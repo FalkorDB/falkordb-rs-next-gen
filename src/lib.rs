@@ -6,6 +6,10 @@ use redis_module::{
 };
 use std::{collections::HashMap, os::raw::c_void};
 
+//
+// This is the RedisType object that represents the Graph object.
+// It is used to define the methods that are called when the object is created, freed, or serialized.
+//
 static GRAPH_TYPE: RedisType = RedisType::new(
     "graphdata",
     0,
@@ -14,7 +18,7 @@ static GRAPH_TYPE: RedisType = RedisType::new(
         rdb_load: None,
         rdb_save: None,
         aof_rewrite: None,
-        free: Some(my_free),
+        free: Some(graph_free),
 
         // Currently unused by Redis
         mem_usage: None,
@@ -38,11 +42,19 @@ static GRAPH_TYPE: RedisType = RedisType::new(
     },
 );
 
+//
+// This function is called when the Redis module is unloaded.
+// It is responsible for freeing the memory allocated for the Graph object.
+//
 #[no_mangle]
-unsafe extern "C" fn my_free(value: *mut c_void) {
+unsafe extern "C" fn graph_free(value: *mut c_void) {
     drop(Box::from_raw(value.cast::<Graph>()));
 }
 
+//
+// This function converts a Value object to a RedisValue object.
+// It is recursive and converts all the nested values.
+//
 fn raw_value_to_redis_value(g: &mut Graph, r: &Value) -> RedisValue {
     match r {
         Value::Null => RedisValue::Null,
@@ -93,6 +105,11 @@ fn raw_value_to_redis_value(g: &mut Graph, r: &Value) -> RedisValue {
     }
 }
 
+//
+// This function is the entry point for the `graph.query` command.
+// It receives the query string and the key name as arguments.
+// It returns the result of the query as a RedisValue object.
+//
 fn graph_query(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     let mut args = args.into_iter().skip(1);
     let key = args.next_arg()?;
@@ -125,13 +142,19 @@ fn graph_query(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     }
 }
 
+//
+// This function is the entry point for the module init.
+// It initializes the Graph object and returns the status of the operation
+//
 fn graph_init(_: &Context, _: &Vec<RedisString>) -> Status {
     Graph::init();
     Status::Ok
 }
 
-//////////////////////////////////////////////////////
-
+//
+// This is the entry point for the Redis module.
+// It defines the module name, version, allocator, data types, init function, and commands.
+//
 redis_module! {
     name: "matrixdb",
     version: 1,

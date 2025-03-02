@@ -20,6 +20,7 @@ use crate::{
     },
 };
 
+// This module provides a Matrix struct that wraps a GraphBLAS matrix.
 pub fn init() {
     unsafe {
         GrB_init(GrB_Mode_GrB_NONBLOCKING as _);
@@ -29,6 +30,8 @@ pub fn init() {
     }
 }
 
+// This function is called when the Redis module is unloaded.
+// It is responsible for freeing the memory allocated for the Matrix object.
 pub fn shutdown() {
     unsafe {
         GrB_Type_free(addr_of_mut!(VALUE_TYPE));
@@ -36,20 +39,25 @@ pub fn shutdown() {
     }
 }
 
+// This trait provides methods for getting the number of rows and columns of a matrix,
+// resizing a matrix, and getting an iterator over the rows of a matrix.
 pub trait Size<T> {
     fn nrows(&self) -> u64;
     fn ncols(&self) -> u64;
     fn resize(&mut self, nrows: u64, ncols: u64);
 }
 
+// This trait provides a method for getting the value at a given row and column of a matrix.
 pub trait Get<T> {
     fn get(&self, i: u64, j: u64) -> Option<T>;
 }
 
+// This trait provides a method for setting the value at a given row and column of a matrix.
 pub trait Set<T> {
     fn set(&mut self, i: u64, j: u64, value: T);
 }
 
+// This trait provides a method for deleting the value at a given row and column of a matrix.
 pub trait Delete<T> {
     fn delete(&mut self, i: u64, j: u64);
 }
@@ -275,6 +283,8 @@ impl Matrix<bool> {
 }
 
 impl Matrix<Value> {
+
+    // Creates a new matrix with the given number of rows and columns.
     pub fn new(nrows: u64, ncols: u64) -> Self {
         unsafe {
             let mut m: MaybeUninit<GrB_Matrix> = MaybeUninit::uninit();
@@ -286,6 +296,7 @@ impl Matrix<Value> {
         }
     }
 
+    // Returns an iterator over the rows of the matrix.
     #[must_use]
     pub fn iter(&self) -> Iter<Value> {
         Iter::<Value>::new(self)
@@ -293,6 +304,8 @@ impl Matrix<Value> {
 }
 
 impl<T> Delete<T> for Matrix<T> {
+
+    // Deletes the value at a given row and column of a matrix.
     fn delete(&mut self, i: u64, j: u64) {
         unsafe {
             let info = GrB_Matrix_removeElement(*self.m, i, j);
@@ -302,6 +315,8 @@ impl<T> Delete<T> for Matrix<T> {
 }
 
 impl Get<bool> for Matrix<bool> {
+
+    // Gets the value at a given row and column of a matrix.
     fn get(&self, i: u64, j: u64) -> Option<bool> {
         unsafe {
             let mut m: MaybeUninit<bool> = MaybeUninit::uninit();
@@ -339,7 +354,10 @@ impl Get<Value> for Matrix<Value> {
     }
 }
 
+// This implementation of the Set trait sets the value at a given row and column of a matrix.
 impl Set<Value> for Matrix<Value> {
+
+    // This function sets the value at a given row and column of a matrix.
     fn set(&mut self, i: u64, j: u64, value: Value) {
         unsafe {
             let info = GrB_Matrix_setElement_UDT(*self.m, addr_of!(value) as *mut c_void, i, j);

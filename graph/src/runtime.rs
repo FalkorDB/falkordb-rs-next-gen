@@ -329,7 +329,7 @@ impl Runtime {
     }
 
     #[must_use]
-    pub fn plan(&self, ir: &QueryIR, debug: bool) -> IR {
+    pub fn plan(&self, ir: &QueryIR, _debug: bool) -> IR {
         self.plan_query(ir, &mut [].iter())
     }
 
@@ -485,7 +485,7 @@ pub fn run(
 
             Value::Bool(false)
         }
-        IR::Xor(irs) => todo!(),
+        IR::Xor(_irs) => todo!(),
         IR::And(irs) => {
             for ir in irs {
                 if matches!(run(vars, g, result_fn, ir), Value::Bool(false)) {
@@ -495,13 +495,13 @@ pub fn run(
 
             Value::Bool(true)
         }
-        IR::Not(ir) => todo!(),
+        IR::Not(_ir) => todo!(),
         IR::Eq(irs) => irs
             .iter()
             .map(|ir| run(vars, g, result_fn, ir))
             .reduce(|a, b| Value::Bool(a == b))
             .unwrap(),
-        IR::Neq(irs) => todo!(),
+        IR::Neq(_irs) => todo!(),
         IR::Lt(op) => Value::Bool(
             match (
                 run(vars, g, result_fn, &op.0),
@@ -511,9 +511,9 @@ pub fn run(
                 _ => todo!(),
             },
         ),
-        IR::Gt(irs) => todo!(),
-        IR::Le(irs) => todo!(),
-        IR::Ge(irs) => todo!(),
+        IR::Gt(_irs) => todo!(),
+        IR::Le(_irs) => todo!(),
+        IR::Ge(_irs) => todo!(),
         IR::Add(irs) => irs
             .iter()
             .map(|ir| run(vars, g, result_fn, ir))
@@ -522,7 +522,7 @@ pub fn run(
                 _ => todo!(),
             })
             .unwrap(),
-        IR::Sub(irs) => todo!(),
+        IR::Sub(_irs) => todo!(),
         IR::Mul(irs) => irs
             .iter()
             .map(|ir| run(vars, g, result_fn, ir))
@@ -531,8 +531,8 @@ pub fn run(
                 _ => todo!(),
             })
             .unwrap(),
-        IR::Div(irs) => todo!(),
-        IR::Pow(irs) => todo!(),
+        IR::Div(_irs) => todo!(),
+        IR::Pow(_irs) => todo!(),
         IR::FuncInvocation(name, irs) => {
             let args = irs.iter().map(|ir| run(vars, g, result_fn, ir)).collect();
             g.runtime.functions[name](g, Value::Array(args))

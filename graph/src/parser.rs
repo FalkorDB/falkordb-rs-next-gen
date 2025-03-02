@@ -168,18 +168,18 @@ macro_rules! match_token {
     () => {};
 }
 
-macro_rules! optional_match_token {
-    ($lexer:expr, $token:ident) => {
-        match $lexer.current() {
-            (Token::$token, len) => {
-                $lexer.next(len);
-                true
-            }
-            _ => false,
-        }
-    };
-    () => {};
-}
+// macro_rules! optional_match_token {
+//     ($lexer:expr, $token:ident) => {
+//         match $lexer.current() {
+//             (Token::$token, len) => {
+//                 $lexer.next(len);
+//                 true
+//             }
+//             _ => false,
+//         }
+//     };
+//     () => {};
+// }
 
 pub struct Parser<'a> {
     lexer: Lexer<'a>,
@@ -623,7 +623,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_link_pattern(&mut self, src: Alias) -> Result<(LinkPattern, NodePattern), String> {
-        let is_incomming = optional_match_token!(self.lexer, LessThan);
+        // let is_incomming = optional_match_token!(self.lexer, LessThan);
         match_token!(self.lexer, Dash);
         match_token!(self.lexer, LBrace);
         let alias = if let (Token::Ident(id), len) = self.lexer.current() {
@@ -638,7 +638,7 @@ impl<'a> Parser<'a> {
         let attrs = self.parse_map()?;
         match_token!(self.lexer, RBrace);
         match_token!(self.lexer, Dash);
-        let is_outgoing = optional_match_token!(self.lexer, GreaterThan);
+        // let is_outgoing = optional_match_token!(self.lexer, GreaterThan);
         let dst = self.parse_node_pattern()?;
         Ok((
             LinkPattern::new(alias, link_type, attrs, src, dst.alias.clone()),
