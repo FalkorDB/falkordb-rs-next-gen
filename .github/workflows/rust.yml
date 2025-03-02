@@ -1,0 +1,70 @@
+name: Rust
+
+on:
+  push:
+    branches: ["master"]
+  pull_request:
+    branches: ["master"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          push: true
+          tags: aviavni/matrixdb-build:latest
+          context: ./build
+  test:
+    runs-on: ubuntu-latest
+    container: aviavni/matrixdb-build:latest
+    needs: docker
+    steps:
+      - uses: actions/checkout@v3
+      - name: Build
+        run: |
+          rustup default stable
+          cargo build
+      - name: Run tests
+        run: |
+          . /data/venv/bin/activate
+          pytest tests/test_e2e.py
+  coverage:
+    runs-on: ubuntu-latest
+    container: aviavni/matrixdb-build:latest
+    needs: docker
+    steps:
+      - uses: actions/checkout@v3
+      - name: Run code coverage
+        run: |
+          rustup default stable
+          RUSTFLAGS="-C instrument-coverage" cargo build
+          mkdir cov
+          cd cov
+          . /data/venv/bin/activate
+          TARGET=../target/debug/libgraphmatrix.so pytest ../tests/test_e2e.py
+          llvm-profdata-19 merge --sparse `ls *.profraw` -o cov.profdata
+          llvm-cov-19 export --format=lcov --instr-profile cov.profdata ../target/debug/libgraphmatrix.so > codecov.txt.all
+          lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}

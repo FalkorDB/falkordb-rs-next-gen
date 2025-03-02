@@ -1,0 +1,21 @@
+[package]
+name = "matrixdb-rs"
+version = "0.1.0"
+edition = "2021"
+description = "Graph database"
+license = "MIT"
+repository = "https://github.com/AviAvni/matrixdb-rs"
+readme = "README.md"
+keywords = ["graph", "database"]
+categories = ["graph", "database"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+name = "matrixdb"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+redis-module = { git="https://github.com/RedisLabsModules/redismodule-rs", tag="v2.1.2" }
+redis-module-macros = { git="https://github.com/RedisLabsModules/redismodule-rs", tag="v2.1.2" }
+graph = { path = "graph", version = "0.1.0" }

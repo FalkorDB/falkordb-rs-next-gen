@@ -1,0 +1,17 @@
+[package]
+name = "graph"
+version = "0.1.0"
+edition = "2021"
+description = "Core of the database"
+license = "MIT"
+repository = "https://github.com/AviAvni/matrixdb-rs"
+readme = "README.md"
+keywords = ["graph", "database"]
+categories = ["graph", "database"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+libc = "0.2.169"
+# llvm-sys = "191"
+roaring = "0.10.10"
