@@ -138,6 +138,7 @@ pub struct LinkPattern {
     pub attrs: Vec<(String, QueryExprIR)>,
     pub from: Alias,
     pub to: Alias,
+    pub bidirectional: bool,
 }
 
 impl LinkPattern {
@@ -148,6 +149,7 @@ impl LinkPattern {
         attrs: Vec<(String, QueryExprIR)>,
         from: Alias,
         to: Alias,
+        bidirectional: bool,
     ) -> Self {
         Self {
             alias,
@@ -155,6 +157,7 @@ impl LinkPattern {
             attrs,
             from,
             to,
+            bidirectional,
         }
     }
 }

@@ -640,10 +640,18 @@ impl<'a> Parser<'a> {
         match_token!(self.lexer, Dash);
         // let is_outgoing = optional_match_token!(self.lexer, GreaterThan);
         let dst = self.parse_node_pattern()?;
-        Ok((
-            LinkPattern::new(alias, link_type, attrs, src, dst.alias.clone()),
-            dst,
-        ))
+        let link = match (is_incomming, is_outgoing) {
+            (true, true) | (false, false) => {
+                LinkPattern::new(alias, link_type, attrs, src, dst.alias.clone(), true)
+            }
+            (true, false) => {
+                LinkPattern::new(alias, link_type, attrs, dst.alias.clone(), src, false)
+            }
+            (false, true) => {
+                LinkPattern::new(alias, link_type, attrs, src, dst.alias.clone(), false)
+            }
+        };
+        Ok((link, dst))
     }
 
     fn parse_labels(&mut self) -> Result<Vec<String>, String> {

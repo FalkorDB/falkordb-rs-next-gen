@@ -136,7 +136,13 @@ def test_create_delete_match():
     res = query("CREATE ()")
     assert res == []
 
+    res = query("MATCH (n) RETURN n")
+    assert res == [[{b"id": 0, b"labels": []}]]
+
     query("MATCH (n) DELETE n")
+
+    res = query("MATCH (n) RETURN n")
+    assert res == []
 
     res = query("UNWIND range(3) AS x CREATE (n:N) RETURN n")
     assert res == [[{b"id": 0, b"labels": [b"N"]}], [{b"id": 1, b"labels": [b"N"]}], [{b"id": 2, b"labels": [b"N"]}]]

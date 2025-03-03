@@ -263,7 +263,7 @@ impl Graph {
 
     pub fn create_link(
         &mut self,
-        link_type: String,
+        link_type: &String,
         from: u64,
         to: u64,
         attr_keys: Value,
@@ -275,7 +275,7 @@ impl Graph {
 
         self.resize();
 
-        let link_type_matrix = self.get_link_type_matrix_mut(&link_type);
+        let link_type_matrix = self.get_link_type_matrix_mut(link_type);
         link_type_matrix.set(from, to, true);
 
         match (attr_keys, attr_values) {
