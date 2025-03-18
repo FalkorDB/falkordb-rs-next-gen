@@ -199,6 +199,7 @@ impl Pattern {
 
 #[derive(Debug)]
 pub enum QueryIR {
+    Call(String, Vec<QueryExprIR>),
     Match(Pattern),
     Unwind(QueryExprIR, String),
     Where(QueryExprIR),

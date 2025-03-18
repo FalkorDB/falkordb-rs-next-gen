@@ -11,7 +11,10 @@
             "program": "redis-server",
             "args": [
                 "--loadmodule",
-                "${workspaceFolder}/target/debug/libmatrixdb.so"
+                // for mac
+                "${workspaceFolder}/target/debug/libmatrixdb.dylib"
+                // for linux
+                // "${workspaceFolder}/target/debug/libmatrixdb.so"
             ],
             "cwd": "${workspaceFolder}",
         }

@@ -1,7 +1,5 @@
 use std::collections::HashMap;
 
-pub trait ValueIter: Iterator<Item = u64> + Clone {}
-
 #[derive(Clone, PartialEq)]
 pub enum Value {
     Null,

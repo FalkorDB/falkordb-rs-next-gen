@@ -43,44 +43,63 @@ unsafe extern "C" fn my_free(value: *mut c_void) {
     drop(Box::from_raw(value.cast::<Graph>()));
 }
 
-fn raw_value_to_redis_value(g: &mut Graph, r: &Value) -> RedisValue {
+fn raw_value_to_redis_value(g: &Graph, r: &Value) -> RedisValue {
     match r {
-        Value::Null => RedisValue::Null,
-        Value::Bool(x) => RedisValue::Bool(*x),
-        Value::Int(x) => RedisValue::Integer(*x),
-        Value::Float(x) => RedisValue::Float(*x),
-        Value::String(x) => RedisValue::SimpleString(x.to_string()),
         Value::Array(values) => RedisValue::Array(
             values
                 .iter()
-                .map(|v| raw_value_to_redis_value(g, v))
+                .map(|v| inner_raw_value_to_redis_value(g, v))
                 .collect(),
         ),
-        Value::Map(map) => RedisValue::Map(
-            map.iter()
-                .map(|(key, value)| {
-                    (
-                        RedisValueKey::String(key.to_string()),
-                        raw_value_to_redis_value(g, value),
-                    )
-                })
-                .collect(),
-        ),
+        _ => todo!(),
+    }
+}
+
+fn inner_raw_value_to_redis_value(g: &Graph, r: &Value) -> RedisValue {
+    match r {
+        Value::Null => RedisValue::Array(vec![RedisValue::Integer(1), RedisValue::Null]),
+        Value::Bool(x) => RedisValue::Array(vec![
+            RedisValue::Integer(4),
+            RedisValue::SimpleString((if *x { "true" } else { "false" }).to_string()),
+        ]),
+        Value::Int(x) => RedisValue::Array(vec![RedisValue::Integer(3), RedisValue::Integer(*x)]),
+        Value::Float(x) => RedisValue::Array(vec![RedisValue::Integer(5), RedisValue::Float(*x)]),
+        Value::String(x) => RedisValue::Array(vec![
+            RedisValue::Integer(2),
+            RedisValue::SimpleString(x.to_string()),
+        ]),
+        Value::Array(values) => RedisValue::Array(vec![
+            RedisValue::Integer(6),
+            RedisValue::Array(
+                values
+                    .iter()
+                    .map(|v| inner_raw_value_to_redis_value(g, v))
+                    .collect(),
+            ),
+        ]),
+        Value::Map(map) => RedisValue::Array(vec![
+            RedisValue::Integer(10),
+            RedisValue::Map(
+                map.iter()
+                    .map(|(key, value)| {
+                        (
+                            RedisValueKey::String(key.to_string()),
+                            inner_raw_value_to_redis_value(g, value),
+                        )
+                    })
+                    .collect(),
+            ),
+        ]),
         Value::Node(id) => {
-            let mut vec = HashMap::new();
-            vec.insert(
-                RedisValueKey::String("id".to_string()),
-                RedisValue::Integer(*id as _),
-            );
+            let mut vec = Vec::new();
+            vec.push(RedisValue::Integer(*id as _));
             let mut labels = Vec::new();
             for label in g.get_node_labels(*id) {
-                labels.push(RedisValue::SimpleString(label.to_string()));
+                labels.push(RedisValue::Integer(g.get_label_id(label).unwrap() as _));
             }
-            vec.insert(
-                RedisValueKey::String("labels".to_string()),
-                RedisValue::Array(labels),
-            );
-            RedisValue::Map(vec)
+            vec.push(RedisValue::Array(labels));
+            vec.push(RedisValue::Array(vec![]));
+            RedisValue::Array(vec![RedisValue::Integer(8), RedisValue::Array(vec)])
         }
         Value::Link(id) => {
             let mut vec = HashMap::new();
@@ -117,12 +136,59 @@ fn graph_query(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
         },
         debug > 0,
     ) {
-        Ok(_) => Ok(res.into()),
+        Ok(_) => Ok(vec![
+            vec![vec![
+                RedisValue::Integer(1),
+                RedisValue::SimpleString("a".to_string()),
+            ]
+            .into()],
+            res,
+            vec![],
+        ]
+        .into()),
         Err(err) => {
             ctx.reply_error_string(err.as_str());
             Ok(RedisValue::NoReply)
         }
     }
+}
+
+fn graph_ro_query(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+    let mut args = args.into_iter().skip(1);
+    let key = args.next_arg()?;
+    let query = args.next_string()?;
+    let debug = args.next_u64().unwrap_or(0);
+
+    let key = ctx.open_key(&key);
+
+    (key.get_value::<Graph>(&GRAPH_TYPE)?).map_or_else(
+        || Ok(RedisValue::Null),
+        |graph| {
+            let mut res = Vec::new();
+            match graph.ro_query(
+                query.as_str(),
+                &mut |g, r| {
+                    res.push(raw_value_to_redis_value(g, &r));
+                },
+                debug > 0,
+            ) {
+                Ok(_) => Ok(vec![
+                    vec![vec![
+                        RedisValue::Integer(1),
+                        RedisValue::SimpleString("a".to_string()),
+                    ]
+                    .into()],
+                    res,
+                    vec![],
+                ]
+                .into()),
+                Err(err) => {
+                    ctx.reply_error_string(err.as_str());
+                    Ok(RedisValue::NoReply)
+                }
+            }
+        },
+    )
 }
 
 fn graph_init(_: &Context, _: &Vec<RedisString>) -> Status {
@@ -139,6 +205,7 @@ redis_module! {
     data_types: [GRAPH_TYPE],
     init: graph_init,
     commands: [
-        ["graph.query", graph_query, "write", 1, 1, 1, ""],
+        ["graph.query", graph_query, "write deny-oom", 1, 1, 1, ""],
+        ["graph.ro_query", graph_ro_query, "readonly", 1, 1, 1, ""],
     ],
 }

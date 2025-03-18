@@ -2,6 +2,7 @@ use crate::ast::{Alias, LinkPattern, NodePattern, PathPattern, Pattern, QueryExp
 
 #[derive(Debug, PartialEq)]
 enum Token {
+    Call,
     Match,
     Unwind,
     Create,
@@ -110,6 +111,7 @@ impl<'a> Lexer<'a> {
                         len += 1;
                     }
                     let token = match self.str[self.pos..self.pos + len].to_lowercase().as_str() {
+                        "call" => Token::Call,
                         "match" => Token::Match,
                         "unwind" => Token::Unwind,
                         "create" => Token::Create,
@@ -206,6 +208,10 @@ impl<'a> Parser<'a> {
 
         loop {
             match self.lexer.current() {
+                (Token::Call, len) => {
+                    self.lexer.next(len);
+                    clauses.push(self.parse_call_clause()?);
+                }
                 (Token::Match, len) => {
                     self.lexer.next(len);
                     clauses.push(self.parse_match_clause()?);
@@ -240,6 +246,10 @@ impl<'a> Parser<'a> {
                 _ => return Err(format!("Unexpected token {:?}", self.lexer.current())),
             }
         }
+    }
+
+    fn parse_call_clause(&mut self) -> Result<QueryIR, String> {
+        Ok(QueryIR::Call(self.parse_ident()?, self.parse_exprs()?))
     }
 
     fn parse_match_clause(&mut self) -> Result<QueryIR, String> {

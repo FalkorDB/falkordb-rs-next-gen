@@ -9,7 +9,7 @@ use roaring::RoaringTreemap;
 use crate::{
     matrix::{Delete, Get, Iter, Matrix, Row, Set, Size},
     parser::Parser,
-    runtime::{run, Runtime, IR},
+    runtime::{plan, ro_run, run, Runtime, IR},
     value::Value,
 };
 
@@ -29,7 +29,6 @@ pub struct Graph {
     link_properties: Matrix<Value>,
     node_property_ids: Vec<String>,
     link_property_ids: Vec<String>,
-    pub runtime: Runtime,
     cache: Mutex<HashMap<String, IR>>,
 }
 
@@ -52,7 +51,6 @@ impl Graph {
             link_properties: Matrix::<Value>::new(0, 0),
             node_property_ids: Vec::new(),
             link_property_ids: Vec::new(),
-            runtime: Runtime::new(),
             cache: Mutex::new(HashMap::new()),
         }
     }
@@ -82,7 +80,7 @@ impl Graph {
     pub fn query(
         &mut self,
         query: &str,
-        result_fn: &mut dyn FnMut(&mut Self, Value),
+        result_fn: &mut dyn FnMut(&Self, Value),
         debug: bool,
     ) -> Result<ResultSummary, String> {
         let mut parse_duration = Duration::ZERO;
@@ -100,7 +98,7 @@ impl Graph {
                         parse_duration = start.elapsed();
 
                         let start = Instant::now();
-                        let value = self.runtime.plan(&ir, debug);
+                        let value = plan(&ir, debug);
                         jit_duration = start.elapsed();
 
                         cache.insert(query.to_string(), value.clone());
@@ -113,8 +111,67 @@ impl Graph {
             }
         };
 
+        let mut runtime = Runtime::new();
         let start = Instant::now();
-        run(&mut HashMap::new(), self, result_fn, &evaluate);
+        run(
+            &mut HashMap::new(),
+            self,
+            &mut runtime,
+            result_fn,
+            &evaluate,
+        );
+        let run_duration = start.elapsed();
+
+        Ok(ResultSummary {
+            parse_duration,
+            jit_duration,
+            run_duration,
+        })
+    }
+
+    pub fn ro_query(
+        &self,
+        query: &str,
+        result_fn: &mut dyn FnMut(&Self, Value),
+        debug: bool,
+    ) -> Result<ResultSummary, String> {
+        let mut parse_duration = Duration::ZERO;
+        let mut jit_duration = Duration::ZERO;
+
+        let evaluate = {
+            match self.cache.lock() {
+                Ok(mut cache) => {
+                    if let Some(f) = cache.get(query) {
+                        f.to_owned()
+                    } else {
+                        let mut parser = Parser::new(query);
+                        let start = Instant::now();
+                        let ir = parser.parse()?;
+                        parse_duration = start.elapsed();
+
+                        let start = Instant::now();
+                        let value = plan(&ir, debug);
+                        jit_duration = start.elapsed();
+
+                        cache.insert(query.to_string(), value.clone());
+                        value
+                    }
+                }
+                Err(_) => {
+                    return Err("Failed to acquire read lock on cache".to_string());
+                }
+            }
+        };
+
+        let mut runtime = Runtime::new();
+        let start = Instant::now();
+        ro_run(
+            &mut HashMap::new(),
+            self,
+            &mut runtime,
+            result_fn,
+            &evaluate,
+        );
         let run_duration = start.elapsed();
 
         Ok(ResultSummary {
@@ -152,7 +209,14 @@ impl Graph {
         self.links.last_mut().map(|(_, o)| o).unwrap()
     }
 
-    pub fn get_node_property_id(&mut self, key: &String) -> u64 {
+    pub fn get_node_property_id(&self, key: &String) -> Option<u64> {
+        self.node_property_ids
+            .iter()
+            .position(|p| p == key)
+            .map(|property_id| property_id as u64)
+    }
+
+    pub fn get_or_add_node_property_id(&mut self, key: &String) -> u64 {
         let property_id = self
             .node_property_ids
             .iter()
@@ -205,7 +269,7 @@ impl Graph {
                 for (key, value) in keys.into_iter().zip(values.into_iter()) {
                     match key {
                         Value::String(key) => {
-                            let property_id = self.get_node_property_id(&key);
+                            let property_id = self.get_or_add_node_property_id(&key);
                             self.resize();
                             self.node_properties.set(id, property_id, value);
                         }

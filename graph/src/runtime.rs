@@ -44,296 +44,31 @@ pub enum IR {
 }
 
 pub struct Runtime {
-    functions: HashMap<String, fn(&mut Graph, Value) -> Value>,
+    write_functions: HashMap<String, fn(&mut Graph, &mut Runtime, Value) -> Value>,
+    read_functions: HashMap<String, fn(&Graph, &mut Runtime, Value) -> Value>,
     iters: Vec<Iter<bool>>,
 }
 
 impl Runtime {
     #[must_use]
     pub fn new() -> Self {
-        let mut functions: HashMap<String, fn(&mut Graph, Value) -> Value> = HashMap::new();
-        functions.insert("create_node".to_string(), Self::create_node);
-        functions.insert("create_link".to_string(), Self::create_link);
-        functions.insert("delete_entity".to_string(), Self::delete_entity);
-        functions.insert("create_node_iter".to_string(), Self::create_node_iter);
-        functions.insert("next_node".to_string(), Self::next_node);
-        functions.insert("property".to_string(), Self::property);
+        let mut write_functions: HashMap<String, fn(&mut Graph, &mut Runtime, Value) -> Value> =
+            HashMap::new();
+        let mut read_functions: HashMap<String, fn(&Graph, &mut Runtime, Value) -> Value> =
+            HashMap::new();
+        write_functions.insert("create_node".to_string(), Self::create_node);
+        write_functions.insert("create_link".to_string(), Self::create_link);
+        write_functions.insert("delete_entity".to_string(), Self::delete_entity);
+        read_functions.insert("create_node_iter".to_string(), Self::create_node_iter);
+        read_functions.insert("next_node".to_string(), Self::next_node);
+        read_functions.insert("property".to_string(), Self::property);
         Self {
-            functions,
+            write_functions,
+            read_functions,
             iters: Vec::new(),
         }
     }
-
-    fn plan_expr(&self, expr: &QueryExprIR) -> IR {
-        match expr {
-            QueryExprIR::Null => IR::Null,
-            QueryExprIR::Bool(x) => IR::Bool(*x),
-            QueryExprIR::Integer(x) => IR::Integer(*x),
-            QueryExprIR::Float(x) => IR::Float(*x),
-            QueryExprIR::String(x) => IR::String(x.to_string()),
-            QueryExprIR::Ident(x) => IR::Var(x.to_string()),
-            QueryExprIR::Param(x) => IR::Param(x.to_string()),
-            QueryExprIR::Named(name, expr) => {
-                IR::Set(name.to_string(), Box::new(self.plan_expr(expr)))
-            }
-            QueryExprIR::List(exprs) => IR::List(exprs.iter().map(|e| self.plan_expr(e)).collect()),
-            QueryExprIR::Or(exprs) => IR::Or(exprs.iter().map(|e| self.plan_expr(e)).collect()),
-            QueryExprIR::Xor(exprs) => IR::Xor(exprs.iter().map(|e| self.plan_expr(e)).collect()),
-            QueryExprIR::And(exprs) => IR::And(exprs.iter().map(|e| self.plan_expr(e)).collect()),
-            QueryExprIR::Not(_) => todo!(),
-            QueryExprIR::Eq(exprs) => IR::Eq(exprs.iter().map(|e| self.plan_expr(e)).collect()),
-            QueryExprIR::Neq(_) => todo!(),
-            QueryExprIR::Lt(_) => todo!(),
-            QueryExprIR::Gt(_) => todo!(),
-            QueryExprIR::Le(_) => todo!(),
-            QueryExprIR::Ge(_) => todo!(),
-            QueryExprIR::Add(exprs) => IR::Add(exprs.iter().map(|e| self.plan_expr(e)).collect()),
-            QueryExprIR::Sub(exprs) => IR::Sub(exprs.iter().map(|e| self.plan_expr(e)).collect()),
-            QueryExprIR::Mul(exprs) => IR::Mul(exprs.iter().map(|e| self.plan_expr(e)).collect()),
-            QueryExprIR::Div(exprs) => IR::Div(exprs.iter().map(|e| self.plan_expr(e)).collect()),
-            QueryExprIR::Pow(_) => todo!(),
-            QueryExprIR::IsNull(expr) => IR::IsNull(Box::new(self.plan_expr(expr))),
-            QueryExprIR::GetElement(op) => {
-                IR::GetElement(Box::new((self.plan_expr(&op.0), self.plan_expr(&op.1))))
-            }
-            QueryExprIR::Property(expr, name) => IR::FuncInvocation(
-                "property".to_string(),
-                vec![self.plan_expr(expr), IR::String(name.to_string())],
-            ),
-            QueryExprIR::FuncInvocation(name, params) => match name.as_str() {
-                "range" => match params.as_slice() {
-                    [length] => IR::Range(Box::new((
-                        IR::Integer(0),
-                        self.plan_expr(length),
-                        IR::Integer(1),
-                    ))),
-                    [from, to] => IR::Range(Box::new((
-                        self.plan_expr(from),
-                        self.plan_expr(to),
-                        IR::Integer(1),
-                    ))),
-                    [from, to, step] => IR::Range(Box::new((
-                        self.plan_expr(from),
-                        self.plan_expr(to),
-                        self.plan_expr(step),
-                    ))),
-                    _ => todo!(),
-                },
-                _ => todo!(),
-            },
-            QueryExprIR::Map(attrs) => IR::Map(
-                attrs
-                    .iter()
-                    .map(|(k, v)| (k.clone(), self.plan_expr(v)))
-                    .collect(),
-            ),
-        }
-    }
-
-    fn plan_create(
-        &self,
-        pattern: &crate::ast::Pattern,
-        iter: &mut std::slice::Iter<'_, QueryIR>,
-    ) -> IR {
-        let create_nodes = pattern
-            .nodes
-            .iter()
-            .map(|n| {
-                let labels = IR::List(
-                    n.labels
-                        .iter()
-                        .map(|l| IR::String((*l).to_string()))
-                        .collect(),
-                );
-                let attrs_keys = IR::List(
-                    n.attrs
-                        .iter()
-                        .map(|(k, _)| IR::String((*k).to_string()))
-                        .collect(),
-                );
-                let attrs_values =
-                    IR::List(n.attrs.iter().map(|(_, v)| self.plan_expr(v)).collect());
-                IR::Set(
-                    n.alias.to_string(),
-                    Box::new(IR::FuncInvocation(
-                        String::from("create_node"),
-                        vec![labels, attrs_keys, attrs_values],
-                    )),
-                )
-            })
-            .collect();
-        let create_links = pattern
-            .links
-            .iter()
-            .map(|l| {
-                let link_type = IR::String(l.link_type.to_string());
-                let attrs_keys = IR::List(
-                    l.attrs
-                        .iter()
-                        .map(|(k, _)| IR::String((*k).to_string()))
-                        .collect(),
-                );
-                let from = IR::Var(l.from.to_string());
-                let to = IR::Var(l.to.to_string());
-                let attrs_values =
-                    IR::List(l.attrs.iter().map(|(_, v)| self.plan_expr(v)).collect());
-                IR::Set(
-                    l.alias.to_string(),
-                    Box::new(IR::FuncInvocation(
-                        String::from("create_link"),
-                        vec![link_type, from, to, attrs_keys, attrs_values],
-                    )),
-                )
-            })
-            .collect();
-        match iter.next() {
-            Some(body_ir) => IR::Block(vec![
-                IR::Block(create_nodes),
-                IR::Block(create_links),
-                self.plan_query(body_ir, iter),
-            ]),
-            None => IR::Block(vec![IR::Block(create_nodes), IR::Block(create_links)]),
-        }
-    }
-
-    fn plan_delete(&self, exprs: &[QueryExprIR], iter: &mut std::slice::Iter<'_, QueryIR>) -> IR {
-        let deleted_entities = exprs.iter().map(|e| self.plan_expr(e)).collect();
-        match iter.next() {
-            Some(body_ir) => IR::Block(vec![
-                IR::FuncInvocation(String::from("delete_entity"), deleted_entities),
-                self.plan_query(body_ir, iter),
-            ]),
-            None => IR::FuncInvocation(String::from("delete_entity"), deleted_entities),
-        }
-    }
-
-    fn plan_unwind(
-        &self,
-        expr: &QueryExprIR,
-        iter: &mut std::slice::Iter<'_, QueryIR>,
-        alias: &String,
-    ) -> IR {
-        let list = self.plan_expr(expr);
-        match list {
-            IR::List(_) => {
-                let list = IR::Set("list".to_string(), Box::new(list));
-                let init = IR::Set("i".to_string(), Box::new(IR::Integer(0)));
-                let condition = IR::Lt(Box::new((
-                    IR::Var("i".to_string()),
-                    IR::Length(Box::new(IR::Var("list".to_string()))),
-                )));
-                let next = IR::Set(
-                    "i".to_string(),
-                    Box::new(IR::Add(vec![IR::Var("i".to_string()), IR::Integer(1)])),
-                );
-                let body_ir = iter.next().unwrap();
-                let body = self.plan_query(body_ir, iter);
-                IR::Block(vec![
-                    list,
-                    IR::For(Box::new((
-                        init,
-                        condition,
-                        next,
-                        IR::Block(vec![
-                            IR::Set(
-                                (*alias).to_string(),
-                                Box::new(IR::GetElement(Box::new((
-                                    IR::Var("list".to_string()),
-                                    IR::Var("i".to_string()),
-                                )))),
-                            ),
-                            body,
-                        ]),
-                    ))),
-                ])
-            }
-            IR::Range(op) => {
-                let init = IR::Set((*alias).to_string(), Box::new(op.0));
-                let condition = IR::Lt(Box::new((IR::Var((*alias).to_string()), op.1)));
-                let next = IR::Set(
-                    (*alias).to_string(),
-                    Box::new(IR::Add(vec![IR::Var((*alias).to_string()), op.2])),
-                );
-                let body_ir = iter.next().unwrap();
-                let body = self.plan_query(body_ir, iter);
-                IR::For(Box::new((init, condition, next, body)))
-            }
-            _ => unimplemented!(""),
-        }
-    }
-
-    fn plan_match(
-        &self,
-        pattern: &crate::ast::Pattern,
-        iter: &mut std::slice::Iter<'_, QueryIR>,
-    ) -> IR {
-        let n = pattern.nodes.first().unwrap();
-        let labels = IR::List(
-            n.labels
-                .iter()
-                .map(|l| IR::String((*l).to_string()))
-                .collect(),
-        );
-        let vec = vec![
-            IR::Set(
-                "iter".to_string(),
-                Box::new(IR::FuncInvocation(
-                    String::from("create_node_iter"),
-                    vec![labels],
-                )),
-            ),
-            IR::Set(
-                n.alias.to_string(),
-                Box::new(IR::FuncInvocation(
-                    String::from("next_node"),
-                    vec![IR::Var("iter".to_string())],
-                )),
-            ),
-        ];
-        let init = IR::Block(vec);
-        let condition = IR::IsNode(Box::new(IR::Var(n.alias.to_string())));
-        let next = IR::Set(
-            n.alias.to_string(),
-            Box::new(IR::FuncInvocation(
-                String::from("next_node"),
-                vec![IR::Var("iter".to_string())],
-            )),
-        );
-        let body_ir = iter.next().unwrap();
-        let body = self.plan_query(body_ir, iter);
-        IR::For(Box::new((init, condition, next, body)))
-    }
-
-    fn plan_query(&self, ir: &QueryIR, iter: &mut std::slice::Iter<QueryIR>) -> IR {
-        match ir {
-            QueryIR::Match(pattern) => self.plan_match(pattern, iter),
-            QueryIR::Unwind(expr, alias) => self.plan_unwind(expr, iter, alias),
-            QueryIR::Where(expr) => IR::If(Box::new((
-                self.plan_expr(expr),
-                self.plan_query(iter.next().unwrap(), iter),
-            ))),
-            QueryIR::Create(pattern) => self.plan_create(pattern, iter),
-            QueryIR::Delete(exprs) => self.plan_delete(exprs, iter),
-            QueryIR::With(exprs) => IR::Block(vec![
-                IR::Block(exprs.iter().map(|e| self.plan_expr(e)).collect()),
-                self.plan_query(iter.next().unwrap(), iter),
-            ]),
-            QueryIR::Return(exprs) => IR::Return(Box::new(IR::List(
-                exprs.iter().map(|e| self.plan_expr(e)).collect(),
-            ))),
-            QueryIR::Query(q) => {
-                let iter = &mut q.iter();
-                self.plan_query(iter.next().unwrap(), iter)
-            }
-        }
-    }
-
-    #[must_use]
-    pub fn plan(&self, ir: &QueryIR, debug: bool) -> IR {
-        self.plan_query(ir, &mut [].iter())
-    }
-
-    fn create_node(g: &mut Graph, args: Value) -> Value {
+    fn create_node(g: &mut Graph, _runtime: &mut Self, args: Value) -> Value {
         match args {
             Value::Array(args) => match args.as_slice() {
                 [Value::Array(raw_labels), raw_keys @ Value::Array(_), raw_values @ Value::Array(_)] =>
@@ -352,7 +87,7 @@ impl Runtime {
         }
     }
 
-    fn delete_entity(g: &mut Graph, args: Value) -> Value {
+    fn delete_entity(g: &mut Graph, _runtime: &mut Self, args: Value) -> Value {
         match args {
             Value::Array(nodes) => {
                 for n in nodes {
@@ -367,7 +102,7 @@ impl Runtime {
         Value::Null
     }
 
-    fn create_link(g: &mut Graph, args: Value) -> Value {
+    fn create_link(g: &mut Graph, _runtime: &mut Self, args: Value) -> Value {
         match args {
             Value::Array(args) => match args.as_slice() {
                 [Value::String(link_type), Value::Node(from), Value::Node(to), keys @ Value::Array(_), values @ Value::Array(_)] => {
@@ -379,7 +114,7 @@ impl Runtime {
         }
     }
 
-    fn create_node_iter(g: &mut Graph, args: Value) -> Value {
+    fn create_node_iter(g: &Graph, runtime: &mut Self, args: Value) -> Value {
         match args {
             Value::Array(args) => match args.as_slice() {
                 [Value::Array(raw_labels)] => {
@@ -389,8 +124,8 @@ impl Runtime {
                             labels.push(l.to_string());
                         }
                     }
-                    g.runtime.iters.push(g.get_nodes(&labels).unwrap());
-                    Value::Int(g.runtime.iters.len() as i64 - 1)
+                    runtime.iters.push(g.get_nodes(&labels).unwrap());
+                    Value::Int(runtime.iters.len() as i64 - 1)
                 }
                 _ => todo!(),
             },
@@ -398,10 +133,10 @@ impl Runtime {
         }
     }
 
-    fn next_node(g: &mut Graph, args: Value) -> Value {
+    fn next_node(g: &Graph, runtime: &mut Self, args: Value) -> Value {
         match args {
             Value::Array(args) => match args.as_slice() {
-                [Value::Int(iter)] => g.runtime.iters[*iter as usize]
+                [Value::Int(iter)] => runtime.iters[*iter as usize]
                     .next()
                     .map_or_else(|| Value::Bool(false), |(n, _)| Value::Node(n)),
                 _ => todo!(),
@@ -410,12 +145,12 @@ impl Runtime {
         }
     }
 
-    fn property(g: &mut Graph, args: Value) -> Value {
+    fn property(g: &Graph, _runtime: &mut Self, args: Value) -> Value {
         match args {
             Value::Array(arr) => match arr.as_slice() {
                 [Value::Node(node_id), Value::String(property)] => {
                     let property_id = g.get_node_property_id(property);
-                    g.get_node_property(*node_id, property_id)
+                    g.get_node_property(*node_id, property_id.unwrap())
                         .map_or_else(|| Value::Bool(false), |n| n)
                 }
                 [Value::Map(map), Value::String(property)] => {
@@ -428,10 +163,258 @@ impl Runtime {
     }
 }
 
-pub fn run(
+fn plan_expr(expr: &QueryExprIR) -> IR {
+    match expr {
+        QueryExprIR::Null => IR::Null,
+        QueryExprIR::Bool(x) => IR::Bool(*x),
+        QueryExprIR::Integer(x) => IR::Integer(*x),
+        QueryExprIR::Float(x) => IR::Float(*x),
+        QueryExprIR::String(x) => IR::String(x.to_string()),
+        QueryExprIR::Ident(x) => IR::Var(x.to_string()),
+        QueryExprIR::Param(x) => IR::Param(x.to_string()),
+        QueryExprIR::Named(name, expr) => IR::Set(name.to_string(), Box::new(plan_expr(expr))),
+        QueryExprIR::List(exprs) => IR::List(exprs.iter().map(plan_expr).collect()),
+        QueryExprIR::Or(exprs) => IR::Or(exprs.iter().map(plan_expr).collect()),
+        QueryExprIR::Xor(exprs) => IR::Xor(exprs.iter().map(plan_expr).collect()),
+        QueryExprIR::And(exprs) => IR::And(exprs.iter().map(plan_expr).collect()),
+        QueryExprIR::Not(_) => todo!(),
+        QueryExprIR::Eq(exprs) => IR::Eq(exprs.iter().map(plan_expr).collect()),
+        QueryExprIR::Neq(_) => todo!(),
+        QueryExprIR::Lt(_) => todo!(),
+        QueryExprIR::Gt(_) => todo!(),
+        QueryExprIR::Le(_) => todo!(),
+        QueryExprIR::Ge(_) => todo!(),
+        QueryExprIR::Add(exprs) => IR::Add(exprs.iter().map(plan_expr).collect()),
+        QueryExprIR::Sub(exprs) => IR::Sub(exprs.iter().map(plan_expr).collect()),
+        QueryExprIR::Mul(exprs) => IR::Mul(exprs.iter().map(plan_expr).collect()),
+        QueryExprIR::Div(exprs) => IR::Div(exprs.iter().map(plan_expr).collect()),
+        QueryExprIR::Pow(_) => todo!(),
+        QueryExprIR::IsNull(expr) => IR::IsNull(Box::new(plan_expr(expr))),
+        QueryExprIR::GetElement(op) => {
+            IR::GetElement(Box::new((plan_expr(&op.0), plan_expr(&op.1))))
+        }
+        QueryExprIR::Property(expr, name) => IR::FuncInvocation(
+            "property".to_string(),
+            vec![plan_expr(expr), IR::String(name.to_string())],
+        ),
+        QueryExprIR::FuncInvocation(name, params) => match name.as_str() {
+            "range" => match params.as_slice() {
+                [length] => IR::Range(Box::new((
+                    IR::Integer(0),
+                    plan_expr(length),
+                    IR::Integer(1),
+                ))),
+                [from, to] => IR::Range(Box::new((plan_expr(from), plan_expr(to), IR::Integer(1)))),
+                [from, to, step] => {
+                    IR::Range(Box::new((plan_expr(from), plan_expr(to), plan_expr(step))))
+                }
+                _ => todo!(),
+            },
+            _ => todo!(),
+        },
+        QueryExprIR::Map(attrs) => IR::Map(
+            attrs
+                .iter()
+                .map(|(k, v)| (k.clone(), plan_expr(v)))
+                .collect(),
+        ),
+    }
+}
+
+fn plan_create(pattern: &crate::ast::Pattern, iter: &mut std::slice::Iter<'_, QueryIR>) -> IR {
+    let create_nodes = pattern
+        .nodes
+        .iter()
+        .map(|n| {
+            let labels = IR::List(
+                n.labels
+                    .iter()
+                    .map(|l| IR::String((*l).to_string()))
+                    .collect(),
+            );
+            let attrs_keys = IR::List(
+                n.attrs
+                    .iter()
+                    .map(|(k, _)| IR::String((*k).to_string()))
+                    .collect(),
+            );
+            let attrs_values = IR::List(n.attrs.iter().map(|(_, v)| plan_expr(v)).collect());
+            IR::Set(
+                n.alias.to_string(),
+                Box::new(IR::FuncInvocation(
+                    String::from("create_node"),
+                    vec![labels, attrs_keys, attrs_values],
+                )),
+            )
+        })
+        .collect();
+    let create_links = pattern
+        .links
+        .iter()
+        .map(|l| {
+            let link_type = IR::String(l.link_type.to_string());
+            let attrs_keys = IR::List(
+                l.attrs
+                    .iter()
+                    .map(|(k, _)| IR::String((*k).to_string()))
+                    .collect(),
+            );
+            let from = IR::Var(l.from.to_string());
+            let to = IR::Var(l.to.to_string());
+            let attrs_values = IR::List(l.attrs.iter().map(|(_, v)| plan_expr(v)).collect());
+            IR::Set(
+                l.alias.to_string(),
+                Box::new(IR::FuncInvocation(
+                    String::from("create_link"),
+                    vec![link_type, from, to, attrs_keys, attrs_values],
+                )),
+            )
+        })
+        .collect();
+    match iter.next() {
+        Some(body_ir) => IR::Block(vec![
+            IR::Block(create_nodes),
+            IR::Block(create_links),
+            plan_query(body_ir, iter),
+        ]),
+        None => IR::Block(vec![IR::Block(create_nodes), IR::Block(create_links)]),
+    }
+}
+
+fn plan_delete(exprs: &[QueryExprIR], iter: &mut std::slice::Iter<'_, QueryIR>) -> IR {
+    let deleted_entities = exprs.iter().map(plan_expr).collect();
+    match iter.next() {
+        Some(body_ir) => IR::Block(vec![
+            IR::FuncInvocation(String::from("delete_entity"), deleted_entities),
+            plan_query(body_ir, iter),
+        ]),
+        None => IR::FuncInvocation(String::from("delete_entity"), deleted_entities),
+    }
+}
+
+fn plan_unwind(expr: &QueryExprIR, iter: &mut std::slice::Iter<'_, QueryIR>, alias: &String) -> IR {
+    let list = plan_expr(expr);
+    match list {
+        IR::List(_) => {
+            let list = IR::Set("list".to_string(), Box::new(list));
+            let init = IR::Set("i".to_string(), Box::new(IR::Integer(0)));
+            let condition = IR::Lt(Box::new((
+                IR::Var("i".to_string()),
+                IR::Length(Box::new(IR::Var("list".to_string()))),
+            )));
+            let next = IR::Set(
+                "i".to_string(),
+                Box::new(IR::Add(vec![IR::Var("i".to_string()), IR::Integer(1)])),
+            );
+            let body_ir = iter.next().unwrap();
+            let body = plan_query(body_ir, iter);
+            IR::Block(vec![
+                list,
+                IR::For(Box::new((
+                    init,
+                    condition,
+                    next,
+                    IR::Block(vec![
+                        IR::Set(
+                            (*alias).to_string(),
+                            Box::new(IR::GetElement(Box::new((
+                                IR::Var("list".to_string()),
+                                IR::Var("i".to_string()),
+                            )))),
+                        ),
+                        body,
+                    ]),
+                ))),
+            ])
+        }
+        IR::Range(op) => {
+            let init = IR::Set((*alias).to_string(), Box::new(op.0));
+            let condition = IR::Lt(Box::new((IR::Var((*alias).to_string()), op.1)));
+            let next = IR::Set(
+                (*alias).to_string(),
+                Box::new(IR::Add(vec![IR::Var((*alias).to_string()), op.2])),
+            );
+            let body_ir = iter.next().unwrap();
+            let body = plan_query(body_ir, iter);
+            IR::For(Box::new((init, condition, next, body)))
+        }
+        _ => unimplemented!(""),
+    }
+}
+
+fn plan_match(pattern: &crate::ast::Pattern, iter: &mut std::slice::Iter<'_, QueryIR>) -> IR {
+    let n = pattern.nodes.first().unwrap();
+    let labels = IR::List(
+        n.labels
+            .iter()
+            .map(|l| IR::String((*l).to_string()))
+            .collect(),
+    );
+    let vec = vec![
+        IR::Set(
+            "iter".to_string(),
+            Box::new(IR::FuncInvocation(
+                String::from("create_node_iter"),
+                vec![labels],
+            )),
+        ),
+        IR::Set(
+            n.alias.to_string(),
+            Box::new(IR::FuncInvocation(
+                String::from("next_node"),
+                vec![IR::Var("iter".to_string())],
+            )),
+        ),
+    ];
+    let init = IR::Block(vec);
+    let condition = IR::IsNode(Box::new(IR::Var(n.alias.to_string())));
+    let next = IR::Set(
+        n.alias.to_string(),
+        Box::new(IR::FuncInvocation(
+            String::from("next_node"),
+            vec![IR::Var("iter".to_string())],
+        )),
+    );
+    let body_ir = iter.next().unwrap();
+    let body = plan_query(body_ir, iter);
+    IR::For(Box::new((init, condition, next, body)))
+}
+
+fn plan_query(ir: &QueryIR, iter: &mut std::slice::Iter<QueryIR>) -> IR {
+    match ir {
+        QueryIR::Call(name, exprs) => todo!(),
+        QueryIR::Match(pattern) => plan_match(pattern, iter),
+        QueryIR::Unwind(expr, alias) => plan_unwind(expr, iter, alias),
+        QueryIR::Where(expr) => IR::If(Box::new((
+            plan_expr(expr),
+            plan_query(iter.next().unwrap(), iter),
+        ))),
+        QueryIR::Create(pattern) => plan_create(pattern, iter),
+        QueryIR::Delete(exprs) => plan_delete(exprs, iter),
+        QueryIR::With(exprs) => IR::Block(vec![
+            IR::Block(exprs.iter().map(|e| plan_expr(e)).collect()),
+            plan_query(iter.next().unwrap(), iter),
+        ]),
+        QueryIR::Return(exprs) => IR::Return(Box::new(IR::List(
+            exprs.iter().map(|e| plan_expr(e)).collect(),
+        ))),
+        QueryIR::Query(q) => {
+            let iter = &mut q.iter();
+            plan_query(iter.next().unwrap(), iter)
+        }
+    }
+}
+
+#[must_use]
+pub fn plan(ir: &QueryIR, debug: bool) -> IR {
+    plan_query(ir, &mut [].iter())
+}
+
+pub fn ro_run(
     vars: &mut HashMap<String, Value>,
-    g: &mut Graph,
-    result_fn: &mut dyn FnMut(&mut Graph, Value),
+    g: &Graph,
+    runtime: &mut Runtime,
+    result_fn: &mut dyn FnMut(&Graph, Value),
     ir: &IR,
 ) -> Value {
     match ir {
@@ -442,14 +425,18 @@ pub fn run(
         IR::String(x) => Value::String(x.to_string()),
         IR::Var(x) => vars.get(x).unwrap().to_owned(),
         IR::Param(_) => todo!(),
-        IR::List(irs) => Value::Array(irs.iter().map(|ir| run(vars, g, result_fn, ir)).collect()),
-        IR::Length(ir) => match run(vars, g, result_fn, ir) {
+        IR::List(irs) => Value::Array(
+            irs.iter()
+                .map(|ir| ro_run(vars, g, runtime, result_fn, ir))
+                .collect(),
+        ),
+        IR::Length(ir) => match ro_run(vars, g, runtime, result_fn, ir) {
             Value::Array(arr) => Value::Int(arr.len() as _),
             _ => todo!(),
         },
         IR::GetElement(op) => {
-            let arr = run(vars, g, result_fn, &op.0);
-            let i = run(vars, g, result_fn, &op.1);
+            let arr = ro_run(vars, g, runtime, result_fn, &op.0);
+            let i = ro_run(vars, g, runtime, result_fn, &op.1);
             match (arr, i) {
                 (Value::Array(values), Value::Int(i)) => {
                     if i < values.len() as _ {
@@ -462,17 +449,17 @@ pub fn run(
             }
         }
         IR::Range(_) => todo!(),
-        IR::IsNull(ir) => match run(vars, g, result_fn, ir) {
+        IR::IsNull(ir) => match ro_run(vars, g, runtime, result_fn, ir) {
             Value::Null => Value::Bool(true),
             _ => Value::Bool(false),
         },
-        IR::IsNode(ir) => match run(vars, g, result_fn, ir) {
+        IR::IsNode(ir) => match ro_run(vars, g, runtime, result_fn, ir) {
             Value::Node(_) => Value::Bool(true),
             _ => Value::Bool(false),
         },
         IR::Or(irs) => {
             for ir in irs {
-                if matches!(run(vars, g, result_fn, ir), Value::Bool(true)) {
+                if matches!(ro_run(vars, g, runtime, result_fn, ir), Value::Bool(true)) {
                     return Value::Bool(true);
                 }
             }
@@ -482,58 +469,58 @@ pub fn run(
         IR::Xor(irs) => todo!(),
         IR::And(irs) => {
             for ir in irs {
-                if matches!(run(vars, g, result_fn, ir), Value::Bool(false)) {
+                if matches!(ro_run(vars, g, runtime, result_fn, ir), Value::Bool(false)) {
                     return Value::Bool(false);
                 }
             }
 
             Value::Bool(true)
         }
-        IR::Not(ir) => match run(vars, g, result_fn, ir) {
+        IR::Not(ir) => match ro_run(vars, g, runtime, result_fn, ir) {
             Value::Bool(b) => Value::Bool(!b),
             _ => todo!(),
         },
         IR::Eq(irs) => irs
             .iter()
-            .map(|ir| run(vars, g, result_fn, ir))
+            .map(|ir| ro_run(vars, g, runtime, result_fn, ir))
             .reduce(|a, b| Value::Bool(a == b))
             .unwrap(),
         IR::Neq(irs) => irs
             .iter()
-            .map(|ir| run(vars, g, result_fn, ir))
+            .map(|ir| ro_run(vars, g, runtime, result_fn, ir))
             .reduce(|a, b| Value::Bool(a != b))
             .unwrap(),
         IR::Lt(op) => match (
-            run(vars, g, result_fn, &op.0),
-            run(vars, g, result_fn, &op.1),
+            ro_run(vars, g, runtime, result_fn, &op.0),
+            ro_run(vars, g, runtime, result_fn, &op.1),
         ) {
             (Value::Int(a), Value::Int(b)) => Value::Bool(a < b),
             _ => todo!(),
         },
         IR::Gt(op) => match (
-            run(vars, g, result_fn, &op.0),
-            run(vars, g, result_fn, &op.1),
+            ro_run(vars, g, runtime, result_fn, &op.0),
+            ro_run(vars, g, runtime, result_fn, &op.1),
         ) {
             (Value::Int(a), Value::Int(b)) => Value::Bool(a > b),
             _ => todo!(),
         },
         IR::Le(op) => match (
-            run(vars, g, result_fn, &op.0),
-            run(vars, g, result_fn, &op.1),
+            ro_run(vars, g, runtime, result_fn, &op.0),
+            ro_run(vars, g, runtime, result_fn, &op.1),
         ) {
             (Value::Int(a), Value::Int(b)) => Value::Bool(a <= b),
             _ => todo!(),
         },
         IR::Ge(op) => match (
-            run(vars, g, result_fn, &op.0),
-            run(vars, g, result_fn, &op.1),
+            ro_run(vars, g, runtime, result_fn, &op.0),
+            ro_run(vars, g, runtime, result_fn, &op.1),
         ) {
             (Value::Int(a), Value::Int(b)) => Value::Bool(a >= b),
             _ => todo!(),
         },
         IR::Add(irs) => irs
             .iter()
-            .map(|ir| run(vars, g, result_fn, ir))
+            .map(|ir| ro_run(vars, g, runtime, result_fn, ir))
             .reduce(|a, b| match (a, b) {
                 (Value::Int(a), Value::Int(b)) => Value::Int(a + b),
                 _ => todo!(),
@@ -541,7 +528,7 @@ pub fn run(
             .unwrap(),
         IR::Sub(irs) => irs
             .iter()
-            .map(|ir| run(vars, g, result_fn, ir))
+            .map(|ir| ro_run(vars, g, runtime, result_fn, ir))
             .reduce(|a, b| match (a, b) {
                 (Value::Int(a), Value::Int(b)) => Value::Int(a - b),
                 _ => todo!(),
@@ -549,7 +536,7 @@ pub fn run(
             .unwrap(),
         IR::Mul(irs) => irs
             .iter()
-            .map(|ir| run(vars, g, result_fn, ir))
+            .map(|ir| ro_run(vars, g, runtime, result_fn, ir))
             .reduce(|a, b| match (a, b) {
                 (Value::Int(a), Value::Int(b)) => Value::Int(a * b),
                 _ => todo!(),
@@ -557,7 +544,7 @@ pub fn run(
             .unwrap(),
         IR::Div(irs) => irs
             .iter()
-            .map(|ir| run(vars, g, result_fn, ir))
+            .map(|ir| ro_run(vars, g, runtime, result_fn, ir))
             .reduce(|a, b| match (a, b) {
                 (Value::Int(a), Value::Int(b)) => Value::Int(a / b),
                 _ => todo!(),
@@ -565,47 +552,246 @@ pub fn run(
             .unwrap(),
         IR::Pow(irs) => irs
             .iter()
-            .map(|ir| run(vars, g, result_fn, ir))
+            .map(|ir| ro_run(vars, g, runtime, result_fn, ir))
             .reduce(|a, b| match (a, b) {
                 (Value::Int(a), Value::Int(b)) => Value::Int(a ^ b),
                 _ => todo!(),
             })
             .unwrap(),
         IR::FuncInvocation(name, irs) => {
-            let args = irs.iter().map(|ir| run(vars, g, result_fn, ir)).collect();
-            g.runtime.functions[name](g, Value::Array(args))
+            let args = irs
+                .iter()
+                .map(|ir| ro_run(vars, g, runtime, result_fn, ir))
+                .collect();
+            runtime.read_functions[name](g, runtime, Value::Array(args))
         }
         IR::Map(items) => Value::Map(
             items
                 .iter()
-                .map(|(key, ir)| (key.to_string(), run(vars, g, result_fn, ir)))
+                .map(|(key, ir)| (key.to_string(), ro_run(vars, g, runtime, result_fn, ir)))
                 .collect(),
         ),
         IR::Set(x, ir) => {
-            let v = run(vars, g, result_fn, ir);
+            let v = ro_run(vars, g, runtime, result_fn, ir);
             vars.insert(x.to_string(), v);
             Value::Null
         }
-        IR::If(op) => match run(vars, g, result_fn, &op.0) {
-            Value::Bool(true) => run(vars, g, result_fn, &op.1),
+        IR::If(op) => match ro_run(vars, g, runtime, result_fn, &op.0) {
+            Value::Bool(true) => ro_run(vars, g, runtime, result_fn, &op.1),
             _ => Value::Null,
         },
         IR::For(op) => {
-            run(vars, g, result_fn, &op.0);
-            while run(vars, g, result_fn, &op.1) == Value::Bool(true) {
-                run(vars, g, result_fn, &op.3);
-                run(vars, g, result_fn, &op.2);
+            ro_run(vars, g, runtime, result_fn, &op.0);
+            while ro_run(vars, g, runtime, result_fn, &op.1) == Value::Bool(true) {
+                ro_run(vars, g, runtime, result_fn, &op.3);
+                ro_run(vars, g, runtime, result_fn, &op.2);
             }
             Value::Null
         }
         IR::Return(ir) => {
-            let v = run(vars, g, result_fn, ir);
+            let v = ro_run(vars, g, runtime, result_fn, ir);
             result_fn(g, v);
             Value::Null
         }
         IR::Block(irs) => {
             for ir in irs {
-                run(vars, g, result_fn, ir);
+                ro_run(vars, g, runtime, result_fn, ir);
+            }
+            Value::Null
+        }
+    }
+}
+
+pub fn run(
+    vars: &mut HashMap<String, Value>,
+    g: &mut Graph,
+    runtime: &mut Runtime,
+    result_fn: &mut dyn FnMut(&Graph, Value),
+    ir: &IR,
+) -> Value {
+    match ir {
+        IR::Null => Value::Null,
+        IR::Bool(x) => Value::Bool(*x),
+        IR::Integer(x) => Value::Int(*x),
+        IR::Float(x) => Value::Float(*x),
+        IR::String(x) => Value::String(x.to_string()),
+        IR::Var(x) => vars.get(x).unwrap().to_owned(),
+        IR::Param(_) => todo!(),
+        IR::List(irs) => Value::Array(
+            irs.iter()
+                .map(|ir| run(vars, g, runtime, result_fn, ir))
+                .collect(),
+        ),
+        IR::Length(ir) => match run(vars, g, runtime, result_fn, ir) {
+            Value::Array(arr) => Value::Int(arr.len() as _),
+            _ => todo!(),
+        },
+        IR::GetElement(op) => {
+            let arr = run(vars, g, runtime, result_fn, &op.0);
+            let i = run(vars, g, runtime, result_fn, &op.1);
+            match (arr, i) {
+                (Value::Array(values), Value::Int(i)) => {
+                    if i < values.len() as _ {
+                        values[i as usize].clone()
+                    } else {
+                        Value::Null
+                    }
+                }
+                _ => todo!(),
+            }
+        }
+        IR::Range(_) => todo!(),
+        IR::IsNull(ir) => match run(vars, g, runtime, result_fn, ir) {
+            Value::Null => Value::Bool(true),
+            _ => Value::Bool(false),
+        },
+        IR::IsNode(ir) => match run(vars, g, runtime, result_fn, ir) {
+            Value::Node(_) => Value::Bool(true),
+            _ => Value::Bool(false),
+        },
+        IR::Or(irs) => {
+            for ir in irs {
+                if matches!(run(vars, g, runtime, result_fn, ir), Value::Bool(true)) {
+                    return Value::Bool(true);
+                }
+            }
+
+            Value::Bool(false)
+        }
+        IR::Xor(irs) => todo!(),
+        IR::And(irs) => {
+            for ir in irs {
+                if matches!(run(vars, g, runtime, result_fn, ir), Value::Bool(false)) {
+                    return Value::Bool(false);
+                }
+            }
+
+            Value::Bool(true)
+        }
+        IR::Not(ir) => match run(vars, g, runtime, result_fn, ir) {
+            Value::Bool(b) => Value::Bool(!b),
+            _ => todo!(),
+        },
+        IR::Eq(irs) => irs
+            .iter()
+            .map(|ir| run(vars, g, runtime, result_fn, ir))
+            .reduce(|a, b| Value::Bool(a == b))
+            .unwrap(),
+        IR::Neq(irs) => irs
+            .iter()
+            .map(|ir| run(vars, g, runtime, result_fn, ir))
+            .reduce(|a, b| Value::Bool(a != b))
+            .unwrap(),
+        IR::Lt(op) => match (
+            run(vars, g, runtime, result_fn, &op.0),
+            run(vars, g, runtime, result_fn, &op.1),
+        ) {
+            (Value::Int(a), Value::Int(b)) => Value::Bool(a < b),
+            _ => todo!(),
+        },
+        IR::Gt(op) => match (
+            run(vars, g, runtime, result_fn, &op.0),
+            run(vars, g, runtime, result_fn, &op.1),
+        ) {
+            (Value::Int(a), Value::Int(b)) => Value::Bool(a > b),
+            _ => todo!(),
+        },
+        IR::Le(op) => match (
+            run(vars, g, runtime, result_fn, &op.0),
+            run(vars, g, runtime, result_fn, &op.1),
+        ) {
+            (Value::Int(a), Value::Int(b)) => Value::Bool(a <= b),
+            _ => todo!(),
+        },
+        IR::Ge(op) => match (
+            run(vars, g, runtime, result_fn, &op.0),
+            run(vars, g, runtime, result_fn, &op.1),
+        ) {
+            (Value::Int(a), Value::Int(b)) => Value::Bool(a >= b),
+            _ => todo!(),
+        },
+        IR::Add(irs) => irs
+            .iter()
+            .map(|ir| run(vars, g, runtime, result_fn, ir))
+            .reduce(|a, b| match (a, b) {
+                (Value::Int(a), Value::Int(b)) => Value::Int(a + b),
+                _ => todo!(),
+            })
+            .unwrap(),
+        IR::Sub(irs) => irs
+            .iter()
+            .map(|ir| run(vars, g, runtime, result_fn, ir))
+            .reduce(|a, b| match (a, b) {
+                (Value::Int(a), Value::Int(b)) => Value::Int(a - b),
+                _ => todo!(),
+            })
+            .unwrap(),
+        IR::Mul(irs) => irs
+            .iter()
+            .map(|ir| run(vars, g, runtime, result_fn, ir))
+            .reduce(|a, b| match (a, b) {
+                (Value::Int(a), Value::Int(b)) => Value::Int(a * b),
+                _ => todo!(),
+            })
+            .unwrap(),
+        IR::Div(irs) => irs
+            .iter()
+            .map(|ir| run(vars, g, runtime, result_fn, ir))
+            .reduce(|a, b| match (a, b) {
+                (Value::Int(a), Value::Int(b)) => Value::Int(a / b),
+                _ => todo!(),
+            })
+            .unwrap(),
+        IR::Pow(irs) => irs
+            .iter()
+            .map(|ir| run(vars, g, runtime, result_fn, ir))
+            .reduce(|a, b| match (a, b) {
+                (Value::Int(a), Value::Int(b)) => Value::Int(a ^ b),
+                _ => todo!(),
+            })
+            .unwrap(),
+        IR::FuncInvocation(name, irs) => {
+            let args = irs
+                .iter()
+                .map(|ir| run(vars, g, runtime, result_fn, ir))
+                .collect();
+            if runtime.write_functions.contains_key(name) {
+                runtime.write_functions[name](g, runtime, Value::Array(args))
+            } else {
+                runtime.read_functions[name](g, runtime, Value::Array(args))
+            }
+        }
+        IR::Map(items) => Value::Map(
+            items
+                .iter()
+                .map(|(key, ir)| (key.to_string(), run(vars, g, runtime, result_fn, ir)))
+                .collect(),
+        ),
+        IR::Set(x, ir) => {
+            let v = run(vars, g, runtime, result_fn, ir);
+            vars.insert(x.to_string(), v);
+            Value::Null
+        }
+        IR::If(op) => match run(vars, g, runtime, result_fn, &op.0) {
+            Value::Bool(true) => run(vars, g, runtime, result_fn, &op.1),
+            _ => Value::Null,
+        },
+        IR::For(op) => {
+            run(vars, g, runtime, result_fn, &op.0);
+            while run(vars, g, runtime, result_fn, &op.1) == Value::Bool(true) {
+                run(vars, g, runtime, result_fn, &op.3);
+                run(vars, g, runtime, result_fn, &op.2);
+            }
+            Value::Null
+        }
+        IR::Return(ir) => {
+            let v = run(vars, g, runtime, result_fn, ir);
+            result_fn(g, v);
+            Value::Null
+        }
+        IR::Block(irs) => {
+            for ir in irs {
+                run(vars, g, runtime, result_fn, ir);
             }
             Value::Null
         }
