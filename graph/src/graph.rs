@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::BTreeMap,
     sync::Mutex,
     time::{Duration, Instant},
 };
@@ -15,21 +15,24 @@ use crate::{
 
 pub struct Graph {
     node_cap: u64,
-    link_cap: u64,
+    relationship_cap: u64,
     node_count: u64,
-    link_count: u64,
+    relationship_count: u64,
     deleted_nodes: RoaringTreemap,
-    deleted_links: RoaringTreemap,
-    adj: Matrix<bool>,
-    node_labels: Matrix<bool>,
-    all_nodes: Matrix<bool>,
-    labels: Vec<(String, Matrix<bool>)>,
-    links: Vec<(String, Matrix<bool>)>,
-    node_properties: Matrix<Value>,
-    link_properties: Matrix<Value>,
-    node_property_ids: Vec<String>,
-    link_property_ids: Vec<String>,
-    cache: Mutex<HashMap<String, IR>>,
+    deleted_relationships: RoaringTreemap,
+    adjacancy_matrix: Matrix<bool>,
+    node_labels_matrix: Matrix<bool>,
+    relationship_type_matrix: Matrix<bool>,
+    all_nodes_matrix: Matrix<bool>,
+    labels_matices: BTreeMap<usize, Matrix<bool>>,
+    relationship_matrices: BTreeMap<usize, Matrix<bool>>,
+    node_properties_matrix: Matrix<Value>,
+    relationship_properties_matrix: Matrix<Value>,
+    node_labels: Vec<String>,
+    relationship_types: Vec<String>,
+    node_properties: Vec<String>,
+    relationship_properties: Vec<String>,
+    cache: Mutex<BTreeMap<String, IR>>,
 }
 
 impl Graph {
@@ -37,21 +40,24 @@ impl Graph {
     pub fn new(n: u64, e: u64) -> Self {
         Self {
             node_cap: n,
-            link_cap: e,
+            relationship_cap: e,
             node_count: 0,
-            link_count: 0,
+            relationship_count: 0,
             deleted_nodes: RoaringTreemap::new(),
-            deleted_links: RoaringTreemap::new(),
-            adj: Matrix::<bool>::new(0, 0),
-            node_labels: Matrix::<bool>::new(0, 0),
-            all_nodes: Matrix::<bool>::new(n, n),
-            labels: Vec::new(),
-            links: Vec::new(),
-            node_properties: Matrix::<Value>::new(0, 0),
-            link_properties: Matrix::<Value>::new(0, 0),
-            node_property_ids: Vec::new(),
-            link_property_ids: Vec::new(),
-            cache: Mutex::new(HashMap::new()),
+            deleted_relationships: RoaringTreemap::new(),
+            adjacancy_matrix: Matrix::<bool>::new(0, 0),
+            node_labels_matrix: Matrix::<bool>::new(0, 0),
+            relationship_type_matrix: Matrix::<bool>::new(0, 0),
+            all_nodes_matrix: Matrix::<bool>::new(n, n),
+            labels_matices: BTreeMap::new(),
+            relationship_matrices: BTreeMap::new(),
+            node_properties_matrix: Matrix::<Value>::new(0, 0),
+            relationship_properties_matrix: Matrix::<Value>::new(0, 0),
+            node_labels: Vec::new(),
+            relationship_types: Vec::new(),
+            node_properties: Vec::new(),
+            relationship_properties: Vec::new(),
+            cache: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -64,28 +70,30 @@ impl Graph {
     }
 
     pub fn get_labels(&self) -> impl Iterator<Item = &String> {
-        self.labels.iter().map(|(l, _)| l)
+        self.node_labels.iter()
     }
 
     pub fn get_types(&self) -> impl Iterator<Item = &String> {
-        self.links.iter().map(|(l, _)| l)
+        self.relationship_types.iter()
     }
 
     pub fn get_properties(&self) -> impl Iterator<Item = &String> {
-        self.node_property_ids.iter().chain(self.link_property_ids.iter())
+        self.node_properties
+            .iter()
+            .chain(self.relationship_properties.iter())
     }
 
     pub fn get_label_id(&self, label: &str) -> Option<u64> {
-        self.labels
+        self.node_labels
             .iter()
-            .position(|p| p.0 == label)
+            .position(|l| l == label)
             .map(|p| p as u64)
     }
 
-    pub fn get_link_id(&self, link_type: &str) -> Option<u64> {
-        self.links
+    pub fn get_type_id(&self, relationship_type: &str) -> Option<u64> {
+        self.relationship_types
             .iter()
-            .position(|p| p.0 == link_type)
+            .position(|t| t == relationship_type)
             .map(|p| p as u64)
     }
 
@@ -126,7 +134,7 @@ impl Graph {
         let mut runtime = Runtime::new();
         let start = Instant::now();
         run(
-            &mut HashMap::new(),
+            &mut BTreeMap::new(),
             self,
             &mut runtime,
             result_fn,
@@ -178,7 +186,7 @@ impl Graph {
         let mut runtime = Runtime::new();
         let start = Instant::now();
         ro_run(
-            &mut HashMap::new(),
+            &mut BTreeMap::new(),
             self,
             &mut runtime,
             result_fn,
@@ -194,35 +202,50 @@ impl Graph {
     }
 
     fn get_label_matrix(&self, label: &String) -> Option<&Matrix<bool>> {
-        self.labels.iter().find(|(l, _)| l == label).map(|l| &l.1)
+        self.node_labels
+            .iter()
+            .position(|l| l == label)
+            .map(|i| &self.labels_matices[&i])
     }
 
     fn get_label_matrix_mut(&mut self, label: &String) -> &mut Matrix<bool> {
-        if let Some(i) = self.labels.iter().position(|(l, _)| l == label) {
-            return &mut self.labels[i].1;
+        if !self.node_labels.contains(label) {
+            self.node_labels.push(label.to_string());
+
+            self.labels_matices.insert(
+                self.node_labels.len() - 1,
+                Matrix::<bool>::new(self.node_cap, self.node_cap),
+            );
         }
 
-        self.labels.push((
-            label.to_string(),
-            Matrix::<bool>::new(self.node_cap, self.node_cap),
-        ));
-        self.labels.last_mut().map(|(_, o)| o).unwrap()
+        self.labels_matices
+            .get_mut(&self.node_labels.iter().position(|l| l == label).unwrap())
+            .unwrap()
     }
 
-    fn get_link_type_matrix_mut(&mut self, link_type: &String) -> &mut Matrix<bool> {
-        if let Some(i) = self.links.iter().position(|(l, _)| l == link_type) {
-            return &mut self.links[i].1;
+    fn get_relationship_matrix_mut(&mut self, relationship_type: &String) -> &mut Matrix<bool> {
+        if !self.relationship_types.contains(relationship_type) {
+            self.relationship_types.push(relationship_type.to_string());
+
+            self.relationship_matrices.insert(
+                self.relationship_types.len() - 1,
+                Matrix::<bool>::new(self.node_cap, self.node_cap),
+            );
         }
 
-        self.links.push((
-            link_type.to_string(),
-            Matrix::<bool>::new(self.node_cap, self.node_cap),
-        ));
-        self.links.last_mut().map(|(_, o)| o).unwrap()
+        self.relationship_matrices
+            .get_mut(
+                &self
+                    .relationship_types
+                    .iter()
+                    .position(|l| l == relationship_type)
+                    .unwrap(),
+            )
+            .unwrap()
     }
 
     pub fn get_node_property_id(&self, key: &String) -> Option<u64> {
-        self.node_property_ids
+        self.node_properties
             .iter()
             .position(|p| p == key)
             .map(|property_id| property_id as u64)
@@ -230,25 +253,25 @@ impl Graph {
 
     pub fn get_or_add_node_property_id(&mut self, key: &String) -> u64 {
         let property_id = self
-            .node_property_ids
+            .node_properties
             .iter()
             .position(|p| p == key)
             .unwrap_or_else(|| {
-                let len = self.node_property_ids.len();
-                self.node_property_ids.push(key.to_string());
+                let len = self.node_properties.len();
+                self.node_properties.push(key.to_string());
                 len
             });
         property_id as u64
     }
 
-    fn get_link_property_id(&mut self, key: &String) -> u64 {
+    fn get_relationship_property_id(&mut self, key: &String) -> u64 {
         let property_id = self
-            .link_property_ids
+            .relationship_properties
             .iter()
             .position(|p| p == key)
             .unwrap_or_else(|| {
-                let len = self.link_property_ids.len();
-                self.link_property_ids.push(key.to_string());
+                let len = self.relationship_properties.len();
+                self.relationship_properties.push(key.to_string());
                 len
             });
         property_id as u64
@@ -266,14 +289,14 @@ impl Graph {
 
         self.resize();
 
-        self.all_nodes.set(id, id, true);
+        self.all_nodes_matrix.set(id, id, true);
 
         for label in labels {
             let label_matrix = self.get_label_matrix_mut(label);
             label_matrix.set(id, id, true);
             let label_id = self.get_label_id(label).unwrap();
             self.resize();
-            self.node_labels.set(id, label_id, true);
+            self.node_labels_matrix.set(id, label_id, true);
         }
 
         match (attr_keys, attr_values) {
@@ -283,7 +306,7 @@ impl Graph {
                         Value::String(key) => {
                             let property_id = self.get_or_add_node_property_id(&key);
                             self.resize();
-                            self.node_properties.set(id, property_id, value);
+                            self.node_properties_matrix.set(id, property_id, value);
                         }
                         _ => todo!(),
                     }
@@ -298,70 +321,77 @@ impl Graph {
     pub fn delete_node(&mut self, id: u64) {
         self.deleted_nodes.insert(id);
         self.node_count -= 1;
-        self.all_nodes.delete(id, id);
+        self.all_nodes_matrix.delete(id, id);
 
-        for (label_id, label_matrix) in self.labels.iter_mut().map(|(_, m)| m).enumerate() {
+        for (label_id, label_matrix) in self.labels_matices.iter_mut().map(|(_, m)| m).enumerate() {
             label_matrix.delete(id, id);
-            self.node_labels.delete(id, label_id as _);
+            self.node_labels_matrix.delete(id, label_id as _);
         }
 
-        for property_id in 0..self.node_property_ids.len() {
-            self.node_properties.delete(id, property_id as _);
+        for property_id in 0..self.node_properties.len() {
+            self.node_properties_matrix.delete(id, property_id as _);
         }
     }
 
     pub fn get_nodes(&self, labels: &[String]) -> Option<Iter<bool>> {
         if labels.is_empty() {
-            return Some(self.all_nodes.iter());
+            return Some(self.all_nodes_matrix.iter());
         }
         self.get_label_matrix(&labels[0]).map(|m| m.iter())
     }
 
-    pub fn get_node_labels(&self, id: u64) -> impl Iterator<Item = &String> {
-        self.node_labels.iter_row(id).map(|(_, l)| {
-            self.labels
-                .iter()
-                .enumerate()
-                .filter(|(i, _)| *i as u64 == l)
-                .map(|(_, (l, _))| l)
-                .next()
-                .unwrap()
-        })
+    pub fn get_node_label_ids(&self, id: u64) -> impl Iterator<Item = u64> {
+        self.node_labels_matrix.iter_row(id).map(|(_, l)| l)
     }
 
     pub fn get_node_properties(&self, id: u64) -> Iter<Row<Value>> {
-        self.node_properties.iter_row(id)
+        self.node_properties_matrix.iter_row(id)
     }
 
     pub fn get_node_property(&self, node_id: u64, property_id: u64) -> Option<Value> {
-        self.node_properties.get(node_id, property_id)
+        self.node_properties_matrix.get(node_id, property_id)
     }
 
-    pub fn create_link(
+    pub fn create_relationship(
         &mut self,
-        link_type: &String,
+        relationship_type: &String,
         from: u64,
         to: u64,
         attr_keys: Value,
         attr_values: Value,
     ) -> Value {
-        let id = self.deleted_links.min().unwrap_or(self.link_count);
-        self.deleted_links.remove(id);
-        self.link_count += 1;
+        let id = self
+            .deleted_relationships
+            .min()
+            .unwrap_or(self.relationship_count);
+        self.deleted_relationships.remove(id);
+        self.relationship_count += 1;
 
         self.resize();
 
-        let link_type_matrix = self.get_link_type_matrix_mut(link_type);
-        link_type_matrix.set(from, to, true);
+        let relationship_type_matrix = self.get_relationship_matrix_mut(relationship_type);
+        relationship_type_matrix.set(from, to, true);
+
+        self.resize();
+
+        self.relationship_type_matrix.set(
+            id,
+            self.relationship_types
+                .iter()
+                .position(|p| p == relationship_type)
+                .unwrap() as u64,
+            true,
+        );
 
         match (attr_keys, attr_values) {
             (Value::Array(keys), Value::Array(values)) => {
                 for (key, value) in keys.into_iter().zip(values.into_iter()) {
                     match key {
                         Value::String(key) => {
-                            let property_id = self.get_link_property_id(&key);
+                            let property_id = self.get_relationship_property_id(&key);
                             self.resize();
-                            self.link_properties.set(id, property_id, value);
+                            self.relationship_properties_matrix
+                                .set(id, property_id, value);
                         }
                         _ => todo!(),
                     }
@@ -370,45 +400,64 @@ impl Graph {
             _ => todo!(),
         }
 
-        Value::Link(id, self.links.iter().position(|(l, _)| l == link_type).unwrap() as u64, from, to)
+        Value::Relationship(id, from, to)
+    }
+
+    pub fn get_relationship_type_id(&self, id: u64) -> u64 {
+        self.relationship_type_matrix
+            .iter_row(id)
+            .map(|(_, l)| l)
+            .next()
+            .unwrap()
     }
 
     fn resize(&mut self) {
         if self.node_count > self.node_cap {
             self.node_cap *= 2;
-            self.node_properties
-                .resize(self.node_cap, self.node_property_ids.len() as u64);
-            self.adj.resize(self.node_cap, self.node_cap);
-            self.node_labels
-                .resize(self.node_cap, self.labels.len() as u64);
-            self.all_nodes.resize(self.node_cap, self.node_cap);
-            for label_matrix in self.labels.iter_mut().map(|(_, m)| m) {
+            self.node_properties_matrix
+                .resize(self.node_cap, self.node_properties.len() as u64);
+            self.adjacancy_matrix.resize(self.node_cap, self.node_cap);
+            self.node_labels_matrix
+                .resize(self.node_cap, self.labels_matices.len() as u64);
+            self.all_nodes_matrix.resize(self.node_cap, self.node_cap);
+            for label_matrix in self.labels_matices.iter_mut().map(|(_, m)| m) {
                 label_matrix.resize(self.node_cap, self.node_cap);
             }
-            for link_matrix in self.links.iter_mut().map(|(_, m)| m) {
-                link_matrix.resize(self.node_cap, self.node_cap);
+            for relationship_matrix in self.relationship_matrices.iter_mut().map(|(_, m)| m) {
+                relationship_matrix.resize(self.node_cap, self.node_cap);
             }
         }
 
-        if self.labels.len() as u64 > self.node_labels.ncols() {
-            self.node_labels
-                .resize(self.node_cap, self.labels.len() as u64);
+        if self.labels_matices.len() as u64 > self.node_labels_matrix.ncols() {
+            self.node_labels_matrix
+                .resize(self.node_cap, self.labels_matices.len() as u64);
         }
 
-        if self.node_property_ids.len() as u64 > self.node_properties.ncols() {
-            self.node_properties
-                .resize(self.node_cap, self.node_property_ids.len() as u64);
+        if self.node_properties.len() as u64 > self.node_properties_matrix.ncols() {
+            self.node_properties_matrix
+                .resize(self.node_cap, self.node_properties.len() as u64);
         }
 
-        if self.link_count > self.link_cap {
-            self.link_cap *= 2;
-            self.link_properties
-                .resize(self.link_cap, self.link_property_ids.len() as u64);
+        if self.relationship_count > self.relationship_cap {
+            self.relationship_cap *= 2;
+            self.relationship_properties_matrix.resize(
+                self.relationship_cap,
+                self.relationship_properties.len() as u64,
+            );
+            self.relationship_type_matrix
+                .resize(self.relationship_cap, self.relationship_types.len() as u64);
         }
 
-        if self.link_property_ids.len() as u64 > self.link_properties.ncols() {
-            self.link_properties
-                .resize(self.link_cap, self.link_property_ids.len() as u64);
+        if self.relationship_properties.len() as u64 > self.relationship_properties_matrix.ncols() {
+            self.relationship_properties_matrix.resize(
+                self.relationship_cap,
+                self.relationship_properties.len() as u64,
+            );
+        }
+
+        if self.relationship_types.len() as u64 > self.relationship_type_matrix.ncols() {
+            self.relationship_type_matrix
+                .resize(self.relationship_cap, self.relationship_types.len() as u64);
         }
     }
 }

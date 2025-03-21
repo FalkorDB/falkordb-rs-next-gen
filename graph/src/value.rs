@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 #[derive(Clone, PartialEq)]
 pub enum Value {
@@ -8,7 +8,7 @@ pub enum Value {
     Float(f64),
     String(String),
     Array(Vec<Value>),
-    Map(HashMap<String, Value>),
+    Map(BTreeMap<String, Value>),
     Node(u64),
-    Link(u64, u64, u64, u64),
+    Relationship(u64, u64, u64),
 }

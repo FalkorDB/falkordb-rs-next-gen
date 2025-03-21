@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use crate::{graph::Graph, matrix::Iter, value::Value};
 
@@ -44,20 +44,20 @@ pub enum IR {
 }
 
 pub struct Runtime {
-    write_functions: HashMap<String, fn(&mut Graph, &mut Runtime, Value) -> Value>,
-    read_functions: HashMap<String, fn(&Graph, &mut Runtime, Value) -> Value>,
+    write_functions: BTreeMap<String, fn(&mut Graph, &mut Runtime, Value) -> Value>,
+    read_functions: BTreeMap<String, fn(&Graph, &mut Runtime, Value) -> Value>,
     iters: Vec<Iter<bool>>,
 }
 
 impl Runtime {
     #[must_use]
     pub fn new() -> Self {
-        let mut write_functions: HashMap<String, fn(&mut Graph, &mut Runtime, Value) -> Value> =
-            HashMap::new();
-        let mut read_functions: HashMap<String, fn(&Graph, &mut Runtime, Value) -> Value> =
-            HashMap::new();
+        let mut write_functions: BTreeMap<String, fn(&mut Graph, &mut Runtime, Value) -> Value> =
+            BTreeMap::new();
+        let mut read_functions: BTreeMap<String, fn(&Graph, &mut Runtime, Value) -> Value> =
+            BTreeMap::new();
         write_functions.insert("create_node".to_string(), Self::create_node);
-        write_functions.insert("create_link".to_string(), Self::create_link);
+        write_functions.insert("create_relationship".to_string(), Self::create_relationship);
         write_functions.insert("delete_entity".to_string(), Self::delete_entity);
         read_functions.insert("create_node_iter".to_string(), Self::create_node_iter);
         read_functions.insert("next_node".to_string(), Self::next_node);
@@ -65,7 +65,7 @@ impl Runtime {
         read_functions.insert("db.labels".to_string(), Self::labels);
         read_functions.insert("db.relationshiptypes".to_string(), Self::types);
         read_functions.insert("db.propertykeys".to_string(), Self::properties);
-        
+
         Self {
             write_functions,
             read_functions,
@@ -106,11 +106,11 @@ impl Runtime {
         Value::Null
     }
 
-    fn create_link(g: &mut Graph, _runtime: &mut Self, args: Value) -> Value {
+    fn create_relationship(g: &mut Graph, _runtime: &mut Self, args: Value) -> Value {
         match args {
             Value::Array(args) => match args.as_slice() {
-                [Value::String(link_type), Value::Node(from), Value::Node(to), keys @ Value::Array(_), values @ Value::Array(_)] => {
-                    g.create_link(link_type, *from, *to, keys.to_owned(), values.to_owned())
+                [Value::String(relationship_type), Value::Node(from), Value::Node(to), keys @ Value::Array(_), values @ Value::Array(_)] => {
+                    g.create_relationship(relationship_type, *from, *to, keys.to_owned(), values.to_owned())
                 }
                 _ => todo!(),
             },
@@ -276,11 +276,11 @@ fn plan_create(pattern: &crate::ast::Pattern, iter: &mut std::slice::Iter<'_, Qu
             )
         })
         .collect();
-    let create_links = pattern
-        .links
+    let create_relationships = pattern
+        .relationships
         .iter()
         .map(|l| {
-            let link_type = IR::String(l.link_type.to_string());
+            let relationship_type = IR::String(l.relationship_type.to_string());
             let attrs_keys = IR::List(
                 l.attrs
                     .iter()
@@ -293,8 +293,8 @@ fn plan_create(pattern: &crate::ast::Pattern, iter: &mut std::slice::Iter<'_, Qu
             IR::Set(
                 l.alias.to_string(),
                 Box::new(IR::FuncInvocation(
-                    String::from("create_link"),
-                    vec![link_type, from, to, attrs_keys, attrs_values],
+                    String::from("create_relationship"),
+                    vec![relationship_type, from, to, attrs_keys, attrs_values],
                 )),
             )
         })
@@ -302,10 +302,10 @@ fn plan_create(pattern: &crate::ast::Pattern, iter: &mut std::slice::Iter<'_, Qu
     match iter.next() {
         Some(body_ir) => IR::Block(vec![
             IR::Block(create_nodes),
-            IR::Block(create_links),
+            IR::Block(create_relationships),
             plan_query(body_ir, iter),
         ]),
-        None => IR::Block(vec![IR::Block(create_nodes), IR::Block(create_links)]),
+        None => IR::Block(vec![IR::Block(create_nodes), IR::Block(create_relationships)]),
     }
 }
 
@@ -410,32 +410,30 @@ fn plan_match(pattern: &crate::ast::Pattern, iter: &mut std::slice::Iter<'_, Que
 
 fn plan_query(ir: &QueryIR, iter: &mut std::slice::Iter<QueryIR>) -> IR {
     match ir {
-        QueryIR::Call(name, exprs) => {
-            IR::For(Box::new((
-                IR::Block(vec![
-                    IR::Set(
-                        "labels".to_string(),
-                        Box::new(IR::FuncInvocation(
-                            name.to_lowercase(),
-                            exprs.iter().map(plan_expr).collect(),
-                        )),
-                    ),
-                    IR::Set("i".to_string(), Box::new(IR::Integer(0))),
-                ]),
-                IR::Lt(Box::new((
-                    IR::Var("i".to_string()),
-                    IR::Length(Box::new(IR::Var("labels".to_string()))),
-                ))),
+        QueryIR::Call(name, exprs) => IR::For(Box::new((
+            IR::Block(vec![
                 IR::Set(
-                    "i".to_string(),
-                    Box::new(IR::Add(vec![IR::Var("i".to_string()), IR::Integer(1)])),
+                    "labels".to_string(),
+                    Box::new(IR::FuncInvocation(
+                        name.to_lowercase(),
+                        exprs.iter().map(plan_expr).collect(),
+                    )),
                 ),
-                IR::Return(Box::new(IR::List(vec![IR::GetElement(Box::new((
-                    IR::Var("labels".to_string()),
-                    IR::Var("i".to_string()),
-                )))]))),
-            )))
-        }
+                IR::Set("i".to_string(), Box::new(IR::Integer(0))),
+            ]),
+            IR::Lt(Box::new((
+                IR::Var("i".to_string()),
+                IR::Length(Box::new(IR::Var("labels".to_string()))),
+            ))),
+            IR::Set(
+                "i".to_string(),
+                Box::new(IR::Add(vec![IR::Var("i".to_string()), IR::Integer(1)])),
+            ),
+            IR::Return(Box::new(IR::List(vec![IR::GetElement(Box::new((
+                IR::Var("labels".to_string()),
+                IR::Var("i".to_string()),
+            )))]))),
+        ))),
         QueryIR::Match(pattern) => plan_match(pattern, iter),
         QueryIR::Unwind(expr, alias) => plan_unwind(expr, iter, alias),
         QueryIR::Where(expr) => IR::If(Box::new((
@@ -464,7 +462,7 @@ pub fn plan(ir: &QueryIR, debug: bool) -> IR {
 }
 
 pub fn ro_run(
-    vars: &mut HashMap<String, Value>,
+    vars: &mut BTreeMap<String, Value>,
     g: &Graph,
     runtime: &mut Runtime,
     result_fn: &mut dyn FnMut(&Graph, Value),
@@ -656,7 +654,7 @@ pub fn ro_run(
 }
 
 pub fn run(
-    vars: &mut HashMap<String, Value>,
+    vars: &mut BTreeMap<String, Value>,
     g: &mut Graph,
     runtime: &mut Runtime,
     result_fn: &mut dyn FnMut(&Graph, Value),

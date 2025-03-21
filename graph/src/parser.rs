@@ -1,4 +1,6 @@
-use crate::ast::{Alias, LinkPattern, NodePattern, PathPattern, Pattern, QueryExprIR, QueryIR};
+use crate::ast::{
+    Alias, NodePattern, PathPattern, Pattern, QueryExprIR, QueryIR, RelationshipPattern,
+};
 
 #[derive(Debug, PartialEq)]
 enum Token {
@@ -304,7 +306,7 @@ impl<'a> Parser<'a> {
 
     fn parse_pattern(&mut self, clause: Token) -> Result<Pattern, String> {
         let mut nodes = Vec::new();
-        let mut links = Vec::new();
+        let mut relationships = Vec::new();
         let mut paths = Vec::new();
         loop {
             if let Ok(p) = self.parse_ident() {
@@ -316,11 +318,11 @@ impl<'a> Parser<'a> {
                 nodes.push(left);
                 loop {
                     if let (Token::Dash | Token::LessThan, _) = self.lexer.current() {
-                        let (link, right) = self.parse_link_pattern(left_alias)?;
-                        vars.push(link.alias.clone());
+                        let (relationship, right) = self.parse_relationship_pattern(left_alias)?;
+                        vars.push(relationship.alias.clone());
                         vars.push(right.alias.clone());
                         left_alias = right.alias.clone();
-                        links.push(link);
+                        relationships.push(relationship);
                         nodes.push(right);
                     } else {
                         paths.push(PathPattern::new(vars, p));
@@ -332,9 +334,9 @@ impl<'a> Parser<'a> {
                 let mut left_alias = left.alias.clone();
                 nodes.push(left);
                 while let (Token::Dash | Token::LessThan, _) = self.lexer.current() {
-                    let (link, right) = self.parse_link_pattern(left_alias)?;
+                    let (relationship, right) = self.parse_relationship_pattern(left_alias)?;
                     left_alias = right.alias.clone();
-                    links.push(link);
+                    relationships.push(relationship);
                     nodes.push(right);
                 }
             }
@@ -354,7 +356,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        Ok(Pattern::new(nodes, links, paths))
+        Ok(Pattern::new(nodes, relationships, paths))
     }
 
     fn parse_primary_expr(&mut self) -> Result<QueryExprIR, String> {
@@ -650,7 +652,10 @@ impl<'a> Parser<'a> {
         Ok(NodePattern::new(alias, labels, attrs))
     }
 
-    fn parse_link_pattern(&mut self, src: Alias) -> Result<(LinkPattern, NodePattern), String> {
+    fn parse_relationship_pattern(
+        &mut self,
+        src: Alias,
+    ) -> Result<(RelationshipPattern, NodePattern), String> {
         let is_incomming = optional_match_token!(self.lexer, LessThan);
         match_token!(self.lexer, Dash);
         match_token!(self.lexer, LBrace);
@@ -662,24 +667,24 @@ impl<'a> Parser<'a> {
             Alias::Anon(self.anon_id - 1)
         };
         match_token!(self.lexer, Colon);
-        let link_type = self.parse_ident()?;
+        let relationship_type = self.parse_ident()?;
         let attrs = self.parse_map()?;
         match_token!(self.lexer, RBrace);
         match_token!(self.lexer, Dash);
         let is_outgoing = optional_match_token!(self.lexer, GreaterThan);
         let dst = self.parse_node_pattern()?;
-        let link = match (is_incomming, is_outgoing) {
+        let relationship = match (is_incomming, is_outgoing) {
             (true, true) | (false, false) => {
-                LinkPattern::new(alias, link_type, attrs, src, dst.alias.clone(), true)
+                RelationshipPattern::new(alias, relationship_type, attrs, src, dst.alias.clone(), true)
             }
             (true, false) => {
-                LinkPattern::new(alias, link_type, attrs, dst.alias.clone(), src, false)
+                RelationshipPattern::new(alias, relationship_type, attrs, dst.alias.clone(), src, false)
             }
             (false, true) => {
-                LinkPattern::new(alias, link_type, attrs, src, dst.alias.clone(), false)
+                RelationshipPattern::new(alias, relationship_type, attrs, src, dst.alias.clone(), false)
             }
         };
-        Ok((link, dst))
+        Ok((relationship, dst))
     }
 
     fn parse_labels(&mut self) -> Result<Vec<String>, String> {

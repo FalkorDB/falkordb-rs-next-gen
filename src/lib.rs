@@ -4,7 +4,7 @@ use redis_module::{
     RedisModuleTypeMethods, RedisResult, RedisString, RedisValue, Status,
     REDISMODULE_TYPE_METHOD_VERSION,
 };
-use std::{collections::HashMap, os::raw::c_void};
+use std::os::raw::c_void;
 
 static GRAPH_TYPE: RedisType = RedisType::new(
     "graphdata",
@@ -94,22 +94,23 @@ fn inner_raw_value_to_redis_value(g: &Graph, r: &Value) -> RedisValue {
             let mut vec = Vec::new();
             vec.push(RedisValue::Integer(*id as _));
             let mut labels = Vec::new();
-            for label in g.get_node_labels(*id) {
-                labels.push(RedisValue::Integer(g.get_label_id(label).unwrap() as _));
+            for label in g.get_node_label_ids(*id) {
+                labels.push(RedisValue::Integer(label as _));
             }
             vec.push(RedisValue::Array(labels));
             vec.push(RedisValue::Array(vec![]));
             RedisValue::Array(vec![RedisValue::Integer(8), RedisValue::Array(vec)])
         }
-        Value::Link(id, type_id, from, to) => {
-            let mut vec = Vec::new();
-            vec.push(RedisValue::Integer(*id as _));
-            vec.push(RedisValue::Integer(*type_id as _));
-            vec.push(RedisValue::Integer(*from as _));
-            vec.push(RedisValue::Integer(*to as _));
-            vec.push(RedisValue::Array(vec![]));
-            RedisValue::Array(vec![RedisValue::Integer(7), RedisValue::Array(vec)])
-        }
+        Value::Relationship(id, from, to) => RedisValue::Array(vec![
+            RedisValue::Integer(7),
+            RedisValue::Array(vec![
+                RedisValue::Integer(*id as _),
+                RedisValue::Integer(g.get_relationship_type_id(*id) as _),
+                RedisValue::Integer(*from as _),
+                RedisValue::Integer(*to as _),
+                RedisValue::Array(vec![]),
+            ]),
+        ]),
     }
 }
 

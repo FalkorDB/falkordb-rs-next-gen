@@ -132,20 +132,20 @@ impl NodePattern {
 }
 
 #[derive(Debug)]
-pub struct LinkPattern {
+pub struct RelationshipPattern {
     pub alias: Alias,
-    pub link_type: String,
+    pub relationship_type: String,
     pub attrs: Vec<(String, QueryExprIR)>,
     pub from: Alias,
     pub to: Alias,
     pub bidirectional: bool,
 }
 
-impl LinkPattern {
+impl RelationshipPattern {
     #[must_use]
     pub const fn new(
         alias: Alias,
-        link_type: String,
+        relationship_type: String,
         attrs: Vec<(String, QueryExprIR)>,
         from: Alias,
         to: Alias,
@@ -153,7 +153,7 @@ impl LinkPattern {
     ) -> Self {
         Self {
             alias,
-            link_type,
+            relationship_type,
             attrs,
             from,
             to,
@@ -178,7 +178,7 @@ impl PathPattern {
 #[derive(Debug)]
 pub struct Pattern {
     pub nodes: Vec<NodePattern>,
-    pub links: Vec<LinkPattern>,
+    pub relationships: Vec<RelationshipPattern>,
     pub paths: Vec<PathPattern>,
 }
 
@@ -186,12 +186,12 @@ impl Pattern {
     #[must_use]
     pub const fn new(
         nodes: Vec<NodePattern>,
-        links: Vec<LinkPattern>,
+        relationships: Vec<RelationshipPattern>,
         paths: Vec<PathPattern>,
     ) -> Self {
         Self {
             nodes,
-            links,
+            relationships,
             paths,
         }
     }
@@ -241,17 +241,17 @@ impl QueryIR {
                     }
                     env.insert(node.alias.to_string());
                 }
-                for link in &p.links {
-                    if env.contains(&link.alias.to_string()) {
+                for relationship in &p.relationships {
+                    if env.contains(&relationship.alias.to_string()) {
                         return Err(format!(
                             "Duplicate alias {}",
-                            link.alias.to_string().as_str()
+                            relationship.alias.to_string().as_str()
                         ));
                     }
-                    for (_, v) in &link.attrs {
+                    for (_, v) in &relationship.attrs {
                         v.inner_validate(env)?;
                     }
-                    env.insert(link.alias.to_string());
+                    env.insert(relationship.alias.to_string());
                 }
                 let first = iter.next().unwrap();
                 first.inner_validate(iter, env)
@@ -293,17 +293,17 @@ impl QueryIR {
                 for node in &p.nodes {
                     env.insert(node.alias.to_string());
                 }
-                for link in &p.links {
-                    if env.contains(&link.alias.to_string()) {
+                for relationship in &p.relationships {
+                    if env.contains(&relationship.alias.to_string()) {
                         return Err(format!(
                             "Duplicate alias {}",
-                            link.alias.to_string().as_str()
+                            relationship.alias.to_string().as_str()
                         ));
                     }
-                    for (_, v) in &link.attrs {
+                    for (_, v) in &relationship.attrs {
                         v.inner_validate(env)?;
                     }
-                    env.insert(link.alias.to_string());
+                    env.insert(relationship.alias.to_string());
                 }
                 iter.next()
                     .map_or(Ok(()), |first| first.inner_validate(iter, env))
