@@ -249,7 +249,25 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_call_clause(&mut self) -> Result<QueryIR, String> {
-        Ok(QueryIR::Call(self.parse_ident()?, self.parse_exprs()?))
+        let ident = self.parse_dotted_ident()?;
+        match_token!(self.lexer, LParen);
+        if let (Token::RParen, len) = self.lexer.current() {
+            self.lexer.next(len);
+            return Ok(QueryIR::Call(ident, vec![]));
+        }
+        let exprs = self.parse_exprs()?;
+        match_token!(self.lexer, RParen);
+        Ok(QueryIR::Call(ident, exprs))
+    }
+
+    fn parse_dotted_ident(&mut self) -> Result<String, String> {
+        let mut ident = self.parse_ident()?;
+        while let (Token::Dot, len) = self.lexer.current() {
+            self.lexer.next(len);
+            ident.push('.');
+            ident.push_str(&self.parse_ident()?);
+        }
+        Ok(ident)
     }
 
     fn parse_match_clause(&mut self) -> Result<QueryIR, String> {

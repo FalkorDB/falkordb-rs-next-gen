@@ -62,6 +62,10 @@ impl Runtime {
         read_functions.insert("create_node_iter".to_string(), Self::create_node_iter);
         read_functions.insert("next_node".to_string(), Self::next_node);
         read_functions.insert("property".to_string(), Self::property);
+        read_functions.insert("db.labels".to_string(), Self::labels);
+        read_functions.insert("db.relationshiptypes".to_string(), Self::types);
+        read_functions.insert("db.propertykeys".to_string(), Self::properties);
+        
         Self {
             write_functions,
             read_functions,
@@ -160,6 +164,30 @@ impl Runtime {
             },
             _ => unimplemented!(),
         }
+    }
+
+    fn labels(g: &Graph, _runtime: &mut Self, args: Value) -> Value {
+        Value::Array(
+            g.get_labels()
+                .map(|n| Value::String(n.to_string()))
+                .collect(),
+        )
+    }
+
+    fn types(g: &Graph, _runtime: &mut Self, args: Value) -> Value {
+        Value::Array(
+            g.get_types()
+                .map(|n| Value::String(n.to_string()))
+                .collect(),
+        )
+    }
+
+    fn properties(g: &Graph, _runtime: &mut Self, args: Value) -> Value {
+        Value::Array(
+            g.get_properties()
+                .map(|n| Value::String(n.to_string()))
+                .collect(),
+        )
     }
 }
 
@@ -382,7 +410,32 @@ fn plan_match(pattern: &crate::ast::Pattern, iter: &mut std::slice::Iter<'_, Que
 
 fn plan_query(ir: &QueryIR, iter: &mut std::slice::Iter<QueryIR>) -> IR {
     match ir {
-        QueryIR::Call(name, exprs) => todo!(),
+        QueryIR::Call(name, exprs) => {
+            IR::For(Box::new((
+                IR::Block(vec![
+                    IR::Set(
+                        "labels".to_string(),
+                        Box::new(IR::FuncInvocation(
+                            name.to_lowercase(),
+                            exprs.iter().map(plan_expr).collect(),
+                        )),
+                    ),
+                    IR::Set("i".to_string(), Box::new(IR::Integer(0))),
+                ]),
+                IR::Lt(Box::new((
+                    IR::Var("i".to_string()),
+                    IR::Length(Box::new(IR::Var("labels".to_string()))),
+                ))),
+                IR::Set(
+                    "i".to_string(),
+                    Box::new(IR::Add(vec![IR::Var("i".to_string()), IR::Integer(1)])),
+                ),
+                IR::Return(Box::new(IR::List(vec![IR::GetElement(Box::new((
+                    IR::Var("labels".to_string()),
+                    IR::Var("i".to_string()),
+                )))]))),
+            )))
+        }
         QueryIR::Match(pattern) => plan_match(pattern, iter),
         QueryIR::Unwind(expr, alias) => plan_unwind(expr, iter, alias),
         QueryIR::Where(expr) => IR::If(Box::new((

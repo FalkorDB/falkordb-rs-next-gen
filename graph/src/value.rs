@@ -10,5 +10,5 @@ pub enum Value {
     Array(Vec<Value>),
     Map(HashMap<String, Value>),
     Node(u64),
-    Link(u64),
+    Link(u64, u64, u64, u64),
 }

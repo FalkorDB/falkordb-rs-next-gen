@@ -101,13 +101,14 @@ fn inner_raw_value_to_redis_value(g: &Graph, r: &Value) -> RedisValue {
             vec.push(RedisValue::Array(vec![]));
             RedisValue::Array(vec![RedisValue::Integer(8), RedisValue::Array(vec)])
         }
-        Value::Link(id) => {
-            let mut vec = HashMap::new();
-            vec.insert(
-                RedisValueKey::String("id".to_string()),
-                RedisValue::Integer(*id as _),
-            );
-            RedisValue::Map(vec)
+        Value::Link(id, type_id, from, to) => {
+            let mut vec = Vec::new();
+            vec.push(RedisValue::Integer(*id as _));
+            vec.push(RedisValue::Integer(*type_id as _));
+            vec.push(RedisValue::Integer(*from as _));
+            vec.push(RedisValue::Integer(*to as _));
+            vec.push(RedisValue::Array(vec![]));
+            RedisValue::Array(vec![RedisValue::Integer(7), RedisValue::Array(vec)])
         }
     }
 }

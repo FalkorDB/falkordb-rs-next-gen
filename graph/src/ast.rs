@@ -222,6 +222,12 @@ impl QueryIR {
         env: &mut HashSet<String>,
     ) -> Result<(), String> {
         match self {
+            Self::Call(_, args) => {
+                for arg in args {
+                    arg.inner_validate(env)?;
+                }
+                Ok(())
+            }
             Self::Match(p) => {
                 for node in &p.nodes {
                     if env.contains(&node.alias.to_string()) {

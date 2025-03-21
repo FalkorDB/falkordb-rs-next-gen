@@ -63,6 +63,18 @@ impl Graph {
         crate::matrix::shutdown();
     }
 
+    pub fn get_labels(&self) -> impl Iterator<Item = &String> {
+        self.labels.iter().map(|(l, _)| l)
+    }
+
+    pub fn get_types(&self) -> impl Iterator<Item = &String> {
+        self.links.iter().map(|(l, _)| l)
+    }
+
+    pub fn get_properties(&self) -> impl Iterator<Item = &String> {
+        self.node_property_ids.iter().chain(self.link_property_ids.iter())
+    }
+
     pub fn get_label_id(&self, label: &str) -> Option<u64> {
         self.labels
             .iter()
@@ -358,7 +370,7 @@ impl Graph {
             _ => todo!(),
         }
 
-        Value::Link(id)
+        Value::Link(id, self.links.iter().position(|(l, _)| l == link_type).unwrap() as u64, from, to)
     }
 
     fn resize(&mut self) {

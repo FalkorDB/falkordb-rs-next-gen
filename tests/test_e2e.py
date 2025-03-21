@@ -1,7 +1,7 @@
 import os
 import platform
 import subprocess
-from falkordb import FalkorDB, Node
+from falkordb import FalkorDB, Node, Edge
 from redis import Redis
 
 redis_server = None
@@ -147,19 +147,19 @@ def test_create_delete_match():
     res = g.query("MATCH (n) RETURN n")
     assert res.result_set == []
 
-    # res = g.query("UNWIND range(3) AS x CREATE (n:N) RETURN n")
-    # assert res.result_set == [[Node(0, labels="N")], [Node(1, labels="N")], [Node(2, labels="N")]]
+    res = g.query("UNWIND range(3) AS x CREATE (n:N) RETURN n")
+    assert res.result_set == [[Node(0, labels="N")], [Node(1, labels="N")], [Node(2, labels="N")]]
 
-#     g.query("MATCH (n:N) DELETE n")
+    g.query("MATCH (n:N) DELETE n")
 
-#     res = g.query("MATCH (n:N) RETURN n")
-#     assert res.result_set == []
+    res = g.query("MATCH (n:N) RETURN n")
+    assert res.result_set == []
 
-#     res = g.query("UNWIND range(3) AS x CREATE (n:N {v: x})-[r:R {v: x}]->(m:M {v: x}) RETURN n, r, m")
-#     assert res.result_set == [[{b"id": 0, b"labels": [b"N"]}, {b"id": 0}, {b"id": 1, b"labels": [b"M"]}], [{b"id": 2, b"labels": [b"N"]}, {b"id": 1}, {b"id": 3, b"labels": [b"M"]}], [{b"id": 4, b"labels": [b"N"]}, {b"id": 2}, {b"id": 5, b"labels": [b"M"]}]]
+    res = g.query("UNWIND range(3) AS x CREATE (n:N {v: x})-[r:R {v: x}]->(m:M {v: x}) RETURN n, r, m")
+    assert res.result_set == [[Node(0, labels="N"), Edge(0, "R", 1, 0), Node(1, labels="M")], [Node(2, labels="N"), Edge(2, "R", 3, 1), Node(3, labels="M")], [Node(4, labels="N"), Edge(4, "R", 5, 2), Node(5, labels="M")]]
 
-#     res = g.query("MATCH (n:N) RETURN n.v")
-#     assert res.result_set == [[0], [1], [2]]
+    res = g.query("MATCH (n:N) RETURN n.v")
+    assert res.result_set == [[0], [1], [2]]
 
 def test_large_graph():
     g.query("UNWIND range(1024) AS x CREATE (n:N {v: x})-[r:R {v: x}]->(m:M {v: x})")
