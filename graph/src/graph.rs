@@ -26,8 +26,8 @@ pub struct Graph {
     all_nodes_matrix: Matrix<bool>,
     labels_matices: BTreeMap<usize, Matrix<bool>>,
     relationship_matrices: BTreeMap<usize, Matrix<bool>>,
-    node_properties_matrix: Matrix<Value>,
-    relationship_properties_matrix: Matrix<Value>,
+    node_properties_matrix: BTreeMap<u64, BTreeMap<u64, Value>>,
+    relationship_properties_matrix: BTreeMap<u64, BTreeMap<u64, Value>>,
     node_labels: Vec<String>,
     relationship_types: Vec<String>,
     node_properties: Vec<String>,
@@ -51,8 +51,8 @@ impl Graph {
             all_nodes_matrix: Matrix::<bool>::new(n, n),
             labels_matices: BTreeMap::new(),
             relationship_matrices: BTreeMap::new(),
-            node_properties_matrix: Matrix::<Value>::new(0, 0),
-            relationship_properties_matrix: Matrix::<Value>::new(0, 0),
+            node_properties_matrix: BTreeMap::new(),
+            relationship_properties_matrix: BTreeMap::new(),
             node_labels: Vec::new(),
             relationship_types: Vec::new(),
             node_properties: Vec::new(),
@@ -299,14 +299,14 @@ impl Graph {
             self.node_labels_matrix.set(id, label_id, true);
         }
 
+        let mut map = BTreeMap::new();
         match (attr_keys, attr_values) {
             (Value::Array(keys), Value::Array(values)) => {
                 for (key, value) in keys.into_iter().zip(values.into_iter()) {
                     match key {
                         Value::String(key) => {
                             let property_id = self.get_or_add_node_property_id(&key);
-                            self.resize();
-                            self.node_properties_matrix.set(id, property_id, value);
+                            map.insert(property_id, value);
                         }
                         _ => todo!(),
                     }
@@ -314,6 +314,7 @@ impl Graph {
             }
             _ => todo!(),
         }
+        self.node_properties_matrix.insert(id, map);
 
         Value::Node(id)
     }
@@ -328,9 +329,7 @@ impl Graph {
             self.node_labels_matrix.delete(id, label_id as _);
         }
 
-        for property_id in 0..self.node_properties.len() {
-            self.node_properties_matrix.delete(id, property_id as _);
-        }
+        self.node_properties_matrix.remove(&id);
     }
 
     pub fn get_nodes(&self, labels: &[String]) -> Option<Iter<bool>> {
@@ -344,12 +343,12 @@ impl Graph {
         self.node_labels_matrix.iter_row(id).map(|(_, l)| l)
     }
 
-    pub fn get_node_properties(&self, id: u64) -> Iter<Row<Value>> {
-        self.node_properties_matrix.iter_row(id)
-    }
-
     pub fn get_node_property(&self, node_id: u64, property_id: u64) -> Option<Value> {
-        self.node_properties_matrix.get(node_id, property_id)
+        self.node_properties_matrix
+            .get(&node_id)
+            .unwrap()
+            .get(&property_id)
+            .cloned()
     }
 
     pub fn create_relationship(
@@ -383,15 +382,14 @@ impl Graph {
             true,
         );
 
+        let mut map = BTreeMap::new();
         match (attr_keys, attr_values) {
             (Value::Array(keys), Value::Array(values)) => {
                 for (key, value) in keys.into_iter().zip(values.into_iter()) {
                     match key {
                         Value::String(key) => {
                             let property_id = self.get_relationship_property_id(&key);
-                            self.resize();
-                            self.relationship_properties_matrix
-                                .set(id, property_id, value);
+                            map.insert(property_id, value);
                         }
                         _ => todo!(),
                     }
@@ -399,6 +397,7 @@ impl Graph {
             }
             _ => todo!(),
         }
+        self.relationship_properties_matrix.insert(id, map);
 
         Value::Relationship(id, from, to)
     }
@@ -414,8 +413,6 @@ impl Graph {
     fn resize(&mut self) {
         if self.node_count > self.node_cap {
             self.node_cap *= 2;
-            self.node_properties_matrix
-                .resize(self.node_cap, self.node_properties.len() as u64);
             self.adjacancy_matrix.resize(self.node_cap, self.node_cap);
             self.node_labels_matrix
                 .resize(self.node_cap, self.labels_matices.len() as u64);
@@ -433,26 +430,10 @@ impl Graph {
                 .resize(self.node_cap, self.labels_matices.len() as u64);
         }
 
-        if self.node_properties.len() as u64 > self.node_properties_matrix.ncols() {
-            self.node_properties_matrix
-                .resize(self.node_cap, self.node_properties.len() as u64);
-        }
-
         if self.relationship_count > self.relationship_cap {
             self.relationship_cap *= 2;
-            self.relationship_properties_matrix.resize(
-                self.relationship_cap,
-                self.relationship_properties.len() as u64,
-            );
             self.relationship_type_matrix
                 .resize(self.relationship_cap, self.relationship_types.len() as u64);
-        }
-
-        if self.relationship_properties.len() as u64 > self.relationship_properties_matrix.ncols() {
-            self.relationship_properties_matrix.resize(
-                self.relationship_cap,
-                self.relationship_properties.len() as u64,
-            );
         }
 
         if self.relationship_types.len() as u64 > self.relationship_type_matrix.ncols() {

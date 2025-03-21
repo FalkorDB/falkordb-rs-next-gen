@@ -1,7 +1,7 @@
 use std::{
     ffi::c_void,
     marker::PhantomData,
-    mem::{size_of, MaybeUninit},
+    mem::MaybeUninit,
     ptr::{addr_of, addr_of_mut, null_mut},
     rc::Rc,
 };
@@ -13,25 +13,20 @@ use crate::{
         GrB_Matrix_extractElement_BOOL, GrB_Matrix_extractElement_UDT, GrB_Matrix_free,
         GrB_Matrix_ncols, GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_removeElement,
         GrB_Matrix_resize, GrB_Matrix_setElement_BOOL, GrB_Matrix_setElement_UDT,
-        GrB_Mode_GrB_NONBLOCKING, GrB_Type, GrB_Type_free, GrB_Type_new, GrB_finalize, GrB_init,
-        GxB_Iterator, GxB_Iterator_free, GxB_Iterator_get_UDT, GxB_Iterator_new,
-        GxB_Matrix_Iterator_attach, GxB_Matrix_Iterator_getIndex, GxB_Matrix_Iterator_next,
-        GxB_Matrix_Iterator_seek,
+        GrB_Mode_GrB_NONBLOCKING, GrB_finalize, GrB_init, GxB_Iterator, GxB_Iterator_free,
+        GxB_Iterator_new, GxB_Matrix_Iterator_attach, GxB_Matrix_Iterator_getIndex,
+        GxB_Matrix_Iterator_next, GxB_Matrix_Iterator_seek,
     },
 };
 
 pub fn init() {
     unsafe {
         GrB_init(GrB_Mode_GrB_NONBLOCKING as _);
-        let mut t: MaybeUninit<GrB_Type> = MaybeUninit::uninit();
-        GrB_Type_new(t.as_mut_ptr(), size_of::<Value>());
-        VALUE_TYPE = t.assume_init();
     }
 }
 
 pub fn shutdown() {
     unsafe {
-        GrB_Type_free(addr_of_mut!(VALUE_TYPE));
         GrB_finalize();
     }
 }
@@ -96,24 +91,6 @@ impl Iter<bool> {
     }
 }
 
-impl Iter<Value> {
-    #[must_use]
-    pub fn new(m: &Matrix<Value>) -> Self {
-        unsafe {
-            let mut iter = MaybeUninit::uninit();
-            GxB_Iterator_new(iter.as_mut_ptr());
-            let iter = iter.assume_init();
-            GxB_Matrix_Iterator_attach(iter, *m.m, null_mut());
-            let info = GxB_Matrix_Iterator_seek(iter, 0);
-            Self {
-                iter,
-                depleted: info == GrB_Info_GxB_EXHAUSTED,
-                data: Value::Bool(true),
-            }
-        }
-    }
-}
-
 impl<T> Iter<Row<T>> {
     #[must_use]
     pub fn new(m: &Matrix<T>, row: u64) -> Self {
@@ -173,36 +150,6 @@ impl Iterator for Iter<bool> {
     }
 }
 
-impl Iterator for Iter<Value> {
-    type Item = (u64, Value, Value);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.depleted {
-            return None;
-        }
-        unsafe {
-            let mut row = 0u64;
-            let mut col = 0u64;
-            GxB_Matrix_Iterator_getIndex(self.iter, addr_of_mut!(row), addr_of_mut!(col));
-            let node_id = row;
-            let mut keys = Vec::new();
-            let mut values = Vec::new();
-            while !self.depleted && row == node_id {
-                let mut value: MaybeUninit<Value> = MaybeUninit::uninit();
-                GxB_Iterator_get_UDT(self.iter, value.as_mut_ptr().cast::<c_void>());
-                keys.push(Value::Int(col as _));
-                values.push(value.assume_init());
-                self.depleted = GxB_Matrix_Iterator_next(self.iter) == GrB_Info_GxB_EXHAUSTED;
-                if !self.depleted {
-                    GxB_Matrix_Iterator_getIndex(self.iter, addr_of_mut!(row), addr_of_mut!(col));
-                }
-            }
-
-            Some((node_id, Value::Array(keys), Value::Array(values)))
-        }
-    }
-}
-
 impl<T> Clone for Matrix<T> {
     fn clone(&self) -> Self {
         Self {
@@ -254,8 +201,6 @@ impl<T> Size<T> for Matrix<T> {
     }
 }
 
-static mut VALUE_TYPE: GrB_Type = null_mut();
-
 impl Matrix<bool> {
     pub fn new(nrows: u64, ncols: u64) -> Self {
         unsafe {
@@ -271,24 +216,6 @@ impl Matrix<bool> {
     #[must_use]
     pub fn iter(&self) -> Iter<bool> {
         Iter::<bool>::new(self)
-    }
-}
-
-impl Matrix<Value> {
-    pub fn new(nrows: u64, ncols: u64) -> Self {
-        unsafe {
-            let mut m: MaybeUninit<GrB_Matrix> = MaybeUninit::uninit();
-            GrB_Matrix_new(m.as_mut_ptr(), VALUE_TYPE, nrows, ncols);
-            Self {
-                m: Rc::new(m.assume_init()),
-                phantom: PhantomData,
-            }
-        }
-    }
-
-    #[must_use]
-    pub fn iter(&self) -> Iter<Value> {
-        Iter::<Value>::new(self)
     }
 }
 
