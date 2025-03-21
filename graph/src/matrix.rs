@@ -1,22 +1,17 @@
 use std::{
-    ffi::c_void,
     marker::PhantomData,
     mem::MaybeUninit,
-    ptr::{addr_of, addr_of_mut, null_mut},
+    ptr::{addr_of_mut, null_mut},
     rc::Rc,
 };
 
-use crate::{
-    value::Value,
-    GraphBLAS::{
-        GrB_BOOL, GrB_Info_GrB_SUCCESS, GrB_Info_GxB_EXHAUSTED, GrB_Matrix,
-        GrB_Matrix_extractElement_BOOL, GrB_Matrix_extractElement_UDT, GrB_Matrix_free,
-        GrB_Matrix_ncols, GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_removeElement,
-        GrB_Matrix_resize, GrB_Matrix_setElement_BOOL, GrB_Matrix_setElement_UDT,
-        GrB_Mode_GrB_NONBLOCKING, GrB_finalize, GrB_init, GxB_Iterator, GxB_Iterator_free,
-        GxB_Iterator_new, GxB_Matrix_Iterator_attach, GxB_Matrix_Iterator_getIndex,
-        GxB_Matrix_Iterator_next, GxB_Matrix_Iterator_seek,
-    },
+use crate::GraphBLAS::{
+    GrB_BOOL, GrB_Info_GrB_SUCCESS, GrB_Info_GxB_EXHAUSTED, GrB_Matrix,
+    GrB_Matrix_extractElement_BOOL, GrB_Matrix_free, GrB_Matrix_ncols, GrB_Matrix_new,
+    GrB_Matrix_nrows, GrB_Matrix_removeElement, GrB_Matrix_resize, GrB_Matrix_setElement_BOOL,
+    GrB_Mode_GrB_NONBLOCKING, GrB_finalize, GrB_init, GxB_Iterator, GxB_Iterator_free,
+    GxB_Iterator_new, GxB_Matrix_Iterator_attach, GxB_Matrix_Iterator_getIndex,
+    GxB_Matrix_Iterator_next, GxB_Matrix_Iterator_seek,
 };
 
 pub fn init() {
@@ -246,30 +241,6 @@ impl Set<bool> for Matrix<bool> {
     fn set(&mut self, i: u64, j: u64, value: bool) {
         unsafe {
             let info = GrB_Matrix_setElement_BOOL(*self.m, value, i, j);
-            assert_eq!(info, GrB_Info_GrB_SUCCESS);
-        }
-    }
-}
-
-impl Get<Value> for Matrix<Value> {
-    fn get(&self, i: u64, j: u64) -> Option<Value> {
-        unsafe {
-            let mut m: MaybeUninit<Value> = MaybeUninit::uninit();
-            let info =
-                GrB_Matrix_extractElement_UDT(m.as_mut_ptr().cast::<c_void>(), *self.m, i, j);
-            if info == GrB_Info_GrB_SUCCESS {
-                Some(m.assume_init())
-            } else {
-                None
-            }
-        }
-    }
-}
-
-impl Set<Value> for Matrix<Value> {
-    fn set(&mut self, i: u64, j: u64, value: Value) {
-        unsafe {
-            let info = GrB_Matrix_setElement_UDT(*self.m, addr_of!(value) as *mut c_void, i, j);
             assert_eq!(info, GrB_Info_GrB_SUCCESS);
         }
     }
