@@ -13,7 +13,7 @@ RUN apt install -y git make cmake curl zlib1g zlib1g-dev libpolly-20-dev libomp-
 
 RUN python3 -m venv venv
 
-RUN venv/bin/pip install redis pytest
+RUN venv/bin/pip install falkordb pytest
 
 RUN git clone https://github.com/DrTimothyAldenDavis/GraphBLAS.git
 
