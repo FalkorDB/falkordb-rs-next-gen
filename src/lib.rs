@@ -114,6 +114,15 @@ fn inner_raw_value_to_redis_value(g: &Graph, r: &Value) -> RedisValue {
     }
 }
 
+fn graph_delete(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+    let mut args = args.into_iter().skip(1);
+    let key = args.next_arg()?;
+
+    let key = ctx.open_key_writable(&key);
+
+    key.delete()
+}
+
 fn graph_query(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     let mut args = args.into_iter().skip(1);
     let key = args.next_arg()?;
@@ -138,14 +147,18 @@ fn graph_query(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
         },
         debug > 0,
     ) {
-        Ok(_) => Ok(vec![
+        Ok(summary) => Ok(vec![
             vec![vec![
                 RedisValue::Integer(1),
                 RedisValue::SimpleString("a".to_string()),
             ]
             .into()],
             res,
-            vec![],
+            vec![
+                RedisValue::SimpleString(format!("Labels added: {}", summary.labels_added)),
+                RedisValue::SimpleString(format!("Nodes created: {}", summary.nodes_created)),
+                RedisValue::SimpleString(format!("Properties set: {}", summary.properties_set)),
+            ],
         ]
         .into()),
         Err(err) => {
@@ -207,6 +220,7 @@ redis_module! {
     data_types: [GRAPH_TYPE],
     init: graph_init,
     commands: [
+        ["graph.delete", graph_delete, "write deny-oom", 1, 1, 1, ""],
         ["graph.query", graph_query, "write deny-oom", 1, 1, 1, ""],
         ["graph.ro_query", graph_ro_query, "readonly", 1, 1, 1, ""],
     ],

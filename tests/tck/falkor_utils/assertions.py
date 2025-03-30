@@ -125,21 +125,21 @@ def assert_empty_resultset(resultset):
 
 def assert_statistics(resultset, stat, value):
     if stat == "+nodes":
-        assert resultset.nodes_created == value
+        assert int(resultset.nodes_created) == value
     elif stat == "+relationships":
-        assert resultset.relationships_created == value
+        assert int(resultset.relationships_created) == value
     elif stat == "-relationships":
-        assert resultset.relationships_deleted == value
+        assert int(resultset.relationships_deleted) == value
     elif stat == "+labels":
-        assert resultset.labels_added == value
+        assert int(resultset.labels_added) == value
     elif stat == "-labels":
-        assert resultset.labels_removed == value
+        assert int(resultset.labels_removed) == value
     elif stat == "+properties":
-        assert resultset.properties_set == value
+        assert int(resultset.properties_set) == value
     elif stat == "-properties":
-        assert resultset.properties_removed == value
+        assert int(resultset.properties_removed) == value
     elif stat == "-nodes":
-        assert resultset.nodes_deleted == value
+        assert int(resultset.nodes_deleted) == value
     else:
         print(stat)
         assert False

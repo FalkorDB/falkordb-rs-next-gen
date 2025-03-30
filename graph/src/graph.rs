@@ -131,6 +131,7 @@ impl Graph {
             }
         };
 
+        let labels_count = self.node_labels.len();
         let mut runtime = Runtime::new();
         let start = Instant::now();
         run(
@@ -146,6 +147,14 @@ impl Graph {
             parse_duration,
             plan_duration,
             run_duration,
+            labels_added: self.node_labels.len() as i32 - labels_count as i32,
+            labels_removed: 0,
+            nodes_created: runtime.nodes_created,
+            relationships_created: runtime.relationships_created,
+            nodes_deleted: runtime.nodes_deleted,
+            relationships_deleted: runtime.relationships_deleted,
+            properties_set: runtime.properties_set,
+            properties_removed: runtime.properties_removed,
         })
     }
 
@@ -198,6 +207,14 @@ impl Graph {
             parse_duration,
             plan_duration,
             run_duration,
+            labels_added: 0,
+            labels_removed: 0,
+            nodes_created: 0,
+            relationships_created: 0,
+            nodes_deleted: 0,
+            relationships_deleted: 0,
+            properties_set: 0,
+            properties_removed: 0,
         })
     }
 
@@ -448,4 +465,12 @@ pub struct ResultSummary {
     pub parse_duration: Duration,
     pub plan_duration: Duration,
     pub run_duration: Duration,
+    pub labels_added: i32,
+    pub labels_removed: i32,
+    pub nodes_created: i32,
+    pub relationships_created: i32,
+    pub nodes_deleted: i32,
+    pub relationships_deleted: i32,
+    pub properties_set: i32,
+    pub properties_removed: i32,
 }

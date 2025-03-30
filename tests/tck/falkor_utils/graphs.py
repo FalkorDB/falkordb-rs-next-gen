@@ -1,14 +1,8 @@
-import os
-import sys
-
-from redis import Redis
-from redis.commands.graph import Graph
-from redis.commands.graph.node import Node
-from redis.commands.graph.edge import Edge
+from falkordb import FalkorDB, Graph, Node, Edge
 
 r = None
 graph_name = "G"
-redis_graph = None
+graph = None
 
 
 def _brand_new_redis():
@@ -16,21 +10,18 @@ def _brand_new_redis():
     if r is not None:
         r.flush()
 
-    return Redis()
+    return FalkorDB()
 
 
 def empty_graph():
-    global redis_graph
+    global graph
 
-    redis_con = _brand_new_redis()
-    redis_graph = Graph(redis_con, "G")
+    falkordb_con = _brand_new_redis()
+    graph = falkordb_con.select_graph("G")
 
-    # Create a graph with a single node.
-    redis_graph.add_node(Node())
-    redis_graph.commit()
+    graph.delete()
 
-    # Delete node to have an empty graph.
-    redis_graph.query("MATCH (n) DELETE n")
+    graph.query("RETURN 1")
 
 
 def any_graph():
@@ -38,11 +29,11 @@ def any_graph():
 
 
 def binary_tree_graph1():
-    global redis_graph
+    global graph
 
-    redis_con = _brand_new_redis()
-    redis_graph = Graph(redis_con, "G1")
-    redis_graph.query("CREATE(a: A {name: 'a'}),    \
+    falkordb_con = _brand_new_redis()
+    graph = falkordb_con.select_graph("G1")
+    graph.query("CREATE(a: A {name: 'a'}),    \
                       (b1: X {name: 'b1'}),         \
                       (b2: X {name: 'b2'}),         \
                       (b3: X {name: 'b3'}),         \
@@ -75,11 +66,11 @@ def binary_tree_graph1():
 
 
 def binary_tree_graph2():
-    global redis_graph
+    global graph
 
-    redis_con = _brand_new_redis()
-    redis_graph = Graph(redis_con, "G2")
-    redis_graph.query("CREATE(a: A {name: 'a'}),    \
+    falkordb_con = _brand_new_redis()
+    graph = falkordb_con.select_graph("G2")
+    graph.query("CREATE(a: A {name: 'a'}),    \
                       (b1: X {name: 'b1'}),         \
                       (b2: X {name: 'b2'}),         \
                       (b3: X {name: 'b3'}),         \
@@ -112,4 +103,4 @@ def binary_tree_graph2():
 
 
 def query(q):
-    return redis_graph.query(q)
+    return graph.query(q)

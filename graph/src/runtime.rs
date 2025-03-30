@@ -47,6 +47,12 @@ pub struct Runtime {
     write_functions: BTreeMap<String, fn(&mut Graph, &mut Runtime, Value) -> Value>,
     read_functions: BTreeMap<String, fn(&Graph, &mut Runtime, Value) -> Value>,
     iters: Vec<Iter<bool>>,
+    pub nodes_created: i32,
+    pub relationships_created: i32,
+    pub nodes_deleted: i32,
+    pub relationships_deleted: i32,
+    pub properties_set: i32,
+    pub properties_removed: i32,
 }
 
 impl Runtime {
@@ -70,12 +76,19 @@ impl Runtime {
             write_functions,
             read_functions,
             iters: Vec::new(),
+            nodes_created: 0,
+            relationships_created: 0,
+            nodes_deleted: 0,
+            relationships_deleted: 0,
+            properties_set: 0,
+            properties_removed: 0,
         }
     }
-    fn create_node(g: &mut Graph, _runtime: &mut Self, args: Value) -> Value {
+
+    fn create_node(g: &mut Graph, runtime: &mut Self, args: Value) -> Value {
         match args {
             Value::Array(args) => match args.as_slice() {
-                [Value::Array(raw_labels), raw_keys @ Value::Array(_), raw_values @ Value::Array(_)] =>
+                [Value::Array(raw_labels), raw_keys @ Value::Array(v), raw_values @ Value::Array(_)] =>
                 {
                     let mut labels = Vec::new();
                     for label in raw_labels {
@@ -83,6 +96,8 @@ impl Runtime {
                             labels.push(lable.to_string());
                         }
                     }
+                    runtime.nodes_created += 1;
+                    runtime.properties_set += v.len() as i32;
                     g.create_node(&labels, raw_keys.to_owned(), raw_values.to_owned())
                 }
                 _ => Value::Null,
