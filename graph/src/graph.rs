@@ -7,7 +7,7 @@ use std::{
 use roaring::RoaringTreemap;
 
 use crate::{
-    matrix::{Delete, Get, Iter, Matrix, Row, Set, Size},
+    matrix::{Delete, Iter, Matrix, Set, Size},
     parser::Parser,
     runtime::{plan, ro_run, run, Runtime, IR},
     value::Value,
@@ -336,7 +336,8 @@ impl Graph {
         if labels.is_empty() {
             return Some(self.all_nodes_matrix.iter());
         }
-        self.get_label_matrix(&labels[0]).map(|m| m.iter())
+        self.get_label_matrix(&labels[0])
+            .map(super::matrix::Matrix::iter)
     }
 
     pub fn get_node_label_ids(&self, id: u64) -> impl Iterator<Item = u64> {

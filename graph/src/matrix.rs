@@ -6,17 +6,16 @@ use std::{
 };
 
 use crate::GraphBLAS::{
-    GrB_BOOL, GrB_Info_GrB_SUCCESS, GrB_Info_GxB_EXHAUSTED, GrB_Matrix,
-    GrB_Matrix_extractElement_BOOL, GrB_Matrix_free, GrB_Matrix_ncols, GrB_Matrix_new,
-    GrB_Matrix_nrows, GrB_Matrix_removeElement, GrB_Matrix_resize, GrB_Matrix_setElement_BOOL,
-    GrB_Mode_GrB_NONBLOCKING, GrB_finalize, GrB_init, GxB_Iterator, GxB_Iterator_free,
-    GxB_Iterator_new, GxB_Matrix_Iterator_attach, GxB_Matrix_Iterator_getIndex,
+    GrB_BOOL, GrB_Info, GrB_Matrix, GrB_Matrix_extractElement_BOOL, GrB_Matrix_free,
+    GrB_Matrix_ncols, GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_removeElement,
+    GrB_Matrix_resize, GrB_Matrix_setElement_BOOL, GrB_Mode, GrB_finalize, GrB_init, GxB_Iterator,
+    GxB_Iterator_free, GxB_Iterator_new, GxB_Matrix_Iterator_attach, GxB_Matrix_Iterator_getIndex,
     GxB_Matrix_Iterator_next, GxB_Matrix_Iterator_seek,
 };
 
 pub fn init() {
     unsafe {
-        GrB_init(GrB_Mode_GrB_NONBLOCKING as _);
+        GrB_init(GrB_Mode::GrB_NONBLOCKING as _);
     }
 }
 
@@ -79,7 +78,7 @@ impl Iter<bool> {
             let info = GxB_Matrix_Iterator_seek(iter, 0);
             Self {
                 iter,
-                depleted: info == GrB_Info_GxB_EXHAUSTED,
+                depleted: info == GrB_Info::GxB_EXHAUSTED,
                 data: true,
             }
         }
@@ -97,7 +96,7 @@ impl<T> Iter<Row<T>> {
             let info = GxB_Matrix_Iterator_seek(iter, row);
             Self {
                 iter,
-                depleted: info == GrB_Info_GxB_EXHAUSTED,
+                depleted: info == GrB_Info::GxB_EXHAUSTED,
                 data: Row {
                     row,
                     phantom: PhantomData,
@@ -122,7 +121,7 @@ impl Iterator for Iter<Row<bool>> {
                 self.depleted = true;
                 return None;
             }
-            self.depleted = GxB_Matrix_Iterator_next(self.iter) == GrB_Info_GxB_EXHAUSTED;
+            self.depleted = GxB_Matrix_Iterator_next(self.iter) == GrB_Info::GxB_EXHAUSTED;
             Some((row, col))
         }
     }
@@ -139,7 +138,7 @@ impl Iterator for Iter<bool> {
             let mut row = 0u64;
             let mut col = 0u64;
             GxB_Matrix_Iterator_getIndex(self.iter, addr_of_mut!(row), addr_of_mut!(col));
-            self.depleted = GxB_Matrix_Iterator_next(self.iter) == GrB_Info_GxB_EXHAUSTED;
+            self.depleted = GxB_Matrix_Iterator_next(self.iter) == GrB_Info::GxB_EXHAUSTED;
             Some((row, col))
         }
     }
@@ -174,7 +173,7 @@ impl<T> Size<T> for Matrix<T> {
         unsafe {
             let mut nrows = 0u64;
             let info = GrB_Matrix_nrows(addr_of_mut!(nrows), *self.m);
-            assert_eq!(info, GrB_Info_GrB_SUCCESS);
+            assert_eq!(info, GrB_Info::GrB_SUCCESS);
             nrows
         }
     }
@@ -183,7 +182,7 @@ impl<T> Size<T> for Matrix<T> {
         unsafe {
             let mut ncols = 0u64;
             let info = GrB_Matrix_ncols(addr_of_mut!(ncols), *self.m);
-            assert_eq!(info, GrB_Info_GrB_SUCCESS);
+            assert_eq!(info, GrB_Info::GrB_SUCCESS);
             ncols
         }
     }
@@ -191,7 +190,7 @@ impl<T> Size<T> for Matrix<T> {
     fn resize(&mut self, nrows: u64, ncols: u64) {
         unsafe {
             let info = GrB_Matrix_resize(*self.m, nrows, ncols);
-            assert_eq!(info, GrB_Info_GrB_SUCCESS);
+            assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }
 }
@@ -218,7 +217,7 @@ impl<T> Delete<T> for Matrix<T> {
     fn delete(&mut self, i: u64, j: u64) {
         unsafe {
             let info = GrB_Matrix_removeElement(*self.m, i, j);
-            assert_eq!(info, GrB_Info_GrB_SUCCESS);
+            assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }
 }
@@ -228,7 +227,7 @@ impl Get<bool> for Matrix<bool> {
         unsafe {
             let mut m: MaybeUninit<bool> = MaybeUninit::uninit();
             let info = GrB_Matrix_extractElement_BOOL(m.as_mut_ptr(), *self.m, i, j);
-            if info == GrB_Info_GrB_SUCCESS {
+            if info == GrB_Info::GrB_SUCCESS {
                 Some(m.assume_init())
             } else {
                 None
@@ -241,7 +240,7 @@ impl Set<bool> for Matrix<bool> {
     fn set(&mut self, i: u64, j: u64, value: bool) {
         unsafe {
             let info = GrB_Matrix_setElement_BOOL(*self.m, value, i, j);
-            assert_eq!(info, GrB_Info_GrB_SUCCESS);
+            assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }
 }

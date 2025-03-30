@@ -110,7 +110,13 @@ impl Runtime {
         match args {
             Value::Array(args) => match args.as_slice() {
                 [Value::String(relationship_type), Value::Node(from), Value::Node(to), keys @ Value::Array(_), values @ Value::Array(_)] => {
-                    g.create_relationship(relationship_type, *from, *to, keys.to_owned(), values.to_owned())
+                    g.create_relationship(
+                        relationship_type,
+                        *from,
+                        *to,
+                        keys.to_owned(),
+                        values.to_owned(),
+                    )
                 }
                 _ => todo!(),
             },
@@ -137,7 +143,7 @@ impl Runtime {
         }
     }
 
-    fn next_node(g: &Graph, runtime: &mut Self, args: Value) -> Value {
+    fn next_node(_g: &Graph, runtime: &mut Self, args: Value) -> Value {
         match args {
             Value::Array(args) => match args.as_slice() {
                 [Value::Int(iter)] => runtime.iters[*iter as usize]
@@ -166,7 +172,7 @@ impl Runtime {
         }
     }
 
-    fn labels(g: &Graph, _runtime: &mut Self, args: Value) -> Value {
+    fn labels(g: &Graph, _runtime: &mut Self, _args: Value) -> Value {
         Value::Array(
             g.get_labels()
                 .map(|n| Value::String(n.to_string()))
@@ -174,7 +180,7 @@ impl Runtime {
         )
     }
 
-    fn types(g: &Graph, _runtime: &mut Self, args: Value) -> Value {
+    fn types(g: &Graph, _runtime: &mut Self, _args: Value) -> Value {
         Value::Array(
             g.get_types()
                 .map(|n| Value::String(n.to_string()))
@@ -182,7 +188,7 @@ impl Runtime {
         )
     }
 
-    fn properties(g: &Graph, _runtime: &mut Self, args: Value) -> Value {
+    fn properties(g: &Graph, _runtime: &mut Self, _args: Value) -> Value {
         Value::Array(
             g.get_properties()
                 .map(|n| Value::String(n.to_string()))
@@ -305,7 +311,10 @@ fn plan_create(pattern: &crate::ast::Pattern, iter: &mut std::slice::Iter<'_, Qu
             IR::Block(create_relationships),
             plan_query(body_ir, iter),
         ]),
-        None => IR::Block(vec![IR::Block(create_nodes), IR::Block(create_relationships)]),
+        None => IR::Block(vec![
+            IR::Block(create_nodes),
+            IR::Block(create_relationships),
+        ]),
     }
 }
 
@@ -443,12 +452,12 @@ fn plan_query(ir: &QueryIR, iter: &mut std::slice::Iter<QueryIR>) -> IR {
         QueryIR::Create(pattern) => plan_create(pattern, iter),
         QueryIR::Delete(exprs) => plan_delete(exprs, iter),
         QueryIR::With(exprs) => IR::Block(vec![
-            IR::Block(exprs.iter().map(|e| plan_expr(e)).collect()),
+            IR::Block(exprs.iter().map(plan_expr).collect()),
             plan_query(iter.next().unwrap(), iter),
         ]),
-        QueryIR::Return(exprs) => IR::Return(Box::new(IR::List(
-            exprs.iter().map(|e| plan_expr(e)).collect(),
-        ))),
+        QueryIR::Return(exprs) => {
+            IR::Return(Box::new(IR::List(exprs.iter().map(plan_expr).collect())))
+        }
         QueryIR::Query(q) => {
             let iter = &mut q.iter();
             plan_query(iter.next().unwrap(), iter)

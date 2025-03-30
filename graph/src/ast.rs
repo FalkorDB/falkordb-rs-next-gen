@@ -213,14 +213,13 @@ pub enum QueryIR {
 impl QueryIR {
     pub fn validate(&self) -> Result<(), String> {
         let mut env = HashSet::new();
-        self.inner_validate([].iter(), &mut env)
+        self.inner_validate(std::iter::empty(), &mut env)
     }
 
-    fn inner_validate(
-        &self,
-        mut iter: std::slice::Iter<Self>,
-        env: &mut HashSet<String>,
-    ) -> Result<(), String> {
+    fn inner_validate<'a, T>(&self, mut iter: T, env: &mut HashSet<String>) -> Result<(), String>
+    where
+        T: Iterator<Item = &'a Self>,
+    {
         match self {
             Self::Call(_, args) => {
                 for arg in args {
