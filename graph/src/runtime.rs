@@ -85,9 +85,9 @@ impl Runtime {
                     }
                     g.create_node(&labels, raw_keys.to_owned(), raw_values.to_owned())
                 }
-                _ => todo!(),
+                _ => Value::Null,
             },
-            _ => todo!(),
+            _ => Value::Null,
         }
     }
 
@@ -158,11 +158,12 @@ impl Runtime {
     fn property(g: &Graph, _runtime: &mut Self, args: Value) -> Value {
         match args {
             Value::Array(arr) => match arr.as_slice() {
-                [Value::Node(node_id), Value::String(property)] => {
-                    let property_id = g.get_node_property_id(property);
-                    g.get_node_property(*node_id, property_id.unwrap())
-                        .map_or_else(|| Value::Bool(false), |n| n)
-                }
+                [Value::Node(node_id), Value::String(property)] => g
+                    .get_node_property_id(property)
+                    .map_or(Value::Null, |property_id| {
+                        g.get_node_property(*node_id, property_id)
+                            .map_or(Value::Null, |n| n)
+                    }),
                 [Value::Map(map), Value::String(property)] => {
                     map.get(property).unwrap_or(&Value::Null).clone()
                 }
@@ -211,7 +212,7 @@ fn plan_expr(expr: &QueryExprIR) -> IR {
         QueryExprIR::Or(exprs) => IR::Or(exprs.iter().map(plan_expr).collect()),
         QueryExprIR::Xor(exprs) => IR::Xor(exprs.iter().map(plan_expr).collect()),
         QueryExprIR::And(exprs) => IR::And(exprs.iter().map(plan_expr).collect()),
-        QueryExprIR::Not(_) => todo!(),
+        QueryExprIR::Not(expr) => IR::Not(Box::new(plan_expr(expr))),
         QueryExprIR::Eq(exprs) => IR::Eq(exprs.iter().map(plan_expr).collect()),
         QueryExprIR::Neq(_) => todo!(),
         QueryExprIR::Lt(_) => todo!(),
@@ -244,7 +245,7 @@ fn plan_expr(expr: &QueryExprIR) -> IR {
                 }
                 _ => todo!(),
             },
-            _ => todo!(),
+            name => IR::FuncInvocation(name.to_string(), params.iter().map(plan_expr).collect()),
         },
         QueryExprIR::Map(attrs) => IR::Map(
             attrs
@@ -675,7 +676,7 @@ pub fn run(
         IR::Integer(x) => Value::Int(*x),
         IR::Float(x) => Value::Float(*x),
         IR::String(x) => Value::String(x.to_string()),
-        IR::Var(x) => vars.get(x).unwrap().to_owned(),
+        IR::Var(x) => vars.get(x).unwrap_or(&Value::Null).to_owned(),
         IR::Param(_) => todo!(),
         IR::List(irs) => Value::Array(
             irs.iter()
@@ -697,10 +698,10 @@ pub fn run(
                         Value::Null
                     }
                 }
-                _ => todo!(),
+                _ => Value::Null,
             }
         }
-        IR::Range(_) => todo!(),
+        IR::Range(_) => Value::Null,
         IR::IsNull(ir) => match run(vars, g, runtime, result_fn, ir) {
             Value::Null => Value::Bool(true),
             _ => Value::Bool(false),
@@ -718,7 +719,7 @@ pub fn run(
 
             Value::Bool(false)
         }
-        IR::Xor(irs) => todo!(),
+        IR::Xor(irs) => Value::Null,
         IR::And(irs) => {
             for ir in irs {
                 if matches!(run(vars, g, runtime, result_fn, ir), Value::Bool(false)) {
@@ -730,7 +731,7 @@ pub fn run(
         }
         IR::Not(ir) => match run(vars, g, runtime, result_fn, ir) {
             Value::Bool(b) => Value::Bool(!b),
-            _ => todo!(),
+            _ => Value::Null,
         },
         IR::Eq(irs) => irs
             .iter()
@@ -747,35 +748,35 @@ pub fn run(
             run(vars, g, runtime, result_fn, &op.1),
         ) {
             (Value::Int(a), Value::Int(b)) => Value::Bool(a < b),
-            _ => todo!(),
+            _ => Value::Null,
         },
         IR::Gt(op) => match (
             run(vars, g, runtime, result_fn, &op.0),
             run(vars, g, runtime, result_fn, &op.1),
         ) {
             (Value::Int(a), Value::Int(b)) => Value::Bool(a > b),
-            _ => todo!(),
+            _ => Value::Null,
         },
         IR::Le(op) => match (
             run(vars, g, runtime, result_fn, &op.0),
             run(vars, g, runtime, result_fn, &op.1),
         ) {
             (Value::Int(a), Value::Int(b)) => Value::Bool(a <= b),
-            _ => todo!(),
+            _ => Value::Null,
         },
         IR::Ge(op) => match (
             run(vars, g, runtime, result_fn, &op.0),
             run(vars, g, runtime, result_fn, &op.1),
         ) {
             (Value::Int(a), Value::Int(b)) => Value::Bool(a >= b),
-            _ => todo!(),
+            _ => Value::Null,
         },
         IR::Add(irs) => irs
             .iter()
             .map(|ir| run(vars, g, runtime, result_fn, ir))
             .reduce(|a, b| match (a, b) {
                 (Value::Int(a), Value::Int(b)) => Value::Int(a + b),
-                _ => todo!(),
+                _ => Value::Null,
             })
             .unwrap(),
         IR::Sub(irs) => irs
@@ -783,7 +784,7 @@ pub fn run(
             .map(|ir| run(vars, g, runtime, result_fn, ir))
             .reduce(|a, b| match (a, b) {
                 (Value::Int(a), Value::Int(b)) => Value::Int(a - b),
-                _ => todo!(),
+                _ => Value::Null,
             })
             .unwrap(),
         IR::Mul(irs) => irs
@@ -791,7 +792,7 @@ pub fn run(
             .map(|ir| run(vars, g, runtime, result_fn, ir))
             .reduce(|a, b| match (a, b) {
                 (Value::Int(a), Value::Int(b)) => Value::Int(a * b),
-                _ => todo!(),
+                _ => Value::Null,
             })
             .unwrap(),
         IR::Div(irs) => irs
@@ -799,7 +800,7 @@ pub fn run(
             .map(|ir| run(vars, g, runtime, result_fn, ir))
             .reduce(|a, b| match (a, b) {
                 (Value::Int(a), Value::Int(b)) => Value::Int(a / b),
-                _ => todo!(),
+                _ => Value::Null,
             })
             .unwrap(),
         IR::Pow(irs) => irs
@@ -807,7 +808,7 @@ pub fn run(
             .map(|ir| run(vars, g, runtime, result_fn, ir))
             .reduce(|a, b| match (a, b) {
                 (Value::Int(a), Value::Int(b)) => Value::Int(a ^ b),
-                _ => todo!(),
+                _ => Value::Null,
             })
             .unwrap(),
         IR::FuncInvocation(name, irs) => {
@@ -817,8 +818,10 @@ pub fn run(
                 .collect();
             if runtime.write_functions.contains_key(name) {
                 runtime.write_functions[name](g, runtime, Value::Array(args))
-            } else {
+            } else if runtime.read_functions.contains_key(name) {
                 runtime.read_functions[name](g, runtime, Value::Array(args))
+            } else {
+                Value::Null
             }
         }
         IR::Map(items) => Value::Map(
