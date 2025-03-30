@@ -104,7 +104,7 @@ impl Graph {
         debug: bool,
     ) -> Result<ResultSummary, String> {
         let mut parse_duration = Duration::ZERO;
-        let mut jit_duration = Duration::ZERO;
+        let mut plan_duration = Duration::ZERO;
 
         let evaluate = {
             match self.cache.lock() {
@@ -119,7 +119,7 @@ impl Graph {
 
                         let start = Instant::now();
                         let value = plan(&ir, debug);
-                        jit_duration = start.elapsed();
+                        plan_duration = start.elapsed();
 
                         cache.insert(query.to_string(), value.clone());
                         value
@@ -144,7 +144,7 @@ impl Graph {
 
         Ok(ResultSummary {
             parse_duration,
-            jit_duration,
+            plan_duration,
             run_duration,
         })
     }
@@ -156,7 +156,7 @@ impl Graph {
         debug: bool,
     ) -> Result<ResultSummary, String> {
         let mut parse_duration = Duration::ZERO;
-        let mut jit_duration = Duration::ZERO;
+        let mut plan_duration = Duration::ZERO;
 
         let evaluate = {
             match self.cache.lock() {
@@ -171,7 +171,7 @@ impl Graph {
 
                         let start = Instant::now();
                         let value = plan(&ir, debug);
-                        jit_duration = start.elapsed();
+                        plan_duration = start.elapsed();
 
                         cache.insert(query.to_string(), value.clone());
                         value
@@ -196,7 +196,7 @@ impl Graph {
 
         Ok(ResultSummary {
             parse_duration,
-            jit_duration,
+            plan_duration,
             run_duration,
         })
     }
@@ -446,6 +446,6 @@ impl Graph {
 
 pub struct ResultSummary {
     pub parse_duration: Duration,
-    pub jit_duration: Duration,
+    pub plan_duration: Duration,
     pub run_duration: Duration,
 }
