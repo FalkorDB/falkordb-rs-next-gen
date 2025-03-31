@@ -26,8 +26,8 @@ pub struct Graph {
     all_nodes_matrix: Matrix<bool>,
     labels_matices: BTreeMap<usize, Matrix<bool>>,
     relationship_matrices: BTreeMap<usize, Matrix<bool>>,
-    node_properties_matrix: BTreeMap<u64, BTreeMap<u64, Value>>,
-    relationship_properties_matrix: BTreeMap<u64, BTreeMap<u64, Value>>,
+    node_properties_map: BTreeMap<u64, BTreeMap<u64, Value>>,
+    relationship_properties_map: BTreeMap<u64, BTreeMap<u64, Value>>,
     node_labels: Vec<String>,
     relationship_types: Vec<String>,
     node_properties: Vec<String>,
@@ -51,8 +51,8 @@ impl Graph {
             all_nodes_matrix: Matrix::<bool>::new(n, n),
             labels_matices: BTreeMap::new(),
             relationship_matrices: BTreeMap::new(),
-            node_properties_matrix: BTreeMap::new(),
-            relationship_properties_matrix: BTreeMap::new(),
+            node_properties_map: BTreeMap::new(),
+            relationship_properties_map: BTreeMap::new(),
             node_labels: Vec::new(),
             relationship_types: Vec::new(),
             node_properties: Vec::new(),
@@ -294,12 +294,7 @@ impl Graph {
         property_id as u64
     }
 
-    pub fn create_node(
-        &mut self,
-        labels: &Vec<String>,
-        attr_keys: Value,
-        attr_values: Value,
-    ) -> Value {
+    pub fn create_node(&mut self, labels: &Vec<String>, attrs: &BTreeMap<String, Value>) -> Value {
         let id = self.deleted_nodes.min().unwrap_or(self.node_count);
         self.deleted_nodes.remove(id);
         self.node_count += 1;
@@ -317,21 +312,14 @@ impl Graph {
         }
 
         let mut map = BTreeMap::new();
-        match (attr_keys, attr_values) {
-            (Value::Array(keys), Value::Array(values)) => {
-                for (key, value) in keys.into_iter().zip(values.into_iter()) {
-                    match key {
-                        Value::String(key) => {
-                            let property_id = self.get_or_add_node_property_id(&key);
-                            map.insert(property_id, value);
-                        }
-                        _ => todo!(),
-                    }
-                }
+        for (key, value) in attrs {
+            if *value == Value::Null {
+                continue;
             }
-            _ => todo!(),
+            let property_id = self.get_or_add_node_property_id(key);
+            map.insert(property_id, value.to_owned());
         }
-        self.node_properties_matrix.insert(id, map);
+        self.node_properties_map.insert(id, map);
 
         Value::Node(id)
     }
@@ -346,7 +334,7 @@ impl Graph {
             self.node_labels_matrix.delete(id, label_id as _);
         }
 
-        self.node_properties_matrix.remove(&id);
+        self.node_properties_map.remove(&id);
     }
 
     pub fn get_nodes(&self, labels: &[String]) -> Option<Iter<bool>> {
@@ -362,7 +350,7 @@ impl Graph {
     }
 
     pub fn get_node_property(&self, node_id: u64, property_id: u64) -> Option<Value> {
-        self.node_properties_matrix
+        self.node_properties_map
             .get(&node_id)
             .unwrap()
             .get(&property_id)
@@ -374,8 +362,7 @@ impl Graph {
         relationship_type: &String,
         from: u64,
         to: u64,
-        attr_keys: Value,
-        attr_values: Value,
+        attrs: &BTreeMap<String, Value>,
     ) -> Value {
         let id = self
             .deleted_relationships
@@ -401,21 +388,14 @@ impl Graph {
         );
 
         let mut map = BTreeMap::new();
-        match (attr_keys, attr_values) {
-            (Value::Array(keys), Value::Array(values)) => {
-                for (key, value) in keys.into_iter().zip(values.into_iter()) {
-                    match key {
-                        Value::String(key) => {
-                            let property_id = self.get_relationship_property_id(&key);
-                            map.insert(property_id, value);
-                        }
-                        _ => todo!(),
-                    }
-                }
+        for (key, value) in attrs {
+            if *value == Value::Null {
+                continue;
             }
-            _ => todo!(),
+            let property_id = self.get_relationship_property_id(key);
+            map.insert(property_id, value.to_owned());
         }
-        self.relationship_properties_matrix.insert(id, map);
+        self.relationship_properties_map.insert(id, map);
 
         Value::Relationship(id, from, to)
     }

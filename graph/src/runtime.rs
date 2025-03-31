@@ -35,7 +35,7 @@ pub enum IR {
     Div(Vec<IR>),
     Pow(Vec<IR>),
     FuncInvocation(String, Vec<IR>),
-    Map(Vec<(String, IR)>),
+    Map(BTreeMap<String, IR>),
     Set(String, Box<IR>),
     If(Box<(IR, IR)>),
     For(Box<(IR, IR, IR, IR)>),
@@ -88,17 +88,20 @@ impl Runtime {
     fn create_node(g: &mut Graph, runtime: &mut Self, args: Value) -> Value {
         match args {
             Value::Array(args) => match args.as_slice() {
-                [Value::Array(raw_labels), raw_keys @ Value::Array(v), raw_values @ Value::Array(_)] =>
-                {
-                    let mut labels = Vec::new();
-                    for label in raw_labels {
-                        if let Value::String(lable) = label {
-                            labels.push(lable.to_string());
-                        }
-                    }
+                [Value::Array(raw_labels), Value::Map(attrs)] => {
+                    let labels = raw_labels
+                        .iter()
+                        .filter_map(|label| {
+                            if let Value::String(label) = label {
+                                Some(label.to_string())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<_>>();
                     runtime.nodes_created += 1;
-                    runtime.properties_set += v.len() as i32;
-                    g.create_node(&labels, raw_keys.to_owned(), raw_values.to_owned())
+                    runtime.properties_set += attrs.len() as i32;
+                    g.create_node(&labels, attrs)
                 }
                 _ => Value::Null,
             },
@@ -124,14 +127,8 @@ impl Runtime {
     fn create_relationship(g: &mut Graph, _runtime: &mut Self, args: Value) -> Value {
         match args {
             Value::Array(args) => match args.as_slice() {
-                [Value::String(relationship_type), Value::Node(from), Value::Node(to), keys @ Value::Array(_), values @ Value::Array(_)] => {
-                    g.create_relationship(
-                        relationship_type,
-                        *from,
-                        *to,
-                        keys.to_owned(),
-                        values.to_owned(),
-                    )
+                [Value::String(relationship_type), Value::Node(from), Value::Node(to), Value::Map(attrs)] => {
+                    g.create_relationship(relationship_type, *from, *to, attrs)
                 }
                 _ => todo!(),
             },
@@ -282,18 +279,17 @@ fn plan_create(pattern: &crate::ast::Pattern, iter: &mut std::slice::Iter<'_, Qu
                     .map(|l| IR::String((*l).to_string()))
                     .collect(),
             );
-            let attrs_keys = IR::List(
+            let attrs = IR::Map(
                 n.attrs
                     .iter()
-                    .map(|(k, _)| IR::String((*k).to_string()))
+                    .map(|(k, v)| (k.to_string(), plan_expr(v)))
                     .collect(),
             );
-            let attrs_values = IR::List(n.attrs.iter().map(|(_, v)| plan_expr(v)).collect());
             IR::Set(
                 n.alias.to_string(),
                 Box::new(IR::FuncInvocation(
                     String::from("create_node"),
-                    vec![labels, attrs_keys, attrs_values],
+                    vec![labels, attrs],
                 )),
             )
         })
@@ -303,20 +299,19 @@ fn plan_create(pattern: &crate::ast::Pattern, iter: &mut std::slice::Iter<'_, Qu
         .iter()
         .map(|l| {
             let relationship_type = IR::String(l.relationship_type.to_string());
-            let attrs_keys = IR::List(
+            let attrs = IR::Map(
                 l.attrs
                     .iter()
-                    .map(|(k, _)| IR::String((*k).to_string()))
+                    .map(|(k, v)| (k.to_string(), plan_expr(v)))
                     .collect(),
             );
             let from = IR::Var(l.from.to_string());
             let to = IR::Var(l.to.to_string());
-            let attrs_values = IR::List(l.attrs.iter().map(|(_, v)| plan_expr(v)).collect());
             IR::Set(
                 l.alias.to_string(),
                 Box::new(IR::FuncInvocation(
                     String::from("create_relationship"),
-                    vec![relationship_type, from, to, attrs_keys, attrs_values],
+                    vec![relationship_type, from, to, attrs],
                 )),
             )
         })
@@ -649,8 +644,8 @@ pub fn ro_run(
         ),
         IR::Set(x, ir) => {
             let v = ro_run(vars, g, runtime, result_fn, ir);
-            vars.insert(x.to_string(), v);
-            Value::Null
+            vars.insert(x.to_string(), v.clone());
+            v
         }
         IR::If(op) => match ro_run(vars, g, runtime, result_fn, &op.0) {
             Value::Bool(true) => ro_run(vars, g, runtime, result_fn, &op.1),
@@ -847,8 +842,8 @@ pub fn run(
         ),
         IR::Set(x, ir) => {
             let v = run(vars, g, runtime, result_fn, ir);
-            vars.insert(x.to_string(), v);
-            Value::Null
+            vars.insert(x.to_string(), v.clone());
+            v
         }
         IR::If(op) => match run(vars, g, runtime, result_fn, &op.0) {
             Value::Bool(true) => run(vars, g, runtime, result_fn, &op.1),

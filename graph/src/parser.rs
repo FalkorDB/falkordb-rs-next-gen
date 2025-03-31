@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use crate::ast::{
     Alias, NodePattern, PathPattern, Pattern, QueryExprIR, QueryIR, RelationshipPattern,
 };
@@ -674,15 +676,30 @@ impl<'a> Parser<'a> {
         let is_outgoing = optional_match_token!(self.lexer, GreaterThan);
         let dst = self.parse_node_pattern()?;
         let relationship = match (is_incomming, is_outgoing) {
-            (true, true) | (false, false) => {
-                RelationshipPattern::new(alias, relationship_type, attrs, src, dst.alias.clone(), true)
-            }
-            (true, false) => {
-                RelationshipPattern::new(alias, relationship_type, attrs, dst.alias.clone(), src, false)
-            }
-            (false, true) => {
-                RelationshipPattern::new(alias, relationship_type, attrs, src, dst.alias.clone(), false)
-            }
+            (true, true) | (false, false) => RelationshipPattern::new(
+                alias,
+                relationship_type,
+                attrs,
+                src,
+                dst.alias.clone(),
+                true,
+            ),
+            (true, false) => RelationshipPattern::new(
+                alias,
+                relationship_type,
+                attrs,
+                dst.alias.clone(),
+                src,
+                false,
+            ),
+            (false, true) => RelationshipPattern::new(
+                alias,
+                relationship_type,
+                attrs,
+                src,
+                dst.alias.clone(),
+                false,
+            ),
         };
         Ok((relationship, dst))
     }
@@ -696,8 +713,8 @@ impl<'a> Parser<'a> {
         Ok(labels)
     }
 
-    fn parse_map(&mut self) -> Result<Vec<(String, QueryExprIR)>, String> {
-        let mut attrs = Vec::new();
+    fn parse_map(&mut self) -> Result<BTreeMap<String, QueryExprIR>, String> {
+        let mut attrs = BTreeMap::new();
         if let (Token::LBracket, len) = self.lexer.current() {
             self.lexer.next(len);
         } else {
@@ -709,7 +726,7 @@ impl<'a> Parser<'a> {
                 self.lexer.next(len);
                 match_token!(self.lexer, Colon);
                 let value = self.parse_expr()?;
-                attrs.push((key, value));
+                attrs.insert(key, value);
 
                 match self.lexer.current() {
                     (Token::Comma, len) => self.lexer.next(len),

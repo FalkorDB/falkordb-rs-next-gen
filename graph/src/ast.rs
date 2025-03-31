@@ -1,4 +1,7 @@
-use std::{collections::HashSet, fmt::Display};
+use std::{
+    collections::{BTreeMap, HashSet},
+    fmt::Display,
+};
 
 #[derive(Debug)]
 pub enum QueryExprIR {
@@ -30,7 +33,7 @@ pub enum QueryExprIR {
     GetElement(Box<(QueryExprIR, QueryExprIR)>),
     Property(Box<QueryExprIR>, String),
     FuncInvocation(String, Vec<QueryExprIR>),
-    Map(Vec<(String, QueryExprIR)>),
+    Map(BTreeMap<String, QueryExprIR>),
 }
 
 impl QueryExprIR {
@@ -68,7 +71,7 @@ impl QueryExprIR {
                 Ok(())
             }
             Self::Map(exprs) => {
-                for (_, expr) in exprs {
+                for expr in exprs.values() {
                     expr.inner_validate(env)?;
                 }
                 Ok(())
@@ -117,12 +120,16 @@ impl Display for Alias {
 pub struct NodePattern {
     pub alias: Alias,
     pub labels: Vec<String>,
-    pub attrs: Vec<(String, QueryExprIR)>,
+    pub attrs: BTreeMap<String, QueryExprIR>,
 }
 
 impl NodePattern {
     #[must_use]
-    pub const fn new(alias: Alias, labels: Vec<String>, attrs: Vec<(String, QueryExprIR)>) -> Self {
+    pub const fn new(
+        alias: Alias,
+        labels: Vec<String>,
+        attrs: BTreeMap<String, QueryExprIR>,
+    ) -> Self {
         Self {
             alias,
             labels,
@@ -135,7 +142,7 @@ impl NodePattern {
 pub struct RelationshipPattern {
     pub alias: Alias,
     pub relationship_type: String,
-    pub attrs: Vec<(String, QueryExprIR)>,
+    pub attrs: BTreeMap<String, QueryExprIR>,
     pub from: Alias,
     pub to: Alias,
     pub bidirectional: bool,
@@ -146,7 +153,7 @@ impl RelationshipPattern {
     pub const fn new(
         alias: Alias,
         relationship_type: String,
-        attrs: Vec<(String, QueryExprIR)>,
+        attrs: BTreeMap<String, QueryExprIR>,
         from: Alias,
         to: Alias,
         bidirectional: bool,
@@ -235,7 +242,7 @@ impl QueryIR {
                             node.alias.to_string().as_str()
                         ));
                     }
-                    for (_, v) in &node.attrs {
+                    for v in node.attrs.values() {
                         v.inner_validate(env)?;
                     }
                     env.insert(node.alias.to_string());
@@ -247,7 +254,7 @@ impl QueryIR {
                             relationship.alias.to_string().as_str()
                         ));
                     }
-                    for (_, v) in &relationship.attrs {
+                    for v in relationship.attrs.values() {
                         v.inner_validate(env)?;
                     }
                     env.insert(relationship.alias.to_string());
@@ -285,7 +292,7 @@ impl QueryIR {
                             node.alias.to_string().as_str()
                         ));
                     }
-                    for (_, v) in &node.attrs {
+                    for v in node.attrs.values() {
                         v.inner_validate(env)?;
                     }
                 }
@@ -299,7 +306,7 @@ impl QueryIR {
                             relationship.alias.to_string().as_str()
                         ));
                     }
-                    for (_, v) in &relationship.attrs {
+                    for v in relationship.attrs.values() {
                         v.inner_validate(env)?;
                     }
                     env.insert(relationship.alias.to_string());
