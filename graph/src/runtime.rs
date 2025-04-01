@@ -749,10 +749,16 @@ pub fn run(
         }
         IR::Xor(irs) => Value::Null,
         IR::And(irs) => {
+            let mut is_null = false;
             for ir in irs {
-                if matches!(run(vars, g, runtime, result_fn, ir), Value::Bool(false)) {
-                    return Value::Bool(false);
+                match run(vars, g, runtime, result_fn, ir) {
+                    Value::Bool(false) => return Value::Bool(false),
+                    Value::Null => is_null = true,
+                    _ => {}
                 }
+            }
+            if is_null {
+                return Value::Null;
             }
 
             Value::Bool(true)
