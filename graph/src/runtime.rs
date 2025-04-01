@@ -92,10 +92,10 @@ impl Runtime {
                 match (iter.next(), iter.next(), iter.next()) {
                     (Some(Value::Array(raw_labels)), Some(Value::Map(attrs)), None) => {
                         let labels = raw_labels
-                            .iter()
+                            .into_iter()
                             .filter_map(|label| {
                                 if let Value::String(label) = label {
-                                    Some(label.to_string())
+                                    Some(label)
                                 } else {
                                     None
                                 }
@@ -103,8 +103,8 @@ impl Runtime {
                             .collect::<Vec<_>>();
                         runtime.nodes_created += 1;
                         runtime.properties_set += attrs
-                            .iter()
-                            .map(|(k, v)| match v {
+                            .values()
+                            .map(|v| match v {
                                 Value::Null => 0,
                                 _ => 1,
                             })
@@ -154,8 +154,8 @@ impl Runtime {
                     ) => {
                         runtime.relationships_created += 1;
                         runtime.properties_set += attrs
-                            .iter()
-                            .map(|(k, v)| match v {
+                            .values()
+                            .map(|v| match v {
                                 Value::Null => 0,
                                 _ => 1,
                             })
@@ -171,19 +171,31 @@ impl Runtime {
 
     fn create_node_iter(g: &Graph, runtime: &mut Self, args: Value) -> Value {
         match args {
-            Value::Array(args) => match args.as_slice() {
-                [Value::Array(raw_labels)] => {
-                    let mut labels = Vec::new();
-                    for l in raw_labels {
-                        if let Value::String(l) = l {
-                            labels.push(l.to_string());
-                        }
+            Value::Array(args) => {
+                let mut iter = args.into_iter();
+                match (iter.next(), iter.next()) {
+                    (Some(Value::Array(raw_labels)), None) => {
+                        runtime.iters.push(
+                            g.get_nodes(
+                                raw_labels
+                                    .into_iter()
+                                    .filter_map(|label| {
+                                        if let Value::String(label) = label {
+                                            Some(label)
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .as_slice(),
+                            )
+                            .unwrap(),
+                        );
+                        Value::Int(runtime.iters.len() as i64 - 1)
                     }
-                    runtime.iters.push(g.get_nodes(&labels).unwrap());
-                    Value::Int(runtime.iters.len() as i64 - 1)
+                    _ => todo!(),
                 }
-                _ => todo!(),
-            },
+            }
             _ => todo!(),
         }
     }
