@@ -118,7 +118,7 @@ impl Graph {
                         parse_duration = start.elapsed();
 
                         let start = Instant::now();
-                        let value = plan(&ir, debug);
+                        let value = plan(ir, debug);
                         plan_duration = start.elapsed();
 
                         cache.insert(query.to_string(), value.clone());
@@ -179,7 +179,7 @@ impl Graph {
                         parse_duration = start.elapsed();
 
                         let start = Instant::now();
-                        let value = plan(&ir, debug);
+                        let value = plan(ir, debug);
                         plan_duration = start.elapsed();
 
                         cache.insert(query.to_string(), value.clone());

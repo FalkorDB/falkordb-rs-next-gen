@@ -255,9 +255,9 @@ fn graph_plan(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     let mut parser = Parser::new(&query);
     match parser.parse() {
         Ok(ir) => {
-            let ir = plan(&ir, false);
+            let ir = plan(ir, false);
             Ok(RedisValue::SimpleString(format!("{ir:?}")))
-        },
+        }
         Err(err) => {
             ctx.reply_error_string(err.as_str());
             Ok(RedisValue::NoReply)

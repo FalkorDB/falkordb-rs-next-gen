@@ -1,6 +1,6 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, vec::IntoIter};
 
-use crate::{graph::Graph, matrix::Iter, value::Value};
+use crate::{ast::Pattern, graph::Graph, matrix::Iter, value::Value};
 
 use super::ast::{QueryExprIR, QueryIR};
 
@@ -255,68 +255,74 @@ impl Runtime {
     }
 }
 
-fn plan_expr(expr: &QueryExprIR) -> IR {
+fn plan_expr(expr: QueryExprIR) -> IR {
     match expr {
         QueryExprIR::Null => IR::Null,
-        QueryExprIR::Bool(x) => IR::Bool(*x),
-        QueryExprIR::Integer(x) => IR::Integer(*x),
-        QueryExprIR::Float(x) => IR::Float(*x),
-        QueryExprIR::String(x) => IR::String(x.to_string()),
-        QueryExprIR::Ident(x) => IR::Var(x.to_string()),
-        QueryExprIR::Param(x) => IR::Param(x.to_string()),
-        QueryExprIR::Named(name, expr) => IR::Set(name.to_string(), Box::new(plan_expr(expr))),
-        QueryExprIR::List(exprs) => IR::List(exprs.iter().map(plan_expr).collect()),
-        QueryExprIR::Or(exprs) => IR::Or(exprs.iter().map(plan_expr).collect()),
-        QueryExprIR::Xor(exprs) => IR::Xor(exprs.iter().map(plan_expr).collect()),
-        QueryExprIR::And(exprs) => IR::And(exprs.iter().map(plan_expr).collect()),
-        QueryExprIR::Not(expr) => IR::Not(Box::new(plan_expr(expr))),
-        QueryExprIR::Eq(exprs) => IR::Eq(exprs.iter().map(plan_expr).collect()),
+        QueryExprIR::Bool(x) => IR::Bool(x),
+        QueryExprIR::Integer(x) => IR::Integer(x),
+        QueryExprIR::Float(x) => IR::Float(x),
+        QueryExprIR::String(x) => IR::String(x),
+        QueryExprIR::Ident(x) => IR::Var(x),
+        QueryExprIR::Param(x) => IR::Param(x),
+        QueryExprIR::Named(name, expr) => IR::Set(name, Box::new(plan_expr(*expr))),
+        QueryExprIR::List(exprs) => IR::List(exprs.into_iter().map(plan_expr).collect()),
+        QueryExprIR::Or(exprs) => IR::Or(exprs.into_iter().map(plan_expr).collect()),
+        QueryExprIR::Xor(exprs) => IR::Xor(exprs.into_iter().map(plan_expr).collect()),
+        QueryExprIR::And(exprs) => IR::And(exprs.into_iter().map(plan_expr).collect()),
+        QueryExprIR::Not(expr) => IR::Not(Box::new(plan_expr(*expr))),
+        QueryExprIR::Eq(exprs) => IR::Eq(exprs.into_iter().map(plan_expr).collect()),
         QueryExprIR::Neq(_) => todo!(),
         QueryExprIR::Lt(_) => todo!(),
         QueryExprIR::Gt(_) => todo!(),
         QueryExprIR::Le(_) => todo!(),
         QueryExprIR::Ge(_) => todo!(),
-        QueryExprIR::Add(exprs) => IR::Add(exprs.iter().map(plan_expr).collect()),
-        QueryExprIR::Sub(exprs) => IR::Sub(exprs.iter().map(plan_expr).collect()),
-        QueryExprIR::Mul(exprs) => IR::Mul(exprs.iter().map(plan_expr).collect()),
-        QueryExprIR::Div(exprs) => IR::Div(exprs.iter().map(plan_expr).collect()),
+        QueryExprIR::Add(exprs) => IR::Add(exprs.into_iter().map(plan_expr).collect()),
+        QueryExprIR::Sub(exprs) => IR::Sub(exprs.into_iter().map(plan_expr).collect()),
+        QueryExprIR::Mul(exprs) => IR::Mul(exprs.into_iter().map(plan_expr).collect()),
+        QueryExprIR::Div(exprs) => IR::Div(exprs.into_iter().map(plan_expr).collect()),
         QueryExprIR::Pow(_) => todo!(),
-        QueryExprIR::IsNull(expr) => IR::IsNull(Box::new(plan_expr(expr))),
-        QueryExprIR::GetElement(op) => {
-            IR::GetElement(Box::new((plan_expr(&op.0), plan_expr(&op.1))))
-        }
+        QueryExprIR::IsNull(expr) => IR::IsNull(Box::new(plan_expr(*expr))),
+        QueryExprIR::GetElement(op) => IR::GetElement(Box::new((plan_expr(op.0), plan_expr(op.1)))),
         QueryExprIR::Property(expr, name) => IR::FuncInvocation(
             "property".to_string(),
-            vec![plan_expr(expr), IR::String(name.to_string())],
+            vec![plan_expr(*expr), IR::String(name)],
         ),
         QueryExprIR::FuncInvocation(name, params) => match name.as_str() {
-            "range" => match params.as_slice() {
-                [length] => IR::Range(Box::new((
-                    IR::Integer(0),
-                    IR::Sub(vec![plan_expr(length), IR::Integer(1)]),
-                    IR::Integer(1),
-                ))),
-                [from, to] => IR::Range(Box::new((plan_expr(from), plan_expr(to), IR::Integer(1)))),
-                [from, to, step] => {
-                    IR::Range(Box::new((plan_expr(from), plan_expr(to), plan_expr(step))))
+            "range" => {
+                let mut iter = params.into_iter();
+                match (iter.next(), iter.next(), iter.next(), iter.next()) {
+                    (Some(length), None, None, None) => IR::Range(Box::new((
+                        IR::Integer(0),
+                        IR::Sub(vec![plan_expr(length), IR::Integer(1)]),
+                        IR::Integer(1),
+                    ))),
+                    (Some(from), Some(to), None, None) => {
+                        IR::Range(Box::new((plan_expr(from), plan_expr(to), IR::Integer(1))))
+                    }
+                    (Some(from), Some(to), Some(step), None) => {
+                        IR::Range(Box::new((plan_expr(from), plan_expr(to), plan_expr(step))))
+                    }
+                    _ => todo!(),
                 }
-                _ => todo!(),
-            },
-            name => IR::FuncInvocation(name.to_string(), params.iter().map(plan_expr).collect()),
+            }
+            name => IR::FuncInvocation(
+                name.to_string(),
+                params.into_iter().map(plan_expr).collect(),
+            ),
         },
         QueryExprIR::Map(attrs) => IR::Map(
             attrs
-                .iter()
-                .map(|(k, v)| (k.clone(), plan_expr(v)))
+                .into_iter()
+                .map(|(k, v)| (k, plan_expr(v)))
                 .collect(),
         ),
     }
 }
 
-fn plan_create(pattern: &crate::ast::Pattern, iter: &mut std::slice::Iter<'_, QueryIR>) -> IR {
+fn plan_create(pattern: Pattern, iter: &mut IntoIter<QueryIR>) -> IR {
     let create_nodes = pattern
         .nodes
-        .iter()
+        .into_iter()
         .map(|n| {
             let labels = IR::List(
                 n.labels
@@ -326,8 +332,8 @@ fn plan_create(pattern: &crate::ast::Pattern, iter: &mut std::slice::Iter<'_, Qu
             );
             let attrs = IR::Map(
                 n.attrs
-                    .iter()
-                    .map(|(k, v)| (k.to_string(), plan_expr(v)))
+                    .into_iter()
+                    .map(|(k, v)| (k, plan_expr(v)))
                     .collect(),
             );
             IR::Set(
@@ -341,13 +347,13 @@ fn plan_create(pattern: &crate::ast::Pattern, iter: &mut std::slice::Iter<'_, Qu
         .collect();
     let create_relationships = pattern
         .relationships
-        .iter()
+        .into_iter()
         .map(|l| {
             let relationship_type = IR::String(l.relationship_type.to_string());
             let attrs = IR::Map(
                 l.attrs
-                    .iter()
-                    .map(|(k, v)| (k.to_string(), plan_expr(v)))
+                    .into_iter()
+                    .map(|(k, v)| (k, plan_expr(v)))
                     .collect(),
             );
             let from = IR::Var(l.from.to_string());
@@ -374,8 +380,8 @@ fn plan_create(pattern: &crate::ast::Pattern, iter: &mut std::slice::Iter<'_, Qu
     }
 }
 
-fn plan_delete(exprs: &[QueryExprIR], iter: &mut std::slice::Iter<'_, QueryIR>) -> IR {
-    let deleted_entities = exprs.iter().map(plan_expr).collect();
+fn plan_delete(exprs: Vec<QueryExprIR>, iter: &mut IntoIter<QueryIR>) -> IR {
+    let deleted_entities = exprs.into_iter().map(plan_expr).collect();
     match iter.next() {
         Some(body_ir) => IR::Block(vec![
             IR::FuncInvocation(String::from("delete_entity"), deleted_entities),
@@ -385,15 +391,15 @@ fn plan_delete(exprs: &[QueryExprIR], iter: &mut std::slice::Iter<'_, QueryIR>) 
     }
 }
 
-fn plan_unwind(expr: &QueryExprIR, iter: &mut std::slice::Iter<'_, QueryIR>, alias: &String) -> IR {
+fn plan_unwind(expr: QueryExprIR, iter: &mut IntoIter<QueryIR>, alias: String) -> IR {
     let list = plan_expr(expr);
     match list {
         IR::Range(op) => {
-            let init = IR::Set((*alias).to_string(), Box::new(op.0));
-            let condition = IR::Le(Box::new((IR::Var((*alias).to_string()), op.1)));
+            let init = IR::Set(alias.to_string(), Box::new(op.0));
+            let condition = IR::Le(Box::new((IR::Var(alias.to_string()), op.1)));
             let next = IR::Set(
-                (*alias).to_string(),
-                Box::new(IR::Add(vec![IR::Var((*alias).to_string()), op.2])),
+                alias.to_string(),
+                Box::new(IR::Add(vec![IR::Var(alias), op.2])),
             );
             let body_ir = iter.next().unwrap();
             let body = plan_query(body_ir, iter);
@@ -420,7 +426,7 @@ fn plan_unwind(expr: &QueryExprIR, iter: &mut std::slice::Iter<'_, QueryIR>, ali
                     next,
                     IR::Block(vec![
                         IR::Set(
-                            (*alias).to_string(),
+                            alias,
                             Box::new(IR::GetElement(Box::new((
                                 IR::Var("list".to_string()),
                                 IR::Var("i".to_string()),
@@ -434,7 +440,7 @@ fn plan_unwind(expr: &QueryExprIR, iter: &mut std::slice::Iter<'_, QueryIR>, ali
     }
 }
 
-fn plan_match(pattern: &crate::ast::Pattern, iter: &mut std::slice::Iter<'_, QueryIR>) -> IR {
+fn plan_match(pattern: Pattern, iter: &mut IntoIter<QueryIR>) -> IR {
     let n = pattern.nodes.first().unwrap();
     let labels = IR::List(
         n.labels
@@ -472,7 +478,7 @@ fn plan_match(pattern: &crate::ast::Pattern, iter: &mut std::slice::Iter<'_, Que
     IR::For(Box::new((init, condition, next, body)))
 }
 
-fn plan_query(ir: &QueryIR, iter: &mut std::slice::Iter<QueryIR>) -> IR {
+fn plan_query(ir: QueryIR, iter: &mut IntoIter<QueryIR>) -> IR {
     match ir {
         QueryIR::Call(name, exprs) => IR::For(Box::new((
             IR::Block(vec![
@@ -480,7 +486,7 @@ fn plan_query(ir: &QueryIR, iter: &mut std::slice::Iter<QueryIR>) -> IR {
                     "res".to_string(),
                     Box::new(IR::FuncInvocation(
                         name.to_lowercase(),
-                        exprs.iter().map(plan_expr).collect(),
+                        exprs.into_iter().map(plan_expr).collect(),
                     )),
                 ),
                 IR::Set("i".to_string(), Box::new(IR::Integer(0))),
@@ -507,22 +513,22 @@ fn plan_query(ir: &QueryIR, iter: &mut std::slice::Iter<QueryIR>) -> IR {
         QueryIR::Create(pattern) => plan_create(pattern, iter),
         QueryIR::Delete(exprs) => plan_delete(exprs, iter),
         QueryIR::With(exprs) => IR::Block(vec![
-            IR::Block(exprs.iter().map(plan_expr).collect()),
+            IR::Block(exprs.into_iter().map(plan_expr).collect()),
             plan_query(iter.next().unwrap(), iter),
         ]),
-        QueryIR::Return(exprs) => {
-            IR::Return(Box::new(IR::List(exprs.iter().map(plan_expr).collect())))
-        }
+        QueryIR::Return(exprs) => IR::Return(Box::new(IR::List(
+            exprs.into_iter().map(plan_expr).collect(),
+        ))),
         QueryIR::Query(q) => {
-            let iter = &mut q.iter();
+            let iter = &mut q.into_iter();
             plan_query(iter.next().unwrap(), iter)
         }
     }
 }
 
 #[must_use]
-pub fn plan(ir: &QueryIR, debug: bool) -> IR {
-    plan_query(ir, &mut [].iter())
+pub fn plan(ir: QueryIR, debug: bool) -> IR {
+    plan_query(ir, &mut Vec::new().into_iter())
 }
 
 pub fn ro_run(
