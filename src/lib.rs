@@ -91,13 +91,6 @@ fn inner_raw_value_to_redis_value(g: &Graph, r: &Value) -> RedisValue {
             ),
         ]),
         Value::Node(id) => {
-            let mut vec = Vec::new();
-            vec.push(RedisValue::Integer(*id as _));
-            let mut labels = Vec::new();
-            for label in g.get_node_label_ids(*id) {
-                labels.push(RedisValue::Integer(label as _));
-            }
-            vec.push(RedisValue::Array(labels));
             let mut props = Vec::new();
             for (key, value) in g.get_node_properties(*id) {
                 let mut prop = Vec::new();
@@ -107,19 +100,40 @@ fn inner_raw_value_to_redis_value(g: &Graph, r: &Value) -> RedisValue {
                 }
                 props.push(RedisValue::Array(prop));
             }
-            vec.push(RedisValue::Array(props));
-            RedisValue::Array(vec![RedisValue::Integer(8), RedisValue::Array(vec)])
-        }
-        Value::Relationship(id, from, to) => RedisValue::Array(vec![
-            RedisValue::Integer(7),
             RedisValue::Array(vec![
-                RedisValue::Integer(*id as _),
-                RedisValue::Integer(g.get_relationship_type_id(*id) as _),
-                RedisValue::Integer(*from as _),
-                RedisValue::Integer(*to as _),
-                RedisValue::Array(vec![]),
-            ]),
-        ]),
+                RedisValue::Integer(8),
+                RedisValue::Array(vec![
+                    RedisValue::Integer(*id as _),
+                    RedisValue::Array(
+                        g.get_node_label_ids(*id)
+                            .map(|l| RedisValue::Integer(l as _))
+                            .collect(),
+                    ),
+                    RedisValue::Array(props),
+                ]),
+            ])
+        }
+        Value::Relationship(id, from, to) => {
+            let mut props = Vec::new();
+            for (key, value) in g.get_relationship_properties(*id) {
+                let mut prop = Vec::new();
+                prop.push(RedisValue::Integer(*key as _));
+                if let RedisValue::Array(mut v) = inner_raw_value_to_redis_value(g, value) {
+                    prop.append(&mut v);
+                }
+                props.push(RedisValue::Array(prop));
+            }
+            RedisValue::Array(vec![
+                RedisValue::Integer(7),
+                RedisValue::Array(vec![
+                    RedisValue::Integer(*id as _),
+                    RedisValue::Integer(g.get_relationship_type_id(*id) as _),
+                    RedisValue::Integer(*from as _),
+                    RedisValue::Integer(*to as _),
+                    RedisValue::Array(props),
+                ]),
+            ])
+        }
     }
 }
 

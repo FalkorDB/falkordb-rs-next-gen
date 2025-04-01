@@ -443,7 +443,13 @@ impl Graph {
     pub fn get_node_properties(&self, id: u64) -> &BTreeMap<u64, Value> {
         self.node_properties_map
             .get(&id)
-            .unwrap_or_else(|| panic!("Node with id {} not found", id))
+            .unwrap_or_else(|| panic!("Node with id {id} not found"))
+    }
+
+    pub fn get_relationship_properties(&self, id: u64) -> &BTreeMap<u64, Value> {
+        self.relationship_properties_map
+            .get(&id)
+            .unwrap_or_else(|| panic!("Relationship with id {id} not found"))
     }
 }
 
