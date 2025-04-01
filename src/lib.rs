@@ -98,7 +98,16 @@ fn inner_raw_value_to_redis_value(g: &Graph, r: &Value) -> RedisValue {
                 labels.push(RedisValue::Integer(label as _));
             }
             vec.push(RedisValue::Array(labels));
-            vec.push(RedisValue::Array(vec![]));
+            let mut props = Vec::new();
+            for (key, value) in g.get_node_properties(*id) {
+                let mut prop = Vec::new();
+                prop.push(RedisValue::Integer(*key as _));
+                if let RedisValue::Array(mut v) = inner_raw_value_to_redis_value(g, value) {
+                    prop.append(&mut v);
+                }
+                props.push(RedisValue::Array(prop));
+            }
+            vec.push(RedisValue::Array(props));
             RedisValue::Array(vec![RedisValue::Integer(8), RedisValue::Array(vec)])
         }
         Value::Relationship(id, from, to) => RedisValue::Array(vec![
@@ -158,7 +167,10 @@ fn graph_query(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
                 RedisValue::SimpleString(format!("Labels added: {}", summary.labels_added)),
                 RedisValue::SimpleString(format!("Nodes created: {}", summary.nodes_created)),
                 RedisValue::SimpleString(format!("Properties set: {}", summary.properties_set)),
-                RedisValue::SimpleString(format!("Relationships created: {}", summary.relationships_created)),
+                RedisValue::SimpleString(format!(
+                    "Relationships created: {}",
+                    summary.relationships_created
+                )),
             ],
         ]
         .into()),

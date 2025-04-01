@@ -102,11 +102,9 @@ impl Runtime {
                     runtime.nodes_created += 1;
                     let filtered_attrs = attrs
                         .iter()
-                        .filter_map(|(k, v)| {
-                            match v {
-                                Value::Null => None,
-                                _ => Some((k.to_string(), v.clone())),
-                            }
+                        .filter_map(|(k, v)| match v {
+                            Value::Null => None,
+                            _ => Some((k.to_string(), v.clone())),
                         })
                         .collect::<BTreeMap<_, _>>();
                     runtime.properties_set += filtered_attrs.len() as i32;
@@ -136,9 +134,18 @@ impl Runtime {
     fn create_relationship(g: &mut Graph, runtime: &mut Self, args: Value) -> Value {
         match args {
             Value::Array(args) => match args.as_slice() {
-                [Value::String(relationship_type), Value::Node(from), Value::Node(to), Value::Map(attrs)] => {
+                [Value::String(relationship_type), Value::Node(from), Value::Node(to), Value::Map(attrs)] =>
+                {
                     runtime.relationships_created += 1;
-                    g.create_relationship(relationship_type, *from, *to, attrs)
+                    let filtered_attrs = attrs
+                        .iter()
+                        .filter_map(|(k, v)| match v {
+                            Value::Null => None,
+                            _ => Some((k.to_string(), v.clone())),
+                        })
+                        .collect::<BTreeMap<_, _>>();
+                    runtime.properties_set += filtered_attrs.len() as i32;
+                    g.create_relationship(relationship_type, *from, *to, &filtered_attrs)
                 }
                 _ => todo!(),
             },

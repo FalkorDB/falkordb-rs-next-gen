@@ -439,6 +439,12 @@ impl Graph {
                 .resize(self.relationship_cap, self.relationship_types.len() as u64);
         }
     }
+    
+    pub fn get_node_properties(&self, id: u64) -> &BTreeMap<u64, Value> {
+        self.node_properties_map
+            .get(&id)
+            .unwrap_or_else(|| panic!("Node with id {} not found", id))
+    }
 }
 
 pub struct ResultSummary {
