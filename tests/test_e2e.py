@@ -123,40 +123,44 @@ def test_unwind():
     res = g.query("UNWIND [1, 2, 3] AS x RETURN x")
     assert res.result_set == [[1], [2], [3]]
 
-    res = g.query("UNWIND range(1, 4) AS x RETURN x")
+    res = g.query("UNWIND range(1, 3) AS x RETURN x")
     assert res.result_set == [[1], [2], [3]]
 
     res = g.query("UNWIND range(1, 4, 2) AS x RETURN x")
     assert res.result_set == [[1], [3]]
 
-    res = g.query("UNWIND range(1, 4) AS x UNWIND range(1, 4) AS y RETURN x, y")
+    res = g.query("UNWIND range(1, 3) AS x UNWIND range(1, 3) AS y RETURN x, y")
     assert res.result_set == [[1, 1], [1, 2], [1, 3], [2, 1], [2, 2], [2, 3], [3, 1], [3, 2], [3, 3]]
 
-    res = g.query("UNWIND range(1, 4) AS x UNWIND range(1, 4) AS y WHERE x = 2 RETURN x, y")
+    res = g.query("UNWIND range(1, 3) AS x UNWIND range(1, 3) AS y WHERE x = 2 RETURN x, y")
     assert res.result_set == [[2, 1], [2, 2], [2, 3]]
     
 def test_create_delete_match():
     res = g.query("CREATE ()")
     assert res.result_set == []
+    assert res.nodes_created == 1
 
     res = g.query("MATCH (n) RETURN n")
     assert res.result_set == [[Node(0)]]
 
-    g.query("MATCH (n) DELETE n")
+    res = g.query("MATCH (n) DELETE n")
+    assert res.nodes_deleted == 1
 
     res = g.query("MATCH (n) RETURN n")
     assert res.result_set == []
 
     res = g.query("UNWIND range(3) AS x CREATE (n:N) RETURN n")
     assert res.result_set == [[Node(0, labels="N")], [Node(1, labels="N")], [Node(2, labels="N")]]
+    assert res.nodes_created == 3
 
-    g.query("MATCH (n:N) DELETE n")
+    res = g.query("MATCH (n:N) DELETE n")
+    assert res.nodes_deleted == 3
 
     res = g.query("MATCH (n:N) RETURN n")
     assert res.result_set == []
 
     res = g.query("UNWIND range(3) AS x CREATE (n:N {v: x})-[r:R {v: x}]->(m:M {v: x}) RETURN n, r, m")
-    assert res.result_set == [[Node(0, labels="N"), Edge(0, "R", 1, 0), Node(1, labels="M")], [Node(2, labels="N"), Edge(2, "R", 3, 1), Node(3, labels="M")], [Node(4, labels="N"), Edge(4, "R", 5, 2), Node(5, labels="M")]]
+    assert res.result_set == [[Node(0, labels="N", properties={"v": 0}), Edge(0, "R", 1, 0, properties={"v": 0}), Node(1, labels="M", properties={"v": 0})], [Node(2, labels="N", properties={"v": 1}), Edge(2, "R", 3, 1, properties={"v": 1}), Node(3, labels="M", properties={"v": 1})], [Node(4, labels="N", properties={"v": 2}), Edge(4, "R", 5, 2, properties={"v": 2}), Node(5, labels="M", properties={"v": 2})]]
 
     res = g.query("MATCH (n:N) RETURN n.v")
     assert res.result_set == [[0], [1], [2]]

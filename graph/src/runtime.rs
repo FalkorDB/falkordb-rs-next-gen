@@ -116,11 +116,12 @@ impl Runtime {
         }
     }
 
-    fn delete_entity(g: &mut Graph, _runtime: &mut Self, args: Value) -> Value {
+    fn delete_entity(g: &mut Graph, runtime: &mut Self, args: Value) -> Value {
         match args {
             Value::Array(nodes) => {
                 for n in nodes {
                     if let Value::Node(id) = n {
+                        runtime.nodes_deleted += 1;
                         g.delete_node(id);
                     }
                 }
@@ -265,7 +266,7 @@ fn plan_expr(expr: &QueryExprIR) -> IR {
             "range" => match params.as_slice() {
                 [length] => IR::Range(Box::new((
                     IR::Integer(0),
-                    plan_expr(length),
+                    IR::Sub(vec![plan_expr(length), IR::Integer(1)]),
                     IR::Integer(1),
                 ))),
                 [from, to] => IR::Range(Box::new((plan_expr(from), plan_expr(to), IR::Integer(1)))),
@@ -394,7 +395,7 @@ fn plan_unwind(expr: &QueryExprIR, iter: &mut std::slice::Iter<'_, QueryIR>, ali
         }
         IR::Range(op) => {
             let init = IR::Set((*alias).to_string(), Box::new(op.0));
-            let condition = IR::Lt(Box::new((IR::Var((*alias).to_string()), op.1)));
+            let condition = IR::Le(Box::new((IR::Var((*alias).to_string()), op.1)));
             let next = IR::Set(
                 (*alias).to_string(),
                 Box::new(IR::Add(vec![IR::Var((*alias).to_string()), op.2])),

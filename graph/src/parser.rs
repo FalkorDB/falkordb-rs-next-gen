@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use crate::ast::{
     Alias, NodePattern, PathPattern, Pattern, QueryExprIR, QueryIR, RelationshipPattern,
@@ -307,7 +307,8 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_pattern(&mut self, clause: Token) -> Result<Pattern, String> {
-        let mut nodes = BTreeMap::new();
+        let mut nodes = Vec::new();
+        let mut nodes_alias = HashSet::new();
         let mut relationships = Vec::new();
         let mut paths = Vec::new();
         loop {
@@ -317,7 +318,9 @@ impl<'a> Parser<'a> {
                 let left = self.parse_node_pattern()?;
                 let mut left_alias = left.alias.clone();
                 vars.push(left_alias.clone());
-                nodes.insert(left.alias.to_string(), left);
+                if nodes_alias.insert(left.alias.to_string()) {
+                    nodes.push(left);
+                }
                 loop {
                     if let (Token::Dash | Token::LessThan, _) = self.lexer.current() {
                         let (relationship, right) = self.parse_relationship_pattern(left_alias)?;
@@ -325,7 +328,9 @@ impl<'a> Parser<'a> {
                         vars.push(right.alias.clone());
                         left_alias = right.alias.clone();
                         relationships.push(relationship);
-                        nodes.insert(right.alias.to_string(), right);
+                        if nodes_alias.insert(right.alias.to_string()) {
+                            nodes.push(right);
+                        }
                     } else {
                         paths.push(PathPattern::new(vars, p));
                         break;
@@ -334,12 +339,17 @@ impl<'a> Parser<'a> {
             } else {
                 let left = self.parse_node_pattern()?;
                 let mut left_alias = left.alias.clone();
-                nodes.insert(left.alias.to_string(), left);
+
+                if nodes_alias.insert(left.alias.to_string()) {
+                    nodes.push(left);
+                }
                 while let (Token::Dash | Token::LessThan, _) = self.lexer.current() {
                     let (relationship, right) = self.parse_relationship_pattern(left_alias)?;
                     left_alias = right.alias.clone();
                     relationships.push(relationship);
-                    nodes.insert(right.alias.to_string(), right);
+                    if nodes_alias.insert(right.alias.to_string()) {
+                        nodes.push(right);
+                    }
                 }
             }
 
@@ -358,7 +368,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        Ok(Pattern::new(nodes.into_values().collect(), relationships, paths))
+        Ok(Pattern::new(nodes, relationships, paths))
     }
 
     fn parse_primary_expr(&mut self) -> Result<QueryExprIR, String> {
