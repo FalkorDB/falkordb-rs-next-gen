@@ -46,7 +46,7 @@ impl QueryExprIR {
                 if env.contains(id) {
                     Ok(())
                 } else {
-                    Err(format!("Unknown identifier {id}"))
+                    Err(format!("'{id}' not defined"))
                 }
             }
             Self::Param(_) => todo!(),
@@ -281,14 +281,14 @@ impl QueryIR {
             Self::Create(p) => {
                 for path in &p.paths {
                     if env.contains(&path.name) {
-                        return Err(format!("Duplicate alias {}", path.name));
+                        return Err(format!("The bound variable {} can't be redeclared in a create clause", path.name));
                     }
                     env.insert(path.name.to_string());
                 }
                 for node in &p.nodes {
                     if env.contains(&node.alias.to_string()) {
                         return Err(format!(
-                            "Duplicate alias {}",
+                            "The bound variable {} can't be redeclared in a create clause",
                             node.alias.to_string().as_str()
                         ));
                     }

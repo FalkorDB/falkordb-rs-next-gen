@@ -100,8 +100,17 @@ impl Runtime {
                         })
                         .collect::<Vec<_>>();
                     runtime.nodes_created += 1;
-                    runtime.properties_set += attrs.len() as i32;
-                    g.create_node(&labels, attrs)
+                    let filtered_attrs = attrs
+                        .iter()
+                        .filter_map(|(k, v)| {
+                            match v {
+                                Value::Null => None,
+                                _ => Some((k.to_string(), v.clone())),
+                            }
+                        })
+                        .collect::<BTreeMap<_, _>>();
+                    runtime.properties_set += filtered_attrs.len() as i32;
+                    g.create_node(&labels, &filtered_attrs)
                 }
                 _ => Value::Null,
             },
