@@ -361,8 +361,19 @@ fn plan_delete(exprs: &[QueryExprIR], iter: &mut std::slice::Iter<'_, QueryIR>) 
 fn plan_unwind(expr: &QueryExprIR, iter: &mut std::slice::Iter<'_, QueryIR>, alias: &String) -> IR {
     let list = plan_expr(expr);
     match list {
-        IR::List(_) => {
-            let list = IR::Set("list".to_string(), Box::new(list));
+        IR::Range(op) => {
+            let init = IR::Set((*alias).to_string(), Box::new(op.0));
+            let condition = IR::Le(Box::new((IR::Var((*alias).to_string()), op.1)));
+            let next = IR::Set(
+                (*alias).to_string(),
+                Box::new(IR::Add(vec![IR::Var((*alias).to_string()), op.2])),
+            );
+            let body_ir = iter.next().unwrap();
+            let body = plan_query(body_ir, iter);
+            IR::For(Box::new((init, condition, next, body)))
+        }
+        x => {
+            let list = IR::Set("list".to_string(), Box::new(x));
             let init = IR::Set("i".to_string(), Box::new(IR::Integer(0)));
             let condition = IR::Lt(Box::new((
                 IR::Var("i".to_string()),
@@ -393,18 +404,7 @@ fn plan_unwind(expr: &QueryExprIR, iter: &mut std::slice::Iter<'_, QueryIR>, ali
                 ))),
             ])
         }
-        IR::Range(op) => {
-            let init = IR::Set((*alias).to_string(), Box::new(op.0));
-            let condition = IR::Le(Box::new((IR::Var((*alias).to_string()), op.1)));
-            let next = IR::Set(
-                (*alias).to_string(),
-                Box::new(IR::Add(vec![IR::Var((*alias).to_string()), op.2])),
-            );
-            let body_ir = iter.next().unwrap();
-            let body = plan_query(body_ir, iter);
-            IR::For(Box::new((init, condition, next, body)))
-        }
-        _ => unimplemented!(""),
+        
     }
 }
 
@@ -805,6 +805,9 @@ pub fn run(
             .reduce(|a, b| match (a, b) {
                 (Value::Int(a), Value::Int(b)) => Value::Int(a + b),
                 (Value::Float(a), Value::Float(b)) => Value::Float(a + b),
+                (Value::Array(a), Value::Array(b)) => {
+                    Value::Array(a.into_iter().chain(b.into_iter()).collect())
+                }
                 _ => Value::Null,
             })
             .unwrap(),

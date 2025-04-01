@@ -264,12 +264,6 @@ impl QueryIR {
             }
             Self::Unwind(l, v) => {
                 l.inner_validate(env)?;
-                if matches!(l, QueryExprIR::List(_))
-                    || (matches!(l, QueryExprIR::FuncInvocation(name, _) if name == "range"))
-                {
-                } else {
-                    return Err("Expected list or range in UNWIND".to_string());
-                }
                 if env.contains(v) {
                     return Err(format!("Duplicate alias {v}"));
                 }
