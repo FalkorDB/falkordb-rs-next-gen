@@ -100,15 +100,14 @@ impl Runtime {
                         })
                         .collect::<Vec<_>>();
                     runtime.nodes_created += 1;
-                    let filtered_attrs = attrs
+                    runtime.properties_set += attrs
                         .iter()
-                        .filter_map(|(k, v)| match v {
-                            Value::Null => None,
-                            _ => Some((k.to_string(), v.clone())),
+                        .map(|(k, v)| match v {
+                            Value::Null => 0,
+                            _ => 1,
                         })
-                        .collect::<BTreeMap<_, _>>();
-                    runtime.properties_set += filtered_attrs.len() as i32;
-                    g.create_node(&labels, &filtered_attrs)
+                        .sum::<i32>();
+                    g.create_node(&labels, attrs)
                 }
                 _ => Value::Null,
             },
@@ -138,15 +137,14 @@ impl Runtime {
                 [Value::String(relationship_type), Value::Node(from), Value::Node(to), Value::Map(attrs)] =>
                 {
                     runtime.relationships_created += 1;
-                    let filtered_attrs = attrs
+                    runtime.properties_set += attrs
                         .iter()
-                        .filter_map(|(k, v)| match v {
-                            Value::Null => None,
-                            _ => Some((k.to_string(), v.clone())),
+                        .map(|(k, v)| match v {
+                            Value::Null => 0,
+                            _ => 1,
                         })
-                        .collect::<BTreeMap<_, _>>();
-                    runtime.properties_set += filtered_attrs.len() as i32;
-                    g.create_relationship(relationship_type, *from, *to, &filtered_attrs)
+                        .sum::<i32>();
+                    g.create_relationship(relationship_type, *from, *to, attrs)
                 }
                 _ => todo!(),
             },
@@ -404,7 +402,6 @@ fn plan_unwind(expr: &QueryExprIR, iter: &mut std::slice::Iter<'_, QueryIR>, ali
                 ))),
             ])
         }
-        
     }
 }
 
