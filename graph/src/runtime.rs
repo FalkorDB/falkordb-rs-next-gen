@@ -178,7 +178,7 @@ impl Runtime {
             Value::Array(args) => match args.as_slice() {
                 [Value::Int(iter)] => runtime.iters[*iter as usize]
                     .next()
-                    .map_or_else(|| Value::Bool(false), |(n, _)| Value::Node(n)),
+                    .map_or_else(|| Value::Null, |(n, _)| Value::Node(n)),
                 _ => todo!(),
             },
             _ => todo!(),
@@ -451,7 +451,7 @@ fn plan_query(ir: &QueryIR, iter: &mut std::slice::Iter<QueryIR>) -> IR {
         QueryIR::Call(name, exprs) => IR::For(Box::new((
             IR::Block(vec![
                 IR::Set(
-                    "labels".to_string(),
+                    "res".to_string(),
                     Box::new(IR::FuncInvocation(
                         name.to_lowercase(),
                         exprs.iter().map(plan_expr).collect(),
@@ -461,14 +461,14 @@ fn plan_query(ir: &QueryIR, iter: &mut std::slice::Iter<QueryIR>) -> IR {
             ]),
             IR::Lt(Box::new((
                 IR::Var("i".to_string()),
-                IR::Length(Box::new(IR::Var("labels".to_string()))),
+                IR::Length(Box::new(IR::Var("res".to_string()))),
             ))),
             IR::Set(
                 "i".to_string(),
                 Box::new(IR::Add(vec![IR::Var("i".to_string()), IR::Integer(1)])),
             ),
             IR::Return(Box::new(IR::List(vec![IR::GetElement(Box::new((
-                IR::Var("labels".to_string()),
+                IR::Var("res".to_string()),
                 IR::Var("i".to_string()),
             )))]))),
         ))),
@@ -713,14 +713,14 @@ pub fn run(
         ),
         IR::Length(ir) => match run(vars, g, runtime, result_fn, ir) {
             Value::Array(arr) => Value::Int(arr.len() as _),
-            _ => todo!(),
+            _ => Value::Null,
         },
         IR::GetElement(op) => {
             let arr = run(vars, g, runtime, result_fn, &op.0);
             let i = run(vars, g, runtime, result_fn, &op.1);
             match (arr, i) {
                 (Value::Array(values), Value::Int(i)) => {
-                    if i < values.len() as _ {
+                    if i >= 0 && i < values.len() as _ {
                         values[i as usize].clone()
                     } else {
                         Value::Null
@@ -804,6 +804,7 @@ pub fn run(
             .map(|ir| run(vars, g, runtime, result_fn, ir))
             .reduce(|a, b| match (a, b) {
                 (Value::Int(a), Value::Int(b)) => Value::Int(a + b),
+                (Value::Float(a), Value::Float(b)) => Value::Float(a + b),
                 _ => Value::Null,
             })
             .unwrap(),

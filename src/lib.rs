@@ -1,10 +1,10 @@
-use graph::{graph::Graph, value::Value};
+use graph::{graph::Graph, parser::Parser, runtime::plan, value::Value};
 use redis_module::{
     native_types::RedisType, redis_module, redisvalue::RedisValueKey, Context, NextArg,
     RedisModuleTypeMethods, RedisResult, RedisString, RedisValue, Status,
     REDISMODULE_TYPE_METHOD_VERSION,
 };
-use std::os::raw::c_void;
+use std::{fmt::format, os::raw::c_void};
 
 static GRAPH_TYPE: RedisType = RedisType::new(
     "graphdata",
@@ -234,6 +234,37 @@ fn graph_ro_query(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     )
 }
 
+fn graph_parse(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+    let mut args = args.into_iter().skip(1);
+    let query = args.next_string()?;
+
+    let mut parser = Parser::new(&query);
+    match parser.parse() {
+        Ok(ir) => Ok(RedisValue::SimpleString(format!("{ir:?}"))),
+        Err(err) => {
+            ctx.reply_error_string(err.as_str());
+            Ok(RedisValue::NoReply)
+        }
+    }
+}
+
+fn graph_plan(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+    let mut args = args.into_iter().skip(1);
+    let query = args.next_string()?;
+
+    let mut parser = Parser::new(&query);
+    match parser.parse() {
+        Ok(ir) => {
+            let ir = plan(&ir, false);
+            Ok(RedisValue::SimpleString(format!("{ir:?}")))
+        },
+        Err(err) => {
+            ctx.reply_error_string(err.as_str());
+            Ok(RedisValue::NoReply)
+        }
+    }
+}
+
 fn graph_init(_: &Context, _: &Vec<RedisString>) -> Status {
     Graph::init();
     Status::Ok
@@ -251,5 +282,7 @@ redis_module! {
         ["graph.delete", graph_delete, "write deny-oom", 1, 1, 1, ""],
         ["graph.query", graph_query, "write deny-oom", 1, 1, 1, ""],
         ["graph.ro_query", graph_ro_query, "readonly", 1, 1, 1, ""],
+        ["graph.parse", graph_parse, "readonly", 0, 0, 0, ""],
+        ["graph.plan", graph_plan, "readonly", 0, 0, 0, ""],
     ],
 }
