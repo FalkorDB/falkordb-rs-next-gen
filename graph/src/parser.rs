@@ -307,7 +307,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_pattern(&mut self, clause: Token) -> Result<Pattern, String> {
-        let mut nodes = Vec::new();
+        let mut nodes = BTreeMap::new();
         let mut relationships = Vec::new();
         let mut paths = Vec::new();
         loop {
@@ -317,7 +317,7 @@ impl<'a> Parser<'a> {
                 let left = self.parse_node_pattern()?;
                 let mut left_alias = left.alias.clone();
                 vars.push(left_alias.clone());
-                nodes.push(left);
+                nodes.insert(left.alias.to_string(), left);
                 loop {
                     if let (Token::Dash | Token::LessThan, _) = self.lexer.current() {
                         let (relationship, right) = self.parse_relationship_pattern(left_alias)?;
@@ -325,7 +325,7 @@ impl<'a> Parser<'a> {
                         vars.push(right.alias.clone());
                         left_alias = right.alias.clone();
                         relationships.push(relationship);
-                        nodes.push(right);
+                        nodes.insert(right.alias.to_string(), right);
                     } else {
                         paths.push(PathPattern::new(vars, p));
                         break;
@@ -334,12 +334,12 @@ impl<'a> Parser<'a> {
             } else {
                 let left = self.parse_node_pattern()?;
                 let mut left_alias = left.alias.clone();
-                nodes.push(left);
+                nodes.insert(left.alias.to_string(), left);
                 while let (Token::Dash | Token::LessThan, _) = self.lexer.current() {
                     let (relationship, right) = self.parse_relationship_pattern(left_alias)?;
                     left_alias = right.alias.clone();
                     relationships.push(relationship);
-                    nodes.push(right);
+                    nodes.insert(right.alias.to_string(), right);
                 }
             }
 
@@ -358,7 +358,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        Ok(Pattern::new(nodes, relationships, paths))
+        Ok(Pattern::new(nodes.into_values().collect(), relationships, paths))
     }
 
     fn parse_primary_expr(&mut self) -> Result<QueryExprIR, String> {

@@ -133,10 +133,11 @@ impl Runtime {
         Value::Null
     }
 
-    fn create_relationship(g: &mut Graph, _runtime: &mut Self, args: Value) -> Value {
+    fn create_relationship(g: &mut Graph, runtime: &mut Self, args: Value) -> Value {
         match args {
             Value::Array(args) => match args.as_slice() {
                 [Value::String(relationship_type), Value::Node(from), Value::Node(to), Value::Map(attrs)] => {
+                    runtime.relationships_created += 1;
                     g.create_relationship(relationship_type, *from, *to, attrs)
                 }
                 _ => todo!(),

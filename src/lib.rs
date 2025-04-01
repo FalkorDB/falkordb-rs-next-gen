@@ -158,6 +158,7 @@ fn graph_query(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
                 RedisValue::SimpleString(format!("Labels added: {}", summary.labels_added)),
                 RedisValue::SimpleString(format!("Nodes created: {}", summary.nodes_created)),
                 RedisValue::SimpleString(format!("Properties set: {}", summary.properties_set)),
+                RedisValue::SimpleString(format!("Relationships created: {}", summary.relationships_created)),
             ],
         ]
         .into()),
