@@ -87,30 +87,33 @@ impl Runtime {
 
     fn create_node(g: &mut Graph, runtime: &mut Self, args: Value) -> Value {
         match args {
-            Value::Array(args) => match args.as_slice() {
-                [Value::Array(raw_labels), Value::Map(attrs)] => {
-                    let labels = raw_labels
-                        .iter()
-                        .filter_map(|label| {
-                            if let Value::String(label) = label {
-                                Some(label.to_string())
-                            } else {
-                                None
-                            }
-                        })
-                        .collect::<Vec<_>>();
-                    runtime.nodes_created += 1;
-                    runtime.properties_set += attrs
-                        .iter()
-                        .map(|(k, v)| match v {
-                            Value::Null => 0,
-                            _ => 1,
-                        })
-                        .sum::<i32>();
-                    g.create_node(&labels, attrs)
+            Value::Array(args) => {
+                let mut iter = args.into_iter();
+                match (iter.next(), iter.next(), iter.next()) {
+                    (Some(Value::Array(raw_labels)), Some(Value::Map(attrs)), None) => {
+                        let labels = raw_labels
+                            .iter()
+                            .filter_map(|label| {
+                                if let Value::String(label) = label {
+                                    Some(label.to_string())
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect::<Vec<_>>();
+                        runtime.nodes_created += 1;
+                        runtime.properties_set += attrs
+                            .iter()
+                            .map(|(k, v)| match v {
+                                Value::Null => 0,
+                                _ => 1,
+                            })
+                            .sum::<i32>();
+                        g.create_node(&labels, attrs)
+                    }
+                    _ => Value::Null,
                 }
-                _ => Value::Null,
-            },
+            }
             _ => Value::Null,
         }
     }
@@ -133,21 +136,35 @@ impl Runtime {
 
     fn create_relationship(g: &mut Graph, runtime: &mut Self, args: Value) -> Value {
         match args {
-            Value::Array(args) => match args.as_slice() {
-                [Value::String(relationship_type), Value::Node(from), Value::Node(to), Value::Map(attrs)] =>
-                {
-                    runtime.relationships_created += 1;
-                    runtime.properties_set += attrs
-                        .iter()
-                        .map(|(k, v)| match v {
-                            Value::Null => 0,
-                            _ => 1,
-                        })
-                        .sum::<i32>();
-                    g.create_relationship(relationship_type, *from, *to, attrs)
+            Value::Array(args) => {
+                let mut iter = args.into_iter();
+                match (
+                    iter.next(),
+                    iter.next(),
+                    iter.next(),
+                    iter.next(),
+                    iter.next(),
+                ) {
+                    (
+                        Some(Value::String(relationship_type)),
+                        Some(Value::Node(from)),
+                        Some(Value::Node(to)),
+                        Some(Value::Map(attrs)),
+                        None,
+                    ) => {
+                        runtime.relationships_created += 1;
+                        runtime.properties_set += attrs
+                            .iter()
+                            .map(|(k, v)| match v {
+                                Value::Null => 0,
+                                _ => 1,
+                            })
+                            .sum::<i32>();
+                        g.create_relationship(&relationship_type, from, to, attrs)
+                    }
+                    _ => todo!(),
                 }
-                _ => todo!(),
-            },
+            }
             _ => todo!(),
         }
     }

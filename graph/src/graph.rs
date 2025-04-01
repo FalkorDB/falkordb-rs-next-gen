@@ -294,7 +294,7 @@ impl Graph {
         property_id as u64
     }
 
-    pub fn create_node(&mut self, labels: &Vec<String>, attrs: &BTreeMap<String, Value>) -> Value {
+    pub fn create_node(&mut self, labels: &Vec<String>, attrs: BTreeMap<String, Value>) -> Value {
         let id = self.deleted_nodes.min().unwrap_or(self.node_count);
         self.deleted_nodes.remove(id);
         self.node_count += 1;
@@ -313,11 +313,11 @@ impl Graph {
 
         let mut map = BTreeMap::new();
         for (key, value) in attrs {
-            if *value == Value::Null {
+            if value == Value::Null {
                 continue;
             }
-            let property_id = self.get_or_add_node_property_id(key);
-            map.insert(property_id, value.to_owned());
+            let property_id = self.get_or_add_node_property_id(&key);
+            map.insert(property_id, value);
         }
         self.node_properties_map.insert(id, map);
 
@@ -362,7 +362,7 @@ impl Graph {
         relationship_type: &String,
         from: u64,
         to: u64,
-        attrs: &BTreeMap<String, Value>,
+        attrs: BTreeMap<String, Value>,
     ) -> Value {
         let id = self
             .deleted_relationships
@@ -389,11 +389,11 @@ impl Graph {
 
         let mut map = BTreeMap::new();
         for (key, value) in attrs {
-            if *value == Value::Null {
+            if value == Value::Null {
                 continue;
             }
-            let property_id = self.get_relationship_property_id(key);
-            map.insert(property_id, value.to_owned());
+            let property_id = self.get_relationship_property_id(&key);
+            map.insert(property_id, value);
         }
         self.relationship_properties_map.insert(id, map);
 
@@ -439,7 +439,7 @@ impl Graph {
                 .resize(self.relationship_cap, self.relationship_types.len() as u64);
         }
     }
-    
+
     pub fn get_node_properties(&self, id: u64) -> &BTreeMap<u64, Value> {
         self.node_properties_map
             .get(&id)

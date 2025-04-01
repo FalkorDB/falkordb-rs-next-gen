@@ -4,7 +4,7 @@ use redis_module::{
     RedisModuleTypeMethods, RedisResult, RedisString, RedisValue, Status,
     REDISMODULE_TYPE_METHOD_VERSION,
 };
-use std::{fmt::format, os::raw::c_void};
+use std::os::raw::c_void;
 
 static GRAPH_TYPE: RedisType = RedisType::new(
     "graphdata",
