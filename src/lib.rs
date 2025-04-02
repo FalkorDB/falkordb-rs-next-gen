@@ -1,4 +1,4 @@
-use graph::{graph::Graph, parser::Parser, runtime::plan, value::Value};
+use graph::{graph::Graph, cypher::Parser, planner::plan, runtime::Value};
 use redis_module::{
     native_types::RedisType, redis_module, redisvalue::RedisValueKey, Context, NextArg,
     RedisModuleTypeMethods, RedisResult, RedisString, RedisValue, Status,
@@ -157,7 +157,7 @@ fn graph_query(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     let graph = if let Some(graph) = key.get_value::<Graph>(&GRAPH_TYPE)? {
         graph
     } else {
-        let value = Graph::new(1024, 1024);
+        let value = Graph::new(16384, 16384);
 
         key.set_value(&GRAPH_TYPE, value)?;
         key.get_value::<Graph>(&GRAPH_TYPE)?.unwrap()
