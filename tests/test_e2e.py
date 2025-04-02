@@ -33,140 +33,152 @@ def teardown_module(module):
     client.connection.shutdown(nosave=True)
     redis_server.wait()
 
+def query(query: str, write: bool = False):
+    if write:
+        return g.query(query)
+    else:
+        write_res = g.query(query)
+        read_res = g.ro_query(query)
+        assert write_res.result_set == read_res.result_set
+        return write_res
+
 def test_return_values():
-    res = g.query("RETURN null")
+    res = query("RETURN null")
     assert res.result_set == [[None]]
 
     for b in [True, False]:
-        res = g.query(f"RETURN {b}")
+        res = query(f"RETURN {b}")
         assert res.result_set == [[1 if b else 0]]
 
     for i in range(-10, 10):
-        res = g.query(f"RETURN {i}")
+        res = query(f"RETURN {i}")
         assert res.result_set == [[i]]
 
     for f in map(lambda x: x/10.0, range(-100, 100, 1)):
-        res = g.query(f"RETURN {f}")
+        res = query(f"RETURN {f}")
         assert res.result_set == [[f]]
 
-    res = g.query("RETURN 'Avi'")
+    res = query("RETURN 'Avi'")
     assert res.result_set == [["Avi"]]
 
-    res = g.query("RETURN []")
+    res = query("RETURN []")
     assert res.result_set == [[[]]]
 
-    res = g.query("RETURN ['Avi', [1, 2]]")
+    res = query("RETURN ['Avi', [1, 2]]")
     assert res.result_set == [[["Avi", [1, 2]]]]
 
-    res = g.query("RETURN {}")
+    res = query("RETURN {}")
     assert res.result_set == [[{}]]
 
-    res = g.query("RETURN {a: 'Avi', b: 42}")
+    res = query("RETURN {a: 'Avi', b: 42}")
     assert res.result_set == [[{"a": "Avi", "b": 42}]]
 
-    res = g.query("WITH 1 AS a, 'Avi' AS b RETURN b, a")
+    res = query("RETURN {a: 'Avi', b: 42}.a")
+    assert res.result_set == [["Avi"]]
+
+    res = query("WITH 1 AS a, 'Avi' AS b RETURN b, a")
     assert res.result_set == [['Avi', 1]]
 
-    res = g.query("WITH 1 AS a RETURN a")
+    res = query("WITH 1 AS a RETURN a")
     assert res.result_set == [[1]]
 
 def test_operators():
     for a in [True, False]:
         for b in [True, False]:
-            res = g.query(f"RETURN {a} AND {b}")
+            res = query(f"RETURN {a} AND {b}")
             assert res.result_set == [[1 if a and b else 0]]
 
     for a in [True, False]:
         for b in [True, False]:
             for c in [True, False]:
-                res = g.query(f"RETURN {a} AND {b} AND {c}")
+                res = query(f"RETURN {a} AND {b} AND {c}")
                 assert res.result_set == [[1 if a and b and c else 0]]
 
     for a in [True, False]:
         for b in [True, False]:
-            res = g.query(f"RETURN {a} OR {b}")
+            res = query(f"RETURN {a} OR {b}")
             assert res.result_set == [[1 if a or b else 0]]
 
     for a in [True, False]:
         for b in [True, False]:
             for c in [True, False]:
-                res = g.query(f"RETURN {a} OR {b} OR {c}")
+                res = query(f"RETURN {a} OR {b} OR {c}")
                 assert res.result_set == [[1 if a or b or c else 0]]
 
     for a in [True, False]:
         for b in [True, False]:
-            res = g.query(f"RETURN {a} = {b}")
+            res = query(f"RETURN {a} = {b}")
             assert res.result_set == [[1 if a == b else 0]]
 
     for a in range(-10, 10):
         for b in range(-10, 10):
-            res = g.query(f"RETURN {a} = {b}")
+            res = query(f"RETURN {a} = {b}")
             assert res.result_set == [[1 if a == b else 0]]
 
     for a in range(-10, 10):
         for b in range(-10, 10):
-            res = g.query(f"RETURN {a} + {b} * ({a} + {b})")
+            res = query(f"RETURN {a} + {b} * ({a} + {b})")
             assert res.result_set == [[a + b * (a + b)]]
 
     for a in range(5):
-        res = g.query(f"RETURN [][{a}]")
+        res = query(f"RETURN [][{a}]")
         assert res.result_set == [[None]]
 
     for a in range(5):
-        res = g.query(f"RETURN [0, 1, 2, 3, 4][{a}]")
+        res = query(f"RETURN [0, 1, 2, 3, 4][{a}]")
         assert res.result_set == [[[0, 1, 2, 3, 4][a]]]
 
-    res = g.query(f"UNWIND [NULL, true, false, 1, 'Avi'] AS x RETURN x IS NULL")
+    res = query(f"UNWIND [NULL, true, false, 1, 'Avi'] AS x RETURN x IS NULL")
     assert res.result_set == [[True], [False], [False], [False], [False]]
 
 def test_unwind():
-    res = g.query("UNWIND [1, 2, 3] AS x RETURN x")
+    res = query("UNWIND [1, 2, 3] AS x RETURN x")
     assert res.result_set == [[1], [2], [3]]
 
-    res = g.query("UNWIND range(1, 3) AS x RETURN x")
+    res = query("UNWIND range(1, 3) AS x RETURN x")
     assert res.result_set == [[1], [2], [3]]
 
-    res = g.query("UNWIND range(1, 4, 2) AS x RETURN x")
+    res = query("UNWIND range(1, 4, 2) AS x RETURN x")
     assert res.result_set == [[1], [3]]
 
-    res = g.query("UNWIND range(1, 3) AS x UNWIND range(1, 3) AS y RETURN x, y")
+    res = query("UNWIND range(1, 3) AS x UNWIND range(1, 3) AS y RETURN x, y")
     assert res.result_set == [[1, 1], [1, 2], [1, 3], [2, 1], [2, 2], [2, 3], [3, 1], [3, 2], [3, 3]]
 
-    res = g.query("UNWIND range(1, 3) AS x UNWIND range(1, 3) AS y WHERE x = 2 RETURN x, y")
+    res = query("UNWIND range(1, 3) AS x UNWIND range(1, 3) AS y WHERE x = 2 RETURN x, y")
     assert res.result_set == [[2, 1], [2, 2], [2, 3]]
     
 def test_create_delete_match():
-    res = g.query("CREATE ()")
+    res = query("CREATE ()", write=True)
     assert res.result_set == []
     assert res.nodes_created == 1
 
-    res = g.query("MATCH (n) RETURN n")
+    res = query("MATCH (n) RETURN n")
     assert res.result_set == [[Node(0)]]
 
-    res = g.query("MATCH (n) DELETE n")
+    res = query("MATCH (n) DELETE n", write=True)
     assert res.nodes_deleted == 1
 
-    res = g.query("MATCH (n) RETURN n")
+    res = query("MATCH (n) RETURN n")
     assert res.result_set == []
 
-    res = g.query("UNWIND range(3) AS x CREATE (n:N) RETURN n")
+    res = query("UNWIND range(3) AS x CREATE (n:N) RETURN n", write=True)
     assert res.result_set == [[Node(0, labels="N")], [Node(1, labels="N")], [Node(2, labels="N")]]
     assert res.nodes_created == 3
 
-    res = g.query("MATCH (n:N), (m:N) RETURN n, m")
+    res = query("MATCH (n:N), (m:N) RETURN n, m")
     assert res.result_set == [[Node(0, labels="N"), Node(0, labels="N")], [Node(0, labels="N"), Node(1, labels="N")], [Node(0, labels="N"), Node(2, labels="N")], [Node(1, labels="N"), Node(0, labels="N")], [Node(1, labels="N"), Node(1, labels="N")], [Node(1, labels="N"), Node(2, labels="N")], [Node(2, labels="N"), Node(0, labels="N")], [Node(2, labels="N"), Node(1, labels="N")], [Node(2, labels="N"), Node(2, labels="N")]]
 
-    res = g.query("MATCH (n:N) DELETE n")
+    res = query("MATCH (n:N) DELETE n", write=True)
     assert res.nodes_deleted == 3
 
-    res = g.query("MATCH (n:N) RETURN n")
+    res = query("MATCH (n:N) RETURN n")
     assert res.result_set == []
 
-    res = g.query("UNWIND range(3) AS x CREATE (n:N {v: x})-[r:R {v: x}]->(m:M {v: x}) RETURN n, r, m")
+    res = query("UNWIND range(3) AS x CREATE (n:N {v: x})-[r:R {v: x}]->(m:M {v: x}) RETURN n, r, m", write=True)
     assert res.result_set == [[Node(0, labels="N", properties={"v": 0}), Edge(0, "R", 1, 0, properties={"v": 0}), Node(1, labels="M", properties={"v": 0})], [Node(2, labels="N", properties={"v": 1}), Edge(2, "R", 3, 1, properties={"v": 1}), Node(3, labels="M", properties={"v": 1})], [Node(4, labels="N", properties={"v": 2}), Edge(4, "R", 5, 2, properties={"v": 2}), Node(5, labels="M", properties={"v": 2})]]
 
-    res = g.query("MATCH (n:N) RETURN n.v")
+    res = query("MATCH (n:N) RETURN n.v")
     assert res.result_set == [[0], [1], [2]]
 
 def test_large_graph():
-    g.query("UNWIND range(1024) AS x CREATE (n:N {v: x})-[r:R {v: x}]->(m:M {v: x})")
+    query("UNWIND range(1024) AS x CREATE (n:N {v: x})-[r:R {v: x}]->(m:M {v: x})", write=True)
