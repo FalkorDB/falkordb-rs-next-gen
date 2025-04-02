@@ -45,7 +45,7 @@ unsafe extern "C" fn my_free(value: *mut c_void) {
 
 fn raw_value_to_redis_value(g: &Graph, r: &Value) -> RedisValue {
     match r {
-        Value::Array(values) => RedisValue::Array(
+        Value::List(values) => RedisValue::Array(
             values
                 .iter()
                 .map(|v| inner_raw_value_to_redis_value(g, v))
@@ -68,7 +68,7 @@ fn inner_raw_value_to_redis_value(g: &Graph, r: &Value) -> RedisValue {
             RedisValue::Integer(2),
             RedisValue::SimpleString(x.to_string()),
         ]),
-        Value::Array(values) => RedisValue::Array(vec![
+        Value::List(values) => RedisValue::Array(vec![
             RedisValue::Integer(6),
             RedisValue::Array(
                 values

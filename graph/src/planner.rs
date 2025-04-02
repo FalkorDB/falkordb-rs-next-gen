@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, vec::IntoIter};
 
-use crate::ast::{Pattern, QueryExprIR, QueryIR};
+use crate::ast::{NodePattern, Pattern, QueryExprIR, QueryIR};
 
 #[derive(Clone, Debug)]
 pub enum IR {
@@ -223,42 +223,50 @@ fn plan_unwind(expr: QueryExprIR, iter: &mut IntoIter<QueryIR>, alias: String) -
     }
 }
 
-fn plan_match(pattern: Pattern, iter: &mut IntoIter<QueryIR>) -> IR {
-    let n = pattern.nodes.first().unwrap();
+fn plan_node_traverse(node: NodePattern, body: IR) -> IR {
     let labels = IR::List(
-        n.labels
+        node.labels
             .iter()
             .map(|l| IR::String((*l).to_string()))
             .collect(),
     );
     let vec = vec![
         IR::Set(
-            "iter".to_string(),
+            format!("iter_{}", node.alias),
             Box::new(IR::FuncInvocation(
                 String::from("create_node_iter"),
                 vec![labels],
             )),
         ),
         IR::Set(
-            n.alias.to_string(),
+            node.alias.to_string(),
             Box::new(IR::FuncInvocation(
                 String::from("next_node"),
-                vec![IR::Var("iter".to_string())],
+                vec![IR::Var(format!("iter_{}", node.alias))],
             )),
         ),
     ];
     let init = IR::Block(vec);
-    let condition = IR::IsNode(Box::new(IR::Var(n.alias.to_string())));
+    let condition = IR::IsNode(Box::new(IR::Var(node.alias.to_string())));
     let next = IR::Set(
-        n.alias.to_string(),
+        node.alias.to_string(),
         Box::new(IR::FuncInvocation(
             String::from("next_node"),
-            vec![IR::Var("iter".to_string())],
+            vec![IR::Var(format!("iter_{}", node.alias))],
         )),
     );
-    let body_ir = iter.next().unwrap();
-    let body = plan_query(body_ir, iter);
     IR::For(Box::new((init, condition, next, body)))
+}
+
+fn plan_match(pattern: Pattern, iter: &mut IntoIter<QueryIR>) -> IR {
+    if pattern.relationships.is_empty() {
+        let mut body = plan_query(iter.next().unwrap(), iter);
+        for node in pattern.nodes.into_iter().rev() {
+            body = plan_node_traverse(node, body);
+        }
+        return body;
+    }
+    IR::Null
 }
 
 fn plan_query(ir: QueryIR, iter: &mut IntoIter<QueryIR>) -> IR {

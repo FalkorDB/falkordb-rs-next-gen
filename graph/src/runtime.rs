@@ -9,7 +9,7 @@ pub enum Value {
     Int(i64),
     Float(f64),
     String(String),
-    Array(Vec<Value>),
+    List(Vec<Value>),
     Map(BTreeMap<String, Value>),
     Node(u64),
     Relationship(u64, u64, u64),
@@ -59,10 +59,10 @@ impl Runtime {
 
     fn create_node(g: &mut Graph, runtime: &mut Self, args: Value) -> Value {
         match args {
-            Value::Array(args) => {
+            Value::List(args) => {
                 let mut iter = args.into_iter();
                 match (iter.next(), iter.next(), iter.next()) {
-                    (Some(Value::Array(raw_labels)), Some(Value::Map(attrs)), None) => {
+                    (Some(Value::List(raw_labels)), Some(Value::Map(attrs)), None) => {
                         let labels = raw_labels
                             .into_iter()
                             .filter_map(|label| {
@@ -92,7 +92,7 @@ impl Runtime {
 
     fn delete_entity(g: &mut Graph, runtime: &mut Self, args: Value) -> Value {
         match args {
-            Value::Array(nodes) => {
+            Value::List(nodes) => {
                 for n in nodes {
                     if let Value::Node(id) = n {
                         runtime.nodes_deleted += 1;
@@ -108,7 +108,7 @@ impl Runtime {
 
     fn create_relationship(g: &mut Graph, runtime: &mut Self, args: Value) -> Value {
         match args {
-            Value::Array(args) => {
+            Value::List(args) => {
                 let mut iter = args.into_iter();
                 match (
                     iter.next(),
@@ -143,10 +143,10 @@ impl Runtime {
 
     fn create_node_iter(g: &Graph, runtime: &mut Self, args: Value) -> Value {
         match args {
-            Value::Array(args) => {
+            Value::List(args) => {
                 let mut iter = args.into_iter();
                 match (iter.next(), iter.next()) {
-                    (Some(Value::Array(raw_labels)), None) => {
+                    (Some(Value::List(raw_labels)), None) => {
                         runtime.iters.push(
                             g.get_nodes(
                                 raw_labels
@@ -174,7 +174,7 @@ impl Runtime {
 
     fn next_node(_g: &Graph, runtime: &mut Self, args: Value) -> Value {
         match args {
-            Value::Array(args) => match args.as_slice() {
+            Value::List(args) => match args.as_slice() {
                 [Value::Int(iter)] => runtime.iters[*iter as usize]
                     .next()
                     .map_or_else(|| Value::Null, |(n, _)| Value::Node(n)),
@@ -186,7 +186,7 @@ impl Runtime {
 
     fn property(g: &Graph, _runtime: &mut Self, args: Value) -> Value {
         match args {
-            Value::Array(arr) => match arr.as_slice() {
+            Value::List(arr) => match arr.as_slice() {
                 [Value::Node(node_id), Value::String(property)] => g
                     .get_node_property_id(property)
                     .map_or(Value::Null, |property_id| {
@@ -203,7 +203,7 @@ impl Runtime {
     }
 
     fn labels(g: &Graph, _runtime: &mut Self, _args: Value) -> Value {
-        Value::Array(
+        Value::List(
             g.get_labels()
                 .map(|n| Value::String(n.to_string()))
                 .collect(),
@@ -211,7 +211,7 @@ impl Runtime {
     }
 
     fn types(g: &Graph, _runtime: &mut Self, _args: Value) -> Value {
-        Value::Array(
+        Value::List(
             g.get_types()
                 .map(|n| Value::String(n.to_string()))
                 .collect(),
@@ -219,7 +219,7 @@ impl Runtime {
     }
 
     fn properties(g: &Graph, _runtime: &mut Self, _args: Value) -> Value {
-        Value::Array(
+        Value::List(
             g.get_properties()
                 .map(|n| Value::String(n.to_string()))
                 .collect(),
@@ -243,20 +243,20 @@ pub fn ro_run(
         IR::String(x) => Value::String(x.to_string()),
         IR::Var(x) => vars.get(x).unwrap().to_owned(),
         IR::Param(_) => todo!(),
-        IR::List(irs) => Value::Array(
+        IR::List(irs) => Value::List(
             irs.iter()
                 .map(|ir| ro_run(vars, g, runtime, result_fn, ir))
                 .collect(),
         ),
         IR::Length(ir) => match ro_run(vars, g, runtime, result_fn, ir) {
-            Value::Array(arr) => Value::Int(arr.len() as _),
+            Value::List(arr) => Value::Int(arr.len() as _),
             _ => todo!(),
         },
         IR::GetElement(op) => {
             let arr = ro_run(vars, g, runtime, result_fn, &op.0);
             let i = ro_run(vars, g, runtime, result_fn, &op.1);
             match (arr, i) {
-                (Value::Array(values), Value::Int(i)) => {
+                (Value::List(values), Value::Int(i)) => {
                     if i < values.len() as _ {
                         values[i as usize].clone()
                     } else {
@@ -381,7 +381,7 @@ pub fn ro_run(
                 .iter()
                 .map(|ir| ro_run(vars, g, runtime, result_fn, ir))
                 .collect();
-            runtime.read_functions[name](g, runtime, Value::Array(args))
+            runtime.read_functions[name](g, runtime, Value::List(args))
         }
         IR::Map(items) => Value::Map(
             items
@@ -436,20 +436,20 @@ pub fn run(
         IR::String(x) => Value::String(x.to_string()),
         IR::Var(x) => vars.get(x).unwrap_or(&Value::Null).to_owned(),
         IR::Param(_) => todo!(),
-        IR::List(irs) => Value::Array(
+        IR::List(irs) => Value::List(
             irs.iter()
                 .map(|ir| run(vars, g, runtime, result_fn, ir))
                 .collect(),
         ),
         IR::Length(ir) => match run(vars, g, runtime, result_fn, ir) {
-            Value::Array(arr) => Value::Int(arr.len() as _),
+            Value::List(arr) => Value::Int(arr.len() as _),
             _ => Value::Null,
         },
         IR::GetElement(op) => {
             let arr = run(vars, g, runtime, result_fn, &op.0);
             let i = run(vars, g, runtime, result_fn, &op.1);
             match (arr, i) {
-                (Value::Array(values), Value::Int(i)) => {
+                (Value::List(values), Value::Int(i)) => {
                     if i >= 0 && i < values.len() as _ {
                         values[i as usize].clone()
                     } else {
@@ -541,8 +541,8 @@ pub fn run(
             .reduce(|a, b| match (a, b) {
                 (Value::Int(a), Value::Int(b)) => Value::Int(a + b),
                 (Value::Float(a), Value::Float(b)) => Value::Float(a + b),
-                (Value::Array(a), Value::Array(b)) => {
-                    Value::Array(a.into_iter().chain(b).collect())
+                (Value::List(a), Value::List(b)) => {
+                    Value::List(a.into_iter().chain(b).collect())
                 }
                 _ => Value::Null,
             })
@@ -583,9 +583,9 @@ pub fn run(
             let mut args = Vec::with_capacity(irs.len());
             args.extend(irs.iter().map(|ir| run(vars, g, runtime, result_fn, ir)));
             if runtime.write_functions.contains_key(name) {
-                runtime.write_functions[name](g, runtime, Value::Array(args))
+                runtime.write_functions[name](g, runtime, Value::List(args))
             } else if runtime.read_functions.contains_key(name) {
-                runtime.read_functions[name](g, runtime, Value::Array(args))
+                runtime.read_functions[name](g, runtime, Value::List(args))
             } else {
                 Value::Null
             }

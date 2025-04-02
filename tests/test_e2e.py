@@ -153,6 +153,9 @@ def test_create_delete_match():
     assert res.result_set == [[Node(0, labels="N")], [Node(1, labels="N")], [Node(2, labels="N")]]
     assert res.nodes_created == 3
 
+    res = g.query("MATCH (n:N), (m:N) RETURN n, m")
+    assert res.result_set == [[Node(0, labels="N"), Node(0, labels="N")], [Node(0, labels="N"), Node(1, labels="N")], [Node(0, labels="N"), Node(2, labels="N")], [Node(1, labels="N"), Node(0, labels="N")], [Node(1, labels="N"), Node(1, labels="N")], [Node(1, labels="N"), Node(2, labels="N")], [Node(2, labels="N"), Node(0, labels="N")], [Node(2, labels="N"), Node(1, labels="N")], [Node(2, labels="N"), Node(2, labels="N")]]
+
     res = g.query("MATCH (n:N) DELETE n")
     assert res.nodes_deleted == 3
 
