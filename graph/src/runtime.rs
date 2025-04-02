@@ -241,7 +241,7 @@ pub fn ro_run(
         IR::Integer(x) => Value::Int(*x),
         IR::Float(x) => Value::Float(*x),
         IR::String(x) => Value::String(x.to_string()),
-        IR::Var(x) => vars.get(x).unwrap().to_owned(),
+        IR::Var(x) => vars.get(x).unwrap_or(&Value::Null).to_owned(),
         IR::Param(_) => todo!(),
         IR::List(irs) => Value::List(
             irs.iter()
@@ -250,23 +250,23 @@ pub fn ro_run(
         ),
         IR::Length(ir) => match ro_run(vars, g, runtime, result_fn, ir) {
             Value::List(arr) => Value::Int(arr.len() as _),
-            _ => todo!(),
+            _ => Value::Null,
         },
         IR::GetElement(op) => {
             let arr = ro_run(vars, g, runtime, result_fn, &op.0);
             let i = ro_run(vars, g, runtime, result_fn, &op.1);
             match (arr, i) {
                 (Value::List(values), Value::Int(i)) => {
-                    if i < values.len() as _ {
+                    if i >= 0 && i < values.len() as _ {
                         values[i as usize].clone()
                     } else {
                         Value::Null
                     }
                 }
-                _ => todo!(),
+                _ => Value::Null,
             }
         }
-        IR::Range(_) => todo!(),
+        IR::Range(_) => Value::Null,
         IR::IsNull(ir) => match ro_run(vars, g, runtime, result_fn, ir) {
             Value::Null => Value::Bool(true),
             _ => Value::Bool(false),
@@ -284,19 +284,25 @@ pub fn ro_run(
 
             Value::Bool(false)
         }
-        IR::Xor(irs) => todo!(),
+        IR::Xor(irs) => Value::Null,
         IR::And(irs) => {
+            let mut is_null = false;
             for ir in irs {
-                if matches!(ro_run(vars, g, runtime, result_fn, ir), Value::Bool(false)) {
-                    return Value::Bool(false);
+                match ro_run(vars, g, runtime, result_fn, ir) {
+                    Value::Bool(false) => return Value::Bool(false),
+                    Value::Null => is_null = true,
+                    _ => {}
                 }
+            }
+            if is_null {
+                return Value::Null;
             }
 
             Value::Bool(true)
         }
         IR::Not(ir) => match ro_run(vars, g, runtime, result_fn, ir) {
             Value::Bool(b) => Value::Bool(!b),
-            _ => todo!(),
+            _ => Value::Null,
         },
         IR::Eq(irs) => irs
             .iter()
@@ -313,35 +319,39 @@ pub fn ro_run(
             ro_run(vars, g, runtime, result_fn, &op.1),
         ) {
             (Value::Int(a), Value::Int(b)) => Value::Bool(a < b),
-            _ => todo!(),
+            _ => Value::Null,
         },
         IR::Gt(op) => match (
             ro_run(vars, g, runtime, result_fn, &op.0),
             ro_run(vars, g, runtime, result_fn, &op.1),
         ) {
             (Value::Int(a), Value::Int(b)) => Value::Bool(a > b),
-            _ => todo!(),
+            _ => Value::Null,
         },
         IR::Le(op) => match (
             ro_run(vars, g, runtime, result_fn, &op.0),
             ro_run(vars, g, runtime, result_fn, &op.1),
         ) {
             (Value::Int(a), Value::Int(b)) => Value::Bool(a <= b),
-            _ => todo!(),
+            _ => Value::Null,
         },
         IR::Ge(op) => match (
             ro_run(vars, g, runtime, result_fn, &op.0),
             ro_run(vars, g, runtime, result_fn, &op.1),
         ) {
             (Value::Int(a), Value::Int(b)) => Value::Bool(a >= b),
-            _ => todo!(),
+            _ => Value::Null,
         },
         IR::Add(irs) => irs
             .iter()
             .map(|ir| ro_run(vars, g, runtime, result_fn, ir))
             .reduce(|a, b| match (a, b) {
                 (Value::Int(a), Value::Int(b)) => Value::Int(a + b),
-                _ => todo!(),
+                (Value::Float(a), Value::Float(b)) => Value::Float(a + b),
+                (Value::List(a), Value::List(b)) => {
+                    Value::List(a.into_iter().chain(b).collect())
+                }
+                _ => Value::Null,
             })
             .unwrap(),
         IR::Sub(irs) => irs
@@ -349,7 +359,7 @@ pub fn ro_run(
             .map(|ir| ro_run(vars, g, runtime, result_fn, ir))
             .reduce(|a, b| match (a, b) {
                 (Value::Int(a), Value::Int(b)) => Value::Int(a - b),
-                _ => todo!(),
+                _ => Value::Null,
             })
             .unwrap(),
         IR::Mul(irs) => irs
@@ -357,7 +367,7 @@ pub fn ro_run(
             .map(|ir| ro_run(vars, g, runtime, result_fn, ir))
             .reduce(|a, b| match (a, b) {
                 (Value::Int(a), Value::Int(b)) => Value::Int(a * b),
-                _ => todo!(),
+                _ => Value::Null,
             })
             .unwrap(),
         IR::Div(irs) => irs
@@ -365,7 +375,7 @@ pub fn ro_run(
             .map(|ir| ro_run(vars, g, runtime, result_fn, ir))
             .reduce(|a, b| match (a, b) {
                 (Value::Int(a), Value::Int(b)) => Value::Int(a / b),
-                _ => todo!(),
+                _ => Value::Null,
             })
             .unwrap(),
         IR::Pow(irs) => irs
@@ -373,7 +383,7 @@ pub fn ro_run(
             .map(|ir| ro_run(vars, g, runtime, result_fn, ir))
             .reduce(|a, b| match (a, b) {
                 (Value::Int(a), Value::Int(b)) => Value::Int(a ^ b),
-                _ => todo!(),
+                _ => Value::Null,
             })
             .unwrap(),
         IR::FuncInvocation(name, irs) => {

@@ -73,9 +73,6 @@ def test_return_values():
     res = query("RETURN {a: 'Avi', b: 42}")
     assert res.result_set == [[{"a": "Avi", "b": 42}]]
 
-    res = query("RETURN {a: 'Avi', b: 42}.a")
-    assert res.result_set == [["Avi"]]
-
     res = query("WITH 1 AS a, 'Avi' AS b RETURN b, a")
     assert res.result_set == [['Avi', 1]]
 
@@ -120,12 +117,20 @@ def test_operators():
             res = query(f"RETURN {a} + {b} * ({a} + {b})")
             assert res.result_set == [[a + b * (a + b)]]
 
+    for i, a in enumerate([True, 1, 'Avi', [1]]):
+        res = query(f"RETURN {{a0: true, a1: 1, a2: 'Avi', a3: [1]}}.a{i}")
+        assert res.result_set == [[a]]
+
     for a in range(5):
         res = query(f"RETURN [][{a}]")
         assert res.result_set == [[None]]
 
     for a in range(5):
         res = query(f"RETURN [0, 1, 2, 3, 4][{a}]")
+        assert res.result_set == [[[0, 1, 2, 3, 4][a]]]
+
+    for a in range(5):
+        res = query(f"RETURN [[0, 1, 2, 3, 4]][0][{a}]")
         assert res.result_set == [[[0, 1, 2, 3, 4][a]]]
 
     res = query(f"UNWIND [NULL, true, false, 1, 'Avi'] AS x RETURN x IS NULL")

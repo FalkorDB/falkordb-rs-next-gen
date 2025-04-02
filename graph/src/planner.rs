@@ -223,7 +223,7 @@ fn plan_unwind(expr: QueryExprIR, iter: &mut IntoIter<QueryIR>, alias: String) -
     }
 }
 
-fn plan_node_traverse(node: NodePattern, body: IR) -> IR {
+fn plan_node_scan(node: NodePattern, body: IR) -> IR {
     let labels = IR::List(
         node.labels
             .iter()
@@ -262,7 +262,7 @@ fn plan_match(pattern: Pattern, iter: &mut IntoIter<QueryIR>) -> IR {
     if pattern.relationships.is_empty() {
         let mut body = plan_query(iter.next().unwrap(), iter);
         for node in pattern.nodes.into_iter().rev() {
-            body = plan_node_traverse(node, body);
+            body = plan_node_scan(node, body);
         }
         return body;
     }

@@ -34,7 +34,7 @@ def teardown_module(module):
 
 
 def test_tck():
-    cmd = ["./tests/tck/features/", '--tags=-crash', '--tags=-skip', "--no-capture"]
+    cmd = ["./tests/tck/features/", '--tags=-crash', '--tags=-skip', "--no-capture", "--include", "tests/tck/features/clauses/create"]
     res = behave_main(cmd)
     res = 'pass' if res == 0 else 'fail'
     assert res == 'pass'

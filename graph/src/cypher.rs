@@ -451,13 +451,13 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_list_operator_expression(&mut self) -> Result<QueryExprIR, String> {
-        let expr = self.parse_property_expression()?;
+        let mut expr = self.parse_property_expression()?;
 
-        if let (Token::LBrace, len) = self.lexer.current() {
+        while let (Token::LBrace, len) = self.lexer.current() {
             self.lexer.next(len);
             let index = self.parse_expr()?;
             match_token!(self.lexer, RBrace);
-            return Ok(QueryExprIR::GetElement(Box::new((expr, index))));
+            expr = QueryExprIR::GetElement(Box::new((expr, index)));
         }
 
         Ok(expr)
