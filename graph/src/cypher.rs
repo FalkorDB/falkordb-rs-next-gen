@@ -439,12 +439,12 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_property_expression(&mut self) -> Result<QueryExprIR, String> {
-        let expr = self.parse_primary_expr()?;
+        let mut expr = self.parse_primary_expr()?;
 
-        if let (Token::Dot, len) = self.lexer.current() {
+        while let (Token::Dot, len) = self.lexer.current() {
             self.lexer.next(len);
             let ident = self.parse_ident()?;
-            return Ok(QueryExprIR::Property(Box::new(expr), ident));
+            expr = QueryExprIR::Property(Box::new(expr), ident);
         }
 
         Ok(expr)

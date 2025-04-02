@@ -121,6 +121,10 @@ def test_operators():
         res = query(f"RETURN {{a0: true, a1: 1, a2: 'Avi', a3: [1]}}.a{i}")
         assert res.result_set == [[a]]
 
+    for i, a in enumerate([True, 1, 'Avi', [1]]):
+        res = query(f"RETURN {{a: {{a0: true, a1: 1, a2: 'Avi', a3: [1]}}}}.a.a{i}")
+        assert res.result_set == [[a]]
+
     for a in range(5):
         res = query(f"RETURN [][{a}]")
         assert res.result_set == [[None]]
