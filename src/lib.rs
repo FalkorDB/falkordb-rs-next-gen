@@ -1,4 +1,4 @@
-use graph::{graph::Graph, cypher::Parser, planner::plan, runtime::Value};
+use graph::{cypher::Parser, graph::Graph, planner::plan, runtime::Value};
 use redis_module::{
     native_types::RedisType, redis_module, redisvalue::RedisValueKey, Context, NextArg,
     RedisModuleTypeMethods, RedisResult, RedisString, RedisValue, Status,

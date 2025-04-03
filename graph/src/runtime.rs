@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use crate::{ast::QueryExprIR, graph::Graph, matrix::Iter, planner::IR};
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum Value {
     Null,
     Bool(bool),
@@ -44,6 +44,7 @@ impl Runtime {
         read_functions.insert("db.labels".to_string(), Self::labels);
         read_functions.insert("db.relationshiptypes".to_string(), Self::types);
         read_functions.insert("db.propertykeys".to_string(), Self::properties);
+        read_functions.insert("toInteger".to_string(), Self::to_integer);
 
         Self {
             write_functions,
@@ -227,6 +228,19 @@ impl Runtime {
                 .collect(),
         )
     }
+
+    fn to_integer(_g: &Graph, _runtime: &mut Self, args: Value) -> Value {
+        match args {
+            Value::List(params) => match params.as_slice() {
+                [Value::String(s)] => s.parse::<i64>().map_or(Value::Null, Value::Int),
+                [Value::Int(i)] => Value::Int(*i),
+                #[allow(clippy::cast_possible_truncation)]
+                [Value::Float(f)] => Value::Int(*f as i64),
+                _ => Value::Null,
+            },
+            _ => Value::Null,
+        }
+    }
 }
 
 #[allow(clippy::too_many_lines)]
@@ -391,7 +405,11 @@ pub fn ro_run(
                 .iter()
                 .map(|ir| ro_run(vars, g, runtime, result_fn, ir))
                 .collect();
-            runtime.read_functions[name](g, runtime, Value::List(args))
+            if runtime.read_functions.contains_key(name) {
+                runtime.read_functions[name](g, runtime, Value::List(args))
+            } else {
+                Value::Null
+            }
         }
         IR::Map(items) => Value::Map(
             items
@@ -643,9 +661,7 @@ pub fn evaluate_param(expr: QueryExprIR) -> Value {
         QueryExprIR::Integer(x) => Value::Int(x),
         QueryExprIR::Float(x) => Value::Float(x),
         QueryExprIR::String(x) => Value::String(x),
-        QueryExprIR::List(irs) => {
-            Value::List(irs.into_iter().map(evaluate_param).collect())
-        }
+        QueryExprIR::List(irs) => Value::List(irs.into_iter().map(evaluate_param).collect()),
         QueryExprIR::Map(irs) => Value::Map(
             irs.into_iter()
                 .map(|(key, ir)| (key, evaluate_param(ir)))

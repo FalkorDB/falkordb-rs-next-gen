@@ -196,3 +196,19 @@ def test_create_delete_match():
 
 def test_large_graph():
     query("UNWIND range(1024) AS x CREATE (n:N {v: x})-[r:R {v: x}]->(m:M {v: x})", write=True)
+
+
+def test_functions():
+    ## toInteger
+    res = query("RETURN toInteger(1)")
+    assert res.result_set == [[1]]
+    res = query("RETURN toInteger(1.0)")
+    assert res.result_set == [[1]]
+    res = query("RETURN toInteger('1')")
+    assert res.result_set == [[1]]
+
+
+#def test():
+#    res = query("WITH $expr AS expr, $idx AS idx RETURN expr[idx] AS value",  
+#          params={"id": 0, "expr": ['Apa']})
+#    assert res.result_set == [['Apa']]

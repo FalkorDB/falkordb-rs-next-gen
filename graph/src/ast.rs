@@ -89,7 +89,7 @@ impl QueryExprIR {
                 op.1.inner_validate(env)
             }
             Self::FuncInvocation(name, exprs) => {
-                if name != "range" {
+                if name != "range" && name != "toInteger" {
                     return Err(format!("Unknown function {name}"));
                 }
                 for arg in exprs {
