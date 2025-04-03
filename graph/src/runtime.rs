@@ -635,19 +635,20 @@ pub fn run(
     }
 }
 
+#[must_use]
 pub fn evaluate_param(expr: QueryExprIR) -> Value {
     match expr {
         QueryExprIR::Null => Value::Null,
         QueryExprIR::Bool(x) => Value::Bool(x),
         QueryExprIR::Integer(x) => Value::Int(x),
         QueryExprIR::Float(x) => Value::Float(x),
-        QueryExprIR::String(x) => Value::String(x.to_string()),
+        QueryExprIR::String(x) => Value::String(x),
         QueryExprIR::List(irs) => {
-            Value::List(irs.into_iter().map(|ir| evaluate_param(ir)).collect())
+            Value::List(irs.into_iter().map(evaluate_param).collect())
         }
         QueryExprIR::Map(irs) => Value::Map(
             irs.into_iter()
-                .map(|(key, ir)| (key.to_string(), evaluate_param(ir)))
+                .map(|(key, ir)| (key, evaluate_param(ir)))
                 .collect(),
         ),
         _ => todo!(),
