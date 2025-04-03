@@ -206,9 +206,4 @@ def test_functions():
     assert res.result_set == [[1]]
     res = query("RETURN toInteger('1')")
     assert res.result_set == [[1]]
-
-
-#def test():
-#    res = query("WITH $expr AS expr, $idx AS idx RETURN expr[idx] AS value",  
-#          params={"id": 0, "expr": ['Apa']})
-#    assert res.result_set == [['Apa']]
+    
