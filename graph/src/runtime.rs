@@ -405,8 +405,9 @@ pub fn ro_run(
                 .iter()
                 .map(|ir| ro_run(vars, g, runtime, result_fn, ir))
                 .collect();
-            if runtime.read_functions.contains_key(name) {
-                runtime.read_functions[name](g, runtime, Value::List(args))
+            #[allow(clippy::option_if_let_else)]
+            if let Some(func) = runtime.read_functions.get(name) {
+                func(g, runtime, Value::List(args))
             } else {
                 Value::Null
             }

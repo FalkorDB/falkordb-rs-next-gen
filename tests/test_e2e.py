@@ -198,8 +198,7 @@ def test_large_graph():
     query("UNWIND range(1024) AS x CREATE (n:N {v: x})-[r:R {v: x}]->(m:M {v: x})", write=True)
 
 
-def test_functions():
-    ## toInteger
+def test_toInteger():
     res = query("RETURN toInteger(1)")
     assert res.result_set == [[1]]
     res = query("RETURN toInteger(1.0)")
