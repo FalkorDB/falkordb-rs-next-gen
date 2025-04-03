@@ -7,10 +7,10 @@ use std::{
 use roaring::RoaringTreemap;
 
 use crate::{
-    matrix::{Delete, Iter, Matrix, Set, Size},
     cypher::Parser,
+    matrix::{Delete, Iter, Matrix, Set, Size},
     planner::{plan, IR},
-    runtime::{ro_run, run, Runtime, Value},
+    runtime::{evaluate_param, ro_run, run, Runtime, Value},
 };
 
 pub struct Graph {
@@ -106,13 +106,15 @@ impl Graph {
         let mut parse_duration = Duration::ZERO;
         let mut plan_duration = Duration::ZERO;
 
+        let mut parser = Parser::new(query);
+        let (parameters, query) = parser.parse_parameters()?;
+
         let evaluate = {
             match self.cache.lock() {
                 Ok(mut cache) => {
                     if let Some(f) = cache.get(query) {
                         f.to_owned()
                     } else {
-                        let mut parser = Parser::new(query);
                         let start = Instant::now();
                         let ir = parser.parse()?;
                         parse_duration = start.elapsed();
@@ -132,7 +134,12 @@ impl Graph {
         };
 
         let labels_count = self.node_labels.len();
-        let mut runtime = Runtime::new();
+        let mut runtime = Runtime::new(
+            parameters
+                .into_iter()
+                .map(|(k, v)| (k, evaluate_param(v)))
+                .collect(),
+        );
         let start = Instant::now();
         run(
             &mut BTreeMap::new(),
@@ -167,13 +174,15 @@ impl Graph {
         let mut parse_duration = Duration::ZERO;
         let mut plan_duration = Duration::ZERO;
 
+        let mut parser = Parser::new(query);
+        let (parameters, query) = parser.parse_parameters()?;
+
         let evaluate = {
             match self.cache.lock() {
                 Ok(mut cache) => {
                     if let Some(f) = cache.get(query) {
                         f.to_owned()
                     } else {
-                        let mut parser = Parser::new(query);
                         let start = Instant::now();
                         let ir = parser.parse()?;
                         parse_duration = start.elapsed();
@@ -192,7 +201,12 @@ impl Graph {
             }
         };
 
-        let mut runtime = Runtime::new();
+        let mut runtime = Runtime::new(
+            parameters
+                .into_iter()
+                .map(|(k, v)| (k, evaluate_param(v)))
+                .collect(),
+        );
         let start = Instant::now();
         ro_run(
             &mut BTreeMap::new(),

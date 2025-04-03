@@ -16,6 +16,7 @@ enum Token {
     Return,
     As,
     Ident(String),
+    Parameter(String),
     Null,
     Bool(bool),
     Integer(i64),
@@ -108,7 +109,37 @@ impl<'a> Lexer<'a> {
                         pos - self.pos + 1,
                     );
                 }
+                '\"' => {
+                    let mut pos = self.pos + 1;
+                    let mut end = false;
+                    for c in chars.by_ref() {
+                        if c == '\"' {
+                            end = true;
+                            break;
+                        }
+                        pos += c.len_utf8();
+                    }
+                    if !end {
+                        return (
+                            Token::Error(self.str[self.pos + 1..pos].to_string()),
+                            pos - self.pos + 1,
+                        );
+                    }
+                    return (
+                        Token::String(self.str[self.pos + 1..pos].to_string()),
+                        pos - self.pos + 1,
+                    );
+                }
                 '0'..='9' => return self.lex_number(1, &mut chars),
+                '$' => {
+                    let mut len = 1;
+                    while let Some('a'..='z' | 'A'..='Z' | '0'..='9') = chars.next() {
+                        len += 1;
+                    }
+                    let token =
+                        Token::Parameter(self.str[self.pos + 1..self.pos + len].to_string());
+                    return (token, len);
+                }
                 'a'..='z' | 'A'..='Z' => {
                     let mut len = 1;
                     while let Some('a'..='z' | 'A'..='Z' | '0'..='9') = chars.next() {
@@ -198,6 +229,26 @@ impl<'a> Parser<'a> {
         Self {
             lexer: Lexer::new(str),
             anon_id: 0,
+        }
+    }
+
+    pub fn parse_parameters(&mut self) -> Result<(BTreeMap<String, QueryExprIR>, &'a str), String> {
+        match self.lexer.current() {
+            (Token::Ident(id), _) => {
+                if id == "CYPHER" {
+                    self.lexer.next(id.len());
+                    let mut params = BTreeMap::new();
+                    while let (Token::Ident(id), len) = self.lexer.current() {
+                        self.lexer.next(len);
+                        match_token!(self.lexer, Equal);
+                        params.insert(id, self.parse_expr()?);
+                    }
+                    Ok((params, &self.lexer.str[self.lexer.pos..]))
+                } else {
+                    Ok((BTreeMap::new(), self.lexer.str))
+                }
+            }
+            _ => Ok((BTreeMap::new(), self.lexer.str)),
         }
     }
 
@@ -388,6 +439,10 @@ impl<'a> Parser<'a> {
                 }
 
                 Ok(QueryExprIR::Ident(ident))
+            }
+            (Token::Parameter(param), len) => {
+                self.lexer.next(len);
+                Ok(QueryExprIR::Parameter(param))
             }
             (Token::Null, len) => {
                 self.lexer.next(len);

@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::{graph::Graph, matrix::Iter, planner::IR};
+use crate::{ast::QueryExprIR, graph::Graph, matrix::Iter, planner::IR};
 
 #[derive(Clone, PartialEq)]
 pub enum Value {
@@ -19,6 +19,7 @@ pub struct Runtime {
     write_functions: BTreeMap<String, fn(&mut Graph, &mut Runtime, Value) -> Value>,
     read_functions: BTreeMap<String, fn(&Graph, &mut Runtime, Value) -> Value>,
     iters: Vec<Iter<bool>>,
+    parameters: BTreeMap<String, Value>,
     pub nodes_created: i32,
     pub relationships_created: i32,
     pub nodes_deleted: i32,
@@ -29,7 +30,7 @@ pub struct Runtime {
 
 impl Runtime {
     #[must_use]
-    pub fn new() -> Self {
+    pub fn new(parameters: BTreeMap<String, Value>) -> Self {
         let mut write_functions: BTreeMap<String, fn(&mut Graph, &mut Runtime, Value) -> Value> =
             BTreeMap::new();
         let mut read_functions: BTreeMap<String, fn(&Graph, &mut Runtime, Value) -> Value> =
@@ -48,6 +49,7 @@ impl Runtime {
             write_functions,
             read_functions,
             iters: Vec::new(),
+            parameters,
             nodes_created: 0,
             relationships_created: 0,
             nodes_deleted: 0,
@@ -242,7 +244,7 @@ pub fn ro_run(
         IR::Float(x) => Value::Float(*x),
         IR::String(x) => Value::String(x.to_string()),
         IR::Var(x) => vars.get(x).unwrap_or(&Value::Null).to_owned(),
-        IR::Param(_) => todo!(),
+        IR::Parameter(x) => runtime.parameters.get(x).unwrap_or(&Value::Null).to_owned(),
         IR::List(irs) => Value::List(
             irs.iter()
                 .map(|ir| ro_run(vars, g, runtime, result_fn, ir))
@@ -348,9 +350,7 @@ pub fn ro_run(
             .reduce(|a, b| match (a, b) {
                 (Value::Int(a), Value::Int(b)) => Value::Int(a + b),
                 (Value::Float(a), Value::Float(b)) => Value::Float(a + b),
-                (Value::List(a), Value::List(b)) => {
-                    Value::List(a.into_iter().chain(b).collect())
-                }
+                (Value::List(a), Value::List(b)) => Value::List(a.into_iter().chain(b).collect()),
                 _ => Value::Null,
             })
             .unwrap(),
@@ -445,7 +445,7 @@ pub fn run(
         IR::Float(x) => Value::Float(*x),
         IR::String(x) => Value::String(x.to_string()),
         IR::Var(x) => vars.get(x).unwrap_or(&Value::Null).to_owned(),
-        IR::Param(_) => todo!(),
+        IR::Parameter(x) => runtime.parameters.get(x).unwrap_or(&Value::Null).to_owned(),
         IR::List(irs) => Value::List(
             irs.iter()
                 .map(|ir| run(vars, g, runtime, result_fn, ir))
@@ -551,9 +551,7 @@ pub fn run(
             .reduce(|a, b| match (a, b) {
                 (Value::Int(a), Value::Int(b)) => Value::Int(a + b),
                 (Value::Float(a), Value::Float(b)) => Value::Float(a + b),
-                (Value::List(a), Value::List(b)) => {
-                    Value::List(a.into_iter().chain(b).collect())
-                }
+                (Value::List(a), Value::List(b)) => Value::List(a.into_iter().chain(b).collect()),
                 _ => Value::Null,
             })
             .unwrap(),
@@ -634,5 +632,24 @@ pub fn run(
             }
             Value::Null
         }
+    }
+}
+
+pub fn evaluate_param(expr: QueryExprIR) -> Value {
+    match expr {
+        QueryExprIR::Null => Value::Null,
+        QueryExprIR::Bool(x) => Value::Bool(x),
+        QueryExprIR::Integer(x) => Value::Int(x),
+        QueryExprIR::Float(x) => Value::Float(x),
+        QueryExprIR::String(x) => Value::String(x.to_string()),
+        QueryExprIR::List(irs) => {
+            Value::List(irs.into_iter().map(|ir| evaluate_param(ir)).collect())
+        }
+        QueryExprIR::Map(irs) => Value::Map(
+            irs.into_iter()
+                .map(|(key, ir)| (key.to_string(), evaluate_param(ir)))
+                .collect(),
+        ),
+        _ => todo!(),
     }
 }

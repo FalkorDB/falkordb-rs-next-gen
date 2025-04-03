@@ -33,12 +33,12 @@ def teardown_module(module):
     client.connection.shutdown(nosave=True)
     redis_server.wait()
 
-def query(query: str, write: bool = False):
+def query(query: str, params = None, write: bool = False):
     if write:
-        return g.query(query)
+        return g.query(query, params)
     else:
-        write_res = g.query(query)
-        read_res = g.ro_query(query)
+        write_res = g.query(query, params)
+        read_res = g.ro_query(query, params)
         assert write_res.result_set == read_res.result_set
         return write_res
 
@@ -78,6 +78,11 @@ def test_return_values():
 
     res = query("WITH 1 AS a RETURN a")
     assert res.result_set == [[1]]
+
+def test_parameters():
+    for value in [None, True, False, 1, -1, 0.1, 'Avi', [1], {"a": 2}, {}]:
+        res = query("RETURN $p", params={"p": value})
+        assert res.result_set == [[value]]
 
 def test_operators():
     for a in [True, False]:

@@ -11,7 +11,7 @@ pub enum QueryExprIR {
     Float(f64),
     String(String),
     Ident(String),
-    Param(String),
+    Parameter(String),
     Named(String, Box<QueryExprIR>),
     List(Vec<QueryExprIR>),
     Or(Vec<QueryExprIR>),
@@ -49,7 +49,7 @@ impl QueryExprIR {
                     Err(format!("'{id}' not defined"))
                 }
             }
-            Self::Param(_) => todo!(),
+            Self::Parameter(_) => Ok(()),
             Self::List(exprs)
             | Self::Or(exprs)
             | Self::Xor(exprs)
@@ -275,7 +275,10 @@ impl QueryIR {
             Self::Create(p) => {
                 for path in &p.paths {
                     if env.contains(&path.name) {
-                        return Err(format!("The bound variable {} can't be redeclared in a create clause", path.name));
+                        return Err(format!(
+                            "The bound variable {} can't be redeclared in a create clause",
+                            path.name
+                        ));
                     }
                     env.insert(path.name.to_string());
                 }
