@@ -318,6 +318,6 @@ fn plan_query(ir: QueryIR, iter: &mut IntoIter<QueryIR>) -> IR {
 }
 
 #[must_use]
-pub fn plan(ir: QueryIR, debug: bool) -> IR {
+pub fn plan(ir: QueryIR, _debug: bool) -> IR {
     plan_query(ir, &mut Vec::new().into_iter())
 }

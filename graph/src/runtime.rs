@@ -286,7 +286,7 @@ pub fn ro_run(
 
             Value::Bool(false)
         }
-        IR::Xor(irs) => Value::Null,
+        IR::Xor(_irs) => Value::Null,
         IR::And(irs) => {
             let mut is_null = false;
             for ir in irs {
@@ -487,7 +487,7 @@ pub fn run(
 
             Value::Bool(false)
         }
-        IR::Xor(irs) => Value::Null,
+        IR::Xor(_irs) => Value::Null,
         IR::And(irs) => {
             let mut is_null = false;
             for ir in irs {
