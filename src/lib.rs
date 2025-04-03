@@ -79,7 +79,7 @@ fn inner_raw_value_to_redis_value(g: &Graph, r: &Value) -> RedisValue {
         ]),
         Value::Map(map) => RedisValue::Array(vec![
             RedisValue::Integer(10),
-            RedisValue::Map(
+            RedisValue::OrderedMap(
                 map.iter()
                     .map(|(key, value)| {
                         (
