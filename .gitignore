@@ -8,3 +8,11 @@ redis-test.log
 .idea
 *.iml
 myenv
+coverage.sh
+codecov.*
+temp-*
+coverage
+dump.rdb
+.antlr
+cov.profdata
+*.profraw
