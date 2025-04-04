@@ -233,13 +233,14 @@ impl Runtime {
         match args {
             Value::List(params) => match params.as_slice() {
                 #[allow(clippy::cast_possible_truncation)]
-                [Value::String(s)] => s.parse::<i64>().map_or_else(
-                    |_| {
-                        s.parse::<f64>()
-                            .map_or(Value::Null, |f| Value::Int(f as i64))
-                    },
-                    Value::Int,
-                ),
+                [Value::String(s)] => 
+					if let Ok(i) = s.parse::<i64>() {
+						Value::Int(i)
+					} else if let Ok(f) = s.parse::<f64>() {
+						Value::Int(f as i64)
+					} else {
+						Value::Null
+					},
                 [Value::Int(i)] => Value::Int(*i),
                 #[allow(clippy::cast_possible_truncation)]
                 [Value::Float(f)] => Value::Int(*f as i64),

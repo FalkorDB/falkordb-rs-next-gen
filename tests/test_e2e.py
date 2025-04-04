@@ -207,4 +207,8 @@ def test_toInteger():
     assert res.result_set == [[1]]
     res = query("RETURN toInteger($p)", params={"p": '1.0'})
     assert res.result_set == [[1]]
+    res = query("RETURN toInteger($p)", params={"p": {}})
+    assert res.result_set == [[None]]
+    res = query("RETURN toInteger($p)", params={"p": ''})
+    assert res.result_set == [[None]]
     
