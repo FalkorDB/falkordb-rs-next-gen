@@ -232,7 +232,14 @@ impl Runtime {
     fn to_integer(_g: &Graph, _runtime: &mut Self, args: Value) -> Value {
         match args {
             Value::List(params) => match params.as_slice() {
-                [Value::String(s)] => s.parse::<i64>().map_or(Value::Null, Value::Int),
+                #[allow(clippy::cast_possible_truncation)]
+                [Value::String(s)] => s.parse::<i64>().map_or_else(
+                    |_| {
+                        s.parse::<f64>()
+                            .map_or(Value::Null, |f| Value::Int(f as i64))
+                    },
+                    Value::Int,
+                ),
                 [Value::Int(i)] => Value::Int(*i),
                 #[allow(clippy::cast_possible_truncation)]
                 [Value::Float(f)] => Value::Int(*f as i64),
@@ -609,10 +616,10 @@ pub fn run(
         IR::FuncInvocation(name, irs) => {
             let mut args = Vec::with_capacity(irs.len());
             args.extend(irs.iter().map(|ir| run(vars, g, runtime, result_fn, ir)));
-            if runtime.write_functions.contains_key(name) {
-                runtime.write_functions[name](g, runtime, Value::List(args))
-            } else if runtime.read_functions.contains_key(name) {
-                runtime.read_functions[name](g, runtime, Value::List(args))
+            if let Some(func) = runtime.write_functions.get(name) {
+                func(g, runtime, Value::List(args))
+            } else if let Some(func) = runtime.read_functions.get(name) {
+                func(g, runtime, Value::List(args))
             } else {
                 Value::Null
             }

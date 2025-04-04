@@ -199,10 +199,12 @@ def test_large_graph():
 
 
 def test_toInteger():
-    res = query("RETURN toInteger(1)")
+    res = query("RETURN toInteger($p)", params={"p": 1})
     assert res.result_set == [[1]]
-    res = query("RETURN toInteger(1.0)")
+    res = query("RETURN toInteger($p)",  params={"p": 1.0})
     assert res.result_set == [[1]]
-    res = query("RETURN toInteger('1')")
+    res = query("RETURN toInteger($p)", params={"p": '1'})
+    assert res.result_set == [[1]]
+    res = query("RETURN toInteger($p)", params={"p": '1.0'})
     assert res.result_set == [[1]]
     
