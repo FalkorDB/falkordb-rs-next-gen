@@ -31,7 +31,7 @@ pub enum QueryExprIR {
     Pow(Vec<QueryExprIR>),
     IsNull(Box<QueryExprIR>),
     GetElement(Box<(QueryExprIR, QueryExprIR)>),
-	GetElements(Box<(QueryExprIR, Option<QueryExprIR>, Option<QueryExprIR>)>),
+    GetElements(Box<(QueryExprIR, Option<QueryExprIR>, Option<QueryExprIR>)>),
     Property(Box<QueryExprIR>, String),
     FuncInvocation(String, Vec<QueryExprIR>),
     Map(BTreeMap<String, QueryExprIR>),
@@ -102,14 +102,16 @@ impl QueryExprIR {
             }
             Self::GetElements(op) => {
                 op.0.inner_validate(env)?;
-                if let Some(query_exp) = &op.1{
+                if let Some(query_exp) = &op.1 {
                     query_exp.inner_validate(env)?;
                 }
-                if let Some(query_exp) = &op.2{
+                if let Some(query_exp) = &op.2 {
                     query_exp.inner_validate(env)?;
                 }
                 if op.1.is_none() && op.2.is_none() {
-                    return Err("GetElements must have at least one of upper or lower bounds".to_string());
+                    return Err(
+                        "GetElements must have at least one of upper or lower bounds".to_string(),
+                    );
                 }
                 Ok(())
             }

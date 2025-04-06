@@ -203,7 +203,7 @@ impl<'a> Lexer<'a> {
 
     fn lex_number(&self, init_len: usize, chars: &mut std::str::Chars<'_>) -> (Token, usize) {
         let mut len = init_len;
-		let mut chars = chars.peekable();
+        let mut chars = chars.peekable();
         while let Some(c @ ('0'..='9' | '.')) = chars.next() {
             if c == '.' && (Some(&'.') == chars.peek()) {
                 break;
@@ -547,7 +547,7 @@ impl<'a> Parser<'a> {
             if optional_match_token!(self.lexer, DotDot) {
                 let start = None;
                 expr = self.match_get_elements(expr, start)?
-            }else {
+            } else {
                 let index = self.parse_expr()?;
 
                 if optional_match_token!(self.lexer, DotDot) {
@@ -562,7 +562,11 @@ impl<'a> Parser<'a> {
         Ok(expr)
     }
 
-    fn match_get_elements(&mut self, expr: QueryExprIR, start: Option<QueryExprIR>) -> Result<QueryExprIR, String> {
+    fn match_get_elements(
+        &mut self,
+        expr: QueryExprIR,
+        start: Option<QueryExprIR>,
+    ) -> Result<QueryExprIR, String> {
         let end = self.parse_expr().ok();
         match_token!(self.lexer, RBrace);
         Ok(QueryExprIR::GetElements(Box::new((expr, start, end))))

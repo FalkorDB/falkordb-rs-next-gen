@@ -319,8 +319,14 @@ pub fn ro_run(
         }
         IR::GetElements(op) => {
             let arr = ro_run(vars, g, runtime, result_fn, &op.0)?;
-            let start = op.1.as_ref().map(|ir| ro_run(vars, g, runtime, result_fn, &ir)).transpose()?;
-            let end = op.2.as_ref().map(|ir| ro_run(vars, g, runtime, result_fn, &ir)).transpose()?;
+            let start =
+                op.1.as_ref()
+                    .map(|ir| ro_run(vars, g, runtime, result_fn, &ir))
+                    .transpose()?;
+            let end =
+                op.2.as_ref()
+                    .map(|ir| ro_run(vars, g, runtime, result_fn, &ir))
+                    .transpose()?;
             get_elements(arr, start, end)
         }
         IR::Range(_) => Err("Range operator not implemented".to_string()),
@@ -551,8 +557,14 @@ pub fn run(
         }
         IR::GetElements(op) => {
             let arr = run(vars, g, runtime, result_fn, &op.0)?;
-            let start = op.1.as_ref().map(|ir| ro_run(vars, g, runtime, result_fn, &ir)).transpose()?;
-            let end = op.2.as_ref().map(|ir| ro_run(vars, g, runtime, result_fn, &ir)).transpose()?;
+            let start =
+                op.1.as_ref()
+                    .map(|ir| ro_run(vars, g, runtime, result_fn, &ir))
+                    .transpose()?;
+            let end =
+                op.2.as_ref()
+                    .map(|ir| ro_run(vars, g, runtime, result_fn, &ir))
+                    .transpose()?;
             get_elements(arr, start, end)
         }
         IR::Range(_) => Err("Range operator not implemented".to_string()),
@@ -757,32 +769,30 @@ pub fn evaluate_param(expr: QueryExprIR) -> Value {
 fn get_elements(arr: Value, start: Option<Value>, end: Option<Value>) -> Result<Value, String> {
     match (arr, start, end) {
         (Value::List(values), Some(Value::Int(mut start)), Some(Value::Int(mut end))) => {
-			start = start.max(0);
-			if end < 0 {
-				end = (values.len() as i64 + end).max(0);
-			} else {
-				end = end.min(values.len() as i64);
-			}
+            start = start.max(0);
+            if end < 0 {
+                end = (values.len() as i64 + end).max(0);
+            } else {
+                end = end.min(values.len() as i64);
+            }
             if start > end {
                 return Ok(Value::List(vec![]));
             }
-			Ok(Value::List(values[start as usize..end as usize].to_vec()))
-		
-		},
-		(Value::List(values), None, Some(Value::Int(mut end))) => {
+            Ok(Value::List(values[start as usize..end as usize].to_vec()))
+        }
+        (Value::List(values), None, Some(Value::Int(mut end))) => {
             if end < 0 {
                 end = (values.len() as i64 + end).max(0);
             } else {
                 end = end.min(values.len() as i64);
             }
             Ok(Value::List(values[..end as usize].to_vec()))
-
-		},
-		(Value::List(values), Some(Value::Int(mut start)), None) => {
+        }
+        (Value::List(values), Some(Value::Int(mut start)), None) => {
             start = start.max(0);
             Ok(Value::List(values[start as usize..].to_vec()))
-        },
-        (_, Some(Value::Null), _) |  (_, _, Some(Value::Null)) => Ok(Value::Null),
+        }
+        (_, Some(Value::Null), _) | (_, _, Some(Value::Null)) => Ok(Value::Null),
 
         _ => Err("get_array_range".to_string()),
     }

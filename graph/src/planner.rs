@@ -14,7 +14,7 @@ pub enum IR {
     List(Vec<IR>),
     Length(Box<IR>),
     GetElement(Box<(IR, IR)>),
-	GetElements(Box<(IR, Option<IR>,Option<IR>)>),
+    GetElements(Box<(IR, Option<IR>, Option<IR>)>),
     Range(Box<(IR, IR, IR)>),
     IsNull(Box<IR>),
     IsNode(Box<IR>),
@@ -110,7 +110,7 @@ impl Planner {
                 let op1 = op.1.map(|ir| self.plan_expr(ir));
                 let op2 = op.2.map(|ir| self.plan_expr(ir));
                 IR::GetElements(Box::new((self.plan_expr(op.0), op1, op2)))
-            },
+            }
             QueryExprIR::Property(expr, name) => IR::FuncInvocation(
                 "property".to_string(),
                 vec![self.plan_expr(*expr), IR::String(name)],
