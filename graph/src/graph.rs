@@ -9,7 +9,7 @@ use roaring::RoaringTreemap;
 use crate::{
     cypher::Parser,
     matrix::{Delete, Iter, Matrix, Set, Size},
-    planner::{plan, IR},
+    planner::{Planner, IR},
     runtime::{evaluate_param, ro_run, run, Runtime, Value},
 };
 
@@ -119,8 +119,9 @@ impl Graph {
                         let ir = parser.parse()?;
                         parse_duration = start.elapsed();
 
+                        let mut planner = Planner::new();
                         let start = Instant::now();
-                        let value = plan(ir, debug);
+                        let value = planner.plan(ir, debug);
                         plan_duration = start.elapsed();
 
                         cache.insert(query.to_string(), value.clone());
@@ -187,8 +188,9 @@ impl Graph {
                         let ir = parser.parse()?;
                         parse_duration = start.elapsed();
 
+                        let mut planner = Planner::new();
                         let start = Instant::now();
-                        let value = plan(ir, debug);
+                        let value = planner.plan(ir, debug);
                         plan_duration = start.elapsed();
 
                         cache.insert(query.to_string(), value.clone());

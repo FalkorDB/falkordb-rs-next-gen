@@ -1,4 +1,4 @@
-use graph::{cypher::Parser, graph::Graph, planner::plan, runtime::Value};
+use graph::{cypher::Parser, graph::Graph, planner::Planner, runtime::Value};
 use redis_module::{
     native_types::RedisType, redis_module, redisvalue::RedisValueKey, Context, NextArg,
     RedisModuleTypeMethods, RedisResult, RedisString, RedisValue, Status,
@@ -255,7 +255,8 @@ fn graph_plan(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     let mut parser = Parser::new(&query);
     match parser.parse() {
         Ok(ir) => {
-            let ir = plan(ir, false);
+            let mut planner = Planner::new();
+            let ir = planner.plan(ir, false);
             Ok(RedisValue::SimpleString(format!("{ir:?}")))
         }
         Err(err) => {
