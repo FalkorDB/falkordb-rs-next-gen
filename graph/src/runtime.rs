@@ -275,7 +275,7 @@ pub fn ro_run(
         IR::List(irs) => Ok(Value::List(
             irs.iter()
                 .map(|ir| ro_run(vars, g, runtime, result_fn, ir))
-                .collect::<Result<Vec<_>, _>>()?
+                .collect::<Result<Vec<_>, _>>()?,
         )),
         IR::Length(ir) => match ro_run(vars, g, runtime, result_fn, ir)? {
             Value::List(arr) => Ok(Value::Int(arr.len() as _)),
@@ -306,10 +306,17 @@ pub fn ro_run(
             _ => Ok(Value::Bool(false)),
         },
         IR::Or(irs) => {
+            let mut is_null = false;
             for ir in irs {
-                if matches!(ro_run(vars, g, runtime, result_fn, ir)?, Value::Bool(true)) {
-                    return Ok(Value::Bool(true));
+                match ro_run(vars, g, runtime, result_fn, ir)? {
+                    Value::Bool(true) => return Ok(Value::Bool(true)),
+                    Value::Bool(false) => {}
+                    Value::Null => is_null = true,
+                    _ => return Err(format!("Type mismatch: expected Bool but was {ir:?}")),
                 }
+            }
+            if is_null {
+                return Ok(Value::Null);
             }
 
             Ok(Value::Bool(false))
@@ -320,8 +327,9 @@ pub fn ro_run(
             for ir in irs {
                 match ro_run(vars, g, runtime, result_fn, ir)? {
                     Value::Bool(false) => return Ok(Value::Bool(false)),
+                    Value::Bool(true) => {}
                     Value::Null => is_null = true,
-                    _ => {}
+                    _ => return Err(format!("Type mismatch: expected Bool but was {ir:?}")),
                 }
             }
             if is_null {
@@ -493,7 +501,7 @@ pub fn run(
         IR::List(irs) => Ok(Value::List(
             irs.iter()
                 .map(|ir| run(vars, g, runtime, result_fn, ir))
-                .collect::<Result<Vec<_>, _>>()?
+                .collect::<Result<Vec<_>, _>>()?,
         )),
         IR::Length(ir) => match run(vars, g, runtime, result_fn, ir)? {
             Value::List(arr) => Ok(Value::Int(arr.len() as _)),
@@ -524,10 +532,17 @@ pub fn run(
             _ => Ok(Value::Bool(false)),
         },
         IR::Or(irs) => {
+            let mut is_null = false;
             for ir in irs {
-                if matches!(run(vars, g, runtime, result_fn, ir)?, Value::Bool(true)) {
-                    return Ok(Value::Bool(true));
+                match ro_run(vars, g, runtime, result_fn, ir)? {
+                    Value::Bool(true) => return Ok(Value::Bool(true)),
+                    Value::Bool(false) => {}
+                    Value::Null => is_null = true,
+                    _ => return Err(format!("Type mismatch: expected Bool but was {ir:?}")),
                 }
+            }
+            if is_null {
+                return Ok(Value::Null);
             }
 
             Ok(Value::Bool(false))
@@ -538,8 +553,9 @@ pub fn run(
             for ir in irs {
                 match run(vars, g, runtime, result_fn, ir)? {
                     Value::Bool(false) => return Ok(Value::Bool(false)),
+                    Value::Bool(true) => {}
                     Value::Null => is_null = true,
-                    _ => {}
+                    _ => return Err(format!("Type mismatch: expected Bool but was {ir:?}")),
                 }
             }
             if is_null {

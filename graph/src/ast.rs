@@ -50,10 +50,21 @@ impl QueryExprIR {
                 }
             }
             Self::Parameter(_) => Ok(()),
+            Self::And(exprs) | Self::Or(exprs) | Self::Xor(exprs) => {
+                for expr in exprs {
+                    if let _e @ (Self::Integer(_)
+                    | Self::Float(_)
+                    | Self::String(_)
+                    | Self::List(_)
+                    | Self::Map(_)) = expr
+                    {
+                        return Err("Type mismatch: expected bool".to_string());
+                    }
+                    expr.inner_validate(env)?;
+                }
+                Ok(())
+            }
             Self::List(exprs)
-            | Self::Or(exprs)
-            | Self::Xor(exprs)
-            | Self::And(exprs)
             | Self::Eq(exprs)
             | Self::Neq(exprs)
             | Self::Lt(exprs)
