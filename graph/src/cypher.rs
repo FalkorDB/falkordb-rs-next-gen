@@ -42,6 +42,7 @@ enum Token {
     Comma,
     Colon,
     Dot,
+    DotDot,
     Error(String),
     EndOfFile,
 }
@@ -88,7 +89,12 @@ impl<'a> Lexer<'a> {
                 '>' => return (Token::GreaterThan, 1),
                 ',' => return (Token::Comma, 1),
                 ':' => return (Token::Colon, 1),
-                '.' => return (Token::Dot, 1),
+                '.' => {
+                    if let Some('.') = chars.next() {
+                        return (Token::DotDot, 2);
+                    }
+                    return (Token::Dot, 1);
+                }
                 '\'' => {
                     let mut pos = self.pos + 1;
                     let mut end = false;
@@ -197,7 +203,11 @@ impl<'a> Lexer<'a> {
 
     fn lex_number(&self, init_len: usize, chars: &mut std::str::Chars<'_>) -> (Token, usize) {
         let mut len = init_len;
-        while let Some('0'..='9' | '.') = chars.next() {
+		let mut chars = chars.peekable();
+        while let Some(c @ ('0'..='9' | '.')) = chars.next() {
+            if c == '.' && (Some(&'.') == chars.peek()) {
+                break;
+            }
             len += 1;
         }
         if self.str[self.pos..self.pos + len].contains('.') {
@@ -528,17 +538,34 @@ impl<'a> Parser<'a> {
         Ok(expr)
     }
 
+    // match one of those kind [..4], [4..], [4..5], [6]
     fn parse_list_operator_expression(&mut self) -> Result<QueryExprIR, String> {
         let mut expr = self.parse_property_expression()?;
-
         while let (Token::LBrace, len) = self.lexer.current() {
             self.lexer.next(len);
-            let index = self.parse_expr()?;
-            match_token!(self.lexer, RBrace);
-            expr = QueryExprIR::GetElement(Box::new((expr, index)));
+
+            if optional_match_token!(self.lexer, DotDot) {
+                let start = None;
+                expr = self.match_get_elements(expr, start)?
+            }else {
+                let index = self.parse_expr()?;
+
+                if optional_match_token!(self.lexer, DotDot) {
+                    expr = self.match_get_elements(expr, Some(index))?;
+                } else {
+                    match_token!(self.lexer, RBrace);
+                    expr = QueryExprIR::GetElement(Box::new((expr, index)));
+                }
+            }
         }
 
         Ok(expr)
+    }
+
+    fn match_get_elements(&mut self, expr: QueryExprIR, start: Option<QueryExprIR>) -> Result<QueryExprIR, String> {
+        let end = self.parse_expr().ok();
+        match_token!(self.lexer, RBrace);
+        Ok(QueryExprIR::GetElements(Box::new((expr, start, end))))
     }
 
     fn parse_null_operator_expression(&mut self) -> Result<QueryExprIR, String> {

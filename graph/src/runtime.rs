@@ -45,7 +45,7 @@ impl Runtime {
         read_functions.insert("create_node_iter".to_string(), Self::create_node_iter);
         read_functions.insert("next_node".to_string(), Self::next_node);
         read_functions.insert("property".to_string(), Self::property);
-        read_functions.insert("toInteger".to_string(), Self::to_integer);
+        read_functions.insert("toInteger".to_string(), Self::value_to_integer);
         read_functions.insert("labels".to_string(), Self::labels);
 
         // procedures
@@ -226,7 +226,7 @@ impl Runtime {
         }
     }
 
-    fn to_integer(_g: &Graph, _runtime: &mut Self, args: Value) -> Value {
+    fn value_to_integer(_g: &Graph, _runtime: &mut Self, args: Value) -> Value {
         match args {
             Value::List(params) => match params.as_slice() {
                 #[allow(clippy::cast_possible_truncation)]
@@ -316,6 +316,12 @@ pub fn ro_run(
                 (Value::List(_), v) => Err(format!("Type mismatch: expected Bool but was {v:?}")),
                 v => Err(format!("Type mismatch: expected Lust but was {v:?}")),
             }
+        }
+        IR::GetElements(op) => {
+            let arr = ro_run(vars, g, runtime, result_fn, &op.0)?;
+            let start = op.1.as_ref().map(|ir| ro_run(vars, g, runtime, result_fn, &ir)).transpose()?;
+            let end = op.2.as_ref().map(|ir| ro_run(vars, g, runtime, result_fn, &ir)).transpose()?;
+            get_elements(arr, start, end)
         }
         IR::Range(_) => Err("Range operator not implemented".to_string()),
         IR::IsNull(ir) => match ro_run(vars, g, runtime, result_fn, ir)? {
@@ -543,6 +549,12 @@ pub fn run(
                 v => Err(format!("Type mismatch: expected Lust but was {v:?}")),
             }
         }
+        IR::GetElements(op) => {
+            let arr = run(vars, g, runtime, result_fn, &op.0)?;
+            let start = op.1.as_ref().map(|ir| ro_run(vars, g, runtime, result_fn, &ir)).transpose()?;
+            let end = op.2.as_ref().map(|ir| ro_run(vars, g, runtime, result_fn, &ir)).transpose()?;
+            get_elements(arr, start, end)
+        }
         IR::Range(_) => Err("Range operator not implemented".to_string()),
         IR::IsNull(ir) => match run(vars, g, runtime, result_fn, ir)? {
             Value::Null => Ok(Value::Bool(true)),
@@ -739,5 +751,39 @@ pub fn evaluate_param(expr: QueryExprIR) -> Value {
                 .collect(),
         ),
         _ => todo!(),
+    }
+}
+
+fn get_elements(arr: Value, start: Option<Value>, end: Option<Value>) -> Result<Value, String> {
+    match (arr, start, end) {
+        (Value::List(values), Some(Value::Int(mut start)), Some(Value::Int(mut end))) => {
+			start = start.max(0);
+			if end < 0 {
+				end = (values.len() as i64 + end).max(0);
+			} else {
+				end = end.min(values.len() as i64);
+			}
+            if start > end {
+                return Ok(Value::List(vec![]));
+            }
+			Ok(Value::List(values[start as usize..end as usize].to_vec()))
+		
+		},
+		(Value::List(values), None, Some(Value::Int(mut end))) => {
+            if end < 0 {
+                end = (values.len() as i64 + end).max(0);
+            } else {
+                end = end.min(values.len() as i64);
+            }
+            Ok(Value::List(values[..end as usize].to_vec()))
+
+		},
+		(Value::List(values), Some(Value::Int(mut start)), None) => {
+            start = start.max(0);
+            Ok(Value::List(values[start as usize..].to_vec()))
+        },
+        (_, Some(Value::Null), _) |  (_, _, Some(Value::Null)) => Ok(Value::Null),
+
+        _ => Err("get_array_range".to_string()),
     }
 }

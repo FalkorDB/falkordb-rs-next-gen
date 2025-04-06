@@ -205,3 +205,25 @@ def test_toInteger():
     for v in [None, True, False, '', 'Avi', [], [1], {}, {"a": 2}]:
         res = query("RETURN toInteger($p)", params={"p": v})
         assert res.result_set == [[None]]
+
+def test_array_range():
+    res = query("WITH [1, 2, 3, 4, 5] AS list RETURN list[1..3] AS r")
+    assert res.result_set == [[[2, 3]]]
+    res = query("WITH [1, 2, 3] AS list RETURN list[1..] AS r")
+    assert res.result_set == [[[2, 3]]]
+    res = query("WITH [1, 2, 3] AS list RETURN list[..2] AS r")
+    assert res.result_set == [[[1, 2]]]
+    res = query("WITH [1, 2, 3] AS list RETURN list[0..1] AS r")
+    assert res.result_set == [[[1]]]
+    res = query("WITH [1, 2, 3] AS list RETURN list[-3..-1] AS r")
+    assert res.result_set == [[[1, 2]]]
+    res = query("WITH [1, 2, 3] AS list RETURN list[3..1] AS r")
+    assert res.result_set == [[[]]]
+    res = query("WITH [1, 2, 3, 4, 5] AS list RETURN list[$from..$to] AS r",
+                params={"from": 1, "to": 3})
+    assert res.result_set == [[[2, 3]]]
+    res = query("WITH [1, 2, 3, 4, 5] AS list RETURN list[$from..$to] AS r",
+                params={"from": 3, "to": 2})
+    assert res.result_set == [[[]]]
+    res = query("WITH [1, 2, 3] AS list RETURN list[null..1] AS r")
+    assert res.result_set == [[None]]
