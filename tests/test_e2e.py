@@ -196,3 +196,12 @@ def test_create_delete_match():
 
 def test_large_graph():
     query("UNWIND range(100000) AS x CREATE (n:N {v: x})-[r:R {v: x}]->(m:M {v: x})", write=True)
+
+def test_toInteger():
+    for v in [1, 1.0, 1.1, '1', '1.0', '1.1']:
+        res = query("RETURN toInteger($p)", params={"p": v})
+        assert res.result_set == [[int(float(v))]]
+
+    for v in [None, True, False, '', 'Avi', [], [1], {}, {"a": 2}]:
+        res = query("RETURN toInteger($p)", params={"p": v})
+        assert res.result_set == [[None]]
