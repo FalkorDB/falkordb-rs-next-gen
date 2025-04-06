@@ -559,11 +559,11 @@ pub fn run(
             let arr = run(vars, g, runtime, result_fn, &op.0)?;
             let start =
                 op.1.as_ref()
-                    .map(|ir| ro_run(vars, g, runtime, result_fn, &ir))
+                    .map(|ir| run(vars, g, runtime, result_fn, &ir))
                     .transpose()?;
             let end =
                 op.2.as_ref()
-                    .map(|ir| ro_run(vars, g, runtime, result_fn, &ir))
+                    .map(|ir| run(vars, g, runtime, result_fn, &ir))
                     .transpose()?;
             get_elements(arr, start, end)
         }
