@@ -147,7 +147,7 @@ impl Graph {
             &mut runtime,
             result_fn,
             &evaluate,
-        );
+        )?;
         let run_duration = start.elapsed();
 
         Ok(ResultSummary {
@@ -214,7 +214,7 @@ impl Graph {
             &mut runtime,
             result_fn,
             &evaluate,
-        );
+        )?;
         let run_duration = start.elapsed();
 
         Ok(ResultSummary {
