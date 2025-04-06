@@ -3,6 +3,7 @@ import platform
 import subprocess
 from falkordb import FalkorDB, Node, Edge
 from redis import Redis
+from redis import ResponseError
 
 redis_server = None
 client = None
@@ -227,3 +228,11 @@ def test_array_range():
     assert res.result_set == [[[]]]
     res = query("WITH [1, 2, 3] AS list RETURN list[null..1] AS r")
     assert res.result_set == [[None]]
+    res = query("WITH [1, 2, 3] AS list RETURN list[1..null] AS r")
+    assert res.result_set == [[None]]
+    try:
+        query("WITH [1, 2, 3] AS list RETURN list[..] AS r")
+        assert False, "should throw error"
+    except ResponseError as e:
+        assert "GetElements must have at least one of upper or lower bounds" in str(f"{e}")
+
