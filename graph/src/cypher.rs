@@ -168,6 +168,27 @@ impl<'a> Lexer<'a> {
                     };
                     return (token, len);
                 }
+                '`' => {
+                    let mut len = 1;
+                    let mut end = false;
+                    for c in chars.by_ref() {
+                        if c == '`' {
+                            end = true;
+                            break;
+                        }
+                        len += c.len_utf8();
+                    }
+                    if !end {
+                        return (
+                            Token::Error(self.str[self.pos + 1..self.pos + len].to_string()),
+                            len + 1,
+                        );
+                    }
+                    return (
+                        Token::Ident(self.str[self.pos + 1..self.pos + len].to_string()),
+                        len + 1,
+                    );
+                }
                 _ => return (Token::Error("Unexpected token".to_string()), 0),
             }
         }
