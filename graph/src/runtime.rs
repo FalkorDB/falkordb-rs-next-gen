@@ -794,6 +794,6 @@ fn get_elements(arr: Value, start: Option<Value>, end: Option<Value>) -> Result<
         }
         (_, Some(Value::Null), _) | (_, _, Some(Value::Null)) => Ok(Value::Null),
 
-        _ => Err("get_array_range".to_string()),
+        _ => Err("Invalid array range parameters.".to_string()),
     }
 }
