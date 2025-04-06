@@ -60,6 +60,7 @@ impl<'a> Lexer<'a> {
         self.pos += len;
     }
 
+    #[allow(clippy::too_many_lines)]
     fn current(&mut self) -> (Token, usize) {
         let mut chars = self.str[self.pos..].chars();
         while let Some(char) = chars.next() {
@@ -191,6 +192,10 @@ impl<'a> Lexer<'a> {
                 (Token::Integer(num), len)
             })
     }
+
+    pub fn format_error(&self, err: &str) -> String {
+        format!("{}\n{}^{}", self.str, " ".repeat(self.pos), err)
+    }
 }
 
 macro_rules! match_token {
@@ -199,7 +204,7 @@ macro_rules! match_token {
             (Token::$token, len) => {
                 $lexer.next(len);
             }
-            _ => return Err(format!("Unexpected token {:?}", $lexer.current())),
+            (token, _) => return Err($lexer.format_error(&format!("Unexpected token: {token:?}"))),
         }
     };
     () => {};
@@ -298,7 +303,11 @@ impl<'a> Parser<'a> {
                 (Token::EndOfFile, _) => {
                     return Ok(QueryIR::Query(clauses));
                 }
-                _ => return Err(format!("Unexpected token {:?}", self.lexer.current())),
+                (token, _) => {
+                    return Err(self
+                        .lexer
+                        .format_error(&format!("Unexpected token {token:?}")))
+                }
             }
         }
     }
@@ -430,11 +439,7 @@ impl<'a> Parser<'a> {
                     self.lexer.next(len);
 
                     let exprs = self.parse_exprs()?;
-                    if let (Token::RParen, len) = self.lexer.current() {
-                        self.lexer.next(len);
-                    } else {
-                        return Err(format!("Unexpected token {:?}", self.lexer.current()));
-                    }
+                    match_token!(self.lexer, RParen);
                     return Ok(QueryExprIR::FuncInvocation(ident, exprs));
                 }
 
@@ -471,13 +476,8 @@ impl<'a> Parser<'a> {
                     return Ok(QueryExprIR::List(vec![]));
                 }
                 let exprs = self.parse_exprs()?;
-                match self.lexer.current() {
-                    (Token::RBrace, len) => {
-                        self.lexer.next(len);
-                        Ok(QueryExprIR::List(exprs))
-                    }
-                    _ => Err(format!("Unexpected token {:?}", self.lexer.current())),
-                }
+                match_token!(self.lexer, RBrace);
+                Ok(QueryExprIR::List(exprs))
             }
             (Token::LBracket, _) => {
                 let attrs = self.parse_map()?;
@@ -489,7 +489,9 @@ impl<'a> Parser<'a> {
                 match_token!(self.lexer, RParen);
                 Ok(expr)
             }
-            _ => Err(format!("Unexpected token {:?}", self.lexer.current())),
+            (token, _) => Err(self
+                .lexer
+                .format_error(&format!("Unexpected token {token:?}"))),
         }
     }
 
@@ -668,11 +670,15 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_ident(&mut self) -> Result<String, String> {
-        if let (Token::Ident(v), len) = self.lexer.current() {
-            self.lexer.next(len);
-            return Ok(v);
+        match self.lexer.current() {
+            (Token::Ident(v), len) => {
+                self.lexer.next(len);
+                Ok(v)
+            }
+            (token, _) => Err(self
+                .lexer
+                .format_error(&format!("Unexpected token {token:?}"))),
         }
-        Err(format!("Unexpected token {:?}", self.lexer.current()))
     }
 
     fn parse_named_exprs(&mut self) -> Result<Vec<QueryExprIR>, String> {
@@ -799,7 +805,11 @@ impl<'a> Parser<'a> {
                         self.lexer.next(len);
                         return Ok(attrs);
                     }
-                    _ => return Err(format!("Unexpected token {:?}", self.lexer.current())),
+                    (token, _) => {
+                        return Err(self
+                            .lexer
+                            .format_error(&format!("Unexpected token {token:?}")))
+                    }
                 }
             } else {
                 match_token!(self.lexer, RBracket);
