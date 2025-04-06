@@ -73,6 +73,10 @@ impl Graph {
         self.node_labels.iter()
     }
 
+    pub fn get_label_by_id(&self, id: u64) -> &String {
+        &self.node_labels[id as usize]
+    }
+
     pub fn get_types(&self) -> impl Iterator<Item = &String> {
         self.relationship_types.iter()
     }

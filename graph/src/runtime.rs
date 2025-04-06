@@ -35,16 +35,23 @@ impl Runtime {
             BTreeMap::new();
         let mut read_functions: BTreeMap<String, fn(&Graph, &mut Runtime, Value) -> Value> =
             BTreeMap::new();
+
+        // write functions
         write_functions.insert("create_node".to_string(), Self::create_node);
         write_functions.insert("create_relationship".to_string(), Self::create_relationship);
         write_functions.insert("delete_entity".to_string(), Self::delete_entity);
+
+        // read functions
         read_functions.insert("create_node_iter".to_string(), Self::create_node_iter);
         read_functions.insert("next_node".to_string(), Self::next_node);
         read_functions.insert("property".to_string(), Self::property);
-        read_functions.insert("db.labels".to_string(), Self::labels);
-        read_functions.insert("db.relationshiptypes".to_string(), Self::types);
-        read_functions.insert("db.propertykeys".to_string(), Self::properties);
         read_functions.insert("toInteger".to_string(), Self::to_integer);
+        read_functions.insert("labels".to_string(), Self::labels);
+
+        // procedures
+        read_functions.insert("db.labels".to_string(), Self::db_labels);
+        read_functions.insert("db.relationshiptypes".to_string(), Self::db_types);
+        read_functions.insert("db.propertykeys".to_string(), Self::db_properties);
 
         Self {
             write_functions,
@@ -205,28 +212,18 @@ impl Runtime {
         }
     }
 
-    fn labels(g: &Graph, _runtime: &mut Self, _args: Value) -> Value {
-        Value::List(
-            g.get_labels()
-                .map(|n| Value::String(n.to_string()))
-                .collect(),
-        )
-    }
-
-    fn types(g: &Graph, _runtime: &mut Self, _args: Value) -> Value {
-        Value::List(
-            g.get_types()
-                .map(|n| Value::String(n.to_string()))
-                .collect(),
-        )
-    }
-
-    fn properties(g: &Graph, _runtime: &mut Self, _args: Value) -> Value {
-        Value::List(
-            g.get_properties()
-                .map(|n| Value::String(n.to_string()))
-                .collect(),
-        )
+    fn labels(g: &Graph, _runtime: &mut Self, args: Value) -> Value {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [Value::Node(node_id)] => Value::List(
+                    g.get_node_label_ids(*node_id)
+                        .map(|label_id| Value::String(g.get_label_by_id(label_id).to_string()))
+                        .collect(),
+                ),
+                _ => Value::Null,
+            },
+            _ => unimplemented!(),
+        }
     }
 
     fn to_integer(_g: &Graph, _runtime: &mut Self, args: Value) -> Value {
@@ -247,6 +244,30 @@ impl Runtime {
             },
             _ => Value::Null,
         }
+    }
+
+    fn db_labels(g: &Graph, _runtime: &mut Self, _args: Value) -> Value {
+        Value::List(
+            g.get_labels()
+                .map(|n| Value::String(n.to_string()))
+                .collect(),
+        )
+    }
+
+    fn db_types(g: &Graph, _runtime: &mut Self, _args: Value) -> Value {
+        Value::List(
+            g.get_types()
+                .map(|n| Value::String(n.to_string()))
+                .collect(),
+        )
+    }
+
+    fn db_properties(g: &Graph, _runtime: &mut Self, _args: Value) -> Value {
+        Value::List(
+            g.get_properties()
+                .map(|n| Value::String(n.to_string()))
+                .collect(),
+        )
     }
 }
 
