@@ -216,7 +216,7 @@ impl<'a> Lexer<'a> {
             }
             if is_float {
                 len += 1;
-                return self.str[self.pos..self.pos + len]
+                return str[pos..pos + len]
                     .parse::<f64>()
                     .map_or((Token::Error("Float overflow".to_string()), 0), |num| {
                         (Token::Float(num), len)
