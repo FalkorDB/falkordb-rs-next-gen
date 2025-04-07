@@ -854,12 +854,11 @@ fn is_equal_lists(l1: &Vec<Value>, l2: &Vec<Value>) -> Value {
     }
 }
 
-fn add_list_scalar(l: Vec<Value>, scalar: Value) -> Value {
+fn add_list_scalar(mut l: Vec<Value>, scalar: Value) -> Value {
     if l.is_empty() {
         return Value::List(vec![scalar]);
     }
 
-    let mut new_list = l.clone();
-    new_list.push(scalar);
-    Value::List(new_list)
+    l.push(scalar);
+    Value::List(l)
 }
