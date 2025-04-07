@@ -1,10 +1,9 @@
-use std::collections::{BTreeMap, HashSet};
-
 use crate::ast::{
     Alias, NodePattern, PathPattern, Pattern, QueryExprIR, QueryIR, RelationshipPattern,
 };
+use std::collections::{BTreeMap, HashSet};
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 enum Token {
     Call,
     Match,
@@ -50,26 +49,43 @@ enum Token {
 struct Lexer<'a> {
     str: &'a str,
     pos: usize,
+    cached_current: (Token, usize),
 }
 
 impl<'a> Lexer<'a> {
-    const fn new(str: &'a str) -> Self {
-        Self { str, pos: 0 }
+    fn new(str: &'a str) -> Self {
+        Self {
+            str,
+            pos: Self::read_spaces(str, 0),
+            cached_current: Self::get_token(str, Self::read_spaces(str, 0)),
+        }
     }
 
-    fn next(&mut self, len: usize) {
-        self.pos += len;
+    fn next(&mut self) {
+        self.pos += self.cached_current.1;
+        self.pos += Self::read_spaces(self.str, self.pos);
+        self.cached_current = Self::get_token(self.str, self.pos);
     }
 
+    fn read_spaces(str: &'a str, pos: usize) -> usize {
+        let mut len = 0;
+        let mut chars = str[pos..].chars();
+        while let Some(' ' | '\t' | '\n') = chars.next() {
+            len += 1;
+        }
+        len
+    }
+
+    fn current(&self) -> Token {
+        self.cached_current.0.clone()
+    }
+
+    #[inline]
     #[allow(clippy::too_many_lines)]
-    fn current(&mut self) -> (Token, usize) {
-        let mut chars = self.str[self.pos..].chars();
-        while let Some(char) = chars.next() {
+    fn get_token(str: &'a str, pos: usize) -> (Token, usize) {
+        let mut chars = str[pos..].chars();
+        if let Some(char) = chars.next() {
             match char {
-                ' ' | '\t' | '\n' => {
-                    self.pos += 1;
-                    continue;
-                }
                 '[' => return (Token::LBrace, 1),
                 ']' => return (Token::RBrace, 1),
                 '{' => return (Token::LBracket, 1),
@@ -80,7 +96,7 @@ impl<'a> Lexer<'a> {
                 '+' => return (Token::Plus, 1),
                 '-' => {
                     if let Some('0'..='9') = chars.next() {
-                        return self.lex_number(2, &mut chars);
+                        return Self::lex_number(str, pos, 2, &mut chars);
                     }
                     return (Token::Dash, 1);
                 }
@@ -94,55 +110,42 @@ impl<'a> Lexer<'a> {
                     _ => return (Token::Dot, 1),
                 },
                 '\'' => {
-                    let mut pos = self.pos + 1;
+                    let mut len = 1;
                     let mut end = false;
                     for c in chars.by_ref() {
                         if c == '\'' {
                             end = true;
                             break;
                         }
-                        pos += c.len_utf8();
+                        len += c.len_utf8();
                     }
                     if !end {
-                        return (
-                            Token::Error(self.str[self.pos + 1..pos].to_string()),
-                            pos - self.pos + 1,
-                        );
+                        return (Token::Error(str[pos + 1..pos + len].to_string()), len + 1);
                     }
-                    return (
-                        Token::String(self.str[self.pos + 1..pos].to_string()),
-                        pos - self.pos + 1,
-                    );
+                    return (Token::String(str[pos + 1..pos + len].to_string()), len + 1);
                 }
                 '\"' => {
-                    let mut pos = self.pos + 1;
+                    let mut len = 1;
                     let mut end = false;
                     for c in chars.by_ref() {
                         if c == '\"' {
                             end = true;
                             break;
                         }
-                        pos += c.len_utf8();
+                        len += c.len_utf8();
                     }
                     if !end {
-                        return (
-                            Token::Error(self.str[self.pos + 1..pos].to_string()),
-                            pos - self.pos + 1,
-                        );
+                        return (Token::Error(str[pos + 1..pos + len].to_string()), len + 1);
                     }
-                    return (
-                        Token::String(self.str[self.pos + 1..pos].to_string()),
-                        pos - self.pos + 1,
-                    );
+                    return (Token::String(str[pos + 1..pos + len].to_string()), len + 1);
                 }
-                '0'..='9' => return self.lex_number(1, &mut chars),
+                '0'..='9' => return Self::lex_number(str, pos, 1, &mut chars),
                 '$' => {
                     let mut len = 1;
                     while let Some('a'..='z' | 'A'..='Z' | '0'..='9') = chars.next() {
                         len += 1;
                     }
-                    let token =
-                        Token::Parameter(self.str[self.pos + 1..self.pos + len].to_string());
+                    let token = Token::Parameter(str[pos + 1..pos + len].to_string());
                     return (token, len);
                 }
                 'a'..='z' | 'A'..='Z' => {
@@ -150,7 +153,7 @@ impl<'a> Lexer<'a> {
                     while let Some('a'..='z' | 'A'..='Z' | '0'..='9') = chars.next() {
                         len += 1;
                     }
-                    let token = match self.str[self.pos..self.pos + len].to_lowercase().as_str() {
+                    let token = match str[pos..pos + len].to_lowercase().as_str() {
                         "call" => Token::Call,
                         "match" => Token::Match,
                         "unwind" => Token::Unwind,
@@ -168,7 +171,7 @@ impl<'a> Lexer<'a> {
                         "and" => Token::And,
                         "not" => Token::Not,
                         "is" => Token::Is,
-                        _ => Token::Ident(self.str[self.pos..self.pos + len].to_string()),
+                        _ => Token::Ident(str[pos..pos + len].to_string()),
                     };
                     return (token, len);
                 }
@@ -183,15 +186,9 @@ impl<'a> Lexer<'a> {
                         len += c.len_utf8();
                     }
                     if !end {
-                        return (
-                            Token::Error(self.str[self.pos + 1..self.pos + len].to_string()),
-                            len + 1,
-                        );
+                        return (Token::Error(str[pos + 1..pos + len].to_string()), len + 1);
                     }
-                    return (
-                        Token::Ident(self.str[self.pos + 1..self.pos + len].to_string()),
-                        len + 1,
-                    );
+                    return (Token::Ident(str[pos + 1..pos + len].to_string()), len + 1);
                 }
                 _ => return (Token::Error("Unexpected token".to_string()), 0),
             }
@@ -199,7 +196,12 @@ impl<'a> Lexer<'a> {
         (Token::EndOfFile, 0)
     }
 
-    fn lex_number(&self, init_len: usize, chars: &mut std::str::Chars<'_>) -> (Token, usize) {
+    fn lex_number(
+        str: &'a str,
+        pos: usize,
+        init_len: usize,
+        chars: &mut std::str::Chars<'_>,
+    ) -> (Token, usize) {
         let mut len = init_len;
         let mut current = chars.next();
         while let Some('0'..='9') = current {
@@ -221,7 +223,7 @@ impl<'a> Lexer<'a> {
                     });
             }
         }
-        self.str[self.pos..self.pos + len]
+        str[pos..pos + len]
             .parse::<i64>()
             .map_or((Token::Error("Integer overflow".to_string()), 0), |num| {
                 (Token::Integer(num), len)
@@ -236,10 +238,10 @@ impl<'a> Lexer<'a> {
 macro_rules! match_token {
     ($lexer:expr, $token:ident) => {
         match $lexer.current() {
-            (Token::$token, len) => {
-                $lexer.next(len);
+            Token::$token => {
+                $lexer.next();
             }
-            (token, _) => return Err($lexer.format_error(&format!("Unexpected token: {token:?}"))),
+            token => return Err($lexer.format_error(&format!("Unexpected token: {token:?}"))),
         }
     };
     () => {};
@@ -248,8 +250,8 @@ macro_rules! match_token {
 macro_rules! optional_match_token {
     ($lexer:expr, $token:ident) => {
         match $lexer.current() {
-            (Token::$token, len) => {
-                $lexer.next(len);
+            Token::$token => {
+                $lexer.next();
                 true
             }
             _ => false,
@@ -265,7 +267,7 @@ pub struct Parser<'a> {
 
 impl<'a> Parser<'a> {
     #[must_use]
-    pub const fn new(str: &'a str) -> Self {
+    pub fn new(str: &'a str) -> Self {
         Self {
             lexer: Lexer::new(str),
             anon_id: 0,
@@ -274,12 +276,12 @@ impl<'a> Parser<'a> {
 
     pub fn parse_parameters(&mut self) -> Result<(BTreeMap<String, QueryExprIR>, &'a str), String> {
         match self.lexer.current() {
-            (Token::Ident(id), _) => {
+            Token::Ident(id) => {
                 if id == "CYPHER" {
-                    self.lexer.next(id.len());
+                    self.lexer.next();
                     let mut params = BTreeMap::new();
-                    while let (Token::Ident(id), len) = self.lexer.current() {
-                        self.lexer.next(len);
+                    while let Token::Ident(id) = self.lexer.current() {
+                        self.lexer.next();
                         match_token!(self.lexer, Equal);
                         params.insert(id, self.parse_expr()?);
                     }
@@ -303,42 +305,42 @@ impl<'a> Parser<'a> {
 
         loop {
             match self.lexer.current() {
-                (Token::Call, len) => {
-                    self.lexer.next(len);
+                Token::Call => {
+                    self.lexer.next();
                     clauses.push(self.parse_call_clause()?);
                 }
-                (Token::Match, len) => {
-                    self.lexer.next(len);
+                Token::Match => {
+                    self.lexer.next();
                     clauses.push(self.parse_match_clause()?);
                 }
-                (Token::Unwind, len) => {
-                    self.lexer.next(len);
+                Token::Unwind => {
+                    self.lexer.next();
                     clauses.push(self.parse_unwind_clause()?);
                 }
-                (Token::Create, len) => {
-                    self.lexer.next(len);
+                Token::Create => {
+                    self.lexer.next();
                     clauses.push(self.parse_create_clause()?);
                 }
-                (Token::Delete, len) => {
-                    self.lexer.next(len);
+                Token::Delete => {
+                    self.lexer.next();
                     clauses.push(self.parse_delete_clause()?);
                 }
-                (Token::Where, len) => {
-                    self.lexer.next(len);
+                Token::Where => {
+                    self.lexer.next();
                     clauses.push(self.parse_where_clause()?);
                 }
-                (Token::With, len) => {
-                    self.lexer.next(len);
+                Token::With => {
+                    self.lexer.next();
                     clauses.push(self.parse_with_clause()?);
                 }
-                (Token::Return, len) => {
-                    self.lexer.next(len);
+                Token::Return => {
+                    self.lexer.next();
                     clauses.push(self.parse_return_clause()?);
                 }
-                (Token::EndOfFile, _) => {
+                Token::EndOfFile => {
                     return Ok(QueryIR::Query(clauses));
                 }
-                (token, _) => {
+                token => {
                     return Err(self
                         .lexer
                         .format_error(&format!("Unexpected token {token:?}")))
@@ -350,8 +352,8 @@ impl<'a> Parser<'a> {
     fn parse_call_clause(&mut self) -> Result<QueryIR, String> {
         let ident = self.parse_dotted_ident()?;
         match_token!(self.lexer, LParen);
-        if let (Token::RParen, len) = self.lexer.current() {
-            self.lexer.next(len);
+        if self.lexer.current() == Token::RParen {
+            self.lexer.next();
             return Ok(QueryIR::Call(ident, vec![]));
         }
         let exprs = self.parse_exprs()?;
@@ -361,8 +363,8 @@ impl<'a> Parser<'a> {
 
     fn parse_dotted_ident(&mut self) -> Result<String, String> {
         let mut ident = self.parse_ident()?;
-        while let (Token::Dot, len) = self.lexer.current() {
-            self.lexer.next(len);
+        while self.lexer.current() == Token::Dot {
+            self.lexer.next();
             ident.push('.');
             ident.push_str(&self.parse_ident()?);
         }
@@ -417,7 +419,7 @@ impl<'a> Parser<'a> {
                     nodes.push(left);
                 }
                 loop {
-                    if let (Token::Dash | Token::LessThan, _) = self.lexer.current() {
+                    if let Token::Dash | Token::LessThan = self.lexer.current() {
                         let (relationship, right) = self.parse_relationship_pattern(left_alias)?;
                         vars.push(relationship.alias.clone());
                         vars.push(right.alias.clone());
@@ -438,7 +440,7 @@ impl<'a> Parser<'a> {
                 if nodes_alias.insert(left.alias.to_string()) {
                     nodes.push(left);
                 }
-                while let (Token::Dash | Token::LessThan, _) = self.lexer.current() {
+                while let Token::Dash | Token::LessThan = self.lexer.current() {
                     let (relationship, right) = self.parse_relationship_pattern(left_alias)?;
                     left_alias = right.alias.clone();
                     relationships.push(relationship);
@@ -449,13 +451,13 @@ impl<'a> Parser<'a> {
             }
 
             match self.lexer.current() {
-                (Token::Comma, len) => {
-                    self.lexer.next(len);
+                Token::Comma => {
+                    self.lexer.next();
                     continue;
                 }
-                (token, len) => {
+                token => {
                     if token == clause {
-                        self.lexer.next(len);
+                        self.lexer.next();
                         continue;
                     }
                     break;
@@ -468,10 +470,10 @@ impl<'a> Parser<'a> {
 
     fn parse_primary_expr(&mut self) -> Result<QueryExprIR, String> {
         match self.lexer.current() {
-            (Token::Ident(ident), len) => {
-                self.lexer.next(len);
-                if let (Token::LParen, len) = self.lexer.current() {
-                    self.lexer.next(len);
+            Token::Ident(ident) => {
+                self.lexer.next();
+                if self.lexer.current() == Token::LParen {
+                    self.lexer.next();
 
                     let exprs = self.parse_exprs()?;
                     match_token!(self.lexer, RParen);
@@ -480,51 +482,51 @@ impl<'a> Parser<'a> {
 
                 Ok(QueryExprIR::Ident(ident))
             }
-            (Token::Parameter(param), len) => {
-                self.lexer.next(len);
+            Token::Parameter(param) => {
+                self.lexer.next();
                 Ok(QueryExprIR::Parameter(param))
             }
-            (Token::Null, len) => {
-                self.lexer.next(len);
+            Token::Null => {
+                self.lexer.next();
                 Ok(QueryExprIR::Null)
             }
-            (Token::Bool(b), len) => {
-                self.lexer.next(len);
+            Token::Bool(b) => {
+                self.lexer.next();
                 Ok(QueryExprIR::Bool(b))
             }
-            (Token::Integer(i), len) => {
-                self.lexer.next(len);
+            Token::Integer(i) => {
+                self.lexer.next();
                 Ok(QueryExprIR::Integer(i))
             }
-            (Token::Float(f), len) => {
-                self.lexer.next(len);
+            Token::Float(f) => {
+                self.lexer.next();
                 Ok(QueryExprIR::Float(f))
             }
-            (Token::String(s), len) => {
-                self.lexer.next(len);
+            Token::String(s) => {
+                self.lexer.next();
                 Ok(QueryExprIR::String(s))
             }
-            (Token::LBrace, len) => {
-                self.lexer.next(len);
-                if let (Token::RBrace, len) = self.lexer.current() {
-                    self.lexer.next(len);
+            Token::LBrace => {
+                self.lexer.next();
+                if self.lexer.current() == Token::RBrace {
+                    self.lexer.next();
                     return Ok(QueryExprIR::List(vec![]));
                 }
                 let exprs = self.parse_exprs()?;
                 match_token!(self.lexer, RBrace);
                 Ok(QueryExprIR::List(exprs))
             }
-            (Token::LBracket, _) => {
+            Token::LBracket => {
                 let attrs = self.parse_map()?;
                 Ok(QueryExprIR::Map(attrs))
             }
-            (Token::LParen, len) => {
-                self.lexer.next(len);
+            Token::LParen => {
+                self.lexer.next();
                 let expr = self.parse_expr()?;
                 match_token!(self.lexer, RParen);
                 Ok(expr)
             }
-            (token, _) => Err(self
+            token => Err(self
                 .lexer
                 .format_error(&format!("Unexpected token {token:?}"))),
         }
@@ -533,8 +535,8 @@ impl<'a> Parser<'a> {
     fn parse_property_expression(&mut self) -> Result<QueryExprIR, String> {
         let mut expr = self.parse_primary_expr()?;
 
-        while let (Token::Dot, len) = self.lexer.current() {
-            self.lexer.next(len);
+        while self.lexer.current() == Token::Dot {
+            self.lexer.next();
             let ident = self.parse_ident()?;
             expr = QueryExprIR::Property(Box::new(expr), ident);
         }
@@ -546,8 +548,8 @@ impl<'a> Parser<'a> {
     fn parse_list_operator_expression(&mut self) -> Result<QueryExprIR, String> {
         let mut expr = self.parse_property_expression()?;
 
-        while let (Token::LBrace, len) = self.lexer.current() {
-            self.lexer.next(len);
+        while let Token::LBrace = self.lexer.current() {
+            self.lexer.next();
 
             let from = self.parse_expr();
             if optional_match_token!(self.lexer, DotDot) {
@@ -567,11 +569,11 @@ impl<'a> Parser<'a> {
         let expr = self.parse_list_operator_expression()?;
 
         match self.lexer.current() {
-            (Token::Is, len) => {
-                self.lexer.next(len);
+            Token::Is => {
+                self.lexer.next();
                 match self.lexer.current() {
-                    (Token::Null, len) => {
-                        self.lexer.next(len);
+                    Token::Null => {
+                        self.lexer.next();
                         Ok(QueryExprIR::IsNull(Box::new(expr)))
                     }
                     _ => Ok(expr),
@@ -587,8 +589,8 @@ impl<'a> Parser<'a> {
             vec.push(self.parse_null_operator_expression()?);
 
             match self.lexer.current() {
-                (Token::Star, len) => {
-                    self.lexer.next(len);
+                Token::Star => {
+                    self.lexer.next();
                 }
                 _ => {
                     if vec.len() == 1 {
@@ -607,8 +609,8 @@ impl<'a> Parser<'a> {
             vec.push(self.parse_mul_expr()?);
 
             match self.lexer.current() {
-                (Token::Plus, len) => {
-                    self.lexer.next(len);
+                Token::Plus => {
+                    self.lexer.next();
                 }
                 _ => {
                     if vec.len() == 1 {
@@ -627,8 +629,8 @@ impl<'a> Parser<'a> {
             vec.push(self.parse_add_expr()?);
 
             match self.lexer.current() {
-                (Token::Equal, len) => {
-                    self.lexer.next(len);
+                Token::Equal => {
+                    self.lexer.next();
                 }
                 _ => {
                     if vec.len() == 1 {
@@ -643,8 +645,8 @@ impl<'a> Parser<'a> {
     fn parse_not_expr(&mut self) -> Result<QueryExprIR, String> {
         let mut not_count = 0;
 
-        while let (Token::Not, len) = self.lexer.current() {
-            self.lexer.next(len);
+        while self.lexer.current() == Token::Not {
+            self.lexer.next();
             not_count += 1;
         }
 
@@ -663,8 +665,8 @@ impl<'a> Parser<'a> {
         loop {
             vec.push(self.parse_not_expr()?);
 
-            if let (Token::And, len) = self.lexer.current() {
-                self.lexer.next(len);
+            if let Token::And = self.lexer.current() {
+                self.lexer.next();
             } else {
                 if vec.len() == 1 {
                     return Ok(vec.pop().unwrap());
@@ -680,8 +682,8 @@ impl<'a> Parser<'a> {
         loop {
             vec.push(self.parse_and_expr()?);
 
-            if let (Token::Xor, len) = self.lexer.current() {
-                self.lexer.next(len);
+            if self.lexer.current() == Token::Xor {
+                self.lexer.next();
             } else {
                 if vec.len() == 1 {
                     return Ok(vec.pop().unwrap());
@@ -697,8 +699,8 @@ impl<'a> Parser<'a> {
         loop {
             vec.push(self.parse_xor_expr()?);
 
-            if let (Token::Or, len) = self.lexer.current() {
-                self.lexer.next(len);
+            if self.lexer.current() == Token::Or {
+                self.lexer.next();
             } else {
                 if vec.len() == 1 {
                     return Ok(vec.pop().unwrap());
@@ -714,11 +716,11 @@ impl<'a> Parser<'a> {
 
     fn parse_ident(&mut self) -> Result<String, String> {
         match self.lexer.current() {
-            (Token::Ident(v), len) => {
-                self.lexer.next(len);
+            Token::Ident(v) => {
+                self.lexer.next();
                 Ok(v)
             }
-            (token, _) => Err(self
+            token => Err(self
                 .lexer
                 .format_error(&format!("Unexpected token {token:?}"))),
         }
@@ -728,15 +730,15 @@ impl<'a> Parser<'a> {
         let mut exprs = Vec::new();
         loop {
             let expr = self.parse_expr()?;
-            if let (Token::As, len) = self.lexer.current() {
-                self.lexer.next(len);
+            if self.lexer.current() == Token::As {
+                self.lexer.next();
                 let ident = self.parse_ident()?;
                 exprs.push(QueryExprIR::Named(ident, Box::new(expr)));
             } else {
                 exprs.push(expr);
             }
             match self.lexer.current() {
-                (Token::Comma, len) => self.lexer.next(len),
+                Token::Comma => self.lexer.next(),
                 _ => return Ok(exprs),
             }
         }
@@ -747,7 +749,7 @@ impl<'a> Parser<'a> {
         loop {
             exprs.push(self.parse_expr()?);
             match self.lexer.current() {
-                (Token::Comma, len) => self.lexer.next(len),
+                Token::Comma => self.lexer.next(),
                 _ => return Ok(exprs),
             }
         }
@@ -755,8 +757,8 @@ impl<'a> Parser<'a> {
 
     fn parse_node_pattern(&mut self) -> Result<NodePattern, String> {
         match_token!(self.lexer, LParen);
-        let alias = if let (Token::Ident(id), len) = self.lexer.current() {
-            self.lexer.next(len);
+        let alias = if let Token::Ident(id) = self.lexer.current() {
+            self.lexer.next();
             Alias::String(id)
         } else {
             self.anon_id += 1;
@@ -775,8 +777,8 @@ impl<'a> Parser<'a> {
         let is_incomming = optional_match_token!(self.lexer, LessThan);
         match_token!(self.lexer, Dash);
         match_token!(self.lexer, LBrace);
-        let alias = if let (Token::Ident(id), len) = self.lexer.current() {
-            self.lexer.next(len);
+        let alias = if let Token::Ident(id) = self.lexer.current() {
+            self.lexer.next();
             Alias::String(id)
         } else {
             self.anon_id += 1;
@@ -820,8 +822,8 @@ impl<'a> Parser<'a> {
 
     fn parse_labels(&mut self) -> Result<Vec<String>, String> {
         let mut labels = Vec::new();
-        while let (Token::Colon, len) = self.lexer.current() {
-            self.lexer.next(len);
+        while self.lexer.current() == Token::Colon {
+            self.lexer.next();
             labels.push(self.parse_ident()?);
         }
         Ok(labels)
@@ -829,26 +831,26 @@ impl<'a> Parser<'a> {
 
     fn parse_map(&mut self) -> Result<BTreeMap<String, QueryExprIR>, String> {
         let mut attrs = BTreeMap::new();
-        if let (Token::LBracket, len) = self.lexer.current() {
-            self.lexer.next(len);
+        if self.lexer.current() == Token::LBracket {
+            self.lexer.next();
         } else {
             return Ok(attrs);
         }
 
         loop {
-            if let (Token::Ident(key), len) = self.lexer.current() {
-                self.lexer.next(len);
+            if let Token::Ident(key) = self.lexer.current() {
+                self.lexer.next();
                 match_token!(self.lexer, Colon);
                 let value = self.parse_expr()?;
                 attrs.insert(key, value);
 
                 match self.lexer.current() {
-                    (Token::Comma, len) => self.lexer.next(len),
-                    (Token::RBracket, len) => {
-                        self.lexer.next(len);
+                    Token::Comma => self.lexer.next(),
+                    Token::RBracket => {
+                        self.lexer.next();
                         return Ok(attrs);
                     }
-                    (token, _) => {
+                    token => {
                         return Err(self
                             .lexer
                             .format_error(&format!("Unexpected token {token:?}")))
