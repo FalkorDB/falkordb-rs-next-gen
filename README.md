@@ -1,8 +1,7 @@
 # falkordb-rs
 
 [![codecov](https://codecov.io/gh/FalkorDB/falkordb-rs/branch/master/graph/badge.svg?token=WTWEHTBOQF)](https://codecov.io/gh/FalkorDB/falkordb-rs)
-[![Rust](https://github.com/FalkorDB/falkordb-rs/actions/workflows/rust.yml/badge.svg)](https://github.com/FalkorDB/falkordb-rs/actions/workflows/rust.yml)
-
+[![Rust](https://github.com/FalkorDB/falkordb-rs-next-gen/actions/workflows/rust.yml/badge.svg)](https://github.com/FalkorDB/falkordb-rs-next-gen/actions/workflows/rust.yml)
 ![coverage](https://codecov.io/gh/FalkorDB/falkordb-rs/branch/master/graphs/tree.svg?token=WTWEHTBOQF)
 
 
