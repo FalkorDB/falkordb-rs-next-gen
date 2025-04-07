@@ -2,7 +2,7 @@ import os
 import platform
 import subprocess
 from falkordb import FalkorDB, Node, Edge
-from redis import Redis
+from redis import Redis, ResponseError
 
 redis_server = None
 client = None
@@ -158,7 +158,7 @@ def test_unwind():
     res = query("UNWIND range(1, 3) AS x UNWIND range(1, 3) AS y RETURN x, y")
     assert res.result_set == [[1, 1], [1, 2], [1, 3], [2, 1], [2, 2], [2, 3], [3, 1], [3, 2], [3, 3]]
 
-    res = query("UNWIND range(1, 3) AS x UNWIND range(1, 3) AS y WHERE x = 2 RETURN x, y")
+    res = query("UNWIND range(1, 3) AS x UNWIND range(1, 3) AS y WITH x, y WHERE x = 2 RETURN x, y")
     assert res.result_set == [[2, 1], [2, 2], [2, 3]]
     
 def test_create_delete_match():
@@ -175,7 +175,7 @@ def test_create_delete_match():
     res = query("MATCH (n) RETURN n")
     assert res.result_set == []
 
-    res = query("UNWIND range(3) AS x CREATE (n:N) RETURN n", write=True)
+    res = query("UNWIND range(1, 3) AS x CREATE (n:N) RETURN n", write=True)
     assert res.result_set == [[Node(0, labels="N")], [Node(1, labels="N")], [Node(2, labels="N")]]
     assert res.nodes_created == 3
 
@@ -205,3 +205,45 @@ def test_toInteger():
     for v in [None, True, False, '', 'Avi', [], [1], {}, {"a": 2}]:
         res = query("RETURN toInteger($p)", params={"p": v})
         assert res.result_set == [[None]]
+
+def test_array_range():
+    for a in range(-10, 10):
+        for b in range(-10, 10):
+            res = query(f"RETURN [1, 2, 3, 4, 5][{a}..{b}] AS r")
+            assert res.result_set == [[[1, 2, 3, 4, 5][a:b]]]
+            res = query("RETURN [1, 2, 3, 4, 5][$from..$to] AS r", params={"from": a, "to": b})
+            assert res.result_set == [[[1, 2, 3, 4, 5][a:b]]]
+    for a in range(-10, 10):
+        res = query(f"RETURN [1, 2, 3, 4, 5][{a}..] AS r")
+        assert res.result_set == [[[1, 2, 3, 4, 5][a:]]]
+        res = query(f"RETURN [1, 2, 3, 4, 5][..{a}] AS r")
+        assert res.result_set == [[[1, 2, 3, 4, 5][:a]]]
+
+    res = query("RETURN [1, 2, 3][null..1] AS r")
+    assert res.result_set == [[None]]
+    res = query("RETURN [1, 2, 3][1..null] AS r")
+    assert res.result_set == [[None]]
+    res = query("RETURN [1, 2, 3][..] AS r")
+    assert res.result_set == [[[1, 2, 3]]]
+
+def test_array_equal():
+    res = query("RETURN [1, 2] = 'foo' AS res")
+    assert res.result_set == [[False]]
+    res = query("RETURN [1] = [1, null] AS res")
+    assert res.result_set == [[False]]
+    res = query("RETURN [1, 2] = [null, 'foo'] AS res")
+    assert res.result_set == [[False]]
+    res = query("RETURN [1, 2] = [null, 2] AS res")
+    assert res.result_set == [[None]]
+    res = query("RETURN [[1]] = [[1], [null]] AS res")
+    assert res.result_set == [[False]]
+    res = query("RETURN [[1, 2], [1, 3]] = [[1, 2], [null, 'foo']] AS res")
+    assert res.result_set == [[False]]
+    res = query("RETURN [[1, 2], ['foo', 'bar']] = [[1, 2], [null, 'bar']] AS res")
+    assert res.result_set == [[None]]
+
+def test_array_concat():
+    res = query("RETURN [1, 10, 100] + [4, 5] AS foo")
+    assert res.result_set == [[[1, 10, 100, 4, 5]]]
+    res = query("RETURN [false, true] + false AS foo")
+    assert res.result_set == [[[False, True, False]]]

@@ -41,6 +41,7 @@ enum Token {
     Comma,
     Colon,
     Dot,
+    DotDot,
     Error(String),
     EndOfFile,
 }
@@ -104,7 +105,10 @@ impl<'a> Lexer<'a> {
                 '>' => return (Token::GreaterThan, 1),
                 ',' => return (Token::Comma, 1),
                 ':' => return (Token::Colon, 1),
-                '.' => return (Token::Dot, 1),
+                '.' => match chars.next() {
+                    Some('.') => return (Token::DotDot, 2),
+                    _ => return (Token::Dot, 1),
+                },
                 '\'' => {
                     let mut len = 1;
                     let mut end = false;
@@ -199,15 +203,25 @@ impl<'a> Lexer<'a> {
         chars: &mut std::str::Chars<'_>,
     ) -> (Token, usize) {
         let mut len = init_len;
-        while let Some('0'..='9' | '.') = chars.next() {
+        let mut current = chars.next();
+        while let Some('0'..='9') = current {
             len += 1;
+            current = chars.next();
         }
-        if str[pos..pos + len].contains('.') {
-            return str[pos..pos + len]
-                .parse::<f64>()
-                .map_or((Token::Error("Float overflow".to_string()), 0), |num| {
-                    (Token::Float(num), len)
-                });
+        if current == Some('.') {
+            let mut is_float = false;
+            while let Some('0'..='9') = chars.next() {
+                len += 1;
+                is_float = true;
+            }
+            if is_float {
+                len += 1;
+                return str[pos..pos + len]
+                    .parse::<f64>()
+                    .map_or((Token::Error("Float overflow".to_string()), 0), |num| {
+                        (Token::Float(num), len)
+                    });
+            }
         }
         str[pos..pos + len]
             .parse::<i64>()
@@ -530,14 +544,22 @@ impl<'a> Parser<'a> {
         Ok(expr)
     }
 
+    // match one of those kind [..4], [4..], [4..5], [6]
     fn parse_list_operator_expression(&mut self) -> Result<QueryExprIR, String> {
         let mut expr = self.parse_property_expression()?;
 
-        while self.lexer.current() == Token::LBrace {
+        while let Token::LBrace = self.lexer.current() {
             self.lexer.next();
-            let index = self.parse_expr()?;
-            match_token!(self.lexer, RBrace);
-            expr = QueryExprIR::GetElement(Box::new((expr, index)));
+
+            let from = self.parse_expr();
+            if optional_match_token!(self.lexer, DotDot) {
+                let to = self.parse_expr().ok();
+                match_token!(self.lexer, RBrace);
+                expr = QueryExprIR::GetElements(Box::new((expr, from.ok(), to)));
+            } else {
+                match_token!(self.lexer, RBrace);
+                expr = QueryExprIR::GetElement(Box::new((expr, from?)));
+            }
         }
 
         Ok(expr)

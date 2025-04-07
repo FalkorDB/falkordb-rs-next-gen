@@ -31,6 +31,7 @@ pub enum QueryExprIR {
     Pow(Vec<QueryExprIR>),
     IsNull(Box<QueryExprIR>),
     GetElement(Box<(QueryExprIR, QueryExprIR)>),
+    GetElements(Box<(QueryExprIR, Option<QueryExprIR>, Option<QueryExprIR>)>),
     Property(Box<QueryExprIR>, String),
     FuncInvocation(String, Vec<QueryExprIR>),
     Map(BTreeMap<String, QueryExprIR>),
@@ -98,6 +99,18 @@ impl QueryExprIR {
             Self::GetElement(op) => {
                 op.0.inner_validate(env)?;
                 op.1.inner_validate(env)
+            }
+            Self::GetElements(op) => {
+                op.0.inner_validate(env)?;
+                match (&op.1, &op.2) {
+                    (Some(a), Some(b)) => {
+                        a.inner_validate(env)?;
+                        b.inner_validate(env)
+                    }
+                    (Some(a), None) => a.inner_validate(env),
+                    (None, Some(b)) => b.inner_validate(env),
+                    (None, None) => Ok(()),
+                }
             }
             Self::FuncInvocation(_name, exprs) => {
                 for arg in exprs {
