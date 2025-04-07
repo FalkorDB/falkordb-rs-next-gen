@@ -10,7 +10,7 @@ g = None
 
 def setup_module(module):
     global redis_server, client, g
-    target = os.environ.get("TARGET", "target/debug/libmatrixdb.dylib" if platform.system() == "Darwin" else "target/debug/libmatrixdb.so")
+    target = os.environ.get("TARGET", "target/debug/libfalkordb.dylib" if platform.system() == "Darwin" else "target/debug/libfalkordb.so")
     try:
         client.ping()
         return

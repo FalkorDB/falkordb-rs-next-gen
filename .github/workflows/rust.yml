@@ -31,11 +31,11 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           push: true
-          tags: aviavni/matrixdb-build:latest
+          tags: aviavni/falkordb-build:latest
           context: ./build
   test:
     runs-on: ubuntu-latest
-    container: aviavni/matrixdb-build:latest
+    container: aviavni/falkordb-build:latest
     needs: docker
     steps:
       - uses: actions/checkout@v3
@@ -49,7 +49,7 @@ jobs:
           pytest tests/test_e2e.py
   coverage:
     runs-on: ubuntu-latest
-    container: aviavni/matrixdb-build:latest
+    container: aviavni/falkordb-build:latest
     needs: docker
     steps:
       - uses: actions/checkout@v3
@@ -60,9 +60,9 @@ jobs:
           mkdir cov
           cd cov
           . /data/venv/bin/activate
-          TARGET=../target/debug/libmatrixdb.so pytest ../tests/test_e2e.py
+          TARGET=../target/debug/libfalkordb.so pytest ../tests/test_e2e.py
           llvm-profdata-20 merge --sparse `ls *.profraw` -o cov.profdata
-          llvm-cov-20 export --format=lcov --instr-profile cov.profdata ../target/debug/libmatrixdb.so > codecov.txt.all
+          llvm-cov-20 export --format=lcov --instr-profile cov.profdata ../target/debug/libfalkordb.so > codecov.txt.all
           lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v3

@@ -1,17 +1,17 @@
 [package]
-name = "matrixdb-rs"
+name = "falkordb-rs"
 version = "0.1.0"
 edition = "2021"
 description = "Graph database"
 license = "MIT"
-repository = "https://github.com/AviAvni/matrixdb-rs"
+repository = "https://github.com/FalkorDB/falkordb-rs-next-gen"
 readme = "README.md"
 keywords = ["graph", "database"]
 categories = ["graph", "database"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]
-name = "matrixdb"
+name = "falkordb"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

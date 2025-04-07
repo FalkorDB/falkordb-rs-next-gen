@@ -274,7 +274,7 @@ fn graph_init(_: &Context, _: &Vec<RedisString>) -> Status {
 //////////////////////////////////////////////////////
 
 redis_module! {
-    name: "matrixdb",
+    name: "falkordb",
     version: 1,
     allocator: (redis_module::alloc::RedisAlloc, redis_module::alloc::RedisAlloc),
     data_types: [GRAPH_TYPE],
