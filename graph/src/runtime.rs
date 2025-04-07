@@ -420,6 +420,7 @@ pub fn ro_run(
                 (Value::Int(a), Value::Int(b)) => Value::Int(a + b),
                 (Value::Float(a), Value::Float(b)) => Value::Float(a + b),
                 (Value::List(a), Value::List(b)) => Value::List(a.into_iter().chain(b).collect()),
+                (Value::List(a), b) => add_list_scalar(a, b).unwrap_or(Value::Null),
                 _ => Value::Null,
             })
             .ok_or_else(|| "Add operator requires at least one argument".to_string()),
@@ -658,6 +659,7 @@ pub fn run(
                 (Value::Int(a), Value::Int(b)) => Value::Int(a + b),
                 (Value::Float(a), Value::Float(b)) => Value::Float(a + b),
                 (Value::List(a), Value::List(b)) => Value::List(a.into_iter().chain(b).collect()),
+                (Value::List(a), b) => add_list_scalar(a, b).unwrap_or(Value::Null),
                 _ => Value::Null,
             })
             .ok_or_else(|| "Add operator requires at least one argument".to_string()),
@@ -834,5 +836,25 @@ fn is_equal_lists(l1: &Vec<Value>, l2: &Vec<Value>) -> Value {
         Value::Null
     } else {
         Value::Bool(true)
+    }
+}
+
+fn add_list_scalar(l: Vec<Value>, scalar: Value) -> Result<Value, String> {
+    if l.is_empty() {
+        return Ok(Value::List(vec![scalar]));
+    }
+
+    match (&l[0], &scalar) {
+        (Value::Int(_), Value::Int(_))
+        | (Value::Float(_), Value::Float(_))
+        | (Value::Bool(_), Value::Bool(_))
+        | (Value::String(_), Value::String(_))
+        | (Value::Node(_), Value::Node(_))
+        | (Value::Relationship(_, _, _), Value::Relationship(_, _, _)) => {
+            let mut new_list = l.clone();
+            new_list.push(scalar);
+            Ok(Value::List(new_list))
+        }
+        _ => Err("Type mismatch: cannot add scalar to list".to_string()),
     }
 }

@@ -251,3 +251,9 @@ def test_array_equal():
     assert res.result_set == [[False]]
     res = query("RETURN [[1, 2], ['foo', 'bar']] = [[1, 2], [null, 'bar']] AS res")
     assert res.result_set == [[None]]
+
+def test_array_concat():
+    res = query("RETURN [1, 10, 100] + [4, 5] AS foo")
+    assert res.result_set == [[[1, 10, 100, 4, 5]]]
+    res = query("RETURN [false, true] + false AS foo")
+    assert res.result_set == [[[False, True, False]]]
