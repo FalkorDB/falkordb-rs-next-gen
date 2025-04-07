@@ -1,10 +1,9 @@
-use std::collections::{BTreeMap, HashSet};
-
 use crate::ast::{
     Alias, NodePattern, PathPattern, Pattern, QueryExprIR, QueryIR, RelationshipPattern,
 };
+use std::collections::{BTreeMap, HashSet};
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 enum Token {
     Call,
     Match,
@@ -49,19 +48,32 @@ enum Token {
 struct Lexer<'a> {
     str: &'a str,
     pos: usize,
+    cached_current: Option<(Token, usize)>,
 }
 
 impl<'a> Lexer<'a> {
     const fn new(str: &'a str) -> Self {
-        Self { str, pos: 0 }
+        Self {
+            str,
+            pos: 0,
+            cached_current: None,
+        }
     }
 
     fn next(&mut self, len: usize) {
         self.pos += len;
+        self.cached_current = None;
     }
 
-    #[allow(clippy::too_many_lines)]
     fn current(&mut self) -> (Token, usize) {
+        if self.cached_current.is_none() {
+            self.cached_current = Some(self.current_());
+        }
+        self.cached_current.as_ref().unwrap().clone()
+    }
+    #[inline]
+    #[allow(clippy::too_many_lines)]
+    fn current_(&mut self) -> (Token, usize) {
         let mut chars = self.str[self.pos..].chars();
         while let Some(char) = chars.next() {
             match char {
