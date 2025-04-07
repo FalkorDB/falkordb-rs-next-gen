@@ -12,9 +12,9 @@
             "args": [
                 "--loadmodule",
                 // for mac
-                "${workspaceFolder}/target/debug/libmatrixdb.dylib"
+                "${workspaceFolder}/target/debug/libfalkordb.dylib"
                 // for linux
-                // "${workspaceFolder}/target/debug/libmatrixdb.so"
+                // "${workspaceFolder}/target/debug/libfalkordb.so"
             ],
             "cwd": "${workspaceFolder}",
         }
