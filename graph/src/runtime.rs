@@ -378,7 +378,7 @@ pub fn ro_run(
         IR::Eq(irs) => irs
             .iter()
             .flat_map(|ir| ro_run(vars, g, runtime, result_fn, ir))
-            .reduce(|a, b| Value::Bool(a == b))
+            .reduce(|a, b| is_equal(&a, &b))
             .ok_or_else(|| "Eq operator requires at least one argument".to_string()),
         IR::Neq(irs) => irs
             .iter()
@@ -616,7 +616,7 @@ pub fn run(
         IR::Eq(irs) => irs
             .iter()
             .flat_map(|ir| run(vars, g, runtime, result_fn, ir))
-            .reduce(|a, b| Value::Bool(a == b))
+            .reduce(|a, b| is_equal(&a, &b))
             .ok_or_else(|| "Eq operator requires at least one argument".to_string()),
         IR::Neq(irs) => irs
             .iter()
@@ -795,5 +795,44 @@ fn get_elements(arr: Value, start: Option<Value>, end: Option<Value>) -> Result<
         (_, Some(Value::Null), _) | (_, _, Some(Value::Null)) => Ok(Value::Null),
 
         _ => Err("Invalid array range parameters.".to_string()),
+    }
+}
+
+#[inline]
+fn is_equal(a: &Value, b: &Value) -> Value {
+    match (a, b) {
+        (Value::List(l1), Value::List(l2)) => is_equal_lists(l1, l2),
+        _ => Value::Bool(a == b),
+    }
+}
+#[inline]
+fn is_equal_lists(l1: &Vec<Value>, l2: &Vec<Value>) -> Value {
+    if l1.len() != l2.len() {
+        return Value::Bool(false);
+    }
+    let mut has_null = false;
+    for (v1, v2) in l1.iter().zip(l2.iter()) {
+        let is_equal = is_equal(v1, v2);
+        if is_equal != Value::Bool(true) {
+            match (v1, v2) {
+                (Value::Null, _) | (_, Value::Null) => {
+                    has_null = true;
+                    continue;
+                }
+                _ => {
+                    if is_equal == Value::Null {
+                        return Value::Null;
+                    }
+                    return Value::Bool(false);
+                }
+            }
+        } else {
+            continue;
+        }
+    }
+    if has_null {
+        Value::Null
+    } else {
+        Value::Bool(true)
     }
 }
