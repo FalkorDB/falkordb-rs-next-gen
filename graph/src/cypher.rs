@@ -89,12 +89,10 @@ impl<'a> Lexer<'a> {
                 '>' => return (Token::GreaterThan, 1),
                 ',' => return (Token::Comma, 1),
                 ':' => return (Token::Colon, 1),
-                '.' => {
-                    if let Some('.') = chars.next() {
-                        return (Token::DotDot, 2);
-                    }
-                    return (Token::Dot, 1);
-                }
+                '.' => match chars.next() {
+                    Some('.') => return (Token::DotDot, 2),
+                    _ => return (Token::Dot, 1),
+                },
                 '\'' => {
                     let mut pos = self.pos + 1;
                     let mut end = false;
@@ -203,19 +201,25 @@ impl<'a> Lexer<'a> {
 
     fn lex_number(&self, init_len: usize, chars: &mut std::str::Chars<'_>) -> (Token, usize) {
         let mut len = init_len;
-        let mut chars = chars.peekable();
-        while let Some(c @ ('0'..='9' | '.')) = chars.next() {
-            if c == '.' && (Some(&'.') == chars.peek()) {
-                break;
-            }
+        let mut current = chars.next();
+        while let Some('0'..='9') = current {
             len += 1;
+            current = chars.next();
         }
-        if self.str[self.pos..self.pos + len].contains('.') {
-            return self.str[self.pos..self.pos + len]
-                .parse::<f64>()
-                .map_or((Token::Error("Float overflow".to_string()), 0), |num| {
-                    (Token::Float(num), len)
-                });
+        if current == Some('.') {
+            let mut is_float = false;
+            while let Some('0'..='9') = chars.next() {
+                len += 1;
+                is_float = true;
+            }
+            if is_float {
+                len += 1;
+                return self.str[self.pos..self.pos + len]
+                    .parse::<f64>()
+                    .map_or((Token::Error("Float overflow".to_string()), 0), |num| {
+                        (Token::Float(num), len)
+                    });
+            }
         }
         self.str[self.pos..self.pos + len]
             .parse::<i64>()
@@ -541,35 +545,22 @@ impl<'a> Parser<'a> {
     // match one of those kind [..4], [4..], [4..5], [6]
     fn parse_list_operator_expression(&mut self) -> Result<QueryExprIR, String> {
         let mut expr = self.parse_property_expression()?;
+
         while let (Token::LBrace, len) = self.lexer.current() {
             self.lexer.next(len);
 
+            let from = self.parse_expr();
             if optional_match_token!(self.lexer, DotDot) {
-                let start = None;
-                expr = self.match_get_elements(expr, start)?
+                let to = self.parse_expr().ok();
+                match_token!(self.lexer, RBrace);
+                expr = QueryExprIR::GetElements(Box::new((expr, from.ok(), to)));
             } else {
-                let index = self.parse_expr()?;
-
-                if optional_match_token!(self.lexer, DotDot) {
-                    expr = self.match_get_elements(expr, Some(index))?;
-                } else {
-                    match_token!(self.lexer, RBrace);
-                    expr = QueryExprIR::GetElement(Box::new((expr, index)));
-                }
+                match_token!(self.lexer, RBrace);
+                expr = QueryExprIR::GetElement(Box::new((expr, from?)));
             }
         }
 
         Ok(expr)
-    }
-
-    fn match_get_elements(
-        &mut self,
-        expr: QueryExprIR,
-        start: Option<QueryExprIR>,
-    ) -> Result<QueryExprIR, String> {
-        let end = self.parse_expr().ok();
-        match_token!(self.lexer, RBrace);
-        Ok(QueryExprIR::GetElements(Box::new((expr, start, end))))
     }
 
     fn parse_null_operator_expression(&mut self) -> Result<QueryExprIR, String> {

@@ -319,15 +319,20 @@ pub fn ro_run(
         }
         IR::GetElements(op) => {
             let arr = ro_run(vars, g, runtime, result_fn, &op.0)?;
-            let start =
-                op.1.as_ref()
-                    .map(|ir| ro_run(vars, g, runtime, result_fn, &ir))
-                    .transpose()?;
-            let end =
-                op.2.as_ref()
-                    .map(|ir| ro_run(vars, g, runtime, result_fn, &ir))
-                    .transpose()?;
-            get_elements(arr, start, end)
+            match (&op.1, &op.2) {
+                (None, None) => get_elements(arr, None, None),
+                (None, Some(b)) => {
+                    get_elements(arr, None, Some(ro_run(vars, g, runtime, result_fn, b)?))
+                }
+                (Some(a), None) => {
+                    get_elements(arr, Some(ro_run(vars, g, runtime, result_fn, a)?), None)
+                }
+                (Some(a), Some(b)) => get_elements(
+                    arr,
+                    Some(ro_run(vars, g, runtime, result_fn, a)?),
+                    Some(ro_run(vars, g, runtime, result_fn, b)?),
+                ),
+            }
         }
         IR::Range(_) => Err("Range operator not implemented".to_string()),
         IR::IsNull(ir) => match ro_run(vars, g, runtime, result_fn, ir)? {
@@ -420,7 +425,7 @@ pub fn ro_run(
                 (Value::Int(a), Value::Int(b)) => Value::Int(a + b),
                 (Value::Float(a), Value::Float(b)) => Value::Float(a + b),
                 (Value::List(a), Value::List(b)) => Value::List(a.into_iter().chain(b).collect()),
-                (Value::List(a), b) => add_list_scalar(a, b).unwrap_or(Value::Null),
+                (Value::List(a), b) => add_list_scalar(a, b),
                 _ => Value::Null,
             })
             .ok_or_else(|| "Add operator requires at least one argument".to_string()),
@@ -558,15 +563,20 @@ pub fn run(
         }
         IR::GetElements(op) => {
             let arr = run(vars, g, runtime, result_fn, &op.0)?;
-            let start =
-                op.1.as_ref()
-                    .map(|ir| run(vars, g, runtime, result_fn, &ir))
-                    .transpose()?;
-            let end =
-                op.2.as_ref()
-                    .map(|ir| run(vars, g, runtime, result_fn, &ir))
-                    .transpose()?;
-            get_elements(arr, start, end)
+            match (&op.1, &op.2) {
+                (None, None) => get_elements(arr, None, None),
+                (None, Some(b)) => {
+                    get_elements(arr, None, Some(run(vars, g, runtime, result_fn, b)?))
+                }
+                (Some(a), None) => {
+                    get_elements(arr, Some(run(vars, g, runtime, result_fn, a)?), None)
+                }
+                (Some(a), Some(b)) => get_elements(
+                    arr,
+                    Some(run(vars, g, runtime, result_fn, a)?),
+                    Some(run(vars, g, runtime, result_fn, b)?),
+                ),
+            }
         }
         IR::Range(_) => Err("Range operator not implemented".to_string()),
         IR::IsNull(ir) => match run(vars, g, runtime, result_fn, ir)? {
@@ -659,7 +669,7 @@ pub fn run(
                 (Value::Int(a), Value::Int(b)) => Value::Int(a + b),
                 (Value::Float(a), Value::Float(b)) => Value::Float(a + b),
                 (Value::List(a), Value::List(b)) => Value::List(a.into_iter().chain(b).collect()),
-                (Value::List(a), b) => add_list_scalar(a, b).unwrap_or(Value::Null),
+                (Value::List(a), b) => add_list_scalar(a, b),
                 _ => Value::Null,
             })
             .ok_or_else(|| "Add operator requires at least one argument".to_string()),
@@ -771,7 +781,9 @@ pub fn evaluate_param(expr: QueryExprIR) -> Value {
 fn get_elements(arr: Value, start: Option<Value>, end: Option<Value>) -> Result<Value, String> {
     match (arr, start, end) {
         (Value::List(values), Some(Value::Int(mut start)), Some(Value::Int(mut end))) => {
-            start = start.max(0);
+            if start < 0 {
+                start = (values.len() as i64 + start).max(0);
+            }
             if end < 0 {
                 end = (values.len() as i64 + end).max(0);
             } else {
@@ -791,10 +803,14 @@ fn get_elements(arr: Value, start: Option<Value>, end: Option<Value>) -> Result<
             Ok(Value::List(values[..end as usize].to_vec()))
         }
         (Value::List(values), Some(Value::Int(mut start)), None) => {
-            start = start.max(0);
+            if start < 0 {
+                start = (values.len() as i64 + start).max(0);
+            }
+            start = start.min(values.len() as i64);
             Ok(Value::List(values[start as usize..].to_vec()))
         }
         (_, Some(Value::Null), _) | (_, _, Some(Value::Null)) => Ok(Value::Null),
+        (Value::List(values), None, None) => Ok(Value::List(values)),
 
         _ => Err("Invalid array range parameters.".to_string()),
     }
@@ -815,21 +831,20 @@ fn is_equal_lists(l1: &Vec<Value>, l2: &Vec<Value>) -> Value {
     let mut has_null = false;
     for (v1, v2) in l1.iter().zip(l2.iter()) {
         let is_equal = is_equal(v1, v2);
-        if is_equal != Value::Bool(true) {
-            match (v1, v2) {
-                (Value::Null, _) | (_, Value::Null) => {
-                    has_null = true;
-                    continue;
-                }
-                _ => {
-                    if is_equal == Value::Null {
-                        return Value::Null;
-                    }
-                    return Value::Bool(false);
-                }
-            }
-        } else {
+        if is_equal == Value::Bool(true) {
             continue;
+        }
+        match (v1, v2) {
+            (Value::Null, _) | (_, Value::Null) => {
+                has_null = true;
+                continue;
+            }
+            _ => {
+                if is_equal == Value::Null {
+                    return Value::Null;
+                }
+                return Value::Bool(false);
+            }
         }
     }
     if has_null {
@@ -839,22 +854,12 @@ fn is_equal_lists(l1: &Vec<Value>, l2: &Vec<Value>) -> Value {
     }
 }
 
-fn add_list_scalar(l: Vec<Value>, scalar: Value) -> Result<Value, String> {
+fn add_list_scalar(l: Vec<Value>, scalar: Value) -> Value {
     if l.is_empty() {
-        return Ok(Value::List(vec![scalar]));
+        return Value::List(vec![scalar]);
     }
 
-    match (&l[0], &scalar) {
-        (Value::Int(_), Value::Int(_))
-        | (Value::Float(_), Value::Float(_))
-        | (Value::Bool(_), Value::Bool(_))
-        | (Value::String(_), Value::String(_))
-        | (Value::Node(_), Value::Node(_))
-        | (Value::Relationship(_, _, _), Value::Relationship(_, _, _)) => {
-            let mut new_list = l.clone();
-            new_list.push(scalar);
-            Ok(Value::List(new_list))
-        }
-        _ => Err("Type mismatch: cannot add scalar to list".to_string()),
-    }
+    let mut new_list = l.clone();
+    new_list.push(scalar);
+    Value::List(new_list)
 }

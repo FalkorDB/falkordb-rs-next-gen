@@ -106,11 +106,11 @@ impl Planner {
             QueryExprIR::GetElement(op) => {
                 IR::GetElement(Box::new((self.plan_expr(op.0), self.plan_expr(op.1))))
             }
-            QueryExprIR::GetElements(op) => {
-                let op1 = op.1.map(|ir| self.plan_expr(ir));
-                let op2 = op.2.map(|ir| self.plan_expr(ir));
-                IR::GetElements(Box::new((self.plan_expr(op.0), op1, op2)))
-            }
+            QueryExprIR::GetElements(op) => IR::GetElements(Box::new((
+                self.plan_expr(op.0),
+                op.1.map(|ir| self.plan_expr(ir)),
+                op.2.map(|ir| self.plan_expr(ir)),
+            ))),
             QueryExprIR::Property(expr, name) => IR::FuncInvocation(
                 "property".to_string(),
                 vec![self.plan_expr(*expr), IR::String(name)],

@@ -2,8 +2,7 @@ import os
 import platform
 import subprocess
 from falkordb import FalkorDB, Node, Edge
-from redis import Redis
-from redis import ResponseError
+from redis import Redis, ResponseError
 
 redis_server = None
 client = None
@@ -159,7 +158,7 @@ def test_unwind():
     res = query("UNWIND range(1, 3) AS x UNWIND range(1, 3) AS y RETURN x, y")
     assert res.result_set == [[1, 1], [1, 2], [1, 3], [2, 1], [2, 2], [2, 3], [3, 1], [3, 2], [3, 3]]
 
-    res = query("UNWIND range(1, 3) AS x UNWIND range(1, 3) AS y WHERE x = 2 RETURN x, y")
+    res = query("UNWIND range(1, 3) AS x UNWIND range(1, 3) AS y WITH x, y WHERE x = 2 RETURN x, y")
     assert res.result_set == [[2, 1], [2, 2], [2, 3]]
     
 def test_create_delete_match():
@@ -176,7 +175,7 @@ def test_create_delete_match():
     res = query("MATCH (n) RETURN n")
     assert res.result_set == []
 
-    res = query("UNWIND range(3) AS x CREATE (n:N) RETURN n", write=True)
+    res = query("UNWIND range(1, 3) AS x CREATE (n:N) RETURN n", write=True)
     assert res.result_set == [[Node(0, labels="N")], [Node(1, labels="N")], [Node(2, labels="N")]]
     assert res.nodes_created == 3
 
@@ -208,33 +207,24 @@ def test_toInteger():
         assert res.result_set == [[None]]
 
 def test_array_range():
-    res = query("WITH [1, 2, 3, 4, 5] AS list RETURN list[1..3] AS r")
-    assert res.result_set == [[[2, 3]]]
-    res = query("WITH [1, 2, 3] AS list RETURN list[1..] AS r")
-    assert res.result_set == [[[2, 3]]]
-    res = query("WITH [1, 2, 3] AS list RETURN list[..2] AS r")
-    assert res.result_set == [[[1, 2]]]
-    res = query("WITH [1, 2, 3] AS list RETURN list[0..1] AS r")
-    assert res.result_set == [[[1]]]
-    res = query("WITH [1, 2, 3] AS list RETURN list[-3..-1] AS r")
-    assert res.result_set == [[[1, 2]]]
-    res = query("WITH [1, 2, 3] AS list RETURN list[3..1] AS r")
-    assert res.result_set == [[[]]]
-    res = query("WITH [1, 2, 3, 4, 5] AS list RETURN list[$from..$to] AS r",
-                params={"from": 1, "to": 3})
-    assert res.result_set == [[[2, 3]]]
-    res = query("WITH [1, 2, 3, 4, 5] AS list RETURN list[$from..$to] AS r",
-                params={"from": 3, "to": 2})
-    assert res.result_set == [[[]]]
-    res = query("WITH [1, 2, 3] AS list RETURN list[null..1] AS r")
+    for a in range(-10, 10):
+        for b in range(-10, 10):
+            res = query(f"RETURN [1, 2, 3, 4, 5][{a}..{b}] AS r")
+            assert res.result_set == [[[1, 2, 3, 4, 5][a:b]]]
+            res = query("RETURN [1, 2, 3, 4, 5][$from..$to] AS r", params={"from": a, "to": b})
+            assert res.result_set == [[[1, 2, 3, 4, 5][a:b]]]
+    for a in range(-10, 10):
+        res = query(f"RETURN [1, 2, 3, 4, 5][{a}..] AS r")
+        assert res.result_set == [[[1, 2, 3, 4, 5][a:]]]
+        res = query(f"RETURN [1, 2, 3, 4, 5][..{a}] AS r")
+        assert res.result_set == [[[1, 2, 3, 4, 5][:a]]]
+
+    res = query("RETURN [1, 2, 3][null..1] AS r")
     assert res.result_set == [[None]]
-    res = query("WITH [1, 2, 3] AS list RETURN list[1..null] AS r")
+    res = query("RETURN [1, 2, 3][1..null] AS r")
     assert res.result_set == [[None]]
-    try:
-        query("WITH [1, 2, 3] AS list RETURN list[..] AS r")
-        assert False, "should throw error"
-    except ResponseError as e:
-        assert "GetElements must have at least one of upper or lower bounds" in str(f"{e}")
+    res = query("RETURN [1, 2, 3][..] AS r")
+    assert res.result_set == [[[1, 2, 3]]]
 
 def test_array_equal():
     res = query("RETURN [1, 2] = 'foo' AS res")

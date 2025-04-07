@@ -102,18 +102,15 @@ impl QueryExprIR {
             }
             Self::GetElements(op) => {
                 op.0.inner_validate(env)?;
-                if let Some(query_exp) = &op.1 {
-                    query_exp.inner_validate(env)?;
+                match (&op.1, &op.2) {
+                    (Some(a), Some(b)) => {
+                        a.inner_validate(env)?;
+                        b.inner_validate(env)
+                    }
+                    (Some(a), None) => a.inner_validate(env),
+                    (None, Some(b)) => b.inner_validate(env),
+                    (None, None) => Ok(()),
                 }
-                if let Some(query_exp) = &op.2 {
-                    query_exp.inner_validate(env)?;
-                }
-                if op.1.is_none() && op.2.is_none() {
-                    return Err(
-                        "GetElements must have at least one of upper or lower bounds".to_string(),
-                    );
-                }
-                Ok(())
             }
             Self::FuncInvocation(_name, exprs) => {
                 for arg in exprs {
