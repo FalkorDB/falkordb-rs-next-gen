@@ -206,7 +206,7 @@ def test_toInteger():
         res = query("RETURN toInteger($p)", params={"p": v})
         assert res.result_set == [[None]]
 
-def test_array_range():
+def test_list_range():
     for a in range(-10, 10):
         for b in range(-10, 10):
             res = query(f"RETURN [1, 2, 3, 4, 5][{a}..{b}] AS r")
@@ -226,7 +226,7 @@ def test_array_range():
     res = query("RETURN [1, 2, 3][..] AS r")
     assert res.result_set == [[[1, 2, 3]]]
 
-def test_array_equal():
+def test_list_equal():
     res = query("RETURN [1, 2] = 'foo' AS res")
     assert res.result_set == [[False]]
     res = query("RETURN [1] = [1, null] AS res")
@@ -242,8 +242,107 @@ def test_array_equal():
     res = query("RETURN [[1, 2], ['foo', 'bar']] = [[1, 2], [null, 'bar']] AS res")
     assert res.result_set == [[None]]
 
-def test_array_concat():
+def test_list_concat():
     res = query("RETURN [1, 10, 100] + [4, 5] AS foo")
     assert res.result_set == [[[1, 10, 100, 4, 5]]]
     res = query("RETURN [false, true] + false AS foo")
     assert res.result_set == [[[False, True, False]]]
+
+def test_in_list():
+    # test that the error is correct on all cases
+    for value , name in  [(False, 'Boolean'), (1, 'Integer'), (1.0, 'Float'), ('"Avi"', 'String'), ({}, 'Map')]:
+        try:
+            query(f"RETURN 0 IN {value} AS r")
+            assert False, "Expected an error"
+        except ResponseError as e:
+            assert f"Type mismatch: expected List or Null but was {name}" in str(e)
+
+    # test for simple values
+    for value in [None, True, False, 1, -1, 0.1, 'Avi', [1], {"a": 2}, {}]:
+        res = query("RETURN $p IN [$p]", params={"p": value})
+        assert res.result_set == [[True]]
+    # TCK
+    res = query("WITH [[1, 2, 3]] AS list RETURN 3 IN list[0] AS r")
+    assert res.result_set == [[True]]
+    res = query("RETURN 1 IN null AS r")
+    assert res.result_set == [[False]]
+    res = query("RETURN 3 IN [[1, 2, 3]][0] AS r")
+    assert res.result_set == [[True]]
+    res = query("WITH [1, 2, 3] AS list RETURN 3 IN list[0..1] AS r")
+    assert res.result_set == [[False]]
+    res = query("RETURN 1 IN ['1', 2] AS res")
+    assert res.result_set == [[False]]
+    res = query("RETURN [1, 2] IN [1, [1, '2']] AS res")
+    assert res.result_set == [[False]]
+    res = query("RETURN [1] IN [1, 2] AS res")
+    assert res.result_set == [[False]]
+    res = query("RETURN [1, 2] IN [1, 2] AS res")
+    assert res.result_set == [[False]]
+    res = query("RETURN [1] IN [1, 2, [1]] AS res")
+    assert res.result_set == [[True]]
+    res = query("RETURN [1, 2] IN [1, [1, 2]] AS res")
+    assert res.result_set == [[True]]
+    res = query("RETURN [1, 2] IN [1, [2, 1]] AS res")
+    assert res.result_set == [[False]]
+    res = query("RETURN [1, 2] IN [1, [1, 2, 3]] AS res")
+    assert res.result_set == [[False]]
+    res = query("RETURN [1, 2] IN [1, [[1, 2]]] AS res")
+    assert res.result_set == [[False]]
+    res = query("RETURN [[1, 2], [3, 4]] IN [5, [[1, 2], [3, 4]]] AS res")
+    assert res.result_set == [[True]]
+    res = query("RETURN [[1, 2], 3] IN [1, [[1, 2], 3]] AS res")
+    assert res.result_set == [[True]]
+    res = query("RETURN [[1]] IN [2, [[1]]] AS res")
+    assert res.result_set == [[True]]
+    res = query("RETURN [[1, 3]] IN [2, [[1, 3]]] AS res")
+    assert res.result_set == [[True]]
+    res = query("RETURN [[1]] IN [2, [1]] AS res")
+    assert res.result_set == [[False]]
+    res = query("RETURN [[1, 3]] IN [2, [1, 3]] AS res")
+    assert res.result_set == [[False]]
+    # res = query("RETURN null IN [null] AS res")
+    # assert res.result_set == [[None]]
+    # res = query("RETURN [null] IN [[null]] AS res")
+    # assert res.result_set == [[None]]
+    # res = query("RETURN [null] IN [null] AS res")
+    # assert res.result_set == [[None]]
+    res = query("RETURN [1] IN [[1, null]] AS res")
+    assert res.result_set == [[False]]
+    res = query("RETURN 3 IN [1, null, 3] AS res")
+    assert res.result_set == [[True]]
+    # res = query("RETURN 4 IN [1, null, 3] AS res")
+    # assert res.result_set == [[None]]
+    res = query("RETURN [1, 2] IN [[null, 'foo'], [1, 2]] AS res")
+    assert res.result_set == [[True]]
+    res = query("RETURN [1, 2] IN [1, [1, 2], null] AS res")
+    assert res.result_set == [[True]]
+    res = query("RETURN [1, 2] IN [[null, 'foo']] AS res")
+    assert res.result_set == [[False]]
+    # res = query("RETURN [1, 2] IN [[null, 2]] AS res")
+    # assert res.result_set == [[None]]
+    res = query("RETURN [1, 2] IN [1, [1, 2, null]] AS res")
+    assert res.result_set == [[False]]
+    # res = query("RETURN [1, 2, null] IN [1, [1, 2, null]] AS res")
+    # assert res.result_set == [[None]]
+    # res = query("RETURN [1, 2] IN [[null, 2], [1, 2]] AS res")
+    # assert res.result_set == [[True]]
+    res = query("RETURN [[1, 2], [3, 4]] IN [5, [[1, 2], [3, 4], null]] AS res")
+    assert res.result_set == [[False]]
+    # res = query("RETURN [1, 2] IN [[null, 2], [1, 3]] AS res")
+    # assert res.result_set == [[None]]
+    res = query("RETURN [] IN [[]] AS res")
+    assert res.result_set == [[True]]
+    res = query("RETURN [] IN [] AS res")
+    assert res.result_set == [[False]]
+    res = query("RETURN [] IN [1, []] AS res")
+    assert res.result_set == [[True]]
+    res = query("RETURN [] IN [1, 2] AS res")
+    assert res.result_set == [[False]]
+    res = query("RETURN [[]] IN [1, [[]]] AS res")
+    assert res.result_set == [[True]]
+    # res = query("RETURN [] IN [1, 2, null] AS res")
+    # assert res.result_set == [[None]]
+    res = query("RETURN [[], []] IN [1, [[], []]] AS res")
+    assert res.result_set == [[True]]
+
+

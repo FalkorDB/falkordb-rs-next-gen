@@ -42,6 +42,7 @@ enum Token {
     Colon,
     Dot,
     DotDot,
+    In,
     Error(String),
     EndOfFile,
 }
@@ -171,6 +172,7 @@ impl<'a> Lexer<'a> {
                         "and" => Token::And,
                         "not" => Token::Not,
                         "is" => Token::Is,
+                        "in" => Token::In,
                         _ => Token::Ident(str[pos..pos + len].to_string()),
                     };
                     return (token, len);
@@ -621,12 +623,23 @@ impl<'a> Parser<'a> {
             }
         }
     }
+    fn parser_string_list_null_predicate_expr(&mut self) -> Result<QueryExprIR, String> {
+        let lhs = self.parse_add_expr()?;
+        match self.lexer.current() {
+            Token::In => {
+                self.lexer.next();
+                let rhs = self.parse_add_expr()?;
+                Ok(QueryExprIR::In(Box::new((lhs, rhs))))
+            }
+            _ => Ok(lhs),
+        }
+    }
 
     fn parse_comparison_expr(&mut self) -> Result<QueryExprIR, String> {
         let mut vec = Vec::new();
 
         loop {
-            vec.push(self.parse_add_expr()?);
+            vec.push(self.parser_string_list_null_predicate_expr()?);
 
             match self.lexer.current() {
                 Token::Equal => {

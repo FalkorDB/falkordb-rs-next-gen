@@ -24,6 +24,7 @@ pub enum QueryExprIR {
     Gt(Vec<QueryExprIR>),
     Le(Vec<QueryExprIR>),
     Ge(Vec<QueryExprIR>),
+    In(Box<(QueryExprIR, QueryExprIR)>),
     Add(Vec<QueryExprIR>),
     Sub(Vec<QueryExprIR>),
     Mul(Vec<QueryExprIR>),
@@ -81,6 +82,10 @@ impl QueryExprIR {
                     expr.inner_validate(env)?;
                 }
                 Ok(())
+            }
+            Self::In(op) => {
+                op.0.inner_validate(env)?;
+                op.1.inner_validate(env)
             }
             Self::Map(exprs) => {
                 for expr in exprs.values() {

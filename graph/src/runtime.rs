@@ -15,6 +15,22 @@ pub enum Value {
     Relationship(u64, u64, u64),
 }
 
+impl Value {
+    fn name(&self) -> String {
+        match self {
+            Value::Null => "Null".to_string(),
+            Value::Bool(_) => "Boolean".to_string(),
+            Value::Int(_) => "Integer".to_string(),
+            Value::Float(_) => "Float".to_string(),
+            Value::String(_) => "String".to_string(),
+            Value::List(_) => "List".to_string(),
+            Value::Map(_) => "Map".to_string(),
+            Value::Node(_) => "Node".to_string(),
+            Value::Relationship(_, _, _) => "Relationship".to_string(),
+        }
+    }
+}
+
 pub struct Runtime {
     write_functions: BTreeMap<String, fn(&mut Graph, &mut Runtime, Value) -> Value>,
     read_functions: BTreeMap<String, fn(&Graph, &mut Runtime, Value) -> Value>,
@@ -418,6 +434,11 @@ pub fn ro_run(
             (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a >= b)),
             _ => Err("Ge operator requires two integers".to_string()),
         },
+        IR::In(op) => {
+            let value = ro_run(vars, g, runtime, result_fn, &op.0)?;
+            let list = ro_run(vars, g, runtime, result_fn, &op.1)?;
+            value_in_list(&value, &list)
+        }
         IR::Add(irs) => irs
             .iter()
             .flat_map(|ir| ro_run(vars, g, runtime, result_fn, ir))
@@ -662,6 +683,11 @@ pub fn run(
             (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a >= b)),
             _ => Err("Ge operator requires two integers".to_string()),
         },
+        IR::In(op) => {
+            let value = run(vars, g, runtime, result_fn, &op.0)?;
+            let list = run(vars, g, runtime, result_fn, &op.1)?;
+            value_in_list(&value, &list)
+        }
         IR::Add(irs) => irs
             .iter()
             .flat_map(|ir| run(vars, g, runtime, result_fn, ir))
@@ -861,4 +887,22 @@ fn add_list_scalar(mut l: Vec<Value>, scalar: Value) -> Value {
 
     l.push(scalar);
     Value::List(l)
+}
+
+fn value_in_list(v: &Value, list: &Value) -> Result<Value, String> {
+    match list {
+        Value::List(arr) => {
+            for item in arr {
+                if is_equal(v, item) == Value::Bool(true) {
+                    return Ok(Value::Bool(true));
+                }
+            }
+            Ok(Value::Bool(false))
+        }
+        Value::Null => Ok(Value::Bool(false)),
+        value => Err(format!(
+            "Type mismatch: expected List or Null but was {}",
+            value.name()
+        )),
+    }
 }
