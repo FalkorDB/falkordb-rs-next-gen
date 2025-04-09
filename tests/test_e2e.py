@@ -253,7 +253,7 @@ def test_in_list():
     for value , name in  [(False, 'Boolean'), (1, 'Integer'), (1.0, 'Float'), ('"Avi"', 'String'), ({}, 'Map')]:
         try:
             query(f"RETURN 0 IN {value} AS r")
-            assert False, "Expected an error"
+            raise AssertionError("Expected an error")
         except ResponseError as e:
             assert f"Type mismatch: expected List or Null but was {name}" in str(e)
 
