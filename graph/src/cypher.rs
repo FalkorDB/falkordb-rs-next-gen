@@ -31,6 +31,7 @@ enum Token {
     Xor,
     And,
     Not,
+    Modulo,
     Star,
     Plus,
     Dash,
@@ -92,6 +93,7 @@ impl<'a> Lexer<'a> {
                 '}' => return (Token::RBracket, 1),
                 '(' => return (Token::LParen, 1),
                 ')' => return (Token::RParen, 1),
+                '%' => return (Token::Modulo, 1),
                 '*' => return (Token::Star, 1),
                 '+' => return (Token::Plus, 1),
                 '-' => {
@@ -548,7 +550,7 @@ impl<'a> Parser<'a> {
     fn parse_list_operator_expression(&mut self) -> Result<QueryExprIR, String> {
         let mut expr = self.parse_property_expression()?;
 
-        while let Token::LBrace = self.lexer.current() {
+        while self.lexer.current() == Token::LBrace {
             self.lexer.next();
 
             let from = self.parse_expr();
@@ -583,10 +585,29 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_mul_expr(&mut self) -> Result<QueryExprIR, String> {
+    fn parse_modulo_expr(&mut self) -> Result<QueryExprIR, String> {
         let mut vec = Vec::new();
         loop {
             vec.push(self.parse_null_operator_expression()?);
+
+            match self.lexer.current() {
+                Token::Modulo => {
+                    self.lexer.next();
+                }
+                _ => {
+                    if vec.len() == 1 {
+                        return Ok(vec.pop().unwrap());
+                    }
+                    return Ok(QueryExprIR::Modulo(vec));
+                }
+            }
+        }
+    }
+
+    fn parse_mul_expr(&mut self) -> Result<QueryExprIR, String> {
+        let mut vec = Vec::new();
+        loop {
+            vec.push(self.parse_modulo_expr()?);
 
             match self.lexer.current() {
                 Token::Star => {
@@ -665,7 +686,7 @@ impl<'a> Parser<'a> {
         loop {
             vec.push(self.parse_not_expr()?);
 
-            if let Token::And = self.lexer.current() {
+            if self.lexer.current() == Token::And {
                 self.lexer.next();
             } else {
                 if vec.len() == 1 {

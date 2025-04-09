@@ -33,12 +33,14 @@ pub enum IR {
     Mul(Vec<IR>),
     Div(Vec<IR>),
     Pow(Vec<IR>),
+    Modulo(Vec<IR>),
     FuncInvocation(String, Vec<IR>),
     Map(BTreeMap<String, IR>),
     Set(String, Box<IR>),
     If(Box<(IR, IR)>),
     For(Box<(IR, IR, IR, IR)>),
     Return(Box<IR>),
+    ReturnAggregation(Box<IR>),
     Block(Vec<IR>),
 }
 
@@ -56,6 +58,20 @@ impl Planner {
         let id = self.var_id;
         self.var_id += 1;
         format!("var_{id}")
+    }
+
+    fn plan_aggregation(&mut self, agg_ctx_var: String, expr: QueryExprIR) -> IR {
+        match expr {
+            QueryExprIR::FuncInvocation(name, params) => {
+                let mut params = params
+                    .into_iter()
+                    .map(|ir| self.plan_expr(ir))
+                    .collect::<Vec<_>>();
+                params.push(IR::Var(agg_ctx_var));
+                IR::FuncInvocation(name, params)
+            }
+            _ => unreachable!(),
+        }
     }
 
     fn plan_expr(&mut self, expr: QueryExprIR) -> IR {
@@ -101,7 +117,12 @@ impl Planner {
             QueryExprIR::Div(exprs) => {
                 IR::Div(exprs.into_iter().map(|ir| self.plan_expr(ir)).collect())
             }
-            QueryExprIR::Pow(_) => todo!(),
+            QueryExprIR::Pow(exprs) => {
+                IR::Pow(exprs.into_iter().map(|ir| self.plan_expr(ir)).collect())
+            }
+            QueryExprIR::Modulo(exprs) => {
+                IR::Modulo(exprs.into_iter().map(|ir| self.plan_expr(ir)).collect())
+            }
             QueryExprIR::IsNull(expr) => IR::IsNull(Box::new(self.plan_expr(*expr))),
             QueryExprIR::GetElement(op) => {
                 IR::GetElement(Box::new((self.plan_expr(op.0), self.plan_expr(op.1))))
@@ -359,12 +380,52 @@ impl Planner {
                 IR::Block(exprs.into_iter().map(|ir| self.plan_expr(ir)).collect()),
                 self.plan_query(iter.next().unwrap(), iter),
             ]),
-            QueryIR::Return(exprs) => IR::Return(Box::new(IR::List(
-                exprs.into_iter().map(|ir| self.plan_expr(ir)).collect(),
-            ))),
+            QueryIR::Return(exprs) => {
+                if exprs.iter().any(super::ast::QueryExprIR::is_aggregation) {
+                    let mut group_by_keys = Vec::new();
+                    let mut aggregations = Vec::new();
+                    for expr in exprs {
+                        if expr.is_aggregation() {
+                            aggregations.push(expr);
+                        } else {
+                            group_by_keys.push(self.plan_expr(expr));
+                        }
+                    }
+                    let agg_ctx_var = self.next_var();
+                    IR::Block(vec![
+                        IR::Set(
+                            agg_ctx_var.to_string(),
+                            Box::new(IR::FuncInvocation(
+                                "create_aggregate_ctx".to_string(),
+                                group_by_keys,
+                            )),
+                        ),
+                        IR::Block(
+                            aggregations
+                                .into_iter()
+                                .map(|ir| self.plan_aggregation(agg_ctx_var.to_string(), ir))
+                                .collect(),
+                        ),
+                    ])
+                } else {
+                    IR::Return(Box::new(IR::List(
+                        exprs.into_iter().map(|ir| self.plan_expr(ir)).collect(),
+                    )))
+                }
+            }
             QueryIR::Query(q) => {
+                let mut is_agg = false;
+                if let Some(QueryIR::Return(exprs)) = q.last() {
+                    if exprs.iter().any(super::ast::QueryExprIR::is_aggregation) {
+                        is_agg = true;
+                    }
+                }
                 let iter = &mut q.into_iter();
-                self.plan_query(iter.next().unwrap(), iter)
+                let res = self.plan_query(iter.next().unwrap(), iter);
+                if is_agg {
+                    return IR::ReturnAggregation(Box::new(res));
+                }
+                res
             }
         }
     }

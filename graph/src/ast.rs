@@ -29,6 +29,7 @@ pub enum QueryExprIR {
     Mul(Vec<QueryExprIR>),
     Div(Vec<QueryExprIR>),
     Pow(Vec<QueryExprIR>),
+    Modulo(Vec<QueryExprIR>),
     IsNull(Box<QueryExprIR>),
     GetElement(Box<(QueryExprIR, QueryExprIR)>),
     GetElements(Box<(QueryExprIR, Option<QueryExprIR>, Option<QueryExprIR>)>),
@@ -76,7 +77,8 @@ impl QueryExprIR {
             | Self::Sub(exprs)
             | Self::Mul(exprs)
             | Self::Div(exprs)
-            | Self::Pow(exprs) => {
+            | Self::Pow(exprs)
+            | Self::Modulo(exprs) => {
                 for expr in exprs {
                     expr.inner_validate(env)?;
                 }
@@ -118,6 +120,19 @@ impl QueryExprIR {
                 }
                 Ok(())
             }
+        }
+    }
+
+    #[must_use]
+    pub fn is_aggregation(&self) -> bool {
+        match self {
+            Self::FuncInvocation(name, _) => {
+                matches!(
+                    name.as_str(),
+                    "count" | "sum" | "avg" | "min" | "max" | "collect"
+                )
+            }
+            _ => false,
         }
     }
 }

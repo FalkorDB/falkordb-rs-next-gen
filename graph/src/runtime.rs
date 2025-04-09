@@ -1,4 +1,7 @@
-use std::collections::BTreeMap;
+use std::{
+    collections::BTreeMap,
+    hash::{DefaultHasher, Hash, Hasher},
+};
 
 use crate::{ast::QueryExprIR, graph::Graph, matrix::Iter, planner::IR};
 
@@ -15,9 +18,26 @@ pub enum Value {
     Relationship(u64, u64, u64),
 }
 
+impl Hash for Value {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            Self::Null => todo!(),
+            Self::Bool(x) => x.hash(state),
+            Self::Int(x) => x.hash(state),
+            Self::Float(_) => todo!(),
+            Self::String(x) => x.hash(state),
+            Self::List(x) => x.hash(state),
+            Self::Map(x) => x.hash(state),
+            Self::Node(x) => x.hash(state),
+            Self::Relationship(_, _, _) => todo!(),
+        }
+    }
+}
+
 pub struct Runtime {
     write_functions: BTreeMap<String, fn(&mut Graph, &mut Runtime, Value) -> Value>,
     read_functions: BTreeMap<String, fn(&Graph, &mut Runtime, Value) -> Value>,
+    agg_ctxs: BTreeMap<u64, (Value, Value)>,
     iters: Vec<Iter<bool>>,
     parameters: BTreeMap<String, Value>,
     pub nodes_created: i32,
@@ -42,11 +62,22 @@ impl Runtime {
         write_functions.insert("delete_entity".to_string(), Self::delete_entity);
 
         // read functions
+        read_functions.insert(
+            "create_aggregate_ctx".to_string(),
+            Self::create_aggregate_ctx,
+        );
         read_functions.insert("create_node_iter".to_string(), Self::create_node_iter);
         read_functions.insert("next_node".to_string(), Self::next_node);
         read_functions.insert("property".to_string(), Self::property);
         read_functions.insert("toInteger".to_string(), Self::value_to_integer);
         read_functions.insert("labels".to_string(), Self::labels);
+
+        // aggregation functions
+        read_functions.insert("collect".to_string(), Self::collect);
+        read_functions.insert("count".to_string(), Self::count);
+        read_functions.insert("sum".to_string(), Self::sum);
+        read_functions.insert("max".to_string(), Self::max);
+        read_functions.insert("min".to_string(), Self::min);
 
         // procedures
         read_functions.insert("db.labels".to_string(), Self::db_labels);
@@ -56,6 +87,7 @@ impl Runtime {
         Self {
             write_functions,
             read_functions,
+            agg_ctxs: BTreeMap::new(),
             iters: Vec::new(),
             parameters,
             nodes_created: 0,
@@ -151,6 +183,17 @@ impl Runtime {
         }
     }
 
+    fn create_aggregate_ctx(_g: &Graph, runtime: &mut Self, args: Value) -> Value {
+        let mut hasher = DefaultHasher::new();
+        args.hash(&mut hasher);
+        let key = hasher.finish();
+        runtime
+            .agg_ctxs
+            .entry(key)
+            .or_insert_with(|| (args, Value::Null));
+        Value::Int(key as i64)
+    }
+
     fn create_node_iter(g: &Graph, runtime: &mut Self, args: Value) -> Value {
         match args {
             Value::List(args) => {
@@ -224,6 +267,92 @@ impl Runtime {
             },
             _ => unimplemented!(),
         }
+    }
+
+    fn collect(_g: &Graph, runtime: &mut Self, args: Value) -> Value {
+        if let Value::List(arr) = args {
+            if let [x, Value::Int(hash)] = arr.as_slice() {
+                runtime.agg_ctxs.entry(*hash as _).and_modify(|v| {
+                    if let (_, Value::List(values)) = v {
+                        values.push(x.clone());
+                    } else {
+                        v.1 = Value::List(vec![x.clone()]);
+                    }
+                });
+            }
+        };
+        Value::Null
+    }
+
+    fn count(_g: &Graph, runtime: &mut Self, args: Value) -> Value {
+        if let Value::List(arr) = args {
+            match arr.as_slice() {
+                [Value::Null, _] => {}
+                [_, Value::Int(hash)] => {
+                    runtime.agg_ctxs.entry(*hash as _).and_modify(|v| {
+                        if let (_, Value::Int(count)) = v {
+                            *count += 1;
+                        } else {
+                            v.1 = Value::Int(1);
+                        }
+                    });
+                }
+                _ => (),
+            }
+        };
+        Value::Null
+    }
+
+    fn sum(_g: &Graph, runtime: &mut Self, args: Value) -> Value {
+        if let Value::List(arr) = args {
+            match arr.as_slice() {
+                [Value::Int(a), Value::Int(hash)] => {
+                    runtime.agg_ctxs.entry(*hash as _).and_modify(|v| {
+                        if let (_, Value::Int(sum)) = v {
+                            *sum += a;
+                        } else {
+                            v.1 = Value::Int(*a);
+                        }
+                    });
+                }
+                _ => (),
+            }
+        };
+        Value::Null
+    }
+
+    fn max(_g: &Graph, runtime: &mut Self, args: Value) -> Value {
+        if let Value::List(arr) = args {
+            if let [Value::Int(a), Value::Int(hash)] = arr.as_slice() {
+                runtime.agg_ctxs.entry(*hash as _).and_modify(|v| {
+                    if let (_, Value::Int(b)) = v {
+                        if a > b {
+                            *b = *a;
+                        }
+                    } else {
+                        v.1 = Value::Int(*a);
+                    }
+                });
+            }
+        };
+        Value::Null
+    }
+
+    fn min(_g: &Graph, runtime: &mut Self, args: Value) -> Value {
+        if let Value::List(arr) = args {
+            if let [Value::Int(a), Value::Int(hash)] = arr.as_slice() {
+                runtime.agg_ctxs.entry(*hash as _).and_modify(|v| {
+                    if let (_, Value::Int(b)) = v {
+                        if a < b {
+                            *b = *a;
+                        }
+                    } else {
+                        v.1 = Value::Int(*a);
+                    }
+                });
+            }
+        };
+        Value::Null
     }
 
     fn value_to_integer(_g: &Graph, _runtime: &mut Self, args: Value) -> Value {
@@ -461,6 +590,14 @@ pub fn ro_run(
                 _ => Value::Null,
             })
             .ok_or_else(|| "Pow operator requires at least one argument".to_string()),
+        IR::Modulo(irs) => irs
+            .iter()
+            .flat_map(|ir| ro_run(vars, g, runtime, result_fn, ir))
+            .reduce(|a, b| match (a, b) {
+                (Value::Int(a), Value::Int(b)) => Value::Int(a % b),
+                _ => Value::Null,
+            })
+            .ok_or_else(|| "Modulo operator requires at least one argument".to_string()),
         IR::FuncInvocation(name, irs) => {
             let args = irs
                 .iter()
@@ -504,6 +641,19 @@ pub fn ro_run(
         IR::Return(ir) => {
             let v = ro_run(vars, g, runtime, result_fn, ir)?;
             result_fn(g, v);
+            Ok(Value::Null)
+        }
+        IR::ReturnAggregation(ir) => {
+            ro_run(vars, g, runtime, result_fn, ir)?;
+            for (keys, r) in runtime.agg_ctxs.values_mut() {
+                if let Value::List(keys) = keys {
+                    keys.push(r.clone());
+                    result_fn(g, Value::List(keys.clone()));
+                } else {
+                    result_fn(g, Value::List(vec![r.clone()]));
+                }
+            }
+            runtime.agg_ctxs.clear();
             Ok(Value::Null)
         }
         IR::Block(irs) => {
@@ -705,6 +855,14 @@ pub fn run(
                 _ => Value::Null,
             })
             .ok_or_else(|| "Pow operator requires at least one argument".to_string()),
+        IR::Modulo(irs) => irs
+            .iter()
+            .flat_map(|ir| ro_run(vars, g, runtime, result_fn, ir))
+            .reduce(|a, b| match (a, b) {
+                (Value::Int(a), Value::Int(b)) => Value::Int(a % b),
+                _ => Value::Null,
+            })
+            .ok_or_else(|| "Modulo operator requires at least one argument".to_string()),
         IR::FuncInvocation(name, irs) => {
             let args = irs
                 .iter()
@@ -749,6 +907,19 @@ pub fn run(
         IR::Return(ir) => {
             let v = run(vars, g, runtime, result_fn, ir)?;
             result_fn(g, v);
+            Ok(Value::Null)
+        }
+        IR::ReturnAggregation(ir) => {
+            run(vars, g, runtime, result_fn, ir)?;
+            for (keys, r) in runtime.agg_ctxs.values_mut() {
+                if let Value::List(keys) = keys {
+                    keys.push(r.clone());
+                    result_fn(g, Value::List(keys.clone()));
+                } else {
+                    result_fn(g, Value::List(vec![r.clone()]));
+                }
+            }
+            runtime.agg_ctxs.clear();
             Ok(Value::Null)
         }
         IR::Block(irs) => {
