@@ -1,6 +1,7 @@
-use std::collections::BTreeMap;
-
 use crate::{ast::QueryExprIR, graph::Graph, matrix::Iter, planner::IR};
+use std::cmp::PartialEq;
+use std::collections::BTreeMap;
+use std::mem;
 
 #[derive(Clone, PartialEq, Debug)]
 pub enum Value {
@@ -27,6 +28,20 @@ impl Value {
             Value::Map(_) => "Map".to_string(),
             Value::Node(_) => "Node".to_string(),
             Value::Relationship(_, _, _) => "Relationship".to_string(),
+        }
+    }
+    fn is_numeric(&self) -> bool {
+        matches!(self, Value::Int(_) | Value::Float(_))
+    }
+    fn is_nan(&self) -> bool {
+        matches!(self, Value::Float(f) if f.is_nan())
+    }
+
+    fn double_value(&self) -> f64 {
+        match self {
+            Value::Int(i) => *i as f64,
+            Value::Float(f) => *f,
+            _ => unreachable!(),
         }
     }
 }
@@ -842,41 +857,19 @@ fn get_elements(arr: Value, start: Option<Value>, end: Option<Value>) -> Result<
     }
 }
 
-#[inline]
+// todo when compare_value is ready to compare all types
+// call call it directly from is_equal on all types
 fn is_equal(a: &Value, b: &Value) -> Value {
     match (a, b) {
-        (Value::List(l1), Value::List(l2)) => is_equal_lists(l1, l2),
+        (Value::List(_), Value::List(_)) => {
+            let (res, dis) = compare_value(a, b);
+            if dis == DisjointOrNull::ComparedNull {
+                Value::Null
+            } else {
+                Value::Bool(res)
+            }
+        }
         _ => Value::Bool(a == b),
-    }
-}
-#[inline]
-fn is_equal_lists(l1: &Vec<Value>, l2: &Vec<Value>) -> Value {
-    if l1.len() != l2.len() {
-        return Value::Bool(false);
-    }
-    let mut has_null = false;
-    for (v1, v2) in l1.iter().zip(l2.iter()) {
-        let is_equal = is_equal(v1, v2);
-        if is_equal == Value::Bool(true) {
-            continue;
-        }
-        match (v1, v2) {
-            (Value::Null, _) | (_, Value::Null) => {
-                has_null = true;
-                continue;
-            }
-            _ => {
-                if is_equal == Value::Null {
-                    return Value::Null;
-                }
-                return Value::Bool(false);
-            }
-        }
-    }
-    if has_null {
-        Value::Null
-    } else {
-        Value::Bool(true)
     }
 }
 
@@ -892,12 +885,23 @@ fn add_list_scalar(mut l: Vec<Value>, scalar: Value) -> Value {
 fn value_in_list(v: &Value, list: &Value) -> Result<Value, String> {
     match list {
         Value::List(arr) => {
+            let mut is_null = false;
             for item in arr {
-                if is_equal(v, item) == Value::Bool(true) {
-                    return Ok(Value::Bool(true));
+                let (res, dis) = compare_value(v, item);
+                is_null = is_null || dis == DisjointOrNull::ComparedNull;
+                if res {
+                    return if dis == DisjointOrNull::ComparedNull {
+                        Ok(Value::Null)
+                    } else {
+                        Ok(Value::Bool(true))
+                    };
                 }
             }
-            Ok(Value::Bool(false))
+            if is_null {
+                Ok(Value::Null)
+            } else {
+                Ok(Value::Bool(false))
+            }
         }
         Value::Null => Ok(Value::Bool(false)),
         value => Err(format!(
@@ -905,4 +909,113 @@ fn value_in_list(v: &Value, list: &Value) -> Result<Value, String> {
             value.name()
         )),
     }
+}
+#[derive(Debug, PartialEq)]
+enum DisjointOrNull {
+    Disjoint,
+    ComparedNull,
+    NaN,
+    None,
+}
+fn compare_value(a: &Value, b: &Value) -> (bool, DisjointOrNull) {
+    let mut disjoint = DisjointOrNull::None;
+    if mem::discriminant(a) == mem::discriminant(b) {
+        match (a, b) {
+            (Value::Int(a), Value::Int(b)) => return (a == b, DisjointOrNull::None),
+            (Value::Bool(a), Value::Bool(b)) => return (a == b, DisjointOrNull::None),
+            (Value::Float(a), Value::Float(b)) => {
+                if a.is_nan() || b.is_nan() {
+                    disjoint = DisjointOrNull::NaN;
+                }
+                return (a == b, disjoint);
+            }
+            (Value::String(a), Value::String(b)) => return (a == b, DisjointOrNull::None),
+            (Value::Null, Value::Null) => {}
+
+            (Value::List(a), Value::List(b)) => return compare_list(a, b),
+            (Value::Map(_a), Value::Map(_b)) => {
+                todo!()
+            }
+            (Value::Node(_a), Value::Node(_b)) => {
+                todo!()
+            }
+            (Value::Relationship(_a, _, _), Value::Relationship(_b, _, _)) => {
+                todo!()
+            }
+
+            _ => {
+                unreachable!()
+            }
+        }
+    };
+
+    // the inputs have different type - compare them if they
+    // are both numerics of differing types
+    if a.is_numeric() && b.is_numeric() {
+        if a.is_nan() || b.is_nan() {
+            disjoint = DisjointOrNull::NaN;
+        }
+        return (a.double_value() == b.double_value(), disjoint);
+    }
+
+    // check if either type is null
+    match (a, b) {
+        (Value::Null, _) | (_, Value::Null) => {
+            disjoint = DisjointOrNull::ComparedNull;
+        }
+        _ => {
+            disjoint = DisjointOrNull::Disjoint;
+        }
+    }
+
+    (mem::discriminant(a) == mem::discriminant(b), disjoint)
+}
+
+fn compare_list(a: &Vec<Value>, b: &Vec<Value>) -> (bool, DisjointOrNull) {
+    let array_a_len = a.len();
+    let array_b_len = b.len();
+    if array_a_len == 0 && array_b_len == 0 {
+        return (true, DisjointOrNull::None);
+    }
+    let len_diff = array_a_len as i64 - array_b_len as i64;
+    let min_len = array_a_len.min(array_b_len);
+
+    let mut has_not_equal = false;
+    let mut null_counter: usize = 0;
+    let mut not_equal_counter: usize = 0;
+
+    for i in 0..min_len {
+        let a_value = &a[i];
+        let b_value = &b[i];
+        let (compare_result, disjoint_or_null) = compare_value(a_value, b_value);
+        if disjoint_or_null != DisjointOrNull::None {
+            if disjoint_or_null == DisjointOrNull::ComparedNull {
+                null_counter += 1;
+            }
+            not_equal_counter += 1;
+            if has_not_equal == false {
+                has_not_equal = !compare_result;
+            }
+        } else if compare_result == false {
+            not_equal_counter += 1;
+            has_not_equal = true;
+        }
+    }
+
+    // if all the elements in the shared range yielded false comparisons
+    if not_equal_counter == min_len && null_counter < not_equal_counter {
+        return (!has_not_equal, DisjointOrNull::None);
+    }
+
+    // if there was a null comparison on non-disjoint arrays
+    if null_counter > 0 && array_a_len == array_b_len {
+        return (!has_not_equal, DisjointOrNull::ComparedNull);
+    }
+
+    // if there was a difference in some member, without any null compare
+    if has_not_equal {
+        return (false, DisjointOrNull::None);
+    }
+
+    (len_diff == 0, DisjointOrNull::None)
 }
