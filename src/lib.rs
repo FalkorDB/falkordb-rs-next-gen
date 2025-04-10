@@ -1,7 +1,8 @@
-use graph::{cypher::Parser, graph::Graph, planner::Planner, runtime::Value};
+use graph::{cypher::Parser, graph::Graph, matrix::init, planner::Planner, runtime::Value};
 use redis_module::{
     native_types::RedisType, redis_module, redisvalue::RedisValueKey, Context, NextArg,
-    RedisModuleTypeMethods, RedisResult, RedisString, RedisValue, Status,
+    RedisModuleTypeMethods, RedisModule_Alloc, RedisModule_Calloc, RedisModule_Free,
+    RedisModule_Realloc, RedisResult, RedisString, RedisValue, Status,
     REDISMODULE_TYPE_METHOD_VERSION,
 };
 use std::os::raw::c_void;
@@ -43,7 +44,10 @@ unsafe extern "C" fn my_free(value: *mut c_void) {
     drop(Box::from_raw(value.cast::<Graph>()));
 }
 
-fn raw_value_to_redis_value(g: &Graph, r: &Value) -> RedisValue {
+fn raw_value_to_redis_value(
+    g: &Graph,
+    r: &Value,
+) -> RedisValue {
     match r {
         Value::List(values) => RedisValue::Array(
             values
@@ -55,7 +59,10 @@ fn raw_value_to_redis_value(g: &Graph, r: &Value) -> RedisValue {
     }
 }
 
-fn inner_raw_value_to_redis_value(g: &Graph, r: &Value) -> RedisValue {
+fn inner_raw_value_to_redis_value(
+    g: &Graph,
+    r: &Value,
+) -> RedisValue {
     match r {
         Value::Null => RedisValue::Array(vec![RedisValue::Integer(1), RedisValue::Null]),
         Value::Bool(x) => RedisValue::Array(vec![
@@ -137,7 +144,10 @@ fn inner_raw_value_to_redis_value(g: &Graph, r: &Value) -> RedisValue {
     }
 }
 
-fn graph_delete(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+fn graph_delete(
+    ctx: &Context,
+    args: Vec<RedisString>,
+) -> RedisResult {
     let mut args = args.into_iter().skip(1);
     let key = args.next_arg()?;
 
@@ -146,7 +156,10 @@ fn graph_delete(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     key.delete()
 }
 
-fn graph_query(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+fn graph_query(
+    ctx: &Context,
+    args: Vec<RedisString>,
+) -> RedisResult {
     let mut args = args.into_iter().skip(1);
     let key = args.next_arg()?;
     let query = args.next_string()?;
@@ -196,7 +209,10 @@ fn graph_query(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     }
 }
 
-fn graph_ro_query(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+fn graph_ro_query(
+    ctx: &Context,
+    args: Vec<RedisString>,
+) -> RedisResult {
     let mut args = args.into_iter().skip(1);
     let key = args.next_arg()?;
     let query = args.next_string()?;
@@ -234,7 +250,10 @@ fn graph_ro_query(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     )
 }
 
-fn graph_parse(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+fn graph_parse(
+    ctx: &Context,
+    args: Vec<RedisString>,
+) -> RedisResult {
     let mut args = args.into_iter().skip(1);
     let query = args.next_string()?;
 
@@ -248,7 +267,10 @@ fn graph_parse(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     }
 }
 
-fn graph_plan(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+fn graph_plan(
+    ctx: &Context,
+    args: Vec<RedisString>,
+) -> RedisResult {
     let mut args = args.into_iter().skip(1);
     let query = args.next_string()?;
 
@@ -266,8 +288,18 @@ fn graph_plan(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     }
 }
 
-fn graph_init(_: &Context, _: &Vec<RedisString>) -> Status {
-    Graph::init();
+fn graph_init(
+    _: &Context,
+    _: &Vec<RedisString>,
+) -> Status {
+    unsafe {
+        init(
+            RedisModule_Alloc,
+            RedisModule_Calloc,
+            RedisModule_Realloc,
+            RedisModule_Free,
+        );
+    }
     Status::Ok
 }
 

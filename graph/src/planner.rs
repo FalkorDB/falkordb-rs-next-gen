@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, vec::IntoIter};
 
-use crate::ast::{NodePattern, Pattern, QueryExprIR, QueryIR};
+use crate::ast::{Alias, NodePattern, Pattern, QueryExprIR, QueryIR, RelationshipPattern};
 
 #[derive(Clone, Debug)]
 pub enum IR {
@@ -18,6 +18,7 @@ pub enum IR {
     Range(Box<(IR, IR, IR)>),
     IsNull(Box<IR>),
     IsNode(Box<IR>),
+    IsRelationship(Box<IR>),
     Or(Vec<IR>),
     Xor(Vec<IR>),
     And(Vec<IR>),
@@ -60,7 +61,11 @@ impl Planner {
         format!("var_{id}")
     }
 
-    fn plan_aggregation(&mut self, agg_ctx_var: String, expr: QueryExprIR) -> IR {
+    fn plan_aggregation(
+        &mut self,
+        agg_ctx_var: String,
+        expr: QueryExprIR,
+    ) -> IR {
         match expr {
             QueryExprIR::FuncInvocation(name, params) => {
                 let mut params = params
@@ -74,7 +79,10 @@ impl Planner {
         }
     }
 
-    fn plan_expr(&mut self, expr: QueryExprIR) -> IR {
+    fn plan_expr(
+        &mut self,
+        expr: QueryExprIR,
+    ) -> IR {
         match expr {
             QueryExprIR::Null => IR::Null,
             QueryExprIR::Bool(x) => IR::Bool(x),
@@ -172,7 +180,11 @@ impl Planner {
         }
     }
 
-    fn plan_create(&mut self, pattern: Pattern, iter: &mut IntoIter<QueryIR>) -> IR {
+    fn plan_create(
+        &mut self,
+        pattern: Pattern,
+        iter: &mut IntoIter<QueryIR>,
+    ) -> IR {
         let create_nodes = pattern
             .nodes
             .into_iter()
@@ -233,7 +245,11 @@ impl Planner {
         }
     }
 
-    fn plan_delete(&mut self, exprs: Vec<QueryExprIR>, iter: &mut IntoIter<QueryIR>) -> IR {
+    fn plan_delete(
+        &mut self,
+        exprs: Vec<QueryExprIR>,
+        iter: &mut IntoIter<QueryIR>,
+    ) -> IR {
         let deleted_entities = exprs.into_iter().map(|ir| self.plan_expr(ir)).collect();
         match iter.next() {
             Some(body_ir) => IR::Block(vec![
@@ -303,7 +319,11 @@ impl Planner {
         }
     }
 
-    fn plan_node_scan(&mut self, node: NodePattern, body: IR) -> IR {
+    fn plan_node_scan(
+        &mut self,
+        node: NodePattern,
+        body: IR,
+    ) -> IR {
         let init = IR::Block(vec![
             IR::Set(
                 format!("iter_{}", node.alias),
@@ -331,7 +351,80 @@ impl Planner {
         IR::For(Box::new((init, condition, next, body)))
     }
 
-    fn plan_match(&mut self, pattern: Pattern, iter: &mut IntoIter<QueryIR>) -> IR {
+    fn plan_relationship_scan(
+        &mut self,
+        rel: &RelationshipPattern,
+        body: IR,
+    ) -> IR {
+        let mut init = vec![
+            IR::Set(
+                format!("iter_{}", rel.alias),
+                Box::new(IR::FuncInvocation(
+                    String::from("create_relationship_iter"),
+                    vec![IR::String(rel.relationship_type.to_string())],
+                )),
+            ),
+            IR::Set(
+                rel.alias.to_string(),
+                Box::new(IR::FuncInvocation(
+                    String::from("next_relationship"),
+                    vec![IR::Var(format!("iter_{}", rel.alias))],
+                )),
+            ),
+        ];
+        let condition = IR::IsRelationship(Box::new(IR::Var(rel.alias.to_string())));
+        let mut next = vec![IR::Set(
+            rel.alias.to_string(),
+            Box::new(IR::FuncInvocation(
+                "next_relationship".to_string(),
+                vec![IR::Var(format!("iter_{}", rel.alias))],
+            )),
+        )];
+        if let Alias::String(from) = &rel.from {
+            init.push(IR::Set(
+                from.to_string(),
+                Box::new(IR::FuncInvocation(
+                    "startnode".to_string(),
+                    vec![IR::Var(rel.alias.to_string())],
+                )),
+            ));
+            next.push(IR::Set(
+                from.to_string(),
+                Box::new(IR::FuncInvocation(
+                    "startnode".to_string(),
+                    vec![IR::Var(rel.alias.to_string())],
+                )),
+            ));
+        }
+        if let Alias::String(to) = &rel.to {
+            init.push(IR::Set(
+                to.to_string(),
+                Box::new(IR::FuncInvocation(
+                    "endnode".to_string(),
+                    vec![IR::Var(rel.alias.to_string())],
+                )),
+            ));
+            next.push(IR::Set(
+                to.to_string(),
+                Box::new(IR::FuncInvocation(
+                    "endnode".to_string(),
+                    vec![IR::Var(rel.alias.to_string())],
+                )),
+            ));
+        }
+        IR::For(Box::new((
+            IR::Block(init),
+            condition,
+            IR::Block(next),
+            body,
+        )))
+    }
+
+    fn plan_match(
+        &mut self,
+        pattern: Pattern,
+        iter: &mut IntoIter<QueryIR>,
+    ) -> IR {
         if pattern.relationships.is_empty() {
             let mut body = self.plan_query(iter.next().unwrap(), iter);
             for node in pattern.nodes.into_iter().rev() {
@@ -339,10 +432,19 @@ impl Planner {
             }
             return body;
         }
+        if pattern.relationships.len() == 1 {
+            let rel = &pattern.relationships[0];
+            let body = self.plan_query(iter.next().unwrap(), iter);
+            return self.plan_relationship_scan(rel, body);
+        }
         IR::Null
     }
 
-    fn plan_query(&mut self, ir: QueryIR, iter: &mut IntoIter<QueryIR>) -> IR {
+    fn plan_query(
+        &mut self,
+        ir: QueryIR,
+        iter: &mut IntoIter<QueryIR>,
+    ) -> IR {
         match ir {
             QueryIR::Call(name, exprs) => IR::For(Box::new((
                 IR::Block(vec![
@@ -416,9 +518,7 @@ impl Planner {
             QueryIR::Query(q) => {
                 let mut is_agg = false;
                 if let Some(QueryIR::Return(exprs)) = q.last() {
-                    if exprs.iter().any(super::ast::QueryExprIR::is_aggregation) {
-                        is_agg = true;
-                    }
+                    is_agg = exprs.iter().any(super::ast::QueryExprIR::is_aggregation);
                 }
                 let iter = &mut q.into_iter();
                 let res = self.plan_query(iter.next().unwrap(), iter);
@@ -431,7 +531,11 @@ impl Planner {
     }
 
     #[must_use]
-    pub fn plan(&mut self, ir: QueryIR, _debug: bool) -> IR {
+    pub fn plan(
+        &mut self,
+        ir: QueryIR,
+        _debug: bool,
+    ) -> IR {
         self.plan_query(ir, &mut Vec::new().into_iter())
     }
 }

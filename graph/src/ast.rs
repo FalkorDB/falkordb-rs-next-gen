@@ -39,7 +39,10 @@ pub enum QueryExprIR {
 }
 
 impl QueryExprIR {
-    fn inner_validate(&self, env: &mut HashSet<String>) -> Result<(), String> {
+    fn inner_validate(
+        &self,
+        env: &mut HashSet<String>,
+    ) -> Result<(), String> {
         match self {
             Self::Null | Self::Bool(_) | Self::Integer(_) | Self::Float(_) | Self::String(_) => {
                 Ok(())
@@ -144,7 +147,10 @@ pub enum Alias {
 }
 
 impl Display for Alias {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
         match self {
             Self::String(s) => write!(f, "{s}"),
             Self::Anon(id) => write!(f, "@anon{id}"),
@@ -213,7 +219,10 @@ pub struct PathPattern {
 
 impl PathPattern {
     #[must_use]
-    pub const fn new(vars: Vec<Alias>, name: String) -> Self {
+    pub const fn new(
+        vars: Vec<Alias>,
+        name: String,
+    ) -> Self {
         Self { vars, name }
     }
 }
@@ -259,7 +268,11 @@ impl QueryIR {
         self.inner_validate(std::iter::empty(), &mut env)
     }
 
-    fn inner_validate<'a, T>(&self, mut iter: T, env: &mut HashSet<String>) -> Result<(), String>
+    fn inner_validate<'a, T>(
+        &self,
+        mut iter: T,
+        env: &mut HashSet<String>,
+    ) -> Result<(), String>
     where
         T: Iterator<Item = &'a Self>,
     {

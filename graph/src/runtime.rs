@@ -3,7 +3,7 @@ use std::{
     hash::{DefaultHasher, Hash, Hasher},
 };
 
-use crate::{ast::QueryExprIR, graph::Graph, matrix::Iter, planner::IR};
+use crate::{ast::QueryExprIR, graph::Graph, matrix, planner::IR, tensor};
 
 #[derive(Clone, PartialEq, Debug)]
 pub enum Value {
@@ -19,7 +19,10 @@ pub enum Value {
 }
 
 impl Hash for Value {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+    fn hash<H: std::hash::Hasher>(
+        &self,
+        state: &mut H,
+    ) {
         match self {
             Self::Null => todo!(),
             Self::Bool(x) => x.hash(state),
@@ -38,7 +41,8 @@ pub struct Runtime {
     write_functions: BTreeMap<String, fn(&mut Graph, &mut Runtime, Value) -> Value>,
     read_functions: BTreeMap<String, fn(&Graph, &mut Runtime, Value) -> Value>,
     agg_ctxs: BTreeMap<u64, (Value, Value)>,
-    iters: Vec<Iter<bool>>,
+    node_iters: Vec<matrix::Iter<bool>>,
+    relationship_iters: Vec<tensor::Iter>,
     parameters: BTreeMap<String, Value>,
     pub nodes_created: i32,
     pub relationships_created: i32,
@@ -68,9 +72,16 @@ impl Runtime {
         );
         read_functions.insert("create_node_iter".to_string(), Self::create_node_iter);
         read_functions.insert("next_node".to_string(), Self::next_node);
+        read_functions.insert(
+            "create_relationship_iter".to_string(),
+            Self::create_relationship_iter,
+        );
+        read_functions.insert("next_relationship".to_string(), Self::next_relationship);
         read_functions.insert("property".to_string(), Self::property);
         read_functions.insert("toInteger".to_string(), Self::value_to_integer);
         read_functions.insert("labels".to_string(), Self::labels);
+        read_functions.insert("startnode".to_string(), Self::start_node);
+        read_functions.insert("endnode".to_string(), Self::end_node);
 
         // aggregation functions
         read_functions.insert("collect".to_string(), Self::collect);
@@ -88,7 +99,8 @@ impl Runtime {
             write_functions,
             read_functions,
             agg_ctxs: BTreeMap::new(),
-            iters: Vec::new(),
+            node_iters: Vec::new(),
+            relationship_iters: Vec::new(),
             parameters,
             nodes_created: 0,
             relationships_created: 0,
@@ -99,7 +111,11 @@ impl Runtime {
         }
     }
 
-    fn create_node(g: &mut Graph, runtime: &mut Self, args: Value) -> Value {
+    fn create_node(
+        g: &mut Graph,
+        runtime: &mut Self,
+        args: Value,
+    ) -> Value {
         match args {
             Value::List(args) => {
                 let mut iter = args.into_iter();
@@ -132,7 +148,11 @@ impl Runtime {
         }
     }
 
-    fn delete_entity(g: &mut Graph, runtime: &mut Self, args: Value) -> Value {
+    fn delete_entity(
+        g: &mut Graph,
+        runtime: &mut Self,
+        args: Value,
+    ) -> Value {
         match args {
             Value::List(nodes) => {
                 for n in nodes {
@@ -148,7 +168,11 @@ impl Runtime {
         Value::Null
     }
 
-    fn create_relationship(g: &mut Graph, runtime: &mut Self, args: Value) -> Value {
+    fn create_relationship(
+        g: &mut Graph,
+        runtime: &mut Self,
+        args: Value,
+    ) -> Value {
         match args {
             Value::List(args) => {
                 let mut iter = args.into_iter();
@@ -183,7 +207,11 @@ impl Runtime {
         }
     }
 
-    fn create_aggregate_ctx(_g: &Graph, runtime: &mut Self, args: Value) -> Value {
+    fn create_aggregate_ctx(
+        _g: &Graph,
+        runtime: &mut Self,
+        args: Value,
+    ) -> Value {
         let mut hasher = DefaultHasher::new();
         args.hash(&mut hasher);
         let key = hasher.finish();
@@ -194,13 +222,17 @@ impl Runtime {
         Value::Int(key as i64)
     }
 
-    fn create_node_iter(g: &Graph, runtime: &mut Self, args: Value) -> Value {
+    fn create_node_iter(
+        g: &Graph,
+        runtime: &mut Self,
+        args: Value,
+    ) -> Value {
         match args {
             Value::List(args) => {
                 let mut iter = args.into_iter();
                 match (iter.next(), iter.next()) {
                     (Some(Value::List(raw_labels)), None) => {
-                        runtime.iters.push(
+                        runtime.node_iters.push(
                             g.get_nodes(
                                 raw_labels
                                     .into_iter()
@@ -216,7 +248,7 @@ impl Runtime {
                             )
                             .unwrap(),
                         );
-                        Value::Int(runtime.iters.len() as i64 - 1)
+                        Value::Int(runtime.node_iters.len() as i64 - 1)
                     }
                     _ => todo!(),
                 }
@@ -225,19 +257,67 @@ impl Runtime {
         }
     }
 
-    fn next_node(_g: &Graph, runtime: &mut Self, args: Value) -> Value {
+    fn next_node(
+        _g: &Graph,
+        runtime: &mut Self,
+        args: Value,
+    ) -> Value {
         match args {
             Value::List(args) => match args.as_slice() {
-                [Value::Int(iter)] => runtime.iters[*iter as usize]
+                [Value::Int(iter)] => runtime.node_iters[*iter as usize]
                     .next()
-                    .map_or_else(|| Value::Null, |(n, _)| Value::Node(n)),
+                    .map_or(Value::Null, |(n, _)| Value::Node(n)),
                 _ => todo!(),
             },
             _ => todo!(),
         }
     }
 
-    fn property(g: &Graph, _runtime: &mut Self, args: Value) -> Value {
+    fn create_relationship_iter(
+        g: &Graph,
+        runtime: &mut Self,
+        args: Value,
+    ) -> Value {
+        match args {
+            Value::List(args) => {
+                let mut iter = args.into_iter();
+                match (iter.next(), iter.next()) {
+                    (Some(Value::String(raw_type)), None) => {
+                        runtime
+                            .relationship_iters
+                            .push(g.get_relationships(&[raw_type]).unwrap());
+                        Value::Int(runtime.relationship_iters.len() as i64 - 1)
+                    }
+                    _ => todo!(),
+                }
+            }
+            _ => todo!(),
+        }
+    }
+
+    fn next_relationship(
+        _g: &Graph,
+        runtime: &mut Self,
+        args: Value,
+    ) -> Value {
+        match args {
+            Value::List(args) => match args.as_slice() {
+                [Value::Int(iter)] => runtime.relationship_iters[*iter as usize]
+                    .next()
+                    .map_or(Value::Null, |(src, dest, id)| {
+                        Value::Relationship(id, src, dest)
+                    }),
+                _ => todo!(),
+            },
+            _ => todo!(),
+        }
+    }
+
+    fn property(
+        g: &Graph,
+        _runtime: &mut Self,
+        args: Value,
+    ) -> Value {
         match args {
             Value::List(arr) => match arr.as_slice() {
                 [Value::Node(node_id), Value::String(property)] => g
@@ -255,7 +335,11 @@ impl Runtime {
         }
     }
 
-    fn labels(g: &Graph, _runtime: &mut Self, args: Value) -> Value {
+    fn labels(
+        g: &Graph,
+        _runtime: &mut Self,
+        args: Value,
+    ) -> Value {
         match args {
             Value::List(arr) => match arr.as_slice() {
                 [Value::Node(node_id)] => Value::List(
@@ -269,7 +353,39 @@ impl Runtime {
         }
     }
 
-    fn collect(_g: &Graph, runtime: &mut Self, args: Value) -> Value {
+    fn start_node(
+        g: &Graph,
+        _runtime: &mut Self,
+        args: Value,
+    ) -> Value {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [Value::Relationship(_, src, _)] => Value::Node(*src),
+                _ => Value::Null,
+            },
+            _ => unimplemented!(),
+        }
+    }
+
+    fn end_node(
+        g: &Graph,
+        _runtime: &mut Self,
+        args: Value,
+    ) -> Value {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [Value::Relationship(_, _, dest)] => Value::Node(*dest),
+                _ => Value::Null,
+            },
+            _ => unimplemented!(),
+        }
+    }
+
+    fn collect(
+        _g: &Graph,
+        runtime: &mut Self,
+        args: Value,
+    ) -> Value {
         if let Value::List(arr) = args {
             if let [x, Value::Int(hash)] = arr.as_slice() {
                 runtime.agg_ctxs.entry(*hash as _).and_modify(|v| {
@@ -284,7 +400,11 @@ impl Runtime {
         Value::Null
     }
 
-    fn count(_g: &Graph, runtime: &mut Self, args: Value) -> Value {
+    fn count(
+        _g: &Graph,
+        runtime: &mut Self,
+        args: Value,
+    ) -> Value {
         if let Value::List(arr) = args {
             match arr.as_slice() {
                 [Value::Null, _] => {}
@@ -303,7 +423,11 @@ impl Runtime {
         Value::Null
     }
 
-    fn sum(_g: &Graph, runtime: &mut Self, args: Value) -> Value {
+    fn sum(
+        _g: &Graph,
+        runtime: &mut Self,
+        args: Value,
+    ) -> Value {
         if let Value::List(arr) = args {
             match arr.as_slice() {
                 [Value::Int(a), Value::Int(hash)] => {
@@ -321,7 +445,11 @@ impl Runtime {
         Value::Null
     }
 
-    fn max(_g: &Graph, runtime: &mut Self, args: Value) -> Value {
+    fn max(
+        _g: &Graph,
+        runtime: &mut Self,
+        args: Value,
+    ) -> Value {
         if let Value::List(arr) = args {
             if let [Value::Int(a), Value::Int(hash)] = arr.as_slice() {
                 runtime.agg_ctxs.entry(*hash as _).and_modify(|v| {
@@ -338,7 +466,11 @@ impl Runtime {
         Value::Null
     }
 
-    fn min(_g: &Graph, runtime: &mut Self, args: Value) -> Value {
+    fn min(
+        _g: &Graph,
+        runtime: &mut Self,
+        args: Value,
+    ) -> Value {
         if let Value::List(arr) = args {
             if let [Value::Int(a), Value::Int(hash)] = arr.as_slice() {
                 runtime.agg_ctxs.entry(*hash as _).and_modify(|v| {
@@ -355,7 +487,11 @@ impl Runtime {
         Value::Null
     }
 
-    fn value_to_integer(_g: &Graph, _runtime: &mut Self, args: Value) -> Value {
+    fn value_to_integer(
+        _g: &Graph,
+        _runtime: &mut Self,
+        args: Value,
+    ) -> Value {
         match args {
             Value::List(params) => match params.as_slice() {
                 #[allow(clippy::cast_possible_truncation)]
@@ -375,7 +511,11 @@ impl Runtime {
         }
     }
 
-    fn db_labels(g: &Graph, _runtime: &mut Self, _args: Value) -> Value {
+    fn db_labels(
+        g: &Graph,
+        _runtime: &mut Self,
+        _args: Value,
+    ) -> Value {
         Value::List(
             g.get_labels()
                 .map(|n| Value::String(n.to_string()))
@@ -383,7 +523,11 @@ impl Runtime {
         )
     }
 
-    fn db_types(g: &Graph, _runtime: &mut Self, _args: Value) -> Value {
+    fn db_types(
+        g: &Graph,
+        _runtime: &mut Self,
+        _args: Value,
+    ) -> Value {
         Value::List(
             g.get_types()
                 .map(|n| Value::String(n.to_string()))
@@ -391,7 +535,11 @@ impl Runtime {
         )
     }
 
-    fn db_properties(g: &Graph, _runtime: &mut Self, _args: Value) -> Value {
+    fn db_properties(
+        g: &Graph,
+        _runtime: &mut Self,
+        _args: Value,
+    ) -> Value {
         Value::List(
             g.get_properties()
                 .map(|n| Value::String(n.to_string()))
@@ -470,6 +618,10 @@ pub fn ro_run(
         },
         IR::IsNode(ir) => match ro_run(vars, g, runtime, result_fn, ir)? {
             Value::Node(_) => Ok(Value::Bool(true)),
+            _ => Ok(Value::Bool(false)),
+        },
+        IR::IsRelationship(ir) => match ro_run(vars, g, runtime, result_fn, ir)? {
+            Value::Relationship(_, _, _) => Ok(Value::Bool(true)),
             _ => Ok(Value::Bool(false)),
         },
         IR::Or(irs) => {
@@ -737,6 +889,10 @@ pub fn run(
             Value::Node(_) => Ok(Value::Bool(true)),
             _ => Ok(Value::Bool(false)),
         },
+        IR::IsRelationship(ir) => match run(vars, g, runtime, result_fn, ir)? {
+            Value::Relationship(_, _, _) => Ok(Value::Bool(true)),
+            _ => Ok(Value::Bool(false)),
+        },
         IR::Or(irs) => {
             let mut is_null = false;
             for ir in irs {
@@ -949,7 +1105,11 @@ pub fn evaluate_param(expr: QueryExprIR) -> Value {
     }
 }
 
-fn get_elements(arr: Value, start: Option<Value>, end: Option<Value>) -> Result<Value, String> {
+fn get_elements(
+    arr: Value,
+    start: Option<Value>,
+    end: Option<Value>,
+) -> Result<Value, String> {
     match (arr, start, end) {
         (Value::List(values), Some(Value::Int(mut start)), Some(Value::Int(mut end))) => {
             if start < 0 {
@@ -988,14 +1148,20 @@ fn get_elements(arr: Value, start: Option<Value>, end: Option<Value>) -> Result<
 }
 
 #[inline]
-fn is_equal(a: &Value, b: &Value) -> Value {
+fn is_equal(
+    a: &Value,
+    b: &Value,
+) -> Value {
     match (a, b) {
         (Value::List(l1), Value::List(l2)) => is_equal_lists(l1, l2),
         _ => Value::Bool(a == b),
     }
 }
 #[inline]
-fn is_equal_lists(l1: &Vec<Value>, l2: &Vec<Value>) -> Value {
+fn is_equal_lists(
+    l1: &Vec<Value>,
+    l2: &Vec<Value>,
+) -> Value {
     if l1.len() != l2.len() {
         return Value::Bool(false);
     }
@@ -1025,7 +1191,10 @@ fn is_equal_lists(l1: &Vec<Value>, l2: &Vec<Value>) -> Value {
     }
 }
 
-fn add_list_scalar(mut l: Vec<Value>, scalar: Value) -> Value {
+fn add_list_scalar(
+    mut l: Vec<Value>,
+    scalar: Value,
+) -> Value {
     if l.is_empty() {
         return Value::List(vec![scalar]);
     }
