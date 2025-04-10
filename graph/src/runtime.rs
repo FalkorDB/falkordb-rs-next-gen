@@ -1,6 +1,7 @@
 use crate::{
     ast::QueryExprIR, graph::Graph, matrix::Iter, planner::IR, value::Contains, value::Value,
 };
+use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
 pub struct Runtime {
@@ -368,11 +369,10 @@ pub fn ro_run(
             Value::Bool(b) => Ok(Value::Bool(!b)),
             _ => Err("Not operator requires a boolean".to_string()),
         },
-        IR::Eq(irs) => irs
-            .iter()
-            .flat_map(|ir| ro_run(vars, g, runtime, result_fn, ir))
-            .reduce(|a, b| a.is_equal(&b))
-            .ok_or_else(|| "Eq operator requires at least one argument".to_string()),
+        IR::Eq(irs) => {
+            let iter = irs.iter().map(|ir| ro_run(vars, g, runtime, result_fn, ir));
+            all_equals(iter)
+        }
         IR::Neq(irs) => irs
             .iter()
             .flat_map(|ir| ro_run(vars, g, runtime, result_fn, ir))
@@ -617,11 +617,10 @@ pub fn run(
             Value::Bool(b) => Ok(Value::Bool(!b)),
             _ => Err("Not operator requires a boolean".to_string()),
         },
-        IR::Eq(irs) => irs
-            .iter()
-            .flat_map(|ir| run(vars, g, runtime, result_fn, ir))
-            .reduce(|a, b| a.is_equal(&b))
-            .ok_or_else(|| "Eq operator requires at least one argument".to_string()),
+        IR::Eq(irs) => {
+            let iter = irs.iter().map(|ir| run(vars, g, runtime, result_fn, ir));
+            all_equals(iter)
+        }
         IR::Neq(irs) => irs
             .iter()
             .flat_map(|ir| run(vars, g, runtime, result_fn, ir))
@@ -831,5 +830,27 @@ fn list_contains(list: &Value, value: &Value) -> Result<Value, String> {
             "Type mismatch: expected List or Null but was {}",
             list.name()
         )),
+    }
+}
+
+// the semantic of Eq [1, 2, 3] is: 1 EQ 2 AND 2 EQ 3
+fn all_equals<I>(mut iter: I) -> Result<Value, String>
+where
+    I: Iterator<Item = Result<Value, String>>,
+{
+    if let Some(first) = iter.next() {
+        let mut prev = first?;
+        for next in iter {
+            let next = next?;
+            match prev.partial_cmp(&next) {
+                None => return Ok(Value::Null),
+                Some(Ordering::Less) | Some(Ordering::Greater) => return Ok(Value::Bool(false)),
+                Some(Ordering::Equal) => {}
+            }
+            prev = next;
+        }
+        Ok(Value::Bool(true))
+    } else {
+        Err("Eq operator requires at least two arguments".to_string())
     }
 }

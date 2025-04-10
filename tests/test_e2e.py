@@ -345,4 +345,35 @@ def test_in_list():
     res = query("RETURN [[], []] IN [1, [[], []]] AS res")
     assert res.result_set == [[True]]
 
+def test_is_equal():
 
+    for v in [1, 1.0, 1.1, '1', '1.0', '1.1', True, False, None, "Avi", [], {}, [1], {"a": 2}]:
+        res = query("RETURN $a = null AS res", params={"a": v})
+        assert res.result_set == [[None]]
+        res = query("RETURN null = $a AS res", params={"a": v})
+        assert res.result_set == [[None]]
+        res = query("RETURN $a = $a = null = 1.8 AS res", params={"a": v})
+        assert res.result_set == [[None]]
+
+
+    for v in [1, 1.0, 1.1, '1', '1.0', '1.1', True, False, "Avi", [], {}, [1], {"a": 2}]:
+        res = query("RETURN $a = $a AS res", params={"a": v})
+        assert res.result_set == [[True]]
+        res = query("RETURN $a = $a = $a AS res", params={"a": v})
+        assert res.result_set == [[True]]
+        res = query("RETURN $a = $a = $a = $b AS res", params={"a": v, "b": "foo"})
+        assert res.result_set == [[False]]
+        res = query("RETURN $a = $a = $a = null AS res", params={"a": v})
+        assert res.result_set == [[None]]
+        res = query("RETURN $a = $a = $a = $b AS res", params={"a": v, "b": "foo"})
+        assert res.result_set == [[False]]
+        res = query("RETURN $a = $a = 1.8 = null AS res", params={"a": v})
+        assert res.result_set == [[False]]
+
+
+
+    # todo debug that
+    # res = query("RETURN $a = $a AS res", params={"a": None})
+    # assert res.result_set == [[None]]
+    res = query("RETURN [null] = [null] AS res")
+    assert res.result_set == [[None]]

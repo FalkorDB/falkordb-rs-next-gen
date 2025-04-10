@@ -57,14 +57,6 @@ impl Value {
         }
     }
 
-    pub(crate) fn is_equal(&self, b: &Self) -> Value {
-        match self.partial_cmp(b) {
-            None => Self::Null,
-            Some(Ordering::Equal) => Self::Bool(true),
-            Some(Ordering::Less) | Some(Ordering::Greater) => Self::Bool(false),
-        }
-    }
-
     fn compare_value(&self, b: &Self) -> (Ordering, DisjointOrNull) {
         if mem::discriminant(self) == mem::discriminant(b) {
             match (self, b) {
@@ -236,15 +228,10 @@ impl Contains for Vec<Value> {
 
 impl PartialOrd for Value {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        if let (Self::List(_), Self::List(_)) = (self, other) {
-            let (ordering, disjoint_or_null) = self.compare_value(other);
-            if disjoint_or_null == DisjointOrNull::ComparedNull {
-                None
-            } else {
-                Some(ordering)
-            }
+        let (ordering, disjoint_or_null) = self.compare_value(other);
+        if disjoint_or_null == DisjointOrNull::ComparedNull {
+            None
         } else {
-            let (ordering, _) = self.compare_value(other);
             Some(ordering)
         }
     }
