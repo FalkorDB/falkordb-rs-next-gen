@@ -79,7 +79,6 @@ impl Value {
                 (Self::List(a), Self::List(b)) => return Self::compare_list(a, b),
                 (Self::Map(a), Self::Map(b)) => return Self::compare_map(a, b),
                 (Self::Node(a), Self::Node(b)) => {
-                    println!("Node comparison: {a:?} {b:?}");
                     return (a.cmp(b), DisjointOrNull::None);
                 }
                 (Self::Relationship(a, b, c), Self::Relationship(a1, b1, c1)) => {
@@ -87,7 +86,6 @@ impl Value {
                 }
 
                 _ => {
-                    println!("Value comparison unreachable: {self:?} {b:?}");
                     unreachable!()
                 }
             }
