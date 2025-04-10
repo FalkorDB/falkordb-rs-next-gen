@@ -259,7 +259,6 @@ def test_in_list():
 
     # test for simple values
     for value in [True, False, 1, -1, 0.1, 'Avi', [1]]:
-        print(f"Testing {value}\n")
         res = query("RETURN $p IN [$p]", params={"p": value})
         assert res.result_set == [[True]]
     # TCK
