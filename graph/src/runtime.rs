@@ -825,7 +825,7 @@ fn add_list_scalar(mut l: Vec<Value>, scalar: Value) -> Value {
 
 fn list_contains(list: &Value, value: &Value) -> Result<Value, String> {
     match list {
-        Value::List(l) => Ok(l.contains(&value)),
+        Value::List(l) => Ok(Contains::contains(l, value)),
         Value::Null => Ok(Value::Null),
         _ => Err(format!(
             "Type mismatch: expected List or Null but was {}",
