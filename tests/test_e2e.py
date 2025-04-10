@@ -266,7 +266,7 @@ def test_in_list():
     res = query("WITH [[1, 2, 3]] AS list RETURN 3 IN list[0] AS r")
     assert res.result_set == [[True]]
     res = query("RETURN 1 IN null AS r")
-    assert res.result_set == [[False]]
+    assert res.result_set == [[None]]
     res = query("RETURN 3 IN [[1, 2, 3]][0] AS r")
     assert res.result_set == [[True]]
     res = query("WITH [1, 2, 3] AS list RETURN 3 IN list[0..1] AS r")

@@ -1,4 +1,4 @@
-use graph::{cypher::Parser, graph::Graph, planner::Planner, runtime::Value};
+use graph::{cypher::Parser, graph::Graph, planner::Planner, value::Value};
 use redis_module::{
     native_types::RedisType, redis_module, redisvalue::RedisValueKey, Context, NextArg,
     RedisModuleTypeMethods, RedisResult, RedisString, RedisValue, Status,
@@ -44,6 +44,7 @@ unsafe extern "C" fn my_free(value: *mut c_void) {
 }
 
 fn raw_value_to_redis_value(g: &Graph, r: &Value) -> RedisValue {
+    // println!("raw_value_to_redis_value {r:?}");
     match r {
         Value::List(values) => RedisValue::Array(
             values
@@ -56,6 +57,7 @@ fn raw_value_to_redis_value(g: &Graph, r: &Value) -> RedisValue {
 }
 
 fn inner_raw_value_to_redis_value(g: &Graph, r: &Value) -> RedisValue {
+    // println!("inner_raw_value_to_redis_value {r:?}");
     match r {
         Value::Null => RedisValue::Array(vec![RedisValue::Integer(1), RedisValue::Null]),
         Value::Bool(x) => RedisValue::Array(vec![
