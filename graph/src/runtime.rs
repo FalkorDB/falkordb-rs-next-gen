@@ -1,5 +1,6 @@
-use crate::{ast::QueryExprIR, graph::Graph, matrix::Iter, planner::IR, value::Value, value::Contains};
-use std::cmp::Ordering;
+use crate::{
+    ast::QueryExprIR, graph::Graph, matrix::Iter, planner::IR, value::Contains, value::Value,
+};
 use std::collections::BTreeMap;
 
 pub struct Runtime {
@@ -370,7 +371,7 @@ pub fn ro_run(
         IR::Eq(irs) => irs
             .iter()
             .flat_map(|ir| ro_run(vars, g, runtime, result_fn, ir))
-            .reduce(|a, b| is_equal(&a, &b))
+            .reduce(|a, b| a.is_equal(&b))
             .ok_or_else(|| "Eq operator requires at least one argument".to_string()),
         IR::Neq(irs) => irs
             .iter()
@@ -619,7 +620,7 @@ pub fn run(
         IR::Eq(irs) => irs
             .iter()
             .flat_map(|ir| run(vars, g, runtime, result_fn, ir))
-            .reduce(|a, b| is_equal(&a, &b))
+            .reduce(|a, b| a.is_equal(&b))
             .ok_or_else(|| "Eq operator requires at least one argument".to_string()),
         IR::Neq(irs) => irs
             .iter()
@@ -810,14 +811,6 @@ fn get_elements(arr: Value, start: Option<Value>, end: Option<Value>) -> Result<
         (Value::List(values), None, None) => Ok(Value::List(values)),
 
         _ => Err("Invalid array range parameters.".to_string()),
-    }
-}
-
-fn is_equal(a: &Value, b: &Value) -> Value {
-    match a.partial_cmp(b) {
-        None => Value::Null,
-        Some(Ordering::Equal) => Value::Bool(true),
-        Some(Ordering::Less) | Some(Ordering::Greater) => Value::Bool(false),
     }
 }
 

@@ -42,10 +42,6 @@ enum DisjointOrNull {
     None,
 }
 
-// pub trait Contains {
-//     fn contains(&self, value: &Value) -> Value;
-// }
-
 impl Value {
     pub(crate) fn name(&self) -> String {
         match self {
@@ -61,6 +57,13 @@ impl Value {
         }
     }
 
+    pub(crate) fn is_equal(&self, b: &Self) -> Value {
+        match self.partial_cmp(b) {
+            None => Self::Null,
+            Some(Ordering::Equal) => Self::Bool(true),
+            Some(Ordering::Less) | Some(Ordering::Greater) => Self::Bool(false),
+        }
+    }
 
     fn compare_value(&self, b: &Self) -> (Ordering, DisjointOrNull) {
         if mem::discriminant(self) == mem::discriminant(b) {
@@ -77,8 +80,8 @@ impl Value {
                 (Self::Map(a), Self::Map(b)) => return Self::compare_map(a, b),
                 (Self::Node(a), Self::Node(b)) => {
                     println!("Node comparison: {a:?} {b:?}");
-                    return (a.cmp(b), DisjointOrNull::None)
-                },
+                    return (a.cmp(b), DisjointOrNull::None);
+                }
                 (Self::Relationship(a, b, c), Self::Relationship(a1, b1, c1)) => {
                     return ((a, b, c).cmp(&(a1, b1, c1)), DisjointOrNull::None);
                 }
@@ -94,11 +97,11 @@ impl Value {
         // are both numerics of differing types
         match (self, b) {
             (Self::Int(i), Self::Float(f)) => {
-				#[allow(clippy::cast_precision_loss)]
-				return compare_floats(*i as f64, *f);
+                #[allow(clippy::cast_precision_loss)]
+                return compare_floats(*i as f64, *f);
             }
             (Self::Float(f), Self::Int(i)) => {
-				#[allow(clippy::cast_precision_loss)]
+                #[allow(clippy::cast_precision_loss)]
                 return compare_floats(*f, *i as f64);
             }
             _ => {}
@@ -106,12 +109,8 @@ impl Value {
 
         // check if either type is null
         let disjoint = match (self, b) {
-            (Self::Null, _) | (_, Self::Null) => {
-                 DisjointOrNull::ComparedNull
-            }
-            _ => {
-                DisjointOrNull::Disjoint
-            }
+            (Self::Null, _) | (_, Self::Null) => DisjointOrNull::ComparedNull,
+            _ => DisjointOrNull::Disjoint,
         };
 
         (self.order().cmp(&b.order()), disjoint)
@@ -119,7 +118,7 @@ impl Value {
 
     fn compare_list(a: &Vec<Self>, b: &Vec<Self>) -> (Ordering, DisjointOrNull) {
         let array_a_len = a.len();
-		let array_b_len = b.len();
+        let array_b_len = b.len();
         if array_a_len == 0 && array_b_len == 0 {
             return (Ordering::Equal, DisjointOrNull::None);
         }
@@ -171,7 +170,6 @@ impl Value {
         a: &BTreeMap<String, Self>,
         b: &BTreeMap<String, Self>,
     ) -> (Ordering, DisjointOrNull) {
-		
         let key_count = a.keys().len();
         let a_key_count = a.keys().len();
         let b_key_count = b.keys().len();
@@ -215,6 +213,7 @@ impl Value {
 pub trait Contains {
     fn contains(&self, value: &Value) -> Value;
 }
+
 impl Contains for Vec<Value> {
     fn contains(&self, value: &Value) -> Value {
         let mut is_null = false;
@@ -236,7 +235,6 @@ impl Contains for Vec<Value> {
         }
     }
 }
-
 
 impl PartialOrd for Value {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
