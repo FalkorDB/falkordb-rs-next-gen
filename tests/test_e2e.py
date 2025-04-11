@@ -484,6 +484,26 @@ def test_list_size():
     res = query("WITH null AS l RETURN size(l), size(null)")
     assert res.result_set == [[None, None]]
 
+def test_list_head():
+    res = query("RETURN head([1, 2, 3]) AS res")
+    assert res.result_set == [[1]]
+
+    res = query("RETURN head([]) AS res")
+    assert res.result_set == [[None]]
+
+    res = query("RETURN head(null) AS res")
+    assert res.result_set == [[None]]
+
+    for value, name in [(False, 'Boolean'), (True, 'Boolean'), (1, 'Integer'), (1.0, 'Float'), ({}, 'Map')]:
+        try:
+            query(f"RETURN head({value}) AS r")
+            raise AssertionError("Expected an error")
+        except ResponseError as e:
+            assert f"Type mismatch: expected List, but was {name}" in str(e)
+
+        res = query(f"RETURN head([{value}, 1]) AS res")
+        assert res.result_set == [[value]]
+
 def test_list_tail():
     res = query("RETURN tail([1, 2, 3]) AS res")
     assert res.result_set == [[[2, 3]]]

@@ -37,6 +37,7 @@ impl Runtime {
         read_functions.insert("toInteger".to_string(), Self::value_to_integer);
         read_functions.insert("labels".to_string(), Self::labels);
         read_functions.insert("size".to_string(), Self::size);
+        read_functions.insert("head".to_string(), Self::head);
         read_functions.insert("tail".to_string(), Self::tail);
 
         // procedures
@@ -252,7 +253,22 @@ impl Runtime {
             _ => unreachable!(),
         }
     }
-    fn tail(_: &Graph, _: &mut Self, args: Value) -> Result<Value, String> {
+    fn head(_: &Graph, _: &mut Self, args: Value) -> Result<Value, String> {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [Value::List(v)]  => if v.is_empty() {
+                    Ok(Value::Null)
+                }else{
+                    Ok(v[0].clone())
+                },
+                [Value::Null] => Ok(Value::Null),
+                [arg] => Err(format!("Type mismatch: expected List, but was {}", arg.name())),
+                args => Err(format!("Expected one argument for head, instead {}", args.len())),
+            },
+            _ => unreachable!(),
+        }
+    }
+fn tail(_: &Graph, _: &mut Self, args: Value) -> Result<Value, String> {
         match args {
             Value::List(arr) => match arr.as_slice() {
                 [Value::List(v)]  => if v.is_empty() {
