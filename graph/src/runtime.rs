@@ -20,10 +20,14 @@ pub struct Runtime {
 impl Runtime {
     #[must_use]
     pub fn new(parameters: BTreeMap<String, Value>) -> Self {
-        let mut write_functions: BTreeMap<String, fn(&mut Graph, &mut Runtime, Value) -> Result<Value, String>> =
-            BTreeMap::new();
-        let mut read_functions: BTreeMap<String, fn(&Graph, &mut Runtime, Value) -> Result<Value, String>> =
-            BTreeMap::new();
+        let mut write_functions: BTreeMap<
+            String,
+            fn(&mut Graph, &mut Runtime, Value) -> Result<Value, String>,
+        > = BTreeMap::new();
+        let mut read_functions: BTreeMap<
+            String,
+            fn(&Graph, &mut Runtime, Value) -> Result<Value, String>,
+        > = BTreeMap::new();
 
         // write functions
         write_functions.insert("create_node".to_string(), Self::create_node);
@@ -38,7 +42,9 @@ impl Runtime {
         read_functions.insert("labels".to_string(), Self::labels);
         read_functions.insert("size".to_string(), Self::size);
         read_functions.insert("head".to_string(), Self::head);
+        read_functions.insert("last".to_string(), Self::last);
         read_functions.insert("tail".to_string(), Self::tail);
+        read_functions.insert("reverse".to_string(), Self::reverse);
 
         // procedures
         read_functions.insert("db.labels".to_string(), Self::db_labels);
@@ -108,7 +114,11 @@ impl Runtime {
         Ok(Value::Null)
     }
 
-    fn create_relationship(g: &mut Graph, runtime: &mut Self, args: Value) -> Result<Value, String> {
+    fn create_relationship(
+        g: &mut Graph,
+        runtime: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
         match args {
             Value::List(args) => {
                 let mut iter = args.into_iter();
@@ -134,7 +144,7 @@ impl Runtime {
                                 _ => 1,
                             })
                             .sum::<i32>();
-                       Ok(g.create_relationship(&relationship_type, from, to, attrs))
+                        Ok(g.create_relationship(&relationship_type, from, to, attrs))
                     }
                     _ => todo!(),
                 }
@@ -218,7 +228,7 @@ impl Runtime {
         }
     }
 
-   fn value_to_integer(_g: &Graph, _runtime: &mut Self, args: Value) -> Result<Value, String> {
+    fn value_to_integer(_g: &Graph, _runtime: &mut Self, args: Value) -> Result<Value, String> {
         match args {
             Value::List(params) => match params.as_slice() {
                 [Value::String(s)] => {
@@ -244,11 +254,17 @@ impl Runtime {
     fn size(_: &Graph, _: &mut Self, args: Value) -> Result<Value, String> {
         match args {
             Value::List(arr) => match arr.as_slice() {
-                [Value::String(s)]  => Ok(Value::Int(s.len() as i64)),
-                [Value::List(v)]  => Ok(Value::Int(v.len() as i64)),
+                [Value::String(s)] => Ok(Value::Int(s.len() as i64)),
+                [Value::List(v)] => Ok(Value::Int(v.len() as i64)),
                 [Value::Null] => Ok(Value::Null),
-                [arg] => Err(format!("Type mismatch: expected List, String, or Null but was {}", arg.name())),
-                args => Err(format!("Expected one argument for size, instead {}", args.len())),
+                [arg] => Err(format!(
+                    "Type mismatch: expected List, String, or Null but was {}",
+                    arg.name()
+                )),
+                args => Err(format!(
+                    "Expected one argument for size, instead {}",
+                    args.len()
+                )),
             },
             _ => unreachable!(),
         }
@@ -256,36 +272,93 @@ impl Runtime {
     fn head(_: &Graph, _: &mut Self, args: Value) -> Result<Value, String> {
         match args {
             Value::List(arr) => match arr.as_slice() {
-                [Value::List(v)]  => if v.is_empty() {
-                    Ok(Value::Null)
-                }else{
-                    Ok(v[0].clone())
-                },
+                [Value::List(v)] => {
+                    if v.is_empty() {
+                        Ok(Value::Null)
+                    } else {
+                        Ok(v[0].clone())
+                    }
+                }
                 [Value::Null] => Ok(Value::Null),
-                [arg] => Err(format!("Type mismatch: expected List, but was {}", arg.name())),
-                args => Err(format!("Expected one argument for head, instead {}", args.len())),
+                [arg] => Err(format!(
+                    "Type mismatch: expected List, but was {}",
+                    arg.name()
+                )),
+                args => Err(format!(
+                    "Expected one argument for head, instead {}",
+                    args.len()
+                )),
             },
             _ => unreachable!(),
         }
     }
-fn tail(_: &Graph, _: &mut Self, args: Value) -> Result<Value, String> {
+
+    fn last(_: &Graph, _: &mut Self, args: Value) -> Result<Value, String> {
         match args {
             Value::List(arr) => match arr.as_slice() {
-                [Value::List(v)]  => if v.is_empty() {
-                    Ok(Value::List(vec![]))
-                }else{
-                    Ok(Value::List(v[1..].to_vec()))
-                },
+                [Value::List(v)] => Ok(v.last().unwrap_or(&Value::Null).clone()),
                 [Value::Null] => Ok(Value::Null),
-                [arg] => Err(format!("Type mismatch: expected List, but was {}", arg.name())),
-                args => Err(format!("Expected one argument for tail, instead {}", args.len())),
+                [arg] => Err(format!(
+                    "Type mismatch: expected List, but was {}",
+                    arg.name()
+                )),
+                args => Err(format!(
+                    "Expected one argument for last, instead {}",
+                    args.len()
+                )),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    fn tail(_: &Graph, _: &mut Self, args: Value) -> Result<Value, String> {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [Value::List(v)] => {
+                    if v.is_empty() {
+                        Ok(Value::List(vec![]))
+                    } else {
+                        Ok(Value::List(v[1..].to_vec()))
+                    }
+                }
+                [Value::Null] => Ok(Value::Null),
+                [arg] => Err(format!(
+                    "Type mismatch: expected List, but was {}",
+                    arg.name()
+                )),
+                args => Err(format!(
+                    "Expected one argument for tail, instead {}",
+                    args.len()
+                )),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    fn reverse(_: &Graph, _: &mut Self, args: Value) -> Result<Value, String> {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [Value::List(v)] => {
+                    let mut v = v.clone();
+                    v.reverse();
+                    Ok(Value::List(v))
+                }
+                [Value::Null] => Ok(Value::Null),
+                [arg] => Err(format!(
+                    "Type mismatch: expected List, but was {}",
+                    arg.name()
+                )),
+                args => Err(format!(
+                    "Expected one argument for reverse, instead {}",
+                    args.len()
+                )),
             },
             _ => unreachable!(),
         }
     }
 
     fn db_labels(g: &Graph, _runtime: &mut Self, _args: Value) -> Result<Value, String> {
-       Ok(Value::List(
+        Ok(Value::List(
             g.get_labels()
                 .map(|n| Value::String(n.to_string()))
                 .collect(),

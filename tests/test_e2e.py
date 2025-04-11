@@ -504,6 +504,26 @@ def test_list_head():
         res = query(f"RETURN head([{value}, 1]) AS res")
         assert res.result_set == [[value]]
 
+def test_list_last():
+    res = query("RETURN last([1, 2, 3]) AS res")
+    assert res.result_set == [[3]]
+
+    res = query("RETURN last([]) AS res")
+    assert res.result_set == [[None]]
+
+    res = query("RETURN last(null) AS res")
+    assert res.result_set == [[None]]
+
+    for value, name in [(False, 'Boolean'), (True, 'Boolean'), (1, 'Integer'), (1.0, 'Float'), ({}, 'Map')]:
+        try:
+            query(f"RETURN last({value}) AS r")
+            raise AssertionError("Expected an error")
+        except ResponseError as e:
+            assert f"Type mismatch: expected List, but was {name}" in str(e)
+
+        res = query(f"RETURN last([1, {value}]) AS res")
+        assert res.result_set == [[value]]
+
 def test_list_tail():
     res = query("RETURN tail([1, 2, 3]) AS res")
     assert res.result_set == [[[2, 3]]]
@@ -521,6 +541,31 @@ def test_list_tail():
         except ResponseError as e:
             assert f"Type mismatch: expected List, but was {name}" in str(e)
 
+def test_list_reverse():
+    res = query("RETURN reverse([1, 2, 3]) AS res")
+    assert res.result_set == [[[3, 2, 1]]]
+
+    res = query("RETURN reverse(['a', 'b', 'c']) AS res")
+    assert res.result_set == [[['c', 'b', 'a']]]
+
+    res = query("RETURN reverse([True, False]) AS res")
+    assert res.result_set == [[[False, True]]]
+
+    res = query("RETURN reverse([null, False]) AS res")
+    assert res.result_set == [[[False, None]]]
+
+    res = query("RETURN reverse([]) AS res")
+    assert res.result_set == [[[]]]
+
+    res = query("RETURN reverse(null) AS res")
+    assert res.result_set == [[None]]
+
+    for value, name in [(False, 'Boolean'), (True, 'Boolean'), (1, 'Integer'), (1.0, 'Float'), ({}, 'Map'), (float("nan"), "Float")]:
+        try:
+            query(f"RETURN reverse({value}) AS r")
+            raise AssertionError("Expected an error")
+        except ResponseError as e:
+            assert f"Type mismatch: expected List, but was {name}" in str(e)
 
 
 
