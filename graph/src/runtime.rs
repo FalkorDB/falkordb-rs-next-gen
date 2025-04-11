@@ -5,8 +5,8 @@ use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
 pub struct Runtime {
-    write_functions: BTreeMap<String, fn(&mut Graph, &mut Runtime, Value) -> Value>,
-    read_functions: BTreeMap<String, fn(&Graph, &mut Runtime, Value) -> Value>,
+    write_functions: BTreeMap<String, fn(&mut Graph, &mut Runtime, Value) -> Result<Value, String>>,
+    read_functions: BTreeMap<String, fn(&Graph, &mut Runtime, Value) -> Result<Value, String>>,
     iters: Vec<Iter<bool>>,
     parameters: BTreeMap<String, Value>,
     pub nodes_created: i32,
@@ -20,9 +20,9 @@ pub struct Runtime {
 impl Runtime {
     #[must_use]
     pub fn new(parameters: BTreeMap<String, Value>) -> Self {
-        let mut write_functions: BTreeMap<String, fn(&mut Graph, &mut Runtime, Value) -> Value> =
+        let mut write_functions: BTreeMap<String, fn(&mut Graph, &mut Runtime, Value) -> Result<Value, String>> =
             BTreeMap::new();
-        let mut read_functions: BTreeMap<String, fn(&Graph, &mut Runtime, Value) -> Value> =
+        let mut read_functions: BTreeMap<String, fn(&Graph, &mut Runtime, Value) -> Result<Value, String>> =
             BTreeMap::new();
 
         // write functions
@@ -36,6 +36,7 @@ impl Runtime {
         read_functions.insert("property".to_string(), Self::property);
         read_functions.insert("toInteger".to_string(), Self::value_to_integer);
         read_functions.insert("labels".to_string(), Self::labels);
+        read_functions.insert("size".to_string(), Self::size);
 
         // procedures
         read_functions.insert("db.labels".to_string(), Self::db_labels);
@@ -56,7 +57,7 @@ impl Runtime {
         }
     }
 
-    fn create_node(g: &mut Graph, runtime: &mut Self, args: Value) -> Value {
+    fn create_node(g: &mut Graph, runtime: &mut Self, args: Value) -> Result<Value, String> {
         match args {
             Value::List(args) => {
                 let mut iter = args.into_iter();
@@ -80,16 +81,16 @@ impl Runtime {
                                 _ => 1,
                             })
                             .sum::<i32>();
-                        g.create_node(&labels, attrs)
+                        Ok(g.create_node(&labels, attrs))
                     }
-                    _ => Value::Null,
+                    _ => Ok(Value::Null),
                 }
             }
-            _ => Value::Null,
+            _ => Ok(Value::Null),
         }
     }
 
-    fn delete_entity(g: &mut Graph, runtime: &mut Self, args: Value) -> Value {
+    fn delete_entity(g: &mut Graph, runtime: &mut Self, args: Value) -> Result<Value, String> {
         match args {
             Value::List(nodes) => {
                 for n in nodes {
@@ -102,10 +103,10 @@ impl Runtime {
             _ => todo!(),
         }
 
-        Value::Null
+        Ok(Value::Null)
     }
 
-    fn create_relationship(g: &mut Graph, runtime: &mut Self, args: Value) -> Value {
+    fn create_relationship(g: &mut Graph, runtime: &mut Self, args: Value) -> Result<Value, String> {
         match args {
             Value::List(args) => {
                 let mut iter = args.into_iter();
@@ -131,16 +132,16 @@ impl Runtime {
                                 _ => 1,
                             })
                             .sum::<i32>();
-                        g.create_relationship(&relationship_type, from, to, attrs)
+                       Ok(g.create_relationship(&relationship_type, from, to, attrs))
                     }
                     _ => todo!(),
                 }
             }
-            _ => todo!(),
+            _ => unreachable!(),
         }
     }
 
-    fn create_node_iter(g: &Graph, runtime: &mut Self, args: Value) -> Value {
+    fn create_node_iter(g: &Graph, runtime: &mut Self, args: Value) -> Result<Value, String> {
         match args {
             Value::List(args) => {
                 let mut iter = args.into_iter();
@@ -162,101 +163,117 @@ impl Runtime {
                             )
                             .unwrap(),
                         );
-                        Value::Int(runtime.iters.len() as i64 - 1)
+                        Ok(Value::Int(runtime.iters.len() as i64 - 1))
                     }
                     _ => todo!(),
                 }
             }
-            _ => todo!(),
+            _ => unreachable!(),
         }
     }
 
-    fn next_node(_g: &Graph, runtime: &mut Self, args: Value) -> Value {
+    fn next_node(_g: &Graph, runtime: &mut Self, args: Value) -> Result<Value, String> {
         match args {
             Value::List(args) => match args.as_slice() {
                 [Value::Int(iter)] => runtime.iters[*iter as usize]
                     .next()
-                    .map_or_else(|| Value::Null, |(n, _)| Value::Node(n)),
+                    .map_or_else(|| Ok(Value::Null), |(n, _)| Ok(Value::Node(n))),
                 _ => todo!(),
             },
-            _ => todo!(),
+            _ => unreachable!(),
         }
     }
 
-    fn property(g: &Graph, _runtime: &mut Self, args: Value) -> Value {
+    fn property(g: &Graph, _runtime: &mut Self, args: Value) -> Result<Value, String> {
         match args {
             Value::List(arr) => match arr.as_slice() {
                 [Value::Node(node_id), Value::String(property)] => g
                     .get_node_property_id(property)
-                    .map_or(Value::Null, |property_id| {
+                    .map_or(Ok(Value::Null), |property_id| {
                         g.get_node_property(*node_id, property_id)
-                            .map_or(Value::Null, |n| n)
+                            .map_or(Ok(Value::Null), |n| Ok(n))
                     }),
                 [Value::Map(map), Value::String(property)] => {
-                    map.get(property).unwrap_or(&Value::Null).clone()
+                    Ok(map.get(property).unwrap_or(&Value::Null).clone())
                 }
-                _ => Value::Null,
+                _ => Ok(Value::Null),
             },
-            _ => unimplemented!(),
+            _ => unreachable!(),
         }
     }
 
-    fn labels(g: &Graph, _runtime: &mut Self, args: Value) -> Value {
+    fn labels(g: &Graph, _runtime: &mut Self, args: Value) -> Result<Value, String> {
         match args {
             Value::List(arr) => match arr.as_slice() {
-                [Value::Node(node_id)] => Value::List(
+                [Value::Node(node_id)] => Ok(Value::List(
                     g.get_node_label_ids(*node_id)
                         .map(|label_id| Value::String(g.get_label_by_id(label_id).to_string()))
                         .collect(),
-                ),
-                _ => Value::Null,
+                )),
+                _ => Ok(Value::Null),
             },
-            _ => unimplemented!(),
+            _ => unreachable!(),
         }
     }
 
-    fn value_to_integer(_g: &Graph, _runtime: &mut Self, args: Value) -> Value {
+   fn value_to_integer(_g: &Graph, _runtime: &mut Self, args: Value) -> Result<Value, String> {
         match args {
             Value::List(params) => match params.as_slice() {
-                #[allow(clippy::cast_possible_truncation)]
-                [Value::String(s)] => s.parse::<i64>().map_or_else(
-                    |_| {
-                        s.parse::<f64>()
-                            .map_or(Value::Null, |f| Value::Int(f as i64))
-                    },
-                    Value::Int,
-                ),
-                [Value::Int(i)] => Value::Int(*i),
-                #[allow(clippy::cast_possible_truncation)]
-                [Value::Float(f)] => Value::Int(*f as i64),
-                _ => Value::Null,
+                [Value::String(s)] => {
+                    s.parse::<i64>()
+                        .map(Value::Int)
+                        .or_else(|_| {
+                            s.parse::<f64>()
+                                .map(|f| Value::Int(f as i64))
+                                .map_err(|_| format!("Failed to parse string `{}` as integer", s))
+                        })
+                }
+                [Value::Int(i)] => Ok(Value::Int(*i)),
+                [Value::Float(f)] => Ok(Value::Int(*f as i64)),
+                [Value::Null] => Ok(Value::Null),
+                [Value::Bool(b)] => Ok(Value::Int(if *b { 1 } else { 0 })),
+                [arg]  => Err(format!("Invalid input for function 'toInteger()': Expected a String, Float, Integer or Boolean, got: {}", arg.name())),
+                args => Err(format!("Expected one argument for value_to_integer, instead {}", args.len())),
             },
-            _ => Value::Null,
+            _ => unreachable!()
         }
     }
 
-    fn db_labels(g: &Graph, _runtime: &mut Self, _args: Value) -> Value {
-        Value::List(
+    fn size(_: &Graph, _: &mut Self, args: Value) -> Result<Value, String> {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [Value::String(s)]  => Ok(Value::Int(s.len() as i64)),
+                [Value::List(v)]  => Ok(Value::Int(v.len() as i64)),
+                [Value::Null] => Ok(Value::Null),
+                [arg] => Err(format!("Type mismatch: expected List, String, or Null but was {}", arg.name())),
+                args => Err(format!("Expected one argument for size, instead {}", args.len())),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    fn db_labels(g: &Graph, _runtime: &mut Self, _args: Value) -> Result<Value, String> {
+       Ok(Value::List(
             g.get_labels()
                 .map(|n| Value::String(n.to_string()))
                 .collect(),
-        )
+        ))
     }
 
-    fn db_types(g: &Graph, _runtime: &mut Self, _args: Value) -> Value {
-        Value::List(
+    fn db_types(g: &Graph, _runtime: &mut Self, _args: Value) -> Result<Value, String> {
+        Ok(Value::List(
             g.get_types()
                 .map(|n| Value::String(n.to_string()))
                 .collect(),
-        )
+        ))
     }
 
-    fn db_properties(g: &Graph, _runtime: &mut Self, _args: Value) -> Value {
-        Value::List(
+    fn db_properties(g: &Graph, _runtime: &mut Self, _args: Value) -> Result<Value, String> {
+        Ok(Value::List(
             g.get_properties()
                 .map(|n| Value::String(n.to_string()))
                 .collect(),
-        )
+        ))
     }
 }
 
@@ -461,7 +478,7 @@ pub fn ro_run(
                 .collect::<Result<Vec<_>, _>>()?;
             #[allow(clippy::option_if_let_else)]
             if let Some(func) = runtime.read_functions.get(name) {
-                Ok(func(g, runtime, Value::List(args)))
+                func(g, runtime, Value::List(args))
             } else {
                 Err(format!("Function {name} not found"))
             }
@@ -708,9 +725,9 @@ pub fn run(
                 .map(|ir| run(vars, g, runtime, result_fn, ir))
                 .collect::<Result<Vec<_>, _>>()?;
             if let Some(func) = runtime.write_functions.get(name) {
-                Ok(func(g, runtime, Value::List(args)))
+                func(g, runtime, Value::List(args))
             } else if let Some(func) = runtime.read_functions.get(name) {
-                Ok(func(g, runtime, Value::List(args)))
+                func(g, runtime, Value::List(args))
             } else {
                 Err(format!("Function {name} not found"))
             }

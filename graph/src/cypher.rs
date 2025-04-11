@@ -173,6 +173,7 @@ impl<'a> Lexer<'a> {
                         "not" => Token::Not,
                         "is" => Token::Is,
                         "in" => Token::In,
+                        "nan" => Token::Float(f64::NAN),
                         _ => Token::Ident(str[pos..pos + len].to_string()),
                     };
                     return (token, len);
