@@ -459,7 +459,7 @@ def test_is_equal():
     assert res.result_set == [[None]]
 
 
-def test_size_fn():
+def test_list_size():
     res = query("RETURN size([1, 2, 3]) AS res")
     assert res.result_set == [[3]]
 
@@ -483,6 +483,24 @@ def test_size_fn():
     assert res.result_set == [[3]]
     res = query("WITH null AS l RETURN size(l), size(null)")
     assert res.result_set == [[None, None]]
+
+def test_list_tail():
+    res = query("RETURN tail([1, 2, 3]) AS res")
+    assert res.result_set == [[[2, 3]]]
+
+    res = query("RETURN tail([]) AS res")
+    assert res.result_set == [[[]]]
+
+    res = query("RETURN tail(null) AS res")
+    assert res.result_set == [[None]]
+
+    for value, name in [(False, 'Boolean'), (True, 'Boolean'), (1, 'Integer'), (1.0, 'Float'), ({}, 'Map'), (float("nan"), "Float")]:
+        try:
+            query(f"RETURN tail({value}) AS r")
+            raise AssertionError("Expected an error")
+        except ResponseError as e:
+            assert f"Type mismatch: expected List, but was {name}" in str(e)
+
 
 
 

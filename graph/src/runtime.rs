@@ -37,6 +37,7 @@ impl Runtime {
         read_functions.insert("toInteger".to_string(), Self::value_to_integer);
         read_functions.insert("labels".to_string(), Self::labels);
         read_functions.insert("size".to_string(), Self::size);
+        read_functions.insert("tail".to_string(), Self::tail);
 
         // procedures
         read_functions.insert("db.labels".to_string(), Self::db_labels);
@@ -247,6 +248,21 @@ impl Runtime {
                 [Value::Null] => Ok(Value::Null),
                 [arg] => Err(format!("Type mismatch: expected List, String, or Null but was {}", arg.name())),
                 args => Err(format!("Expected one argument for size, instead {}", args.len())),
+            },
+            _ => unreachable!(),
+        }
+    }
+    fn tail(_: &Graph, _: &mut Self, args: Value) -> Result<Value, String> {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [Value::List(v)]  => if v.is_empty() {
+                    Ok(Value::List(vec![]))
+                }else{
+                    Ok(Value::List(v[1..].to_vec()))
+                },
+                [Value::Null] => Ok(Value::Null),
+                [arg] => Err(format!("Type mismatch: expected List, but was {}", arg.name())),
+                args => Err(format!("Expected one argument for tail, instead {}", args.len())),
             },
             _ => unreachable!(),
         }
