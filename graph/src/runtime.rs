@@ -470,7 +470,18 @@ pub fn ro_run(
 
             Ok(Value::Bool(false))
         }
-        IR::Xor(_irs) => Err("Xor operator not implemented".to_string()),
+        IR::Xor(irs) => {
+            let mut last = None;
+            for ir in irs {
+                match ro_run(vars, g, runtime, result_fn, ir)? {
+                    Value::Bool(b) => last = Some(last.map_or(b, |l| logical_xor(l, b))),
+                    Value::Null => return Ok(Value::Null),
+                    _ => return Err(format!("Type mismatch: expected Bool but was {ir:?}")),
+                }
+            }
+            Ok(Value::Bool(last.unwrap_or(false)))
+        }
+
         IR::And(irs) => {
             let mut is_null = false;
             for ir in irs {
@@ -489,7 +500,8 @@ pub fn ro_run(
         }
         IR::Not(ir) => match ro_run(vars, g, runtime, result_fn, ir)? {
             Value::Bool(b) => Ok(Value::Bool(!b)),
-            _ => Err("Not operator requires a boolean".to_string()),
+            Value::Null => Ok(Value::Null),
+            _ => Err("InvalidArgumentType: Not operator requires a boolean or null".to_string()),
         },
         IR::Eq(irs) => {
             let iter = irs.iter().map(|ir| ro_run(vars, g, runtime, result_fn, ir));
@@ -718,7 +730,17 @@ pub fn run(
 
             Ok(Value::Bool(false))
         }
-        IR::Xor(_irs) => Err("Xor operator not implemented".to_string()),
+        IR::Xor(irs) => {
+            let mut last = None;
+            for ir in irs {
+                match run(vars, g, runtime, result_fn, ir)? {
+                    Value::Bool(b) => last = Some(last.map_or(b, |l| logical_xor(l, b))),
+                    Value::Null => return Ok(Value::Null),
+                    _ => return Err(format!("Type mismatch: expected Bool but was {ir:?}")),
+                }
+            }
+            Ok(Value::Bool(last.unwrap_or(false)))
+        }
         IR::And(irs) => {
             let mut is_null = false;
             for ir in irs {
@@ -737,7 +759,8 @@ pub fn run(
         }
         IR::Not(ir) => match run(vars, g, runtime, result_fn, ir)? {
             Value::Bool(b) => Ok(Value::Bool(!b)),
-            _ => Err("Not operator requires a boolean".to_string()),
+            Value::Null => Ok(Value::Null),
+            _ => Err("InvalidArgumentType: Not operator requires a boolean or null".to_string()),
         },
         IR::Eq(irs) => {
             let iter = irs.iter().map(|ir| run(vars, g, runtime, result_fn, ir));
@@ -975,4 +998,9 @@ where
     } else {
         Err("Eq operator requires at least two arguments".to_string())
     }
+}
+
+#[inline]
+fn logical_xor(a: bool, b: bool) -> bool {
+    (a && !b) || (!a && b)
 }

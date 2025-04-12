@@ -1,5 +1,6 @@
 import os
 import platform
+import itertools
 import subprocess
 from falkordb import FalkorDB, Node, Edge
 from redis import Redis, ResponseError
@@ -567,5 +568,27 @@ def test_list_reverse():
         except ResponseError as e:
             assert f"Type mismatch: expected List, but was {name}" in str(e)
 
+
+def cypher_xor(a, b, c):
+    """
+    This function simulates the XOR operation for three boolean values.
+    It returns True if an odd number of inputs are True, otherwise it returns False.
+    """
+    if a == "null" or b == "null" or c == "null":
+        return None
+    else:
+        return a ^ b ^ c
+
+def test_xor():
+    # Define the possible values
+    values = [True, False, "null"]
+
+    # Generate all possible triples
+    triples = list(itertools.product(values, repeat=3))
+
+    for (a, b, c) in triples:
+        res = query(f"RETURN {a} XOR {b} XOR {c} AS r")
+        expected = cypher_xor(a, b, c)
+        assert res.result_set == [[expected]]
 
 

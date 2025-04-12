@@ -193,7 +193,12 @@ impl<'a> Lexer<'a> {
                     }
                     return (Token::Ident(str[pos + 1..pos + len].to_string()), len + 1);
                 }
-                _ => return (Token::Error("Unexpected token".to_string()), 0),
+                _ => {
+                    return (
+                        Token::Error(format!("Unexpected token at pos: {} at char {}", pos, char)),
+                        0,
+                    )
+                }
             }
         }
         (Token::EndOfFile, 0)
