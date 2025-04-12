@@ -1,4 +1,4 @@
-# falkordb-rs-next-gen
+# rust implemenation of falkordb
 
 [![Rust](https://github.com/FalkorDB/falkordb-rs-next-gen/actions/workflows/rust.yml/badge.svg)](https://github.com/FalkorDB/falkordb-rs-next-gen/actions/workflows/rust.yml)
 [![codecov](https://codecov.io/gh/FalkorDB/falkordb-rs-next-gen/branch/main/graph/badge.svg)](https://codecov.io/gh/FalkorDB/falkordb-rs-next-gen)
