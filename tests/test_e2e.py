@@ -591,4 +591,10 @@ def test_xor():
         expected = cypher_xor(a, b, c)
         assert res.result_set == [[expected]]
 
+def test_literals():
+    for i in range(-100, 101):
+        hex_value = hex(i)
+        res = query(f"RETURN {hex_value} AS literal")
+        assert res.result_set == [[i]]
+
 

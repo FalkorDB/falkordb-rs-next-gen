@@ -212,10 +212,26 @@ impl<'a> Lexer<'a> {
     ) -> (Token, usize) {
         let mut len = init_len;
         let mut current = chars.next();
-        while let Some('0'..='9') = current {
+        let mut radix = 10;
+
+        // Check for hexadecimal prefix
+        if str[pos..].starts_with("0x") || str[pos..].starts_with("-0x") {
+            radix = 16;
             len += 1;
             current = chars.next();
         }
+
+        // Parse digits
+        while let Some(c) = current {
+            if c.is_digit(radix) {
+                len += 1;
+                current = chars.next();
+            } else {
+                break;
+            }
+        }
+
+        // Handle floats for base 10
         if current == Some('.') {
             let mut is_float = false;
             while let Some('0'..='9') = chars.next() {
@@ -223,6 +239,12 @@ impl<'a> Lexer<'a> {
                 is_float = true;
             }
             if is_float {
+                if radix == 16 {
+                    return (
+                        Token::Error("Hexadecimal float not supported".to_string()),
+                        0,
+                    );
+                }
                 len += 1;
                 return str[pos..pos + len]
                     .parse::<f64>()
@@ -231,8 +253,13 @@ impl<'a> Lexer<'a> {
                     });
             }
         }
-        str[pos..pos + len]
-            .parse::<i64>()
+        let s = if radix == 16 {
+            &str[pos..pos + len].replacen("0x", "", 1)
+        } else {
+            &str[pos..pos + len]
+        };
+
+        i64::from_str_radix(s, radix)
             .map_or((Token::Error("Integer overflow".to_string()), 0), |num| {
                 (Token::Integer(num), len)
             })
