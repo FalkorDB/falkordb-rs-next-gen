@@ -219,6 +219,10 @@ impl<'a> Lexer<'a> {
             radix = 16;
             len += 1;
             current = chars.next();
+        } else if str[pos..].starts_with("0o") || str[pos..].starts_with("-0o") {
+            radix = 8;
+            len += 1;
+            current = chars.next();
         }
 
         // Parse digits
@@ -255,6 +259,8 @@ impl<'a> Lexer<'a> {
         }
         let s = if radix == 16 {
             &str[pos..pos + len].replacen("0x", "", 1)
+        } else if radix == 8 {
+            &str[pos..pos + len].replacen("0o", "", 1)
         } else {
             &str[pos..pos + len]
         };

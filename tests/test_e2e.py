@@ -593,8 +593,10 @@ def test_xor():
 
 def test_literals():
     for i in range(-100, 101):
-        hex_value = hex(i)
-        res = query(f"RETURN {hex_value} AS literal")
+        hex_representation = hex(i)
+        res = query(f"RETURN {hex_representation} AS literal")
         assert res.result_set == [[i]]
-
-
+        octal_representation = oct(i)
+        res = query(f"RETURN {octal_representation} AS literal")
+        # assert res.result_set == [[octal_representation]]
+        assert res.result_set == [[i]]
