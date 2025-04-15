@@ -261,6 +261,9 @@ impl<'a> Lexer<'a> {
             &str[pos..pos + len].replacen("0x", "", 1)
         } else if radix == 8 {
             &str[pos..pos + len].replacen("0o", "", 1)
+        } else if is_octet(&str[pos..pos + len]) {
+            radix = 8;
+            &str[pos..pos + len]
         } else {
             &str[pos..pos + len]
         };
@@ -274,6 +277,9 @@ impl<'a> Lexer<'a> {
     pub fn format_error(&self, err: &str) -> String {
         format!("{}\n{}^{}", self.str, " ".repeat(self.pos), err)
     }
+}
+fn is_octet(s: &str) -> bool {
+    s.len() > 1 && s.starts_with('0') && s.chars().skip(1).all(|c| c.is_digit(8))
 }
 
 macro_rules! match_token {

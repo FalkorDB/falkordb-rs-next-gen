@@ -598,5 +598,9 @@ def test_literals():
         assert res.result_set == [[i]]
         octal_representation = oct(i)
         res = query(f"RETURN {octal_representation} AS literal")
-        # assert res.result_set == [[octal_representation]]
         assert res.result_set == [[i]]
+
+        # octal representation with leading zero, old format
+        res = query("RETURN 02613152366 AS literal")
+        assert res.result_set == [[372036854]]
+
