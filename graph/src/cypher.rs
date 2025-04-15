@@ -96,20 +96,24 @@ impl<'a> Lexer<'a> {
                 '*' => return (Token::Star, 1),
                 '+' => return (Token::Plus, 1),
                 '-' => {
-                    if let Some('0'..='9') = chars.next() {
-                        return Self::lex_number(str, pos, 2, &mut chars);
+                    return match chars.next() {
+                        Some('0'..='9') => Self::lex_number(str, pos, 2, &mut chars),
+                        Some('.') => Self::lex_number(str, pos, 2, &mut chars),
+                        _ => (Token::Dash, 1),
                     }
-                    return (Token::Dash, 1);
                 }
                 '=' => return (Token::Equal, 1),
                 '<' => return (Token::LessThan, 1),
                 '>' => return (Token::GreaterThan, 1),
                 ',' => return (Token::Comma, 1),
                 ':' => return (Token::Colon, 1),
-                '.' => match chars.next() {
-                    Some('.') => return (Token::DotDot, 2),
-                    _ => return (Token::Dot, 1),
-                },
+                '.' => {
+                    return match chars.next() {
+                        Some('.') => (Token::DotDot, 2),
+                        Some('0'..='9') => Self::lex_number(str, pos, 2, &mut chars),
+                        _ => (Token::Dot, 1),
+                    }
+                }
                 '\'' => {
                     let mut len = 1;
                     let mut end = false;
@@ -213,6 +217,7 @@ impl<'a> Lexer<'a> {
         let mut len = init_len;
         let mut current = chars.next();
         let mut radix = 10;
+        let mut is_float = false;
 
         // Check for hexadecimal prefix
         if str[pos..].starts_with("0x") || str[pos..].starts_with("-0x") {
@@ -223,6 +228,8 @@ impl<'a> Lexer<'a> {
             radix = 8;
             len += 1;
             current = chars.next();
+        } else if str[pos..].starts_with(".") || str[pos..].starts_with("-.") {
+            is_float = true;
         }
 
         // Parse digits
@@ -237,26 +244,33 @@ impl<'a> Lexer<'a> {
 
         // Handle floats for base 10
         if current == Some('.') {
-            let mut is_float = false;
+            if is_float {
+                return (
+                    Token::Error(format!("Illegal number: {}", &str[pos..pos + len])),
+                    0,
+                );
+            }
+            // let mut is_float = false;
             while let Some('0'..='9') = chars.next() {
                 len += 1;
                 is_float = true;
             }
             if is_float {
-                if radix == 16 {
+                if radix != 10 {
                     return (
-                        Token::Error("Hexadecimal float not supported".to_string()),
+                        Token::Error("Only decimal floats are supported".to_string()),
                         0,
                     );
                 }
                 len += 1;
-                return str[pos..pos + len]
-                    .parse::<f64>()
-                    .map_or((Token::Error("Float overflow".to_string()), 0), |num| {
-                        (Token::Float(num), len)
-                    });
+                let str = &str[pos..pos + len];
+                return str.parse::<f64>().map_or(
+                    (Token::Error(format!("Float overflow: {}", str)), 0),
+                    |num| (Token::Float(num), len),
+                );
             }
         }
+
         let s = if radix == 16 {
             &str[pos..pos + len].replacen("0x", "", 1)
         } else if radix == 8 {
@@ -268,10 +282,17 @@ impl<'a> Lexer<'a> {
             &str[pos..pos + len]
         };
 
-        i64::from_str_radix(s, radix)
-            .map_or((Token::Error("Integer overflow".to_string()), 0), |num| {
-                (Token::Integer(num), len)
-            })
+        if is_float {
+            s.parse::<f64>().map_or(
+                (Token::Error(format!("Float overflow: {}", str)), 0),
+                |num| (Token::Float(num), len),
+            )
+        } else {
+            i64::from_str_radix(s, radix).map_or(
+                (Token::Error(format!("Integer overflow: {}", s)), 0),
+                |num| (Token::Integer(num), len),
+            )
+        }
     }
 
     pub fn format_error(&self, err: &str) -> String {

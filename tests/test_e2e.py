@@ -604,3 +604,8 @@ def test_literals():
         res = query("RETURN 02613152366 AS literal")
         assert res.result_set == [[372036854]]
 
+        res = query("RETURN .2 AS literal")
+        assert res.result_set == [[0.2]]
+
+        res = query("RETURN -.2 AS literal")
+        assert res.result_set == [[-0.2]]
