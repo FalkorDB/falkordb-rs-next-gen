@@ -28,3 +28,5 @@ There is an option to run only part of the TCK tests and stop on the first fail
 ```bash
 TCK_INCLUDE=tests/tck/features/expressions/list pytest tests/tck/test_tck.py
 ```
+
+- run unit tests with `cargo test -p graph`

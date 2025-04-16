@@ -2,6 +2,8 @@ use crate::ast::{
     Alias, NodePattern, PathPattern, Pattern, QueryExprIR, QueryIR, RelationshipPattern,
 };
 use std::collections::{BTreeMap, HashSet};
+use std::iter::Peekable;
+use std::str::Chars;
 
 #[derive(Debug, PartialEq, Clone)]
 enum Token {
@@ -97,8 +99,8 @@ impl<'a> Lexer<'a> {
                 '+' => return (Token::Plus, 1),
                 '-' => {
                     return match chars.next() {
-                        Some('0'..='9') => Self::lex_number(str, pos, 2, &mut chars),
-                        Some('.') => Self::lex_number(str, pos, 2, &mut chars),
+                        Some('0'..='9') => Self::lex_number(str, pos),
+                        Some('.') => Self::lex_number(str, pos),
                         _ => (Token::Dash, 1),
                     }
                 }
@@ -110,7 +112,7 @@ impl<'a> Lexer<'a> {
                 '.' => {
                     return match chars.next() {
                         Some('.') => (Token::DotDot, 2),
-                        Some('0'..='9') => Self::lex_number(str, pos, 2, &mut chars),
+                        Some('0'..='9') => Self::lex_number(str, pos),
                         _ => (Token::Dot, 1),
                     }
                 }
@@ -144,7 +146,7 @@ impl<'a> Lexer<'a> {
                     }
                     return (Token::String(str[pos + 1..pos + len].to_string()), len + 1);
                 }
-                '0'..='9' => return Self::lex_number(str, pos, 1, &mut chars),
+                '0'..='9' => return Self::lex_number(str, pos),
                 '$' => {
                     let mut len = 1;
                     while let Some('a'..='z' | 'A'..='Z' | '0'..='9') = chars.next() {
@@ -208,89 +210,196 @@ impl<'a> Lexer<'a> {
         (Token::EndOfFile, 0)
     }
 
-    fn lex_number(
-        str: &'a str,
-        pos: usize,
-        init_len: usize,
-        chars: &mut std::str::Chars<'_>,
-    ) -> (Token, usize) {
-        let mut len = init_len;
-        let mut current = chars.next();
-        let mut radix = 10;
-        let mut is_float = false;
+    fn lex_number(input: &str, start_pos: usize) -> (Token, usize) {
+        let mut chars = input[start_pos..].chars().peekable();
+        let mut len = 0;
 
-        // Check for hexadecimal prefix
-        if str[pos..].starts_with("0x") || str[pos..].starts_with("-0x") {
-            radix = 16;
-            len += 1;
-            current = chars.next();
-        } else if str[pos..].starts_with("0o") || str[pos..].starts_with("-0o") {
-            radix = 8;
-            len += 1;
-            current = chars.next();
-        } else if str[pos..].starts_with(".") || str[pos..].starts_with("-.") {
-            is_float = true;
+        // Optional sign
+        if let Some(&c) = chars.peek() {
+            if c == '+' || c == '-' {
+                chars.next();
+                len += 1;
+            }
         }
 
-        // Parse digits
-        while let Some(c) = current {
-            if c.is_digit(radix) {
+        let mut has_digits_before_dot = false;
+
+        // Check for radix prefix (0x, 0o, 0b)
+        if let Some(&c) = chars.peek() {
+            if c == '0' {
+                chars.next();
                 len += 1;
-                current = chars.next();
+                has_digits_before_dot = true;
+                if let Some(&c2) = chars.peek() {
+                    if c2 == 'x' || c2 == 'X' {
+                        chars.next();
+                        len += 1;
+                        return Lexer::lex_integer(input, start_pos, chars, len, 16);
+                    } else if c2 == 'o' || c2 == 'O' {
+                        chars.next();
+                        len += 1;
+                        return Lexer::lex_integer(input, start_pos, chars, len, 8);
+                    } else if c2 == 'b' || c2 == 'B' {
+                        chars.next();
+                        len += 1;
+                        return Lexer::lex_integer(input, start_pos, chars, len, 2);
+                    }
+                }
+            }
+        }
+
+        // Integer part digits
+        while let Some(&c) = chars.peek() {
+            if c.is_ascii_digit() {
+                chars.next();
+                len += 1;
+                has_digits_before_dot = true;
             } else {
                 break;
             }
         }
 
-        // Handle floats for base 10
-        if current == Some('.') {
-            if is_float {
-                return (
-                    Token::Error(format!("Illegal number: {}", &str[pos..pos + len])),
-                    0,
-                );
-            }
-            // let mut is_float = false;
-            while let Some('0'..='9') = chars.next() {
-                len += 1;
-                is_float = true;
-            }
-            if is_float {
-                if radix != 10 {
-                    return (
-                        Token::Error("Only decimal floats are supported".to_string()),
-                        0,
-                    );
+        let mut has_dot = false;
+        let mut has_digits_after_dot = false;
+
+        // Fractional part
+        if let Some(&'.') = chars.peek() {
+            has_dot = true;
+            chars.next();
+            len += 1;
+
+            while let Some(&c) = chars.peek() {
+                if c.is_ascii_digit() {
+                    chars.next();
+                    len += 1;
+                    has_digits_after_dot = true;
+                } else {
+                    break;
                 }
-                len += 1;
-                let str = &str[pos..pos + len];
-                return str.parse::<f64>().map_or(
-                    (Token::Error(format!("Float overflow: {}", str)), 0),
-                    |num| (Token::Float(num), len),
-                );
             }
         }
 
-        let s = if radix == 16 {
-            &str[pos..pos + len].replacen("0x", "", 1)
-        } else if radix == 8 {
-            &str[pos..pos + len].replacen("0o", "", 1)
-        } else if is_octet(&str[pos..pos + len]) {
-            radix = 8;
-            &str[pos..pos + len]
-        } else {
-            &str[pos..pos + len]
-        };
+        // Exponent part
+        let mut has_exponent = false;
+        if let Some(&c) = chars.peek() {
+            if c == 'e' || c == 'E' {
+                has_exponent = true;
+                chars.next();
+                len += 1;
 
-        if is_float {
-            s.parse::<f64>().map_or(
-                (Token::Error(format!("Float overflow: {}", str)), 0),
-                |num| (Token::Float(num), len),
-            )
+                // Optional exponent sign
+                if let Some(&c2) = chars.peek() {
+                    if c2 == '+' || c2 == '-' {
+                        chars.next();
+                        len += 1;
+                    }
+                }
+
+                let mut exp_digits = 0;
+                while let Some(&c3) = chars.peek() {
+                    if c3.is_ascii_digit() {
+                        chars.next();
+                        len += 1;
+                        exp_digits += 1;
+                    } else {
+                        break;
+                    }
+                }
+
+                if exp_digits == 0 {
+                    // Invalid exponent (no digits)
+                    return (
+                        Token::Error(format!(
+                            "Invalid exponent (no digits): {}",
+                            &input[start_pos..start_pos + len]
+                        )),
+                        0,
+                    );
+                }
+            }
+        }
+
+        // Validate that we have digits somewhere
+        if !has_digits_before_dot && !(has_dot && has_digits_after_dot) {
+            return (
+                Token::Error(format!(
+                    "Invalid number (no digits): {}",
+                    &input[start_pos..start_pos + len]
+                )),
+                0,
+            );
+        }
+
+        // if the last character is a dot, it is an integer and we should not eat the last dot
+        if has_dot && !has_digits_after_dot {
+            len = len - 1;
+            has_dot = false;
+        }
+
+        let number_str = &input[start_pos..start_pos + len];
+
+        // If it has a dot or exponent, parse as float
+        if has_dot || has_exponent {
+            match number_str.parse::<f64>() {
+                Ok(f) => (Token::Float(f), len),
+                Err(_) => (Token::Error(format!("Invalid float: {}", number_str)), len),
+            }
         } else {
-            i64::from_str_radix(s, radix).map_or(
-                (Token::Error(format!("Integer overflow: {}", s)), 0),
-                |num| (Token::Integer(num), len),
+            // Otherwise parse as integer
+            let radix = if number_str.chars().next().unwrap() == '0' {
+                8
+            } else {
+                10
+            };
+            match i64::from_str_radix(number_str, radix) {
+                Ok(i) => (Token::Integer(i), len),
+                Err(_) => (
+                    Token::Error(format!("Invalid integer: {}", number_str)),
+                    len,
+                ),
+            }
+        }
+    }
+
+    fn lex_integer(
+        input: &str,
+        start_pos: usize,
+        mut chars: Peekable<Chars>,
+        mut len: usize,
+        radix: u32,
+    ) -> (Token, usize) {
+        let mut has_digits = false;
+        let input = &input[start_pos..];
+        while let Some(&c) = chars.peek() {
+            if c.is_digit(radix) {
+                chars.next();
+                len += 1;
+                has_digits = true;
+            } else {
+                break;
+            }
+        }
+
+        if has_digits {
+            // Handle prefixes and signs
+            let number_str = if input.starts_with('-') || input.starts_with('+') {
+                let sign = &input[0..1];
+                let rest = &input[3..len];
+                format!("{}{}", sign, rest)
+            } else {
+                input[2..len].to_string()
+            };
+            match i64::from_str_radix(number_str.as_str(), radix) {
+                Ok(i) => (Token::Integer(i), len),
+                Err(_) => (
+                    Token::Error(format!("Invalid integer: {}", number_str.as_str())),
+                    len,
+                ),
+            }
+        } else {
+            (
+                Token::Error(format!("Invalid integer: {}", &input[..len])),
+                len,
             )
         }
     }
@@ -298,9 +407,6 @@ impl<'a> Lexer<'a> {
     pub fn format_error(&self, err: &str) -> String {
         format!("{}\n{}^{}", self.str, " ".repeat(self.pos), err)
     }
-}
-fn is_octet(s: &str) -> bool {
-    s.len() > 1 && s.starts_with('0') && s.chars().skip(1).all(|c| c.is_digit(8))
 }
 
 macro_rules! match_token {
@@ -939,6 +1045,64 @@ impl<'a> Parser<'a> {
                 match_token!(self.lexer, RBracket);
                 return Ok(attrs);
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_scan_float() {
+        let inputs = [
+            ("0.1", Token::Float(0.1)),
+            ("3.14159", Token::Float(3.14159)),
+            ("1e10", Token::Float(1e10)),
+            ("-1e10", Token::Float(-1e10)),
+            ("-1.2E-3", Token::Float(-1.2E-3)),
+            ("-.1", Token::Float(-0.1)),
+            ("1e0", Token::Float(1e0)),
+        ];
+        for (input, expected) in inputs.iter() {
+            let (token, _) = Lexer::lex_number(input, 0);
+            assert_eq!(token, *expected);
+        }
+    }
+    #[test]
+    fn test_scan_int() {
+        let inputs = [
+            ("1", Token::Integer(1)),
+            ("-1", Token::Integer(-1)),
+            ("0", Token::Integer(0)),
+            (
+                "12345678901234567890",
+                Token::Error("Invalid integer: 12345678901234567890".to_string()),
+            ),
+            (
+                "-12345678901234567890",
+                Token::Error("Invalid integer: -12345678901234567890".to_string()),
+            ),
+            ("0x1", Token::Integer(1)),
+            ("0x10", Token::Integer(16)),
+            ("0xFF", Token::Integer(255)),
+            ("0o1", Token::Integer(1)),
+            ("0o10", Token::Integer(8)),
+            ("0o77", Token::Integer(63)),
+            ("0b1", Token::Integer(1)),
+            ("0b10", Token::Integer(2)),
+            ("0b1111", Token::Integer(15)),
+            ("-0x1", Token::Integer(-1)),
+            ("-0o1", Token::Integer(-1)),
+            ("-0b1", Token::Integer(-1)),
+            ("-0B1", Token::Integer(-1)),
+            ("02613152366", Token::Integer(372036854)),
+        ];
+
+        for (input, expected) in inputs.iter() {
+            println!("Testing {}", input);
+            let (token, _) = Lexer::lex_number(input, 0);
+            assert_eq!(token, *expected);
         }
     }
 }

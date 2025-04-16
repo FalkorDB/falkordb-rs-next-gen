@@ -43,6 +43,9 @@ jobs:
         run: |
           rustup default stable
           cargo build
+      - name: Run unit tests
+        run: |
+          cargo test -p graph
       - name: Run tests
         run: |
           . /data/venv/bin/activate
@@ -57,11 +60,12 @@ jobs:
         run: |
           rustup default stable
           RUSTFLAGS="-C instrument-coverage" cargo build
+          RUSTFLAGS="-C instrument-coverage" cargo test -p graph
           mkdir cov
           cd cov
           . /data/venv/bin/activate
           TARGET=../target/debug/libfalkordb.so pytest ../tests/test_e2e.py
-          llvm-profdata-20 merge --sparse `ls *.profraw` -o cov.profdata
+          llvm-profdata-20 merge --sparse `find . -name "*.profraw"` -o cov.profdata
           llvm-cov-20 export --format=lcov --instr-profile cov.profdata ../target/debug/libfalkordb.so > codecov.txt.all
           lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
       - name: Upload coverage reports to Codecov

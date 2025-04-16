@@ -453,9 +453,8 @@ def test_is_equal():
         res = query("RETURN $a = $a = 1.8 = null AS res", params={"a": v})
         assert res.result_set == [[False]]
 
-    # todo debug that
-    # res = query("RETURN $a = $a AS res", params={"a": None})
-    # assert res.result_set == [[None]]
+    res = query("RETURN $a = $a AS res", params={"a": None})
+    assert res.result_set == [[None]]
     res = query("RETURN [null] = [null] AS res")
     assert res.result_set == [[None]]
 
