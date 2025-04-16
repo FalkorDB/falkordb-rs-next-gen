@@ -342,7 +342,10 @@ impl<'a> Lexer<'a> {
         if has_dot || has_exponent {
             match number_str.parse::<f64>() {
                 Ok(f) if f.is_finite() => (Token::Float(f), len),
-                Ok(_) => (Token::Error(format!("FloatingPointOverflow: {}", number_str)), len),
+                Ok(_) => (
+                    Token::Error(format!("FloatingPointOverflow: {}", number_str)),
+                    len,
+                ),
                 Err(_) => (Token::Error(format!("Invalid float: {}", number_str)), len),
             }
         } else {
@@ -1070,8 +1073,11 @@ mod tests {
             assert_eq!(token, *expected);
         }
 
-       let (token, _) =  Lexer::lex_number("1.34E999", 0);
-       assert_eq!(token, Token::Error("FloatingPointOverflow: 1.34E999".to_string()))
+        let (token, _) = Lexer::lex_number("1.34E999", 0);
+        assert_eq!(
+            token,
+            Token::Error("FloatingPointOverflow: 1.34E999".to_string())
+        )
     }
 
     #[test]
