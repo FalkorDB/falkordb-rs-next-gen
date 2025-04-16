@@ -39,9 +39,12 @@ jobs:
     needs: docker
     steps:
       - uses: actions/checkout@v3
-      - name: Build
+      - name: Lint
         run: |
           rustup default stable
+          cargo clippy
+      - name: Build
+        run: |
           cargo build
       - name: Run tests
         run: |
