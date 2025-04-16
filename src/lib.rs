@@ -1,8 +1,8 @@
 use graph::{cypher::Parser, graph::Graph, planner::Planner, runtime::Value};
 use redis_module::{
-    native_types::RedisType, redis_module, redisvalue::RedisValueKey, Context, NextArg,
-    RedisModuleTypeMethods, RedisResult, RedisString, RedisValue, Status,
-    REDISMODULE_TYPE_METHOD_VERSION,
+    key::RedisKey, native_types::RedisType, redis_module, redisvalue::RedisValueKey, Context,
+    KeysCursor, NextArg, RedisError, RedisModuleTypeMethods, RedisResult, RedisString, RedisValue,
+    Status, REDISMODULE_TYPE_METHOD_VERSION,
 };
 use std::os::raw::c_void;
 
@@ -234,6 +234,48 @@ fn graph_ro_query(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     )
 }
 
+/// TODO: change implemention once we have a better way to list graphs
+///
+/// This function is used to list all the graphs
+/// in the database. It returns a list of graphs IDs
+/// that are currently stored in the database.
+///
+/// See: https://docs.falkordb.com/commands/graph.list.html
+///
+/// # Example
+///
+/// ```sh
+/// 127.0.0.1:6379> GRAPH.LIST
+/// 2) G
+/// 3) resources
+/// 4) players
+/// ```
+fn graph_list(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+    if args.len() != 1 {
+        return Err(RedisError::WrongArity);
+    }
+
+    let cursor = KeysCursor::new();
+    let mut res = Vec::new();
+
+    let scan_callback = |_ctx: &Context, key_name: RedisString, key: Option<&RedisKey>| {
+        // Check if the key is a graph
+        if let Some(key) = key {
+            if key
+                .get_value::<Graph>(&GRAPH_TYPE)
+                .is_ok_and(|graph| graph.is_some())
+            {
+                res.push(RedisValue::BulkRedisString(key_name));
+            }
+        }
+    };
+
+    while cursor.scan(ctx, &scan_callback) {
+        // do nothing
+    }
+    Ok(RedisValue::Array(res))
+}
+
 fn graph_parse(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     let mut args = args.into_iter().skip(1);
     let query = args.next_string()?;
@@ -283,6 +325,7 @@ redis_module! {
         ["graph.delete", graph_delete, "write deny-oom", 1, 1, 1, ""],
         ["graph.query", graph_query, "write deny-oom", 1, 1, 1, ""],
         ["graph.ro_query", graph_ro_query, "readonly", 1, 1, 1, ""],
+        ["graph.list", graph_list, "readonly", 0, 0, 0, ""],
         ["graph.parse", graph_parse, "readonly", 0, 0, 0, ""],
         ["graph.plan", graph_plan, "readonly", 0, 0, 0, ""],
     ],

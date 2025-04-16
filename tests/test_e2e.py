@@ -247,3 +247,14 @@ def test_array_concat():
     assert res.result_set == [[[1, 10, 100, 4, 5]]]
     res = query("RETURN [false, true] + false AS foo")
     assert res.result_set == [[[False, True, False]]]
+
+
+def test_graph_list():
+
+    assert client is not None
+    client.select_graph("g1").query("return 1")
+    client.select_graph("g2").query("return 1")
+    client.select_graph("g3").query("return 1")
+    client.connection.set("ng", "ng")
+    graphs = client.list_graphs()
+    assert len(graphs) == 3
