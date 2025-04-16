@@ -36,7 +36,7 @@ pub trait Size<T> {
     fn ncols(&self) -> u64;
 
     /// Resizes the matrix to the specified number of rows and columns.
-    /// 
+    ///
     /// # Parameters
     /// - `nrows`: The new number of rows.
     /// - `ncols`: The new number of columns.
@@ -47,7 +47,7 @@ pub trait Size<T> {
 pub trait Get<T> {
     /// Retrieves the element at the specified row and column.
     /// Returns `None` if the element does not exist.
-    /// 
+    ///
     /// # Parameters
     /// - `i`: The row index.
     /// - `j`: The column index.
@@ -61,7 +61,7 @@ pub trait Get<T> {
 /// A trait for setting elements in a matrix.
 pub trait Set<T> {
     /// Sets the element at the specified row and column to the given value.
-    /// 
+    ///
     /// # Parameters
     /// - `i`: The row index.
     /// - `j`: The column index.
@@ -72,7 +72,7 @@ pub trait Set<T> {
 /// A trait for deleting elements from a matrix.
 pub trait Delete<T> {
     /// Deletes the element at the specified row and column.
-    /// 
+    ///
     /// # Parameters
     /// - `i`: The row index.
     /// - `j`: The column index.
@@ -116,7 +116,7 @@ impl<T> Drop for Iter<T> {
 
 impl Iter<bool> {
     /// Creates a new iterator for traversing all elements in a boolean matrix.
-    /// 
+    ///
     /// # Parameters
     /// - `m`: The matrix to iterate over.
     #[must_use]
@@ -138,7 +138,7 @@ impl Iter<bool> {
 
 impl<T> Iter<Row<T>> {
     /// Creates a new iterator for traversing elements in a specific row of a matrix.
-    /// 
+    ///
     /// # Parameters
     /// - `m`: The matrix to iterate over.
     /// - `row`: The row index.
@@ -166,7 +166,7 @@ impl Iterator for Iter<Row<bool>> {
     type Item = (u64, u64);
 
     /// Advances the iterator and returns the next element in the row.
-    /// 
+    ///
     /// # Returns
     /// - `Some((u64, u64))`: The next element in the row.
     /// - `None`: The iterator is depleted.
@@ -192,7 +192,7 @@ impl Iterator for Iter<bool> {
     type Item = (u64, u64);
 
     /// Advances the iterator and returns the next element in the matrix.
-    /// 
+    ///
     /// # Returns
     /// - `Some((u64, u64))`: The next element in the matrix.
     /// - `None`: The iterator is depleted.
@@ -212,7 +212,7 @@ impl Iterator for Iter<bool> {
 
 impl<T> Clone for Matrix<T> {
     /// Creates a new `Matrix` instance that shares ownership of the underlying GraphBLAS matrix.
-    /// 
+    ///
     /// # Returns
     /// - `Matrix<T>`: A cloned `Matrix` instance.
     #[must_use]
@@ -235,10 +235,10 @@ impl<T> Drop for Matrix<T> {
 
 impl<T> Matrix<T> {
     /// Creates an iterator for traversing elements in a specific row of the matrix.
-    /// 
+    ///
     /// # Parameters
     /// - `row`: The row index.
-    /// 
+    ///
     /// # Returns
     /// - `Iter<Row<T>>`: An iterator for the specified row.
     #[must_use]
@@ -249,7 +249,7 @@ impl<T> Matrix<T> {
 
 impl<T> Size<T> for Matrix<T> {
     /// Returns the number of rows in the matrix.
-    /// 
+    ///
     /// # Returns
     /// - `u64`: The number of rows in the matrix.
     #[must_use]
@@ -263,7 +263,7 @@ impl<T> Size<T> for Matrix<T> {
     }
 
     /// Returns the number of columns in the matrix.
-    /// 
+    ///
     /// # Returns
     /// - `u64`: The number of columns in the matrix.
     #[must_use]
@@ -277,7 +277,7 @@ impl<T> Size<T> for Matrix<T> {
     }
 
     /// Resizes the matrix to the specified dimensions.
-    /// 
+    ///
     /// # Parameters
     /// - `nrows`: The new number of rows.
     /// - `ncols`: The new number of columns.
@@ -291,11 +291,11 @@ impl<T> Size<T> for Matrix<T> {
 
 impl Matrix<bool> {
     /// Creates a new boolean matrix with the specified dimensions.
-    /// 
+    ///
     /// # Parameters
     /// - `nrows`: The number of rows.
     /// - `ncols`: The number of columns.
-    /// 
+    ///
     /// # Returns
     /// - `Matrix<bool>`: A new boolean matrix.
     #[must_use]
@@ -311,7 +311,7 @@ impl Matrix<bool> {
     }
 
     /// Creates an iterator for traversing all elements in the matrix.
-    /// 
+    ///
     /// # Returns
     /// - `Iter<bool>`: An iterator for the matrix.
     #[must_use]
@@ -322,7 +322,7 @@ impl Matrix<bool> {
 
 impl<T> Delete<T> for Matrix<T> {
     /// Deletes the element at the specified position in the matrix.
-    /// 
+    ///
     /// # Parameters
     /// - `i`: The row index.
     /// - `j`: The column index.
@@ -337,11 +337,11 @@ impl<T> Delete<T> for Matrix<T> {
 impl Get<bool> for Matrix<bool> {
     /// Retrieves the boolean value at the specified position in the matrix.
     /// Returns `None` if the element does not exist.
-    /// 
+    ///
     /// # Parameters
     /// - `i`: The row index.
     /// - `j`: The column index.
-    /// 
+    ///
     /// # Returns
     /// - `Some(bool)`: The boolean value at the specified position.
     /// - `None`: The element does not exist.
@@ -361,7 +361,7 @@ impl Get<bool> for Matrix<bool> {
 
 impl Set<bool> for Matrix<bool> {
     /// Sets the boolean value at the specified position in the matrix.
-    /// 
+    ///
     /// # Parameters
     /// - `i`: The row index.
     /// - `j`: The column index.
