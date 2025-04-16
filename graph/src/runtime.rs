@@ -45,6 +45,7 @@ impl Runtime {
         read_functions.insert("last".to_string(), Self::last);
         read_functions.insert("tail".to_string(), Self::tail);
         read_functions.insert("reverse".to_string(), Self::reverse);
+        read_functions.insert("substring".to_string(), Self::substring);
 
         // procedures
         read_functions.insert("db.labels".to_string(), Self::db_labels);
@@ -351,6 +352,59 @@ impl Runtime {
                 args => Err(format!(
                     "Expected one argument for reverse, instead {}",
                     args.len()
+                )),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    fn substring(_: &Graph, _: &mut Self, args: Value) -> Result<Value, String> {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                // Handle NULL input case
+                [Value::Null] => Ok(Value::Null),
+
+                // Two-argument version: (string, start)
+                [Value::String(s), Value::Int(start)] => {
+                    let start = *start;
+                    if start < 0 {
+                        return Err("substring(): start index cannot be negative".into());
+                    }
+                    let chars: Vec<char> = s.chars().collect();
+                    let start = start as usize;
+
+                    Ok(Value::String(
+                        chars
+                            .get(start..)
+                            .map(|slice| slice.iter().collect())
+                            .unwrap_or_default(),
+                    ))
+                }
+
+                // Three-argument version: (string, start, length)
+                [Value::String(s), Value::Int(start), Value::Int(length)] => {
+                    let start = *start;
+                    let length = *length;
+                    if start < 0 || length < 0 {
+                        return Err("substring(): start/length cannot be negative".into());
+                    }
+                    let chars: Vec<char> = s.chars().collect();
+                    let start = start as usize;
+                    let length = length as usize;
+
+                    let end = start.saturating_add(length).min(chars.len());
+                    Ok(Value::String(
+                        chars
+                            .get(start..end)
+                            .map(|slice| slice.iter().collect())
+                            .unwrap_or_default(),
+                    ))
+                }
+
+                // Type mismatch handling
+                args => Err(format!(
+                    "Type mismatch: expected substring(String, Integer) [+ Integer] but got {:?}",
+                    args.iter().map(Value::name).collect::<Vec<_>>()
                 )),
             },
             _ => unreachable!(),
