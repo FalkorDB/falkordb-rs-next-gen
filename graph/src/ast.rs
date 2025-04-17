@@ -37,6 +37,7 @@ pub enum QueryExprIR {
     FuncInvocation(String, Vec<QueryExprIR>),
     Map(BTreeMap<String, QueryExprIR>),
     StartsWith(Box<(QueryExprIR, QueryExprIR)>),
+    EndsWith(Box<(QueryExprIR, QueryExprIR)>),
 }
 
 impl QueryExprIR {
@@ -92,6 +93,10 @@ impl QueryExprIR {
                 op.1.inner_validate(env)
             }
             Self::StartsWith(op) => {
+                op.0.inner_validate(env)?;
+                op.1.inner_validate(env)
+            }
+            Self::EndsWith(op) => {
                 op.0.inner_validate(env)?;
                 op.1.inner_validate(env)
             }

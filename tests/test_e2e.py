@@ -612,26 +612,35 @@ def test_literals():
 def test_split():
     res = query("RETURN split('Learning Cypher!', ' ')")
     assert res.result_set == [[["Learning", "Cypher!"]]]
+
     res = query("RETURN split('We are learning Cypher!', ' ')")
     assert res.result_set == [[["We", "are", "learning", "Cypher!"]]]
+
     res = query("RETURN split('Hakuna-Matata', ' ')")
     assert res.result_set == [[["Hakuna-Matata"]]]
+
     res = query("RETURN split('Hakuna-Matata', '-')")
     assert res.result_set == [[["Hakuna", "Matata"]]]
+
     res = query("RETURN split('We are learning Cypher', 'e ')")
     assert res.result_set == [[["W", "ar", "learning Cypher"]]]
+
     res = query("RETURN split('We are learning Cypher', null)")
     assert res.result_set == [[None]]
+
     res = query("RETURN split(null, ' ')")
     assert res.result_set == [[None]]
+
     res = query("RETURN split('We are learning Cypher', '')")
     assert res.result_set == [[["W", "e", " ", "a", "r", "e", " ", "l", "e", "a", "r", "n", "i", "n", "g", " ", "C", "y", "p", "h", "e", "r"]]]
+
     for value in [False, True, 1, 1.0, {}, float("nan"), [], ["foo"]]:
         try:
             query(f"RETURN split({value}, 'a') AS r")
             raise AssertionError("Expected an error")
         except ResponseError as e:
             assert f"Type mismatch" in str(e)
+
         try:
             query(f"RETURN split('a', {value}) AS r")
             raise AssertionError("Expected an error")
@@ -642,22 +651,29 @@ def test_split():
 def test_letter_casing():
     res = query("RETURN toUpper('Avi') AS name")
     assert res.result_set == [["AVI"]]
+
     res = query("RETURN toLower('Avi') AS name")
     assert res.result_set == [["avi"]]
+
     res = query("RETURN toLower(null) AS name")
     assert res.result_set == [[None]]
+
     res = query("RETURN toUpper(null) AS name")
     assert res.result_set == [[None]]
+
     res = query("RETURN toLower('') AS name")
     assert res.result_set == [[""]]
+
     res = query("RETURN toUpper('') AS name")
     assert res.result_set == [[""]]
+
     for value in [False, True, 1, 1.0, {}, float("nan"), [], ["foo"]]:
         try:
             query(f"RETURN toLower({value}) AS r")
             raise AssertionError("Expected an error")
         except ResponseError as e:
             assert f"Type mismatch" in str(e)
+
     try:
         query(f"RETURN toUpper({value}) AS r")
         raise AssertionError("Expected an error")
@@ -667,24 +683,34 @@ def test_letter_casing():
 def test_add():
     res = query("RETURN null + 1 AS name")
     assert res.result_set == [[None]]
+
     res = query("RETURN 1 + null AS name")
     assert res.result_set == [[None]]
+
     res = query("RETURN 1 + 1 AS name")
     assert res.result_set == [[2]]
+
     res = query("RETURN 1.0 + 1.0 AS name")
     assert res.result_set == [[2.0]]
+
     res = query("RETURN [1] + [1] AS name")
     assert res.result_set == [[[1, 1]]]
+
     res = query("RETURN [1] + 1 AS name")
     assert res.result_set == [[[1, 1]]]
+
     res = query("RETURN 'a' + [1, 2 ,3] AS name")
     assert res.result_set == [[['a', 1, 2, 3]]]
+
     res = query("RETURN 'a' + 'b' + 'c' AS name")
     assert res.result_set == [["abc"]]
+
     res = query("RETURN 'a' + 'b' + 1 AS name")
     assert res.result_set == [["ab1"]]
+
     res = query("RETURN 'a' + 'b' + 0.1 AS name")
     assert res.result_set == [["ab0.1"]]
+
     try:
         query("RETURN 'a' + True AS name")
         raise AssertionError("Expected an error")
@@ -694,16 +720,43 @@ def test_add():
 def test_starts_with():
     res = query("RETURN null STARTS WITH 'a' AS name")
     assert res.result_set == [[None]]
+
     res = query("RETURN 'ab' STARTS WITH null AS name")
     assert res.result_set == [[None]]
+
     res = query("RETURN 'ab' STARTS WITH 'a' AS name")
     assert res.result_set == [[True]]
+
     res = query("RETURN 'ab' STARTS WITH 'b' AS name")
     assert res.result_set == [[False]]
+
     res = query("RETURN '' STARTS WITH 'b' AS name")
     assert res.result_set == [[False]]
+
     try:
         query("RETURN [1, 2] STARTS WITH 'a' AS name")
+        raise AssertionError("Expected an error")
+    except ResponseError as e:
+        assert "Type mismatch: expected String or null, but was:" in str(e)
+
+def test_ends_with():
+    res = query("RETURN null ENDS WITH 'a' AS name")
+    assert res.result_set == [[None]]
+
+    res = query("RETURN 'ab' ENDS WITH null AS name")
+    assert res.result_set == [[None]]
+
+    res = query("RETURN 'ab' ENDS WITH 'b' AS name")
+    assert res.result_set == [[True]]
+
+    res = query("RETURN 'ab' ENDS WITH 'a' AS name")
+    assert res.result_set == [[False]]
+
+    res = query("RETURN '' ENDS WITH 'b' AS name")
+    assert res.result_set == [[False]]
+
+    try:
+        query("RETURN [1, 2] ENDS WITH 'a' AS name")
         raise AssertionError("Expected an error")
     except ResponseError as e:
         assert "Type mismatch: expected String or null, but was:" in str(e)
