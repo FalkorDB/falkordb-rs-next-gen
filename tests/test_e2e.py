@@ -785,3 +785,54 @@ def test_contains():
         raise AssertionError("Expected an error")
     except ResponseError as e:
         assert "Type mismatch: expected String or null, but was:" in str(e)
+
+def test_replace():
+    # Null handling
+    res = query("RETURN replace(null, 'a', 'b') AS result")
+    assert res.result_set == [[None]]
+
+    res = query("RETURN replace('abc', null, 'b') AS result")
+    assert res.result_set == [[None]]
+
+    res = query("RETURN replace('abc', 'a', null) AS result")
+    assert res.result_set == [[None]]
+
+    # Basic replacements
+    res = query("RETURN replace('abc', 'a', 'x') AS result")
+    assert res.result_set == [["xbc"]]
+
+    res = query("RETURN replace('abcabc', 'a', 'x') AS result")
+    assert res.result_set == [["xbcxbc"]]
+
+    res = query("RETURN replace('abc', 'd', 'x') AS result")
+    assert res.result_set == [["abc"]]  # No match, no replacement
+
+    # Empty strings
+    res = query("RETURN replace('abc', '', 'x') AS result")
+    assert res.result_set == [["xaxbxcx"]]
+
+    res = query("RETURN replace('', 'a', 'x') AS result")
+    assert res.result_set == [[""]]  # Empty input string remains empty
+
+    res = query("RETURN replace('abc', 'a', '') AS result")
+    assert res.result_set == [["bc"]]  # Replacement with empty string removes matches
+
+    # Type mismatch
+    for value, name in [(1, 'Integer'), (1.0, 'Float'), (True, 'Boolean'), ({}, 'Map'), ([], 'List')]:
+        try:
+            query(f"RETURN replace({value}, 'a', 'b') AS result")
+            raise AssertionError("Expected an error")
+        except ResponseError as e:
+            assert "Type mismatch" in str(e)
+
+        try:
+            query(f"RETURN replace('abc', {value}, 'b') AS result")
+            raise AssertionError("Expected an error")
+        except ResponseError as e:
+            assert "Type mismatch" in str(e)
+
+        try:
+            query(f"RETURN replace('abc', 'a', {value}) AS result")
+            raise AssertionError("Expected an error")
+        except ResponseError as e:
+            assert "Type mismatch" in str(e)

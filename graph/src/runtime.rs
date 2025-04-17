@@ -49,6 +49,7 @@ impl Runtime {
         read_functions.insert("split".to_string(), Self::split);
         read_functions.insert("toLower".to_string(), Self::string_to_lower);
         read_functions.insert("toUpper".to_string(), Self::string_to_upper);
+        read_functions.insert("replace".to_string(), Self::string_replace);
 
         // internal functions are not accessible from Cypher
         read_functions.insert("@starts_with".to_string(), Self::internal_starts_with);
@@ -494,6 +495,27 @@ impl Runtime {
                 )),
                 args => Err(format!(
                     "Expected one argument for toUpper, instead {}",
+                    args.len()
+                )),
+            },
+            _ => unreachable!(),
+        }
+    }
+    fn string_replace(_: &Graph, _: &mut Self, args: Value) -> Result<Value, String> {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [Value::String(s), Value::String(search), Value::String(replacement)] => {
+                    Ok(Value::String(s.replace(search, replacement)))
+                }
+                [Value::Null, _, _] | [_, Value::Null, _] | [_, _, Value::Null] => Ok(Value::Null),
+                [arg1, arg2, arg3] => Err(format!(
+                    "Type mismatch: expected (String, String, String) or null, but was: ({}, {}, {})",
+                    arg1.name(),
+                    arg2.name(),
+                    arg3.name()
+                )),
+                args => Err(format!(
+                    "Expected three arguments for replace, instead {}",
                     args.len()
                 )),
             },
