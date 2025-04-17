@@ -1,6 +1,8 @@
 use graph::{cypher::Parser, graph::Graph, planner::Planner, runtime::Value};
 use redis_module::{
-    native_types::RedisType, redis_module, redisvalue::RedisValueKey, Context, NextArg, RedisError, RedisModuleTypeMethods, RedisResult, RedisString, RedisValue, Status, REDISMODULE_TYPE_METHOD_VERSION
+    native_types::RedisType, redis_module, redisvalue::RedisValueKey, Context, NextArg, RedisError,
+    RedisModuleTypeMethods, RedisResult, RedisString, RedisValue, Status,
+    REDISMODULE_TYPE_METHOD_VERSION,
 };
 use std::os::raw::c_void;
 
@@ -146,7 +148,6 @@ fn inner_raw_value_to_redis_value(g: &Graph, r: &Value) -> RedisValue {
 /// OK
 /// ```
 fn graph_delete(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
-
     if args.len() != 2 {
         return Err(RedisError::WrongArity);
     }
@@ -155,7 +156,7 @@ fn graph_delete(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     let key = args.next_arg()?;
     let key = ctx.open_key_writable(&key);
     if key.get_value::<Graph>(&GRAPH_TYPE)?.is_some() {
-        key.delete()    
+        key.delete()
     } else {
         Err(RedisError::Str("ERR Invalid graph operation on empty key"))
     }
