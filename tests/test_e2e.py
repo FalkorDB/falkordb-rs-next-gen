@@ -876,3 +876,42 @@ def test_regex_matches():
             raise AssertionError("Expected an error")
         except ResponseError as e:
             assert "Type mismatch" in str(e)
+
+def test_left():
+        # Null handling
+        res = query("RETURN left(null, 3) AS result")
+        assert res.result_set == [[None]]
+
+        res = query("RETURN left('abc', null) AS result")
+        assert res.result_set == [[None]]
+
+        # Basic functionality
+        res = query("RETURN left('abc', 2) AS result")
+        assert res.result_set == [["ab"]]
+
+        res = query("RETURN left('abc', 0) AS result")
+        assert res.result_set == [[""]]
+
+        res = query("RETURN left('abc', 5) AS result")
+        assert res.result_set == [["abc"]]  # n > length of string
+
+        # Negative values for n
+        try:
+            query("RETURN left('abc', -1) AS result")
+            raise AssertionError("Expected an error")
+        except ResponseError as e:
+            assert "Invalid input for function 'left'" in str(e)
+
+        # Type mismatch
+        for value, name in [(1.0, 'Float'), (True, 'Boolean'), ({}, 'Map'), ([], 'List')]:
+            try:
+                query(f"RETURN left({value}, 2) AS result")
+                raise AssertionError("Expected an error")
+            except ResponseError as e:
+                assert "Type mismatch" in str(e)
+
+            try:
+                query(f"RETURN left('abc', {value}) AS result")
+                raise AssertionError("Expected an error")
+            except ResponseError as e:
+                assert "Type mismatch" in str(e)
