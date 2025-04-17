@@ -45,6 +45,7 @@ enum Token {
     Dot,
     DotDot,
     In,
+    Starts,
     Error(String),
     EndOfFile,
 }
@@ -179,6 +180,7 @@ impl<'a> Lexer<'a> {
                         "not" => Token::Not,
                         "is" => Token::Is,
                         "in" => Token::In,
+                        "starts" => Token::Starts,
                         "nan" => Token::Float(f64::NAN),
                         _ => Token::Ident(str[pos..pos + len].to_string()),
                     };
@@ -806,6 +808,12 @@ impl<'a> Parser<'a> {
                 self.lexer.next();
                 let rhs = self.parse_add_expr()?;
                 Ok(QueryExprIR::In(Box::new((lhs, rhs))))
+            }
+            Token::Starts => {
+                self.lexer.next();
+                match_token!(self.lexer, With);
+                let rhs = self.parse_add_expr()?;
+                Ok(QueryExprIR::StartsWith(Box::new((lhs, rhs))))
             }
             _ => Ok(lhs),
         }

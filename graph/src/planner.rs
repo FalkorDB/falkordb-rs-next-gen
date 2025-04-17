@@ -113,6 +113,10 @@ impl Planner {
                 op.1.map(|ir| self.plan_expr(ir)),
                 op.2.map(|ir| self.plan_expr(ir)),
             ))),
+            QueryExprIR::StartsWith(op) => IR::FuncInvocation(
+                "@starts_with".to_string(),
+                vec![self.plan_expr(op.0), self.plan_expr(op.1)],
+            ),
             QueryExprIR::Property(expr, name) => IR::FuncInvocation(
                 "property".to_string(),
                 vec![self.plan_expr(*expr), IR::String(name)],

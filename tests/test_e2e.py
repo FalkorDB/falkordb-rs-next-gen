@@ -690,3 +690,20 @@ def test_add():
         raise AssertionError("Expected an error")
     except ResponseError as e:
         assert "Unexpected types for add operator" in str(e)
+
+def test_starts_with():
+    res = query("RETURN null STARTS WITH 'a' AS name")
+    assert res.result_set == [[None]]
+    res = query("RETURN 'ab' STARTS WITH null AS name")
+    assert res.result_set == [[None]]
+    res = query("RETURN 'ab' STARTS WITH 'a' AS name")
+    assert res.result_set == [[True]]
+    res = query("RETURN 'ab' STARTS WITH 'b' AS name")
+    assert res.result_set == [[False]]
+    res = query("RETURN '' STARTS WITH 'b' AS name")
+    assert res.result_set == [[False]]
+    try:
+        query("RETURN [1, 2] STARTS WITH 'a' AS name")
+        raise AssertionError("Expected an error")
+    except ResponseError as e:
+        assert "Type mismatch: expected String or null, but was:" in str(e)

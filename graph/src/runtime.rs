@@ -50,6 +50,9 @@ impl Runtime {
         read_functions.insert("toLower".to_string(), Self::string_to_lower);
         read_functions.insert("toUpper".to_string(), Self::string_to_upper);
 
+        // internal functions are not accessible from Cypher
+        read_functions.insert("@starts_with".to_string(), Self::internal_starts_with);
+
         // procedures
         read_functions.insert("db.labels".to_string(), Self::db_labels);
         read_functions.insert("db.relationshiptypes".to_string(), Self::db_types);
@@ -491,6 +494,28 @@ impl Runtime {
                     "Expected one argument for toUpper, instead {}",
                     args.len()
                 )),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    //
+    // Internal functions
+    //
+
+    fn internal_starts_with(_: &Graph, _: &mut Self, args: Value) -> Result<Value, String> {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [Value::String(s), Value::String(prefix)] => Ok(Value::Bool(s.starts_with(prefix))),
+
+                [Value::Null, _] => Ok(Value::Null),
+                [_, Value::Null] => Ok(Value::Null),
+                [arg1, arg2] => Err(format!(
+                    "Type mismatch: expected String or null, but was: ({}, {})",
+                    arg1.name(),
+                    arg2.name()
+                )),
+                _ => unreachable!(),
             },
             _ => unreachable!(),
         }
