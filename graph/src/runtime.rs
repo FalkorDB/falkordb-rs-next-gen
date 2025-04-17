@@ -684,17 +684,11 @@ pub fn ro_run(
             let list = ro_run(vars, g, runtime, result_fn, &op.1)?;
             list_contains(&list, &value)
         }
-        IR::Add(irs) => irs
-            .iter()
-            .flat_map(|ir| ro_run(vars, g, runtime, result_fn, ir))
-            .reduce(|a, b| match (a, b) {
-                (Value::Int(a), Value::Int(b)) => Value::Int(a + b),
-                (Value::Float(a), Value::Float(b)) => Value::Float(a + b),
-                (Value::List(a), Value::List(b)) => Value::List(a.into_iter().chain(b).collect()),
-                (Value::List(a), b) => add_list_scalar(a, b),
-                _ => Value::Null,
-            })
-            .ok_or_else(|| "Add operator requires at least one argument".to_string()),
+        IR::Add(irs) => add_all(
+            irs.iter()
+                .flat_map(|ir| ro_run(vars, g, runtime, result_fn, ir))
+                .collect::<Vec<Value>>(),
+        ),
         IR::Sub(irs) => irs
             .iter()
             .flat_map(|ir| ro_run(vars, g, runtime, result_fn, ir))
@@ -943,17 +937,11 @@ pub fn run(
             let list = run(vars, g, runtime, result_fn, &op.1)?;
             list_contains(&list, &value)
         }
-        IR::Add(irs) => irs
-            .iter()
-            .flat_map(|ir| run(vars, g, runtime, result_fn, ir))
-            .reduce(|a, b| match (a, b) {
-                (Value::Int(a), Value::Int(b)) => Value::Int(a + b),
-                (Value::Float(a), Value::Float(b)) => Value::Float(a + b),
-                (Value::List(a), Value::List(b)) => Value::List(a.into_iter().chain(b).collect()),
-                (Value::List(a), b) => add_list_scalar(a, b),
-                _ => Value::Null,
-            })
-            .ok_or_else(|| "Add operator requires at least one argument".to_string()),
+        IR::Add(irs) => add_all(
+            irs.iter()
+                .flat_map(|ir| run(vars, g, runtime, result_fn, ir))
+                .collect::<Vec<Value>>(),
+        ),
         IR::Sub(irs) => irs
             .iter()
             .flat_map(|ir| run(vars, g, runtime, result_fn, ir))
@@ -1142,4 +1130,38 @@ where
 #[inline]
 fn logical_xor(a: bool, b: bool) -> bool {
     (a && !b) || (!a && b)
+}
+
+fn add_all(values: Vec<Value>) -> Result<Value, String> {
+    let mut iter = values.into_iter();
+    let mut result = iter
+        .next()
+        .ok_or_else(|| "Add operator requires at least one argument".to_string())?;
+
+    for value in iter {
+        result = match (result, value) {
+            (Value::Null, _) | (_, Value::Null) => Value::Null,
+            (Value::Int(a), Value::Int(b)) => Value::Int(a + b),
+            (Value::Float(a), Value::Float(b)) => Value::Float(a + b),
+            (Value::List(a), Value::List(b)) => Value::List(a.into_iter().chain(b).collect()),
+            (Value::List(a), b) => add_list_scalar(a, b),
+            (s, Value::List(l)) => {
+                let mut new_list = vec![s];
+                new_list.extend(l);
+                Value::List(new_list)
+            }
+            (Value::String(a), Value::String(b)) => Value::String(a + &b),
+            (Value::String(s), Value::Int(i)) => Value::String(s + &i.to_string()),
+            (Value::String(s), Value::Float(f)) => Value::String(s + &f.to_string()),
+            (a, b) => {
+                return Err(format!(
+                    "Unexpected types for add operator ({}, {})",
+                    a.name(),
+                    b.name()
+                ))
+            }
+        };
+    }
+
+    Ok(result)
 }

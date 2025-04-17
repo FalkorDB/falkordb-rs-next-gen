@@ -664,3 +664,29 @@ def test_letter_casing():
     except ResponseError as e:
         assert f"Type mismatch" in str(e)
 
+def test_add():
+    res = query("RETURN null + 1 AS name")
+    assert res.result_set == [[None]]
+    res = query("RETURN 1 + null AS name")
+    assert res.result_set == [[None]]
+    res = query("RETURN 1 + 1 AS name")
+    assert res.result_set == [[2]]
+    res = query("RETURN 1.0 + 1.0 AS name")
+    assert res.result_set == [[2.0]]
+    res = query("RETURN [1] + [1] AS name")
+    assert res.result_set == [[[1, 1]]]
+    res = query("RETURN [1] + 1 AS name")
+    assert res.result_set == [[[1, 1]]]
+    res = query("RETURN 'a' + [1, 2 ,3] AS name")
+    assert res.result_set == [[['a', 1, 2, 3]]]
+    res = query("RETURN 'a' + 'b' + 'c' AS name")
+    assert res.result_set == [["abc"]]
+    res = query("RETURN 'a' + 'b' + 1 AS name")
+    assert res.result_set == [["ab1"]]
+    res = query("RETURN 'a' + 'b' + 0.1 AS name")
+    assert res.result_set == [["ab0.1"]]
+    try:
+        query("RETURN 'a' + True AS name")
+        raise AssertionError("Expected an error")
+    except ResponseError as e:
+        assert "Unexpected types for add operator" in str(e)
