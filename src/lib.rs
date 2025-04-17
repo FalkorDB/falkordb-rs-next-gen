@@ -325,7 +325,7 @@ redis_module! {
         ["graph.delete", graph_delete, "write deny-oom", 1, 1, 1, ""],
         ["graph.query", graph_query, "write deny-oom", 1, 1, 1, ""],
         ["graph.ro_query", graph_ro_query, "readonly", 1, 1, 1, ""],
-        ["graph.list", graph_list, "readonly", 0, 0, 0, ""],
+        ["graph.LIST", graph_list, "readonly", 0, 0, 0, ""],
         ["graph.parse", graph_parse, "readonly", 0, 0, 0, ""],
         ["graph.plan", graph_plan, "readonly", 0, 0, 0, ""],
     ],
