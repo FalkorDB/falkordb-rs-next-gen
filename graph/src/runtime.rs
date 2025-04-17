@@ -47,6 +47,8 @@ impl Runtime {
         read_functions.insert("reverse".to_string(), Self::reverse);
         read_functions.insert("substring".to_string(), Self::substring);
         read_functions.insert("split".to_string(), Self::split);
+        read_functions.insert("toLower".to_string(), Self::string_to_lower);
+        read_functions.insert("toUpper".to_string(), Self::string_to_upper);
 
         // procedures
         read_functions.insert("db.labels".to_string(), Self::db_labels);
@@ -445,6 +447,48 @@ impl Runtime {
                 )),
                 args => Err(format!(
                     "Expected two arguments for split, instead {}",
+                    args.len()
+                )),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    fn string_to_lower(_: &Graph, _: &mut Self, args: Value) -> Result<Value, String> {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [Value::String(s)] => {
+                    let lower = s.to_lowercase();
+                    Ok(Value::String(lower))
+                }
+                [Value::Null] => Ok(Value::Null),
+                [arg] => Err(format!(
+                    "Type mismatch: expected List, String or null, but was {}",
+                    arg.name()
+                )),
+                args => Err(format!(
+                    "Expected one argument for toLower, instead {}",
+                    args.len()
+                )),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    fn string_to_upper(_: &Graph, _: &mut Self, args: Value) -> Result<Value, String> {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [Value::String(s)] => {
+                    let upper = s.to_uppercase();
+                    Ok(Value::String(upper))
+                }
+                [Value::Null] => Ok(Value::Null),
+                [arg] => Err(format!(
+                    "Type mismatch: expected List, String or null, but was {}",
+                    arg.name()
+                )),
+                args => Err(format!(
+                    "Expected one argument for toUpper, instead {}",
                     args.len()
                 )),
             },

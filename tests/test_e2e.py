@@ -638,3 +638,29 @@ def test_split():
         except ResponseError as e:
             assert f"Type mismatch" in str(e)
 
+
+def test_letter_casing():
+    res = query("RETURN toUpper('Avi') AS name")
+    assert res.result_set == [["AVI"]]
+    res = query("RETURN toLower('Avi') AS name")
+    assert res.result_set == [["avi"]]
+    res = query("RETURN toLower(null) AS name")
+    assert res.result_set == [[None]]
+    res = query("RETURN toUpper(null) AS name")
+    assert res.result_set == [[None]]
+    res = query("RETURN toLower('') AS name")
+    assert res.result_set == [[""]]
+    res = query("RETURN toUpper('') AS name")
+    assert res.result_set == [[""]]
+    for value in [False, True, 1, 1.0, {}, float("nan"), [], ["foo"]]:
+        try:
+            query(f"RETURN toLower({value}) AS r")
+            raise AssertionError("Expected an error")
+        except ResponseError as e:
+            assert f"Type mismatch" in str(e)
+    try:
+        query(f"RETURN toUpper({value}) AS r")
+        raise AssertionError("Expected an error")
+    except ResponseError as e:
+        assert f"Type mismatch" in str(e)
+
