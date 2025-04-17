@@ -53,6 +53,7 @@ impl Runtime {
         // internal functions are not accessible from Cypher
         read_functions.insert("@starts_with".to_string(), Self::internal_starts_with);
         read_functions.insert("@ends_with".to_string(), Self::internal_ends_with);
+        read_functions.insert("@contains".to_string(), Self::internal_contains);
 
         // procedures
         read_functions.insert("db.labels".to_string(), Self::db_labels);
@@ -526,6 +527,26 @@ impl Runtime {
         match args {
             Value::List(arr) => match arr.as_slice() {
                 [Value::String(s), Value::String(suffix)] => Ok(Value::Bool(s.ends_with(suffix))),
+
+                [Value::Null, _] => Ok(Value::Null),
+                [_, Value::Null] => Ok(Value::Null),
+                [arg1, arg2] => Err(format!(
+                    "Type mismatch: expected String or null, but was: ({}, {})",
+                    arg1.name(),
+                    arg2.name()
+                )),
+                _ => unreachable!(),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    fn internal_contains(_: &Graph, _: &mut Self, args: Value) -> Result<Value, String> {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [Value::String(s), Value::String(substring)] => {
+                    Ok(Value::Bool(s.contains(substring)))
+                }
 
                 [Value::Null, _] => Ok(Value::Null),
                 [_, Value::Null] => Ok(Value::Null),

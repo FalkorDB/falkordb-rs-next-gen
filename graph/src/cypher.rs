@@ -47,6 +47,7 @@ enum Token {
     In,
     Starts,
     Ends,
+    Contains,
     Error(String),
     EndOfFile,
 }
@@ -183,6 +184,7 @@ impl<'a> Lexer<'a> {
                         "in" => Token::In,
                         "starts" => Token::Starts,
                         "ends" => Token::Ends,
+                        "contains" => Token::Contains,
                         "nan" => Token::Float(f64::NAN),
                         _ => Token::Ident(str[pos..pos + len].to_string()),
                     };
@@ -822,6 +824,11 @@ impl<'a> Parser<'a> {
                 match_token!(self.lexer, With);
                 let rhs = self.parse_add_expr()?;
                 Ok(QueryExprIR::EndsWith(Box::new((lhs, rhs))))
+            }
+            Token::Contains => {
+                self.lexer.next();
+                let rhs = self.parse_add_expr()?;
+                Ok(QueryExprIR::Contains(Box::new((lhs, rhs))))
             }
             _ => Ok(lhs),
         }

@@ -760,3 +760,28 @@ def test_ends_with():
         raise AssertionError("Expected an error")
     except ResponseError as e:
         assert "Type mismatch: expected String or null, but was:" in str(e)
+
+def test_contains():
+    res = query("RETURN null CONTAINS 'a' AS name")
+    assert res.result_set == [[None]]
+
+    res = query("RETURN 'ab' CONTAINS null AS name")
+    assert res.result_set == [[None]]
+
+    res = query("RETURN 'ab' CONTAINS 'b' AS name")
+    assert res.result_set == [[True]]
+
+    res = query("RETURN 'ab' CONTAINS 'a' AS name")
+    assert res.result_set == [[True]]
+
+    res = query("RETURN 'ab' CONTAINS 'c' AS name")
+    assert res.result_set == [[False]]
+
+    res = query("RETURN '' CONTAINS 'b' AS name")
+    assert res.result_set == [[False]]
+
+    try:
+        query("RETURN [1, 2] CONTAINS 'a' AS name")
+        raise AssertionError("Expected an error")
+    except ResponseError as e:
+        assert "Type mismatch: expected String or null, but was:" in str(e)
