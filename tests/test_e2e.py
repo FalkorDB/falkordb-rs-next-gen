@@ -257,4 +257,6 @@ def test_graph_list():
     client.select_graph("g3").query("return 1")
     client.connection.set("ng", "ng")
     graphs = client.list_graphs()
-    assert len(graphs) == 3
+
+    # ['g1', 'test', 'g3', 'g2'] test is the default graph
+    assert len(graphs) == 4
