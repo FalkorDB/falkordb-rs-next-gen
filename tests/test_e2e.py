@@ -836,3 +836,43 @@ def test_replace():
             raise AssertionError("Expected an error")
         except ResponseError as e:
             assert "Type mismatch" in str(e)
+
+def test_regex_matches():
+    res = query("RETURN 'abc' =~ 'a.*' AS result")
+    assert res.result_set == [[True]]
+
+    res = query("RETURN 'abc' =~ 'd.*' AS result")
+    assert res.result_set == [[False]]
+
+    res = query("RETURN 'abc' =~ 'a.*c' AS result")
+    assert res.result_set == [[True]]
+
+    res = query("RETURN 'abc' =~ 'a.*d' AS result")
+    assert res.result_set == [[False]]
+
+    res = query("RETURN 'abc' =~ '^a.*c$' AS result")
+    assert res.result_set == [[True]]
+
+    res = query("RETURN 'abc' =~ '^d.*c$' AS result")
+    assert res.result_set == [[False]]
+
+    # Null handling
+    res = query("RETURN null =~ 'a.*' AS result")
+    assert res.result_set == [[None]]
+
+    res = query("RETURN 'abc' =~ null AS result")
+    assert res.result_set == [[None]]
+
+    # Type mismatch
+    for value, name in [(1, 'Integer'), (1.0, 'Float'), (True, 'Boolean'), ({}, 'Map'), ([], 'List')]:
+        try:
+            query(f"RETURN {value} =~ 'a.*' AS result")
+            raise AssertionError("Expected an error")
+        except ResponseError as e:
+            assert "Type mismatch" in str(e)
+
+        try:
+            query(f"RETURN 'abc' =~ {value} AS result")
+            raise AssertionError("Expected an error")
+        except ResponseError as e:
+            assert "Type mismatch" in str(e)

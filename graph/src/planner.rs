@@ -125,6 +125,10 @@ impl Planner {
                 "@contains".to_string(),
                 vec![self.plan_expr(op.0), self.plan_expr(op.1)],
             ),
+            QueryExprIR::RegexMatches(op) => IR::FuncInvocation(
+                "@regex_matches".to_string(),
+                vec![self.plan_expr(op.0), self.plan_expr(op.1)],
+            ),
             QueryExprIR::Property(expr, name) => IR::FuncInvocation(
                 "property".to_string(),
                 vec![self.plan_expr(*expr), IR::String(name)],

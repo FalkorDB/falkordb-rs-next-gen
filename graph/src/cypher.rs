@@ -48,6 +48,7 @@ enum Token {
     Starts,
     Ends,
     Contains,
+    RegexMatches,
     Error(String),
     EndOfFile,
 }
@@ -107,7 +108,12 @@ impl<'a> Lexer<'a> {
                         _ => (Token::Dash, 1),
                     }
                 }
-                '=' => return (Token::Equal, 1),
+                '=' => {
+                    return match chars.next() {
+                        Some('~') => (Token::RegexMatches, 2),
+                        _ => (Token::Equal, 1),
+                    }
+                }
                 '<' => return (Token::LessThan, 1),
                 '>' => return (Token::GreaterThan, 1),
                 ',' => return (Token::Comma, 1),
@@ -829,6 +835,11 @@ impl<'a> Parser<'a> {
                 self.lexer.next();
                 let rhs = self.parse_add_expr()?;
                 Ok(QueryExprIR::Contains(Box::new((lhs, rhs))))
+            }
+            Token::RegexMatches => {
+                self.lexer.next();
+                let rhs = self.parse_add_expr()?;
+                Ok(QueryExprIR::RegexMatches(Box::new((lhs, rhs))))
             }
             _ => Ok(lhs),
         }

@@ -14,4 +14,5 @@ categories = ["graph", "database"]
 [dependencies]
 libc = "0.2.169"
 # llvm-sys = "191"
-roaring = "0.10.10"
+roaring = "0.10.12"
+regex = "1.11.1"

@@ -55,6 +55,7 @@ impl Runtime {
         read_functions.insert("@starts_with".to_string(), Self::internal_starts_with);
         read_functions.insert("@ends_with".to_string(), Self::internal_ends_with);
         read_functions.insert("@contains".to_string(), Self::internal_contains);
+        read_functions.insert("@regex_matches".to_string(), Self::internal_regex_matches);
 
         // procedures
         read_functions.insert("db.labels".to_string(), Self::db_labels);
@@ -583,6 +584,27 @@ impl Runtime {
         }
     }
 
+    fn internal_regex_matches(_: &Graph, _: &mut Self, args: Value) -> Result<Value, String> {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [Value::String(s), Value::String(pattern)] => {
+                    // Compile the regex pattern
+                    match regex::Regex::new(pattern) {
+                        Ok(re) => Ok(Value::Bool(re.is_match(s))),
+                        Err(e) => Err(format!("Invalid regex pattern: {}", e)),
+                    }
+                }
+                [Value::Null, _] | [_, Value::Null] => Ok(Value::Null),
+                [arg1, arg2] => Err(format!(
+                    "Type mismatch: expected (String, String) or null, but was: ({}, {})",
+                    arg1.name(),
+                    arg2.name()
+                )),
+                _ => Err("Expected two arguments for regex matching".to_string()),
+            },
+            _ => unreachable!(),
+        }
+    }
     fn db_labels(g: &Graph, _runtime: &mut Self, _args: Value) -> Result<Value, String> {
         Ok(Value::List(
             g.get_labels()

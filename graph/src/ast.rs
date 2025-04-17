@@ -39,6 +39,7 @@ pub enum QueryExprIR {
     StartsWith(Box<(QueryExprIR, QueryExprIR)>),
     EndsWith(Box<(QueryExprIR, QueryExprIR)>),
     Contains(Box<(QueryExprIR, QueryExprIR)>),
+    RegexMatches(Box<(QueryExprIR, QueryExprIR)>),
 }
 
 impl QueryExprIR {
@@ -102,6 +103,10 @@ impl QueryExprIR {
                 op.1.inner_validate(env)
             }
             Self::Contains(op) => {
+                op.0.inner_validate(env)?;
+                op.1.inner_validate(env)
+            }
+            Self::RegexMatches(op) => {
                 op.0.inner_validate(env)?;
                 op.1.inner_validate(env)
             }
