@@ -345,6 +345,7 @@ impl Runtime {
                     Ok(Value::List(v))
                 }
                 [Value::Null] => Ok(Value::Null),
+                [Value::String(s)] => Ok(Value::String(s.chars().rev().collect())),
                 [arg] => Err(format!(
                     "Type mismatch: expected List, but was {}",
                     arg.name()

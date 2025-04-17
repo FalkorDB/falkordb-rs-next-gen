@@ -45,7 +45,7 @@ jobs:
           cargo fmt --all --check
       - name: Lint
         run: |
-          cargo clippy --all
+          cargo clippy --all --all-targets
       - name: Build
         run: |
           cargo build
