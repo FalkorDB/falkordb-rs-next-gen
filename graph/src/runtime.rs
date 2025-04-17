@@ -51,6 +51,7 @@ impl Runtime {
         read_functions.insert("toUpper".to_string(), Self::string_to_upper);
         read_functions.insert("replace".to_string(), Self::string_replace);
         read_functions.insert("left".to_string(), Self::string_left);
+        read_functions.insert("ltrim".to_string(), Self::string_ltrim);
 
         // internal functions are not accessible from Cypher
         read_functions.insert("@starts_with".to_string(), Self::internal_starts_with);
@@ -551,6 +552,26 @@ impl Runtime {
         }
     }
 
+    fn string_ltrim(_: &Graph, _: &mut Self, args: Value) -> Result<Value, String> {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [Value::String(s)] => {
+                    let trimmed = s.trim_start();
+                    Ok(Value::String(trimmed.to_string()))
+                }
+                [Value::Null] => Ok(Value::Null),
+                [arg] => Err(format!(
+                    "Type mismatch: expected String or null, but was {}",
+                    arg.name()
+                )),
+                args => Err(format!(
+                    "Expected one argument for ltrim, instead {}",
+                    args.len()
+                )),
+            },
+            _ => unreachable!(),
+        }
+    }
     //
     // Internal functions
     //

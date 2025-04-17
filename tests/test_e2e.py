@@ -915,3 +915,29 @@ def test_left():
                 raise AssertionError("Expected an error")
             except ResponseError as e:
                 assert "Type mismatch" in str(e)
+
+def test_ltrim():
+    # Null handling
+    res = query("RETURN ltrim(null) AS result")
+    assert res.result_set == [[None]]
+
+    # Basic functionality
+    res = query("RETURN ltrim('   abc') AS result")
+    assert res.result_set == [["abc"]]
+
+    res = query("RETURN ltrim('abc   ') AS result")
+    assert res.result_set == [["abc   "]]
+
+    res = query("RETURN ltrim('   abc   ') AS result")
+    assert res.result_set == [["abc   "]]
+
+    res = query("RETURN ltrim('abc') AS result")
+    assert res.result_set == [["abc"]]
+
+    # Type mismatch
+    for value, name in [(1.0, 'Float'), (True, 'Boolean'), ({}, 'Map'), ([], 'List')]:
+        try:
+            query(f"RETURN ltrim({value}) AS result")
+            raise AssertionError("Expected an error")
+        except ResponseError as e:
+            assert "Type mismatch" in str(e)
