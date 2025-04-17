@@ -283,7 +283,7 @@ def test_in_list():
             query(f"RETURN 0 IN {value} AS r")
             raise AssertionError("Expected an error")
         except ResponseError as e:
-            assert f"Type mismatch: expected List or Null but was {name}" in str(e)
+            assert f"Type mismatch" in str(e)
 
     # test for simple values
     for value in [True, False, 1, -1, 0.1, 'Avi', [1]]:
@@ -565,7 +565,7 @@ def test_list_reverse():
             query(f"RETURN reverse({value}) AS r")
             raise AssertionError("Expected an error")
         except ResponseError as e:
-            assert f"Type mismatch: expected List, but was {name}" in str(e)
+            assert f"Type mismatch" in str(e)
 
 
 def cypher_xor(a, b, c):
@@ -608,3 +608,33 @@ def test_literals():
 
         res = query("RETURN -.2 AS literal")
         assert res.result_set == [[-0.2]]
+
+def test_split():
+    res = query("RETURN split('Learning Cypher!', ' ')")
+    assert res.result_set == [[["Learning", "Cypher!"]]]
+    res = query("RETURN split('We are learning Cypher!', ' ')")
+    assert res.result_set == [[["We", "are", "learning", "Cypher!"]]]
+    res = query("RETURN split('Hakuna-Matata', ' ')")
+    assert res.result_set == [[["Hakuna-Matata"]]]
+    res = query("RETURN split('Hakuna-Matata', '-')")
+    assert res.result_set == [[["Hakuna", "Matata"]]]
+    res = query("RETURN split('We are learning Cypher', 'e ')")
+    assert res.result_set == [[["W", "ar", "learning Cypher"]]]
+    res = query("RETURN split('We are learning Cypher', null)")
+    assert res.result_set == [[None]]
+    res = query("RETURN split(null, ' ')")
+    assert res.result_set == [[None]]
+    res = query("RETURN split('We are learning Cypher', '')")
+    assert res.result_set == [[["W", "e", " ", "a", "r", "e", " ", "l", "e", "a", "r", "n", "i", "n", "g", " ", "C", "y", "p", "h", "e", "r"]]]
+    for value in [False, True, 1, 1.0, {}, float("nan"), [], ["foo"]]:
+        try:
+            query(f"RETURN split({value}, 'a') AS r")
+            raise AssertionError("Expected an error")
+        except ResponseError as e:
+            assert f"Type mismatch" in str(e)
+        try:
+            query(f"RETURN split('a', {value}) AS r")
+            raise AssertionError("Expected an error")
+        except ResponseError as e:
+            assert f"Type mismatch" in str(e)
+

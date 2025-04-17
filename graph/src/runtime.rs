@@ -46,6 +46,7 @@ impl Runtime {
         read_functions.insert("tail".to_string(), Self::tail);
         read_functions.insert("reverse".to_string(), Self::reverse);
         read_functions.insert("substring".to_string(), Self::substring);
+        read_functions.insert("split".to_string(), Self::split);
 
         // procedures
         read_functions.insert("db.labels".to_string(), Self::db_labels);
@@ -347,7 +348,7 @@ impl Runtime {
                 [Value::Null] => Ok(Value::Null),
                 [Value::String(s)] => Ok(Value::String(s.chars().rev().collect())),
                 [arg] => Err(format!(
-                    "Type mismatch: expected List, but was {}",
+                    "Type mismatch: expected List, String or null, but was {}",
                     arg.name()
                 )),
                 args => Err(format!(
@@ -406,6 +407,45 @@ impl Runtime {
                 args => Err(format!(
                     "Type mismatch: expected substring(String, Integer) [+ Integer] but got {:?}",
                     args.iter().map(Value::name).collect::<Vec<_>>()
+                )),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    fn split(_: &Graph, _: &mut Self, args: Value) -> Result<Value, String> {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [Value::String(string), Value::String(delimiter)] => {
+                    if delimiter.is_empty() {
+                        // split string to characters
+                        let parts: Vec<Value> = string
+                            .chars()
+                            .map(|c| Value::String(c.to_string()))
+                            .collect();
+                        Ok(Value::List(parts))
+                    } else {
+                        let parts: Vec<Value> = string
+                            .split(delimiter.as_str())
+                            .map(|s| Value::String(s.to_string()))
+                            .collect();
+                        Ok(Value::List(parts))
+                    }
+                }
+                [Value::Null, _] => Ok(Value::Null),
+                [_, Value::Null] => Ok(Value::Null),
+                [arg1, arg2] => Err(format!(
+                    "Type mismatch: expected 2 String or null arguments, but was {} {}",
+                    arg1.name(),
+                    arg2.name()
+                )),
+                [arg] => Err(format!(
+                    "Type mismatch: expected 2 String or null arguments, but was {}",
+                    arg.name()
+                )),
+                args => Err(format!(
+                    "Expected two arguments for split, instead {}",
+                    args.len()
                 )),
             },
             _ => unreachable!(),
