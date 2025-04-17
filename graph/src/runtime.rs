@@ -52,6 +52,7 @@ impl Runtime {
         read_functions.insert("replace".to_string(), Self::string_replace);
         read_functions.insert("left".to_string(), Self::string_left);
         read_functions.insert("ltrim".to_string(), Self::string_ltrim);
+        read_functions.insert("right".to_string(), Self::string_right);
 
         // internal functions are not accessible from Cypher
         read_functions.insert("@starts_with".to_string(), Self::internal_starts_with);
@@ -572,6 +573,36 @@ impl Runtime {
             _ => unreachable!(),
         }
     }
+
+    fn string_right(_: &Graph, _: &mut Self, args: Value) -> Result<Value, String> {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [Value::String(s), Value::Int(n)] => {
+                    if *n < 0 {
+                        Err("Invalid input for function 'right': 'n' cannot be negative"
+                            .to_string())
+                    } else {
+                        let n = *n as usize;
+                        let len = s.chars().count();
+                        let start = len.saturating_sub(n);
+                        Ok(Value::String(s.chars().skip(start).collect()))
+                    }
+                }
+                [Value::Null, _] | [_, Value::Null] => Ok(Value::Null),
+                [arg1, arg2] => Err(format!(
+                    "Type mismatch: expected (String, Integer) or null, but was: ({}, {})",
+                    arg1.name(),
+                    arg2.name()
+                )),
+                args => Err(format!(
+                    "Expected two arguments for function 'right', instead {}",
+                    args.len()
+                )),
+            },
+            _ => unreachable!(),
+        }
+    }
+
     //
     // Internal functions
     //

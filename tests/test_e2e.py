@@ -941,3 +941,42 @@ def test_ltrim():
             raise AssertionError("Expected an error")
         except ResponseError as e:
             assert "Type mismatch" in str(e)
+
+def test_right():
+    # Null handling
+    res = query("RETURN right(null, 3) AS result")
+    assert res.result_set == [[None]]
+
+    res = query("RETURN right('abc', null) AS result")
+    assert res.result_set == [[None]]
+
+    # Basic functionality
+    res = query("RETURN right('abc', 2) AS result")
+    assert res.result_set == [["bc"]]
+
+    res = query("RETURN right('abc', 0) AS result")
+    assert res.result_set == [[""]]
+
+    res = query("RETURN right('abc', 5) AS result")
+    assert res.result_set == [["abc"]]  # n > length of string
+
+    # Negative values for n
+    try:
+        query("RETURN right('abc', -1) AS result")
+        raise AssertionError("Expected an error")
+    except ResponseError as e:
+        assert "Invalid input for function 'right'" in str(e)
+
+    # Type mismatch
+    for value, name in [(1.0, 'Float'), (True, 'Boolean'), ({}, 'Map'), ([], 'List')]:
+        try:
+            query(f"RETURN right({value}, 2) AS result")
+            raise AssertionError("Expected an error")
+        except ResponseError as e:
+            assert "Type mismatch" in str(e)
+
+        try:
+            query(f"RETURN right('abc', {value}) AS result")
+            raise AssertionError("Expected an error")
+        except ResponseError as e:
+            assert "Type mismatch" in str(e)
