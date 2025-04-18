@@ -1,8 +1,8 @@
 use graph::{cypher::Parser, graph::Graph, planner::Planner, runtime::Value};
 use redis_module::{
-    native_types::RedisType, redis_module, redisvalue::RedisValueKey, Context, NextArg,
-    RedisModuleTypeMethods, RedisResult, RedisString, RedisValue, Status,
-    REDISMODULE_TYPE_METHOD_VERSION,
+    Context, NextArg, REDISMODULE_TYPE_METHOD_VERSION, RedisModuleTypeMethods, RedisResult,
+    RedisString, RedisValue, Status, native_types::RedisType, redis_module,
+    redisvalue::RedisValueKey,
 };
 use std::os::raw::c_void;
 
@@ -173,11 +173,13 @@ fn graph_query(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
         debug > 0,
     ) {
         Ok(summary) => Ok(vec![
-            vec![vec![
-                RedisValue::Integer(1),
-                RedisValue::SimpleString("a".to_string()),
-            ]
-            .into()],
+            vec![
+                vec![
+                    RedisValue::Integer(1),
+                    RedisValue::SimpleString("a".to_string()),
+                ]
+                .into(),
+            ],
             res,
             vec![
                 RedisValue::SimpleString(format!("Labels added: {}", summary.labels_added)),
@@ -218,11 +220,13 @@ fn graph_ro_query(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
                 debug > 0,
             ) {
                 Ok(_) => Ok(vec![
-                    vec![vec![
-                        RedisValue::Integer(1),
-                        RedisValue::SimpleString("a".to_string()),
-                    ]
-                    .into()],
+                    vec![
+                        vec![
+                            RedisValue::Integer(1),
+                            RedisValue::SimpleString("a".to_string()),
+                        ]
+                        .into(),
+                    ],
                     res,
                     vec![],
                 ]
