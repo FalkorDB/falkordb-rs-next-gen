@@ -38,9 +38,11 @@ static GRAPH_TYPE: RedisType = RedisType::new(
     },
 );
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 unsafe extern "C" fn my_free(value: *mut c_void) {
-    drop(Box::from_raw(value.cast::<Graph>()));
+    unsafe {
+        drop(Box::from_raw(value.cast::<Graph>()));
+    }
 }
 
 fn raw_value_to_redis_value(g: &Graph, r: &Value) -> RedisValue {
