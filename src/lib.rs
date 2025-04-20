@@ -1,6 +1,6 @@
 use graph::{cypher::Parser, graph::Graph, planner::Planner, runtime::Value};
 use redis_module::{
-    native_types::RedisType, redis_module, redisvalue::RedisValueKey, Context, NextArg,
+    native_types::RedisType, redis_module, redisvalue::RedisValueKey, Context, NextArg, RedisError,
     RedisModuleTypeMethods, RedisResult, RedisString, RedisValue, Status,
     REDISMODULE_TYPE_METHOD_VERSION,
 };
@@ -137,13 +137,29 @@ fn inner_raw_value_to_redis_value(g: &Graph, r: &Value) -> RedisValue {
     }
 }
 
+/// This function is used to delete a graph
+///
+/// See: https://docs.falkordb.com/commands/graph.delete.html
+///
+/// # Example
+///
+/// ```sh
+/// 127.0.0.1:6379> GRAPH.DELETE graph
+/// OK
+/// ```
 fn graph_delete(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+    if args.len() != 2 {
+        return Err(RedisError::WrongArity);
+    }
+
     let mut args = args.into_iter().skip(1);
     let key = args.next_arg()?;
-
     let key = ctx.open_key_writable(&key);
-
-    key.delete()
+    if key.get_value::<Graph>(&GRAPH_TYPE)?.is_some() {
+        key.delete()
+    } else {
+        Err(RedisError::Str("ERR Invalid graph operation on empty key"))
+    }
 }
 
 fn graph_query(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
