@@ -7950,7 +7950,7 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     pub fn GrB_Monoid_new_INT8(monoid: *mut GrB_Monoid, op: GrB_BinaryOp, identity: i8)
-        -> GrB_Info;
+    -> GrB_Info;
 }
 unsafe extern "C" {
     pub fn GrB_Monoid_new_INT16(
@@ -8256,7 +8256,7 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     pub fn GrB_Scalar_extractElement_UDT(x: *mut ::std::os::raw::c_void, s: GrB_Scalar)
-        -> GrB_Info;
+    -> GrB_Info;
 }
 unsafe extern "C" {
     pub fn GrB_Vector_new(v: *mut GrB_Vector, type_: GrB_Type, n: GrB_Index) -> GrB_Info;
@@ -8535,7 +8535,7 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     pub fn GrB_Vector_extractElement_Scalar(x: GrB_Scalar, v: GrB_Vector, i: GrB_Index)
-        -> GrB_Info;
+    -> GrB_Info;
 }
 unsafe extern "C" {
     pub fn GxB_Vector_isStoredElement(v: GrB_Vector, i: GrB_Index) -> GrB_Info;
@@ -8878,7 +8878,7 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     pub fn GrB_Matrix_setElement_INT8(C: GrB_Matrix, x: i8, i: GrB_Index, j: GrB_Index)
-        -> GrB_Info;
+    -> GrB_Info;
 }
 unsafe extern "C" {
     pub fn GrB_Matrix_setElement_INT16(
@@ -10076,7 +10076,7 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     pub fn GrB_Type_set_INT32(object: GrB_Type, arg1: i32, arg2: ::std::os::raw::c_int)
-        -> GrB_Info;
+    -> GrB_Info;
 }
 unsafe extern "C" {
     pub fn GrB_Type_set_VOID(
@@ -10173,7 +10173,7 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     pub fn GrB_Descriptor_wait(object: GrB_Descriptor, waitmode: ::std::os::raw::c_int)
-        -> GrB_Info;
+    -> GrB_Info;
 }
 unsafe extern "C" {
     pub fn GrB_Scalar_wait(object: GrB_Scalar, waitmode: ::std::os::raw::c_int) -> GrB_Info;
@@ -13151,7 +13151,7 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     pub fn GrB_Matrix_resize(C: GrB_Matrix, nrows_new: GrB_Index, ncols_new: GrB_Index)
-        -> GrB_Info;
+    -> GrB_Info;
 }
 unsafe extern "C" {
     pub fn GrB_Vector_resize(w: GrB_Vector, nrows_new: GrB_Index) -> GrB_Info;
@@ -14209,14 +14209,14 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     pub fn GxB_UnaryOp_ztype_name(arg1: *mut ::std::os::raw::c_char, arg2: GrB_UnaryOp)
-        -> GrB_Info;
+    -> GrB_Info;
 }
 unsafe extern "C" {
     pub fn GxB_UnaryOp_xtype(arg1: *mut GrB_Type, arg2: GrB_UnaryOp) -> GrB_Info;
 }
 unsafe extern "C" {
     pub fn GxB_UnaryOp_xtype_name(arg1: *mut ::std::os::raw::c_char, arg2: GrB_UnaryOp)
-        -> GrB_Info;
+    -> GrB_Info;
 }
 unsafe extern "C" {
     pub fn GxB_BinaryOp_ztype(arg1: *mut GrB_Type, arg2: GrB_BinaryOp) -> GrB_Info;
@@ -14383,7 +14383,7 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     pub fn GxB_Scalar_error(arg1: *mut *const ::std::os::raw::c_char, arg2: GrB_Scalar)
-        -> GrB_Info;
+    -> GrB_Info;
 }
 unsafe extern "C" {
     pub fn GxB_Vector_type_name(arg1: *mut ::std::os::raw::c_char, arg2: GrB_Vector) -> GrB_Info;

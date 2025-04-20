@@ -1,8 +1,8 @@
 use graph::{cypher::Parser, graph::Graph, planner::Planner, runtime::Value};
 use redis_module::{
-    native_types::RedisType, redis_module, redisvalue::RedisValueKey, Context, NextArg, RedisError,
-    RedisModuleTypeMethods, RedisResult, RedisString, RedisValue, Status,
-    REDISMODULE_TYPE_METHOD_VERSION,
+    Context, NextArg, REDISMODULE_TYPE_METHOD_VERSION, RedisError, RedisModuleTypeMethods,
+    RedisResult, RedisString, RedisValue, Status, native_types::RedisType, redis_module,
+    redisvalue::RedisValueKey,
 };
 use std::os::raw::c_void;
 
@@ -38,9 +38,11 @@ static GRAPH_TYPE: RedisType = RedisType::new(
     },
 );
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 unsafe extern "C" fn my_free(value: *mut c_void) {
-    drop(Box::from_raw(value.cast::<Graph>()));
+    unsafe {
+        drop(Box::from_raw(value.cast::<Graph>()));
+    }
 }
 
 fn raw_value_to_redis_value(g: &Graph, r: &Value) -> RedisValue {
@@ -187,11 +189,13 @@ fn graph_query(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
         debug > 0,
     ) {
         Ok(summary) => Ok(vec![
-            vec![vec![
-                RedisValue::Integer(1),
-                RedisValue::SimpleString("a".to_string()),
-            ]
-            .into()],
+            vec![
+                vec![
+                    RedisValue::Integer(1),
+                    RedisValue::SimpleString("a".to_string()),
+                ]
+                .into(),
+            ],
             res,
             vec![
                 RedisValue::SimpleString(format!("Labels added: {}", summary.labels_added)),
@@ -232,11 +236,13 @@ fn graph_ro_query(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
                 debug > 0,
             ) {
                 Ok(_) => Ok(vec![
-                    vec![vec![
-                        RedisValue::Integer(1),
-                        RedisValue::SimpleString("a".to_string()),
-                    ]
-                    .into()],
+                    vec![
+                        vec![
+                            RedisValue::Integer(1),
+                            RedisValue::SimpleString("a".to_string()),
+                        ]
+                        .into(),
+                    ],
                     res,
                     vec![],
                 ]
