@@ -15,7 +15,7 @@ RUN python3 -m venv venv
 
 RUN venv/bin/pip install falkordb pytest
 
-RUN git clone https://github.com/DrTimothyAldenDavis/GraphBLAS.git
+RUN git clone --branch v10.0.3 --single-branch https://github.com/DrTimothyAldenDavis/GraphBLAS.git
 
 RUN cd GraphBLAS && \
     make static CMAKE_OPTIONS='-DGRAPHBLAS_COMPACT=1 -DCMAKE_POSITION_INDEPENDENT_CODE=on' JOBS=2 CC=clang-20 CXX=clang++-20 && \

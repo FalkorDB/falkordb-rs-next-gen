@@ -15,6 +15,7 @@ env:
 
 jobs:
   docker:
+    if: contains(github.event.pull_request.changed_files, 'build/Dockerfile')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -37,6 +38,7 @@ jobs:
     runs-on: ubuntu-latest
     container: aviavni/falkordb-build:latest
     needs: docker
+    if: always()
     steps:
       - uses: actions/checkout@v3
       - name: Format
@@ -57,6 +59,7 @@ jobs:
     runs-on: ubuntu-latest
     container: aviavni/falkordb-build:latest
     needs: docker
+    if: always()
     steps:
       - uses: actions/checkout@v3
       - name: Run code coverage
