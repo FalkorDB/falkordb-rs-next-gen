@@ -9,8 +9,8 @@ use roaring::RoaringTreemap;
 use crate::{
     cypher::Parser,
     matrix::{Delete, Iter, Matrix, Set, Size},
-    planner::{Planner, IR},
-    runtime::{evaluate_param, ro_run, run, Runtime},
+    planner::{IR, Planner},
+    runtime::{Runtime, evaluate_param, ro_run, run},
     value::Value,
 };
 

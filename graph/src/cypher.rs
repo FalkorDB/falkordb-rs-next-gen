@@ -533,7 +533,7 @@ impl<'a> Parser<'a> {
                 token => {
                     return Err(self
                         .lexer
-                        .format_error(&format!("Unexpected token {token:?}")))
+                        .format_error(&format!("Unexpected token {token:?}")));
                 }
             }
         }
@@ -1076,7 +1076,7 @@ impl<'a> Parser<'a> {
                     token => {
                         return Err(self
                             .lexer
-                            .format_error(&format!("Unexpected token {token:?}")))
+                            .format_error(&format!("Unexpected token {token:?}")));
                     }
                 }
             } else {
