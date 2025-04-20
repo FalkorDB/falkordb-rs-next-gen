@@ -252,14 +252,12 @@ def test_array_concat():
 def test_graph_list():
 
     assert client is not None
-    client.select_graph("g1").query("return 1")
-    client.select_graph("g2").query("return 1")
-    client.select_graph("g3").query("return 1")
-    client.connection.set("ng", "ng")
+    for i in range(1000):
+        client.select_graph(f"g{i}").query("return 1")
+        client.connection.set(f"ng{i}", "ng")
     graphs = client.list_graphs()
 
-    assert len(graphs) == 4
-    assert 'g1' in graphs
-    assert 'g2' in graphs
-    assert 'g3' in graphs
+    assert len(graphs) == 1001
+    for i in range(1000):
+        assert f'g{i}' in graphs
     assert 'test' in graphs

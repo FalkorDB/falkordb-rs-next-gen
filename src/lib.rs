@@ -1,8 +1,8 @@
 use graph::{cypher::Parser, graph::Graph, planner::Planner, runtime::Value};
 use redis_module::{
-    Context, KeysCursor, NextArg, REDISMODULE_TYPE_METHOD_VERSION, RedisError,
-    RedisModuleTypeMethods, RedisResult, RedisString, RedisValue, Status, key::RedisKey,
-    native_types::RedisType, redis_module, redisvalue::RedisValueKey,
+    Context, NextArg, REDISMODULE_TYPE_METHOD_VERSION, RedisError, RedisModuleTypeMethods,
+    RedisResult, RedisString, RedisValue, Status, native_types::RedisType, redis_module,
+    redisvalue::RedisValueKey,
 };
 use std::os::raw::c_void;
 
@@ -256,8 +256,6 @@ fn graph_ro_query(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     )
 }
 
-/// TODO: change implemention once we have a better way to list graphs
-///
 /// This function is used to list all the graphs
 /// in the database. It returns a list of graphs IDs
 /// that are currently stored in the database.
@@ -277,23 +275,31 @@ fn graph_list(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
         return Err(RedisError::WrongArity);
     }
 
-    let cursor = KeysCursor::new();
+    let mut a = [
+        ctx.create_string("0"),
+        ctx.create_string("TYPE"),
+        ctx.create_string("graphdata"),
+    ];
     let mut res = Vec::new();
-
-    let scan_callback = |_ctx: &Context, key_name: RedisString, key: Option<&RedisKey>| {
-        // Check if the key is a graph
-        if let Some(key) = key {
-            if key
-                .get_value::<Graph>(&GRAPH_TYPE)
-                .is_ok_and(|graph| graph.is_some())
-            {
-                res.push(RedisValue::BulkRedisString(key_name));
+    loop {
+        let call_res = ctx.call("SCAN", a.iter().collect::<Vec<_>>().as_slice())?;
+        if let RedisValue::Array(arr) = &call_res {
+            if let RedisValue::Array(arr) = &arr[1] {
+                for v in arr {
+                    if let RedisValue::SimpleString(key) = v {
+                        res.push(RedisValue::SimpleString(key.to_string()));
+                    }
+                }
             }
+            if let RedisValue::SimpleString(i) = &arr[0] {
+                if i == "0" {
+                    break;
+                }
+                a[0] = ctx.create_string(i.to_string());
+            }
+        } else {
+            return Err(RedisError::Str("ERR Failed to list graphs"));
         }
-    };
-
-    while cursor.scan(ctx, &scan_callback) {
-        // do nothing
     }
     Ok(RedisValue::Array(res))
 }
