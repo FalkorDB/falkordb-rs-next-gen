@@ -1,8 +1,8 @@
 use graph::{cypher::Parser, graph::Graph, planner::Planner, runtime::Value};
 use redis_module::{
-    key::RedisKey, native_types::RedisType, redis_module, redisvalue::RedisValueKey, Context,
-    KeysCursor, NextArg, RedisError, RedisModuleTypeMethods, RedisResult, RedisString, RedisValue,
-    Status, REDISMODULE_TYPE_METHOD_VERSION,
+    Context, KeysCursor, NextArg, REDISMODULE_TYPE_METHOD_VERSION, RedisError,
+    RedisModuleTypeMethods, RedisResult, RedisString, RedisValue, Status, key::RedisKey,
+    native_types::RedisType, redis_module, redisvalue::RedisValueKey,
 };
 use std::os::raw::c_void;
 
@@ -187,18 +187,9 @@ fn query_mut(graph: &mut Graph, debug: u64, query: &str) -> Result<RedisValue, R
                 res,
                 vec![
                     RedisValue::SimpleString(format!("Labels added: {}", summary.labels_added)),
-                    RedisValue::SimpleString(format!(
-                        "Nodes created: {}",
-                        summary.nodes_created
-                    )),
-                    RedisValue::SimpleString(format!(
-                        "Nodes deleted: {}",
-                        summary.nodes_deleted
-                    )),
-                    RedisValue::SimpleString(format!(
-                        "Properties set: {}",
-                        summary.properties_set
-                    )),
+                    RedisValue::SimpleString(format!("Nodes created: {}", summary.nodes_created)),
+                    RedisValue::SimpleString(format!("Nodes deleted: {}", summary.nodes_deleted)),
+                    RedisValue::SimpleString(format!("Properties set: {}", summary.properties_set)),
                     RedisValue::SimpleString(format!(
                         "Relationships created: {}",
                         summary.relationships_created
