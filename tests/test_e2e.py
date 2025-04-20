@@ -210,10 +210,9 @@ def test_toInteger():
     for v in [[], [1], {}, {"a": 2}]:
         try:
             query("RETURN toInteger($p)", params={"p": v})
-            raise AssertionError("Expected an error")
+            assert False, "Expected an error"
         except ResponseError as e:
              assert f"Invalid input for function 'toInteger()': Expected a String, Float, Integer or Boolean, got:" in str(e)
-
 
 def test_list_range():
     for a in range(-10, 10):
@@ -270,7 +269,7 @@ def test_in_list():
     for value , name in  [(False, 'Boolean'), (1, 'Integer'), (1.0, 'Float'), ('"Avi"', 'String'), ({}, 'Map')]:
         try:
             query(f"RETURN 0 IN {value} AS r")
-            raise AssertionError("Expected an error")
+            assert False, "Expected an error"
         except ResponseError as e:
             assert f"Type mismatch" in str(e)
 
@@ -464,7 +463,7 @@ def test_list_size():
     for value, name in [(False, 'Boolean'), (True, 'Boolean'), (1, 'Integer'), (1.0, 'Float'), ({}, 'Map'), (float("nan"), "Float")]:
         try:
             query(f"RETURN size({value}) AS r")
-            raise AssertionError("Expected an error")
+            assert False, "Expected an error"
         except ResponseError as e:
             assert f"Type mismatch: expected List, String, or Null but was {name}" in str(e)
 
@@ -486,7 +485,7 @@ def test_list_head():
     for value, name in [(False, 'Boolean'), (True, 'Boolean'), (1, 'Integer'), (1.0, 'Float'), ({}, 'Map')]:
         try:
             query(f"RETURN head({value}) AS r")
-            raise AssertionError("Expected an error")
+            assert False, "Expected an error"
         except ResponseError as e:
             assert f"Type mismatch: expected List, but was {name}" in str(e)
 
@@ -506,7 +505,7 @@ def test_list_last():
     for value, name in [(False, 'Boolean'), (True, 'Boolean'), (1, 'Integer'), (1.0, 'Float'), ({}, 'Map')]:
         try:
             query(f"RETURN last({value}) AS r")
-            raise AssertionError("Expected an error")
+            assert False, "Expected an error"
         except ResponseError as e:
             assert f"Type mismatch: expected List, but was {name}" in str(e)
 
@@ -526,7 +525,7 @@ def test_list_tail():
     for value, name in [(False, 'Boolean'), (True, 'Boolean'), (1, 'Integer'), (1.0, 'Float'), ({}, 'Map'), (float("nan"), "Float")]:
         try:
             query(f"RETURN tail({value}) AS r")
-            raise AssertionError("Expected an error")
+            assert False, "Expected an error"
         except ResponseError as e:
             assert f"Type mismatch: expected List, but was {name}" in str(e)
 
@@ -552,10 +551,9 @@ def test_list_reverse():
     for value, name in [(False, 'Boolean'), (True, 'Boolean'), (1, 'Integer'), (1.0, 'Float'), ({}, 'Map'), (float("nan"), "Float")]:
         try:
             query(f"RETURN reverse({value}) AS r")
-            raise AssertionError("Expected an error")
+            assert False, "Expected an error"
         except ResponseError as e:
             assert f"Type mismatch" in str(e)
-
 
 def cypher_xor(a, b, c):
     """
@@ -626,13 +624,13 @@ def test_split():
     for value in [False, True, 1, 1.0, {}, float("nan"), [], ["foo"]]:
         try:
             query(f"RETURN split({value}, 'a') AS r")
-            raise AssertionError("Expected an error")
+            assert False, "Expected an error"
         except ResponseError as e:
             assert f"Type mismatch" in str(e)
 
         try:
             query(f"RETURN split('a', {value}) AS r")
-            raise AssertionError("Expected an error")
+            assert False, "Expected an error"
         except ResponseError as e:
             assert f"Type mismatch" in str(e)
 
@@ -659,13 +657,13 @@ def test_letter_casing():
     for value in [False, True, 1, 1.0, {}, float("nan"), [], ["foo"]]:
         try:
             query(f"RETURN toLower({value}) AS r")
-            raise AssertionError("Expected an error")
+            assert False, "Expected an error"
         except ResponseError as e:
             assert f"Type mismatch" in str(e)
 
     try:
         query(f"RETURN toUpper({value}) AS r")
-        raise AssertionError("Expected an error")
+        assert False, "Expected an error"
     except ResponseError as e:
         assert f"Type mismatch" in str(e)
 
@@ -702,7 +700,7 @@ def test_add():
 
     try:
         query("RETURN 'a' + True AS name")
-        raise AssertionError("Expected an error")
+        assert False, "Expected an error"
     except ResponseError as e:
         assert "Unexpected types for add operator" in str(e)
 
@@ -724,7 +722,7 @@ def test_starts_with():
 
     try:
         query("RETURN [1, 2] STARTS WITH 'a' AS name")
-        raise AssertionError("Expected an error")
+        assert False, "Expected an error"
     except ResponseError as e:
         assert "Type mismatch: expected String or null, but was:" in str(e)
 
@@ -746,7 +744,7 @@ def test_ends_with():
 
     try:
         query("RETURN [1, 2] ENDS WITH 'a' AS name")
-        raise AssertionError("Expected an error")
+        assert False, "Expected an error"
     except ResponseError as e:
         assert "Type mismatch: expected String or null, but was:" in str(e)
 
@@ -771,7 +769,7 @@ def test_contains():
 
     try:
         query("RETURN [1, 2] CONTAINS 'a' AS name")
-        raise AssertionError("Expected an error")
+        assert False, "Expected an error"
     except ResponseError as e:
         assert "Type mismatch: expected String or null, but was:" in str(e)
 
@@ -810,19 +808,19 @@ def test_replace():
     for value, name in [(1, 'Integer'), (1.0, 'Float'), (True, 'Boolean'), ({}, 'Map'), ([], 'List')]:
         try:
             query(f"RETURN replace({value}, 'a', 'b') AS result")
-            raise AssertionError("Expected an error")
+            assert False, "Expected an error"
         except ResponseError as e:
             assert "Type mismatch" in str(e)
 
         try:
             query(f"RETURN replace('abc', {value}, 'b') AS result")
-            raise AssertionError("Expected an error")
+            assert False, "Expected an error"
         except ResponseError as e:
             assert "Type mismatch" in str(e)
 
         try:
             query(f"RETURN replace('abc', 'a', {value}) AS result")
-            raise AssertionError("Expected an error")
+            assert False, "Expected an error"
         except ResponseError as e:
             assert "Type mismatch" in str(e)
 
@@ -856,13 +854,13 @@ def test_regex_matches():
     for value, name in [(1, 'Integer'), (1.0, 'Float'), (True, 'Boolean'), ({}, 'Map'), ([], 'List')]:
         try:
             query(f"RETURN {value} =~ 'a.*' AS result")
-            raise AssertionError("Expected an error")
+            assert False, "Expected an error"
         except ResponseError as e:
             assert "Type mismatch" in str(e)
 
         try:
             query(f"RETURN 'abc' =~ {value} AS result")
-            raise AssertionError("Expected an error")
+            assert False, "Expected an error"
         except ResponseError as e:
             assert "Type mismatch" in str(e)
 
@@ -887,7 +885,7 @@ def test_left():
         # Negative values for n
         try:
             query("RETURN left('abc', -1) AS result")
-            raise AssertionError("Expected an error")
+            assert False, "Expected an error"
         except ResponseError as e:
             assert "Invalid input for function 'left'" in str(e)
 
@@ -895,13 +893,13 @@ def test_left():
         for value, name in [(1.0, 'Float'), (True, 'Boolean'), ({}, 'Map'), ([], 'List')]:
             try:
                 query(f"RETURN left({value}, 2) AS result")
-                raise AssertionError("Expected an error")
+                assert False, "Expected an error"
             except ResponseError as e:
                 assert "Type mismatch" in str(e)
 
             try:
                 query(f"RETURN left('abc', {value}) AS result")
-                raise AssertionError("Expected an error")
+                assert False, "Expected an error"
             except ResponseError as e:
                 assert "Type mismatch" in str(e)
 
@@ -927,7 +925,7 @@ def test_ltrim():
     for value, name in [(1.0, 'Float'), (True, 'Boolean'), ({}, 'Map'), ([], 'List')]:
         try:
             query(f"RETURN ltrim({value}) AS result")
-            raise AssertionError("Expected an error")
+            assert False, "Expected an error"
         except ResponseError as e:
             assert "Type mismatch" in str(e)
 
@@ -952,7 +950,7 @@ def test_right():
     # Negative values for n
     try:
         query("RETURN right('abc', -1) AS result")
-        raise AssertionError("Expected an error")
+        assert False, "Expected an error"
     except ResponseError as e:
         assert "Invalid input for function 'right'" in str(e)
 
@@ -960,12 +958,12 @@ def test_right():
     for value, name in [(1.0, 'Float'), (True, 'Boolean'), ({}, 'Map'), ([], 'List')]:
         try:
             query(f"RETURN right({value}, 2) AS result")
-            raise AssertionError("Expected an error")
+            assert False, "Expected an error"
         except ResponseError as e:
             assert "Type mismatch" in str(e)
 
         try:
             query(f"RETURN right('abc', {value}) AS result")
-            raise AssertionError("Expected an error")
+            assert False, "Expected an error"
         except ResponseError as e:
             assert "Type mismatch" in str(e)
