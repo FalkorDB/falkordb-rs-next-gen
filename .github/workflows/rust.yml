@@ -15,7 +15,7 @@ env:
 
 jobs:
   docker:
-    if: contains(github.event.pull_request.changed_files, 'build/Dockerfile')
+    if: ${{ !contains(github.event.pull_request.changed_files, 'build/Dockerfile') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
