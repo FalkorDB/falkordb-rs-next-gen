@@ -6,6 +6,8 @@ use redis_module::{
 };
 use std::os::raw::c_void;
 
+const EMPTY_KEY_ERR: RedisResult = Err(RedisError::Str("ERR Invalid graph operation on empty key"));
+
 static GRAPH_TYPE: RedisType = RedisType::new(
     "graphdata",
     0,
@@ -160,7 +162,7 @@ fn graph_delete(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     if key.get_value::<Graph>(&GRAPH_TYPE)?.is_some() {
         key.delete()
     } else {
-        Err(RedisError::Str("ERR Invalid graph operation on empty key"))
+        EMPTY_KEY_ERR
     }
 }
 
@@ -187,18 +189,9 @@ fn query_mut(graph: &mut Graph, debug: u64, query: &str) -> Result<RedisValue, R
                 res,
                 vec![
                     RedisValue::SimpleString(format!("Labels added: {}", summary.labels_added)),
-                    RedisValue::SimpleString(format!(
-                        "Nodes created: {}",
-                        summary.nodes_created
-                    )),
-                    RedisValue::SimpleString(format!(
-                        "Nodes deleted: {}",
-                        summary.nodes_deleted
-                    )),
-                    RedisValue::SimpleString(format!(
-                        "Properties set: {}",
-                        summary.properties_set
-                    )),
+                    RedisValue::SimpleString(format!("Nodes created: {}", summary.nodes_created)),
+                    RedisValue::SimpleString(format!("Nodes deleted: {}", summary.nodes_deleted)),
+                    RedisValue::SimpleString(format!("Properties set: {}", summary.properties_set)),
                     RedisValue::SimpleString(format!(
                         "Relationships created: {}",
                         summary.relationships_created
@@ -228,6 +221,15 @@ fn graph_query(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     }
 }
 
+/// This function is used to execute a read only query on a graph
+///
+/// See: https://docs.falkordb.com/commands/graph.ro_query.html
+/// 
+/// # Example
+/// 
+/// ```sh
+/// GRAPH.RO_QUERY graph "MATCH (n) RETURN n"
+/// ```
 fn graph_ro_query(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     let mut args = args.into_iter().skip(1);
     let key = args.next_arg()?;
@@ -236,8 +238,12 @@ fn graph_ro_query(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
 
     let key = ctx.open_key(&key);
 
+    // We check if the key exists and is of type Graph if wrong type `get_value` return an error
     (key.get_value::<Graph>(&GRAPH_TYPE)?).map_or_else(
-        || Ok(RedisValue::Null),
+        || {
+            // If the key does not exist, we return an error
+            EMPTY_KEY_ERR
+        },
         |graph| {
             let mut res = Vec::new();
             match graph.ro_query(
