@@ -247,7 +247,7 @@ impl Runtime {
                 [Value::String(s)] => s.parse::<i64>().map(Value::Int).or_else(|_| {
                     s.parse::<f64>()
                         .map(|f| Value::Int(f as i64))
-                        .map_err(|_| format!("Failed to parse string `{}` as integer", s))
+                        .or(Ok(Value::Null))
                 }),
                 [Value::Int(i)] => Ok(Value::Int(*i)),
                 [Value::Float(f)] => Ok(Value::Int(*f as i64)),

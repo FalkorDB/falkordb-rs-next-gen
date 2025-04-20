@@ -199,24 +199,13 @@ def test_large_graph():
     query("UNWIND range(100000) AS x CREATE (n:N {v: x})-[r:R {v: x}]->(m:M {v: x})", write=True)
 
 def test_toInteger():
-    res = query("RETURN toInteger($p)", params={"p": None})
-    assert res.result_set == [[None]]
+    for v in [None, '']:
+        res = query("RETURN toInteger($p)", params={"p": v})
+        assert res.result_set == [[None]]
 
-    res = query("RETURN toInteger($p)", params={"p": True})
-    assert res.result_set == [[1]]
-
-    res = query("RETURN toInteger($p)", params={"p": False})
-    assert res.result_set == [[0]]
-
-    for v in [1, 1.0, 1.1, '1', '1.0', '1.1']:
+    for v in [True, False, 1, 1.0, 1.1, '1', '1.0', '1.1']:
         res = query("RETURN toInteger($p)", params={"p": v})
         assert res.result_set == [[int(float(v))]]
-
-    try:
-        query("RETURN toInteger('')")
-        raise AssertionError("Expected an error")
-    except ResponseError as e:
-        assert f"Failed to parse string" in str(e)
 
     for v in [[], [1], {}, {"a": 2}]:
         try:
