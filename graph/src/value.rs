@@ -1,6 +1,5 @@
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
-use std::mem;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
@@ -22,18 +21,19 @@ trait OrderedEnum {
 impl OrderedEnum for Value {
     fn order(&self) -> u32 {
         match self {
-            Value::Null => 0,
-            Value::Bool(_) => 1,
-            Value::Int(_) => 2,
-            Value::Float(_) => 3,
-            Value::String(_) => 4,
-            Value::List(_) => 5,
-            Value::Map(_) => 6,
-            Value::Node(_) => 7,
-            Value::Relationship(_, _, _) => 8,
+            Self::Null => 0,
+            Self::Bool(_) => 1,
+            Self::Int(_) => 2,
+            Self::Float(_) => 3,
+            Self::String(_) => 4,
+            Self::List(_) => 5,
+            Self::Map(_) => 6,
+            Self::Node(_) => 7,
+            Self::Relationship(_, _, _) => 8,
         }
     }
 }
+
 #[derive(Debug, PartialEq)]
 enum DisjointOrNull {
     Disjoint,
@@ -58,34 +58,19 @@ impl Value {
     }
 
     fn compare_value(&self, b: &Self) -> (Ordering, DisjointOrNull) {
-        if mem::discriminant(self) == mem::discriminant(b) {
-            match (self, b) {
-                (Self::Int(a), Self::Int(b)) => return (a.cmp(b), DisjointOrNull::None),
-                (Self::Bool(a), Self::Bool(b)) => return (a.cmp(b), DisjointOrNull::None),
-                (Self::Float(a), Self::Float(b)) => {
-                    return compare_floats(*a, *b);
-                }
-                (Self::String(a), Self::String(b)) => return (a.cmp(b), DisjointOrNull::None),
-                (Self::Null, Value::Null) => {}
-
-                (Self::List(a), Self::List(b)) => return Self::compare_list(a, b),
-                (Self::Map(a), Self::Map(b)) => return Self::compare_map(a, b),
-                (Self::Node(a), Self::Node(b)) => {
-                    return (a.cmp(b), DisjointOrNull::None);
-                }
-                (Self::Relationship(a, b, c), Self::Relationship(a1, b1, c1)) => {
-                    return ((a, b, c).cmp(&(a1, b1, c1)), DisjointOrNull::None);
-                }
-
-                _ => {
-                    unreachable!()
-                }
-            }
-        }
-
-        // the inputs have different type - compare them if they
-        // are both numerics of differing types
         match (self, b) {
+            (Self::Int(a), Self::Int(b)) => (a.cmp(b), DisjointOrNull::None),
+            (Self::Bool(a), Self::Bool(b)) => (a.cmp(b), DisjointOrNull::None),
+            (Self::Float(a), Self::Float(b)) => compare_floats(*a, *b),
+            (Self::String(a), Self::String(b)) => (a.cmp(b), DisjointOrNull::None),
+            (Self::List(a), Self::List(b)) => Self::compare_list(a, b),
+            (Self::Map(a), Self::Map(b)) => Self::compare_map(a, b),
+            (Self::Node(a), Self::Node(b)) => (a.cmp(b), DisjointOrNull::None),
+            (Self::Relationship(a, b, c), Self::Relationship(a1, b1, c1)) => {
+                ((a, b, c).cmp(&(a1, b1, c1)), DisjointOrNull::None)
+            }
+            // the inputs have different type - compare them if they
+            // are both numerics of differing types
             (Self::Int(i), Self::Float(f)) => {
                 #[allow(clippy::cast_precision_loss)]
                 return compare_floats(*i as f64, *f);
@@ -94,19 +79,14 @@ impl Value {
                 #[allow(clippy::cast_precision_loss)]
                 return compare_floats(*f, *i as f64);
             }
-            _ => {}
+            (Self::Null, _) | (_, Self::Null) => {
+                (self.order().cmp(&b.order()), DisjointOrNull::ComparedNull)
+            }
+            _ => (self.order().cmp(&b.order()), DisjointOrNull::Disjoint),
         }
-
-        // check if either type is null
-        let disjoint = match (self, b) {
-            (Self::Null, _) | (_, Self::Null) => DisjointOrNull::ComparedNull,
-            _ => DisjointOrNull::Disjoint,
-        };
-
-        (self.order().cmp(&b.order()), disjoint)
     }
 
-    fn compare_list(a: &Vec<Self>, b: &Vec<Self>) -> (Ordering, DisjointOrNull) {
+    fn compare_list(a: &[Self], b: &[Self]) -> (Ordering, DisjointOrNull) {
         let array_a_len = a.len();
         let array_b_len = b.len();
         if array_a_len == 0 && array_b_len == 0 {
@@ -118,9 +98,7 @@ impl Value {
         let mut null_counter: usize = 0;
         let mut not_equal_counter: usize = 0;
 
-        for i in 0..min_len {
-            let a_value = &a[i];
-            let b_value = &b[i];
+        for (a_value, b_value) in a.iter().zip(b) {
             let (compare_result, disjoint_or_null) = a_value.compare_value(b_value);
             if disjoint_or_null != DisjointOrNull::None {
                 if disjoint_or_null == DisjointOrNull::ComparedNull {
@@ -160,31 +138,27 @@ impl Value {
         a: &BTreeMap<String, Self>,
         b: &BTreeMap<String, Self>,
     ) -> (Ordering, DisjointOrNull) {
-        let key_count = a.keys().len();
-        let a_key_count = a.keys().len();
-        let b_key_count = b.keys().len();
+        let a_key_count = a.len();
+        let b_key_count = b.len();
         if a_key_count != b_key_count {
             return (a_key_count.cmp(&b_key_count), DisjointOrNull::None);
         }
 
         // sort keys
-        let mut a_keys: Vec<String> = a.keys().cloned().collect();
+        let mut a_keys: Vec<&String> = a.keys().collect();
         a_keys.sort();
-        let mut b_keys: Vec<String> = b.keys().cloned().collect();
+        let mut b_keys: Vec<&String> = b.keys().collect();
         b_keys.sort();
 
         // iterate over keys count
-        for i in 0..key_count {
-            let a_key = &a_keys[i];
-            let b_key = &b_keys[i];
-            if a_key != b_key {
-                return (a_key.cmp(b_key), DisjointOrNull::None);
+        for (a_key, b_key) in a_keys.iter().zip(b_keys) {
+            if *a_key != b_key {
+                return ((*a_key).cmp(b_key), DisjointOrNull::None);
             }
         }
 
         // iterate over values
-        for i in 0..key_count {
-            let key = &a_keys[i];
+        for key in a_keys {
             let a_value = &a[key];
             let b_value = &b[key];
             let (compare_result, disjoint_or_null) = a_value.compare_value(b_value);
