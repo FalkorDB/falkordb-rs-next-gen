@@ -103,16 +103,15 @@ impl<'a> Lexer<'a> {
                 '+' => return (Token::Plus, 1),
                 '-' => {
                     return match chars.next() {
-                        Some('0'..='9') => Self::lex_number(str, pos),
-                        Some('.') => Self::lex_number(str, pos),
+                        Some('.' | '0'..='9') => Self::lex_number(str, pos),
                         _ => (Token::Dash, 1),
-                    }
+                    };
                 }
                 '=' => {
                     return match chars.next() {
                         Some('~') => (Token::RegexMatches, 2),
                         _ => (Token::Equal, 1),
-                    }
+                    };
                 }
                 '<' => return (Token::LessThan, 1),
                 '>' => return (Token::GreaterThan, 1),
@@ -123,7 +122,7 @@ impl<'a> Lexer<'a> {
                         Some('.') => (Token::DotDot, 2),
                         Some('0'..='9') => Self::lex_number(str, pos),
                         _ => (Token::Dot, 1),
-                    }
+                    };
                 }
                 '\'' => {
                     let mut len = 1;
@@ -213,15 +212,16 @@ impl<'a> Lexer<'a> {
                 }
                 _ => {
                     return (
-                        Token::Error(format!("Unexpected token at pos: {} at char {}", pos, char)),
+                        Token::Error(format!("Unexpected token at pos: {pos} at char {char}")),
                         0,
-                    )
+                    );
                 }
             }
         }
         (Token::EndOfFile, 0)
     }
 
+    #[allow(clippy::too_many_lines)]
     fn lex_number(input: &str, start_pos: usize) -> (Token, usize) {
         let mut chars = input[start_pos..].chars().peekable();
         let mut len = 0;
@@ -275,7 +275,7 @@ impl<'a> Lexer<'a> {
         let mut has_digits_after_dot = false;
 
         // Fractional part
-        if let Some(&'.') = chars.peek() {
+        if chars.peek() == Some(&'.') {
             has_dot = true;
             chars.next();
             len += 1;
@@ -344,7 +344,7 @@ impl<'a> Lexer<'a> {
 
         // if the last character is a dot, it is an integer and we should not eat the last dot
         if has_dot && !has_digits_after_dot {
-            len = len - 1;
+            len -= 1;
             has_dot = false;
         }
 
@@ -355,25 +355,18 @@ impl<'a> Lexer<'a> {
             match number_str.parse::<f64>() {
                 Ok(f) if f.is_finite() => (Token::Float(f), len),
                 Ok(_) => (
-                    Token::Error(format!("FloatingPointOverflow: {}", number_str)),
+                    Token::Error(format!("FloatingPointOverflow: {number_str}")),
                     len,
                 ),
-                Err(_) => (Token::Error(format!("Invalid float: {}", number_str)), len),
+                Err(_) => (Token::Error(format!("Invalid float: {number_str}")), len),
             }
         } else {
             // Otherwise parse as integer
-            let radix = if number_str.chars().next().unwrap() == '0' {
-                8
-            } else {
-                10
-            };
-            match i64::from_str_radix(number_str, radix) {
-                Ok(i) => (Token::Integer(i), len),
-                Err(_) => (
-                    Token::Error(format!("Invalid integer: {}", number_str)),
-                    len,
-                ),
-            }
+            let radix = if number_str.starts_with('0') { 8 } else { 10 };
+            i64::from_str_radix(number_str, radix).map_or_else(
+                |_| (Token::Error(format!("Invalid integer: {number_str}")), len),
+                |i| (Token::Integer(i), len),
+            )
         }
     }
 
@@ -401,17 +394,14 @@ impl<'a> Lexer<'a> {
             let number_str = if input.starts_with('-') || input.starts_with('+') {
                 let sign = &input[0..1];
                 let rest = &input[3..len];
-                format!("{}{}", sign, rest)
+                format!("{sign}{rest}")
             } else {
                 input[2..len].to_string()
             };
-            match i64::from_str_radix(number_str.as_str(), radix) {
-                Ok(i) => (Token::Integer(i), len),
-                Err(_) => (
-                    Token::Error(format!("Invalid integer: {}", number_str.as_str())),
-                    len,
-                ),
-            }
+            i64::from_str_radix(number_str.as_str(), radix).map_or_else(
+                |_| (Token::Error(format!("Invalid integer: {number_str}")), len),
+                |i| (Token::Integer(i), len),
+            )
         } else {
             (
                 Token::Error(format!("Invalid integer: {}", &input[..len])),
@@ -738,7 +728,7 @@ impl<'a> Parser<'a> {
     fn parse_list_operator_expression(&mut self) -> Result<QueryExprIR, String> {
         let mut expr = self.parse_property_expression()?;
 
-        while let Token::LBrace = self.lexer.current() {
+        while self.lexer.current() == Token::LBrace {
             self.lexer.next();
 
             let from = self.parse_expr();
@@ -1102,16 +1092,16 @@ mod tests {
             ("-.1", Token::Float(-0.1)),
             ("1e0", Token::Float(1e0)),
         ];
-        for (input, expected) in inputs.iter() {
+        for (input, expected) in inputs {
             let (token, _) = Lexer::lex_number(input, 0);
-            assert_eq!(token, *expected);
+            assert_eq!(token, expected);
         }
 
         let (token, _) = Lexer::lex_number("1.34E999", 0);
         assert_eq!(
             token,
             Token::Error("FloatingPointOverflow: 1.34E999".to_string())
-        )
+        );
     }
 
     #[test]
@@ -1144,10 +1134,9 @@ mod tests {
             ("02613152366", Token::Integer(372036854)),
         ];
 
-        for (input, expected) in inputs.iter() {
-            println!("Testing {}", input);
+        for (input, expected) in inputs {
             let (token, _) = Lexer::lex_number(input, 0);
-            assert_eq!(token, *expected);
+            assert_eq!(token, expected);
         }
     }
 }
