@@ -296,10 +296,10 @@ redis_module! {
     data_types: [GRAPH_TYPE],
     init: graph_init,
     commands: [
-        ["graph.delete", graph_delete, "write", 1, 1, 1, ""],
-        ["graph.query", graph_query, "write deny-oom", 1, 1, 1, ""],
-        ["graph.ro_query", graph_ro_query, "readonly", 1, 1, 1, ""],
-        ["graph.parse", graph_parse, "readonly", 0, 0, 0, ""],
-        ["graph.plan", graph_plan, "readonly", 0, 0, 0, ""],
+        ["graph.DELETE", graph_delete, "write", 1, 1, 1, ""],
+        ["graph.QUERY", graph_query, "write deny-oom", 1, 1, 1, ""],
+        ["graph.RO_QUERY", graph_ro_query, "readonly", 1, 1, 1, ""],
+        ["graph.PARSE", graph_parse, "readonly", 0, 0, 0, ""],
+        ["graph.PLAN", graph_plan, "readonly", 0, 0, 0, ""],
     ],
 }
