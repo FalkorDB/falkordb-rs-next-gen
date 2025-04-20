@@ -1,6 +1,6 @@
 use graph::{cypher::Parser, graph::Graph, planner::Planner, runtime::Value};
 use redis_module::{
-    Context, NextArg, RedisError, REDISMODULE_TYPE_METHOD_VERSION, RedisModuleTypeMethods, 
+    Context, NextArg, REDISMODULE_TYPE_METHOD_VERSION, RedisError, RedisModuleTypeMethods,
     RedisResult, RedisString, RedisValue, Status, native_types::RedisType, redis_module,
     redisvalue::RedisValueKey,
 };
@@ -22,7 +22,7 @@ static GRAPH_TYPE: RedisType = RedisType::new(
 
         // Aux data
         aux_load: None,
-        aux_save: None,RedisError
+        aux_save: None,
         aux_save2: None,
         aux_save_triggers: 0,
 
