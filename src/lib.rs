@@ -271,6 +271,56 @@ fn graph_ro_query(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     )
 }
 
+/// This function is used to list all the graphs
+/// in the database. It returns a list of graphs IDs
+/// that are currently stored in the database.
+///
+/// See: https://docs.falkordb.com/commands/graph.list.html
+///
+/// # Example
+///
+/// ```sh
+/// 127.0.0.1:6379> GRAPH.LIST
+/// 2) G
+/// 3) resources
+/// 4) players
+/// ```
+fn graph_list(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+    if args.len() != 1 {
+        return Err(RedisError::WrongArity);
+    }
+
+    let mut a = [
+        ctx.create_string("0"),
+        ctx.create_string("TYPE"),
+        ctx.create_string("graphdata"),
+    ];
+    let mut res = Vec::new();
+    loop {
+        let call_res = ctx.call("SCAN", a.iter().collect::<Vec<_>>().as_slice())?;
+        match call_res {
+            RedisValue::Array(arr) => {
+                if let RedisValue::Array(arr) = &arr[1] {
+                    res.extend(arr.iter().filter_map(|v| {
+                        if let RedisValue::SimpleString(key) = v {
+                            Some(RedisValue::SimpleString(key.to_string()))
+                        } else {
+                            None
+                        }
+                    }));
+                }
+                if let RedisValue::SimpleString(i) = &arr[0] {
+                    if i == "0" {
+                        return Ok(RedisValue::Array(res));
+                    }
+                    a[0] = ctx.create_string(i.to_string());
+                }
+            }
+            _ => return Err(RedisError::Str("ERR Failed to list graphs")),
+        }
+    }
+}
+
 fn graph_parse(_ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     let mut args = args.into_iter().skip(1);
     let query = args.next_str()?;
@@ -314,6 +364,7 @@ redis_module! {
         ["graph.DELETE", graph_delete, "write", 1, 1, 1, ""],
         ["graph.QUERY", graph_query, "write deny-oom", 1, 1, 1, ""],
         ["graph.RO_QUERY", graph_ro_query, "readonly", 1, 1, 1, ""],
+        ["graph.LIST", graph_list, "readonly", 0, 0, 0, ""],
         ["graph.PARSE", graph_parse, "readonly", 0, 0, 0, ""],
         ["graph.PLAN", graph_plan, "readonly", 0, 0, 0, ""],
     ],
