@@ -158,6 +158,10 @@ impl Runtime {
                 for n in nodes {
                     if let Value::Node(id) = n {
                         runtime.nodes_deleted += 1;
+                        for (src, dest, id) in g.get_node_relationships(id).collect::<Vec<_>>() {
+                            runtime.relationships_deleted += 1;
+                            g.delete_relationship(id, src, dest);
+                        }
                         g.delete_node(id);
                     }
                 }
@@ -354,7 +358,7 @@ impl Runtime {
     }
 
     fn start_node(
-        g: &Graph,
+        _g: &Graph,
         _runtime: &mut Self,
         args: Value,
     ) -> Value {
@@ -368,7 +372,7 @@ impl Runtime {
     }
 
     fn end_node(
-        g: &Graph,
+        _g: &Graph,
         _runtime: &mut Self,
         args: Value,
     ) -> Value {

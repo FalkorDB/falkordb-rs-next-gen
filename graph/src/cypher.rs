@@ -313,50 +313,62 @@ impl<'a> Parser<'a> {
 
     fn parse_query(&mut self) -> Result<QueryIR, String> {
         let mut clauses = Vec::new();
-
         loop {
-            match self.lexer.current() {
-                Token::Call => {
-                    self.lexer.next();
-                    clauses.push(self.parse_call_clause()?);
-                }
-                Token::Match => {
-                    self.lexer.next();
-                    clauses.push(self.parse_match_clause()?);
-                }
-                Token::Unwind => {
-                    self.lexer.next();
-                    clauses.push(self.parse_unwind_clause()?);
-                }
-                Token::Create => {
-                    self.lexer.next();
-                    clauses.push(self.parse_create_clause()?);
-                }
-                Token::Delete => {
-                    self.lexer.next();
-                    clauses.push(self.parse_delete_clause()?);
-                }
-                Token::Where => {
-                    self.lexer.next();
-                    clauses.push(self.parse_where_clause()?);
-                }
-                Token::With => {
-                    self.lexer.next();
-                    clauses.push(self.parse_with_clause()?);
-                }
-                Token::Return => {
-                    self.lexer.next();
-                    clauses.push(self.parse_return_clause()?);
-                }
-                Token::EndOfFile => {
-                    return Ok(QueryIR::Query(clauses));
-                }
-                token => {
-                    return Err(self
-                        .lexer
-                        .format_error(&format!("Unexpected token {token:?}")))
-                }
+            while let Ok(clause) = self.parse_reading_clasue() {
+                clauses.push(clause);
             }
+            while let Ok(clause) = self.parse_writing_clause() {
+                clauses.push(clause);
+            }
+            if optional_match_token!(self.lexer, With) {
+                clauses.push(self.parse_with_clause()?);
+            } else {
+                break;
+            }
+        }
+        if optional_match_token!(self.lexer, Return) {
+            clauses.push(self.parse_return_clause()?);
+        }
+        Ok(QueryIR::Query(clauses))
+    }
+
+    fn parse_reading_clasue(&mut self) -> Result<QueryIR, String> {
+        match self.lexer.current() {
+            Token::Match => {
+                self.lexer.next();
+                self.parse_match_clause()
+            }
+            Token::Unwind => {
+                self.lexer.next();
+                self.parse_unwind_clause()
+            }
+            Token::Call => {
+                self.lexer.next();
+                self.parse_call_clause()
+            }
+            Token::Where => {
+                self.lexer.next();
+                self.parse_where_clause()
+            }
+            token => Err(self
+                .lexer
+                .format_error(&format!("Unexpected token {token:?}"))),
+        }
+    }
+
+    fn parse_writing_clause(&mut self) -> Result<QueryIR, String> {
+        match self.lexer.current() {
+            Token::Create => {
+                self.lexer.next();
+                self.parse_create_clause()
+            }
+            Token::Delete => {
+                self.lexer.next();
+                self.parse_delete_clause()
+            }
+            token => Err(self
+                .lexer
+                .format_error(&format!("Unexpected token {token:?}"))),
         }
     }
 

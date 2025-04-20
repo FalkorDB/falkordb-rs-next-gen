@@ -8,7 +8,7 @@ use roaring::RoaringTreemap;
 
 use crate::{
     cypher::Parser,
-    matrix::{self, Delete, Matrix, Set, Size},
+    matrix::{self, Matrix, Remove, Set, Size},
     planner::{Planner, IR},
     runtime::{evaluate_param, ro_run, run, Runtime, Value},
     tensor::{self, Tensor},
@@ -394,14 +394,23 @@ impl Graph {
     ) {
         self.deleted_nodes.insert(id);
         self.node_count -= 1;
-        self.all_nodes_matrix.delete(id, id);
+        self.all_nodes_matrix.remove(id, id);
 
         for (label_id, label_matrix) in self.labels_matices.iter_mut().map(|(_, m)| m).enumerate() {
-            label_matrix.delete(id, id);
-            self.node_labels_matrix.delete(id, label_id as _);
+            label_matrix.remove(id, id);
+            self.node_labels_matrix.remove(id, label_id as _);
         }
 
         self.node_properties_map.remove(&id);
+    }
+
+    pub fn get_node_relationships(
+        &self,
+        id: u64,
+    ) -> impl Iterator<Item = (u64, u64, u64)> + '_ {
+        self.relationship_matrices
+            .values()
+            .flat_map(move |m| m.iter(id, id))
     }
 
     pub fn get_nodes(
@@ -409,17 +418,17 @@ impl Graph {
         labels: &[String],
     ) -> Option<matrix::Iter<bool>> {
         if labels.is_empty() {
-            return Some(self.all_nodes_matrix.iter());
+            return Some(self.all_nodes_matrix.iter(0, u64::MAX));
         }
         self.get_label_matrix(&labels[0])
-            .map(super::matrix::Matrix::<bool>::iter)
+            .map(|m| m.iter(0, u64::MAX))
     }
 
     pub fn get_node_label_ids(
         &self,
         id: u64,
     ) -> impl Iterator<Item = u64> {
-        self.node_labels_matrix.iter_row(id).map(|(_, l)| l)
+        self.node_labels_matrix.iter(id, id).map(|(_, l)| l)
     }
 
     pub fn get_node_property(
@@ -477,6 +486,19 @@ impl Graph {
         Value::Relationship(id, from, to)
     }
 
+    pub fn delete_relationship(
+        &mut self,
+        id: u64,
+        src: u64,
+        dest: u64,
+    ) {
+        self.deleted_relationships.insert(id);
+        self.relationship_count -= 1;
+        self.relationship_matrices
+            .values_mut()
+            .for_each(|m| m.remove(src, dest, id));
+    }
+
     pub fn get_relationships(
         &self,
         types: &[String],
@@ -486,7 +508,7 @@ impl Graph {
         }
         self.get_relationship_matrix(&types[0]).map(|m| {
             m.wait();
-            m.iter()
+            m.iter(0, u64::MAX)
         })
     }
 
@@ -495,7 +517,7 @@ impl Graph {
         id: u64,
     ) -> u64 {
         self.relationship_type_matrix
-            .iter_row(id)
+            .iter(id, id)
             .map(|(_, l)| l)
             .next()
             .unwrap()

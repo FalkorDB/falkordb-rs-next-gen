@@ -1,7 +1,7 @@
 use std::{ffi::c_void, sync::Once};
 
 use crate::{
-    matrix::{self, Get, Matrix, Set, Size, UnaryOp},
+    matrix::{self, Matrix, Remove, Set, Size, UnaryOp},
     vector::{self, Vector},
     GraphBLAS::GrB_Vector,
 };
@@ -94,6 +94,23 @@ impl Tensor {
         // }
     }
 
+    pub fn remove(
+        &mut self,
+        src: u64,
+        dest: u64,
+        id: u64,
+    ) {
+        // if let Some(current_edge) = self.m.get(src, dest) {
+        //     if single_edge!(current_edge) {
+        //         let mut v = Vector::from(clear_msb!(current_edge) as GrB_Vector);
+        //         v.set(id, false);
+        //         v.wait();
+        //     } else {
+        self.m.remove(src, dest);
+        //     }
+        // }
+    }
+
     pub fn resize(
         &mut self,
         nrows: u64,
@@ -103,8 +120,12 @@ impl Tensor {
     }
 
     #[must_use]
-    pub fn iter(&self) -> Iter {
-        Iter::new(self)
+    pub fn iter(
+        &self,
+        min_row: u64,
+        max_row: u64,
+    ) -> Iter {
+        Iter::new(self, min_row, max_row)
     }
 
     pub fn wait(&self) {
@@ -120,9 +141,13 @@ pub struct Iter {
 }
 
 impl Iter {
-    fn new(m: &Tensor) -> Self {
+    fn new(
+        m: &Tensor,
+        min_row: u64,
+        max_row: u64,
+    ) -> Self {
         Self {
-            mit: m.m.iter(),
+            mit: m.m.iter(min_row, max_row),
             vit: None,
             src: 0,
             dest: 0,

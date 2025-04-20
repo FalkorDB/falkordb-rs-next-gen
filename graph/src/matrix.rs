@@ -69,8 +69,8 @@ pub trait Set<T> {
     );
 }
 
-pub trait Delete<T> {
-    fn delete(
+pub trait Remove<T> {
+    fn remove(
         &mut self,
         i: u64,
         j: u64,
@@ -156,17 +156,12 @@ impl Matrix<bool> {
 
     #[must_use]
     #[allow(clippy::iter_without_into_iter)]
-    pub fn iter(&self) -> Iter<bool> {
-        Iter::new(self, 0, u64::MAX)
-    }
-
-    #[must_use]
-    #[allow(clippy::iter_without_into_iter)]
-    pub fn iter_row(
+    pub fn iter(
         &self,
-        row: u64,
+        min_row: u64,
+        max_row: u64,
     ) -> Iter<bool> {
-        Iter::new(self, row, row)
+        Iter::new(self, min_row, max_row)
     }
 }
 
@@ -233,13 +228,17 @@ impl Matrix<u64> {
 
     #[must_use]
     #[allow(clippy::iter_without_into_iter)]
-    pub fn iter(&self) -> Iter<u64> {
-        Iter::new(self, 0, u64::MAX)
+    pub fn iter(
+        &self,
+        min_row: u64,
+        max_row: u64,
+    ) -> Iter<u64> {
+        Iter::new(self, min_row, max_row)
     }
 }
 
-impl<T> Delete<T> for Matrix<T> {
-    fn delete(
+impl<T> Remove<T> for Matrix<T> {
+    fn remove(
         &mut self,
         i: u64,
         j: u64,

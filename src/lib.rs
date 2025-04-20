@@ -199,6 +199,10 @@ fn graph_query(
                     "Relationships created: {}",
                     summary.relationships_created
                 )),
+                RedisValue::SimpleString(format!(
+                    "Relationships deleted: {}",
+                    summary.relationships_deleted
+                )),
             ],
         ]
         .into()),

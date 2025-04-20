@@ -33,6 +33,10 @@ def teardown_module(module):
     client.connection.shutdown(nosave=True)
     redis_server.wait()
 
+def setup_function(function):
+    global g
+    g.delete()
+
 def query(query: str, params = None, write: bool = False):
     if write:
         return g.query(query, params)
@@ -161,7 +165,7 @@ def test_unwind():
     res = query("UNWIND range(1, 3) AS x UNWIND range(1, 3) AS y WITH x, y WHERE x = 2 RETURN x, y")
     assert res.result_set == [[2, 1], [2, 2], [2, 3]]
     
-def test_create_delete_match():
+def test_graph_crud():
     res = query("CREATE ()", write=True)
     assert res.result_set == []
     assert res.nodes_created == 1
@@ -190,12 +194,21 @@ def test_create_delete_match():
 
     res = query("UNWIND range(3) AS x CREATE (n:N {v: x})-[r:R {v: x}]->(m:M {v: x}) RETURN n, r, m", write=True)
     assert res.result_set == [[Node(0, labels="N", properties={"v": 0}), Edge(0, "R", 1, 0, properties={"v": 0}), Node(1, labels="M", properties={"v": 0})], [Node(2, labels="N", properties={"v": 1}), Edge(2, "R", 3, 1, properties={"v": 1}), Node(3, labels="M", properties={"v": 1})], [Node(4, labels="N", properties={"v": 2}), Edge(4, "R", 5, 2, properties={"v": 2}), Node(5, labels="M", properties={"v": 2})]]
+    assert res.nodes_created == 6
+    assert res.relationships_created == 3
 
     res = query("MATCH (n)-[r:R]->(m) RETURN n, r, m")
     assert res.result_set == [[Node(0, labels="N", properties={"v": 0}), Edge(0, "R", 1, 0, properties={"v": 0}), Node(1, labels="M", properties={"v": 0})], [Node(2, labels="N", properties={"v": 1}), Edge(2, "R", 3, 1, properties={"v": 1}), Node(3, labels="M", properties={"v": 1})], [Node(4, labels="N", properties={"v": 2}), Edge(4, "R", 5, 2, properties={"v": 2}), Node(5, labels="M", properties={"v": 2})]]
 
+    res = query("MATCH (m)<-[r:R]-(n) RETURN n, r, m")
+    assert res.result_set == [[Node(0, labels="N", properties={"v": 0}), Edge(0, "R", 1, 0, properties={"v": 0}), Node(1, labels="M", properties={"v": 0})], [Node(2, labels="N", properties={"v": 1}), Edge(2, "R", 3, 1, properties={"v": 1}), Node(3, labels="M", properties={"v": 1})], [Node(4, labels="N", properties={"v": 2}), Edge(4, "R", 5, 2, properties={"v": 2}), Node(5, labels="M", properties={"v": 2})]]
+
     res = query("MATCH (n:N) RETURN n.v")
     assert res.result_set == [[0], [1], [2]]
+
+    res = query("MATCH (n:N) DELETE n", write=True)
+    assert res.nodes_deleted == 3
+    # assert res.relationships_deleted == 3
 
 def test_large_graph():
     query("UNWIND range(100000) AS x CREATE (n:N {v: x})-[r:R {v: x}]->(m:M {v: x})", write=True)
