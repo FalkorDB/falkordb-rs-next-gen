@@ -16,6 +16,7 @@ use crate::GraphBLAS::{
     GxB_Matrix_Iterator_seek, GxB_init, GxB_unary_function,
 };
 
+/// Initializes the GraphBLAS library in non-blocking mode.
 pub fn init(
     user_malloc_function: Option<unsafe extern "C" fn(arg1: usize) -> *mut c_void>,
     user_calloc_function: Option<unsafe extern "C" fn(arg1: usize, arg2: usize) -> *mut c_void>,
@@ -35,24 +36,48 @@ pub fn init(
     }
 }
 
+/// Finalizes the GraphBLAS library, releasing all resources.
 pub fn shutdown() {
     unsafe {
         GrB_finalize();
     }
 }
 
+/// A trait for querying and modifying the size of a matrix.
 pub trait Size<T> {
+    /// Returns the number of rows in the matrix.
     fn nrows(&self) -> u64;
+
+    /// Returns the number of columns in the matrix.
     fn ncols(&self) -> u64;
+
+    /// Resizes the matrix to the specified number of rows and columns.
+    ///
+    /// # Parameters
+    /// - `nrows`: The new number of rows.
+    /// - `ncols`: The new number of columns.
     fn resize(
         &mut self,
         nrows: u64,
         ncols: u64,
     );
+
+    /// Returns the number of non-zero values in the matrix.
     fn nvals(&self) -> u64;
 }
 
+/// A trait for retrieving elements from a matrix.
 pub trait Get<T> {
+    /// Retrieves the element at the specified row and column.
+    /// Returns `None` if the element does not exist.
+    ///
+    /// # Parameters
+    /// - `i`: The row index.
+    /// - `j`: The column index.
+    ///
+    /// # Returns
+    /// - `Some(T)`: The element at the specified position.
+    /// - `None`: The element does not exist.
     fn get(
         &self,
         i: u64,
@@ -60,7 +85,14 @@ pub trait Get<T> {
     ) -> Option<T>;
 }
 
+/// A trait for setting elements in a matrix.
 pub trait Set<T> {
+    /// Sets the element at the specified row and column to the given value.
+    ///
+    /// # Parameters
+    /// - `i`: The row index.
+    /// - `j`: The column index.
+    /// - `value`: The value to set.
     fn set(
         &mut self,
         i: u64,
@@ -77,8 +109,25 @@ pub trait Remove<T> {
     );
 }
 
+/// A trait for deleting elements from a matrix.
+pub trait Delete<T> {
+    /// Deletes the element at the specified row and column.
+    ///
+    /// # Parameters
+    /// - `i`: The row index.
+    /// - `j`: The column index.
+    fn delete(
+        &mut self,
+        i: u64,
+        j: u64,
+    );
+}
+
+/// A wrapper around a GraphBLAS matrix with type safety for elements.
 pub struct Matrix<T> {
+    /// The underlying GraphBLAS matrix.
     m: GrB_Matrix,
+    /// Phantom data to associate the matrix with a specific type.
     phantom: PhantomData<T>,
 }
 
@@ -315,13 +364,18 @@ impl Set<u64> for Matrix<u64> {
 }
 
 pub struct Iter<T> {
+    /// The underlying GraphBLAS iterator.
     iter: GxB_Iterator,
+    /// Indicates whether the iterator is depleted.
     depleted: bool,
+    /// The maximum row index for the iterator.
     max_row: u64,
+    /// Phantom data to associate the iterator with a specific type.
     phantom: PhantomData<T>,
 }
 
 impl<T> Drop for Iter<T> {
+    /// Frees the GraphBLAS iterator when the `Iter` is dropped.
     fn drop(&mut self) {
         unsafe {
             GxB_Iterator_free(addr_of_mut!(self.iter));
@@ -330,6 +384,12 @@ impl<T> Drop for Iter<T> {
 }
 
 impl<T> Iter<T> {
+    /// Creates a new iterator for traversing all elements in a matrix.
+    ///
+    /// # Parameters
+    /// - `m`: The matrix to iterate over.
+    /// - `min_row`: The minimum row index to start iterating from.
+    /// - `max_row`: The maximum row index to stop iterating at.
     #[must_use]
     pub fn new(
         m: &Matrix<T>,
@@ -355,6 +415,11 @@ impl<T> Iter<T> {
 impl Iterator for Iter<bool> {
     type Item = (u64, u64);
 
+    /// Advances the iterator and returns the next element in the matrix.
+    ///
+    /// # Returns
+    /// - `Some((u64, u64))`: The next element in the matrix.
+    /// - `None`: The iterator is depleted.
     fn next(&mut self) -> Option<Self::Item> {
         if self.depleted {
             return None;

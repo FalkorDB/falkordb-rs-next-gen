@@ -1,4 +1,4 @@
-name: Rust
+name: Rust CI
 
 on:
   push:
@@ -39,9 +39,15 @@ jobs:
     needs: docker
     steps:
       - uses: actions/checkout@v3
-      - name: Build
+      - name: Format
         run: |
           rustup default stable
+          cargo fmt --all --check
+      - name: Lint
+        run: |
+          cargo clippy --all
+      - name: Build
+        run: |
           cargo build
       - name: Run tests
         run: |
