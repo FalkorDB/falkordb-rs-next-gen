@@ -283,25 +283,27 @@ fn graph_list(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     let mut res = Vec::new();
     loop {
         let call_res = ctx.call("SCAN", a.iter().collect::<Vec<_>>().as_slice())?;
-        if let RedisValue::Array(arr) = &call_res {
-            if let RedisValue::Array(arr) = &arr[1] {
-                for v in arr {
-                    if let RedisValue::SimpleString(key) = v {
-                        res.push(RedisValue::SimpleString(key.to_string()));
+        match call_res {
+            RedisValue::Array(arr) => {
+                if let RedisValue::Array(arr) = &arr[1] {
+                    res.extend(arr.iter().filter_map(|v| {
+                        if let RedisValue::SimpleString(key) = v {
+                            Some(RedisValue::SimpleString(key.to_string()))
+                        } else {
+                            None
+                        }
+                    }));
+                }
+                if let RedisValue::SimpleString(i) = &arr[0] {
+                    if i == "0" {
+                        return Ok(RedisValue::Array(res));
                     }
+                    a[0] = ctx.create_string(i.to_string());
                 }
             }
-            if let RedisValue::SimpleString(i) = &arr[0] {
-                if i == "0" {
-                    break;
-                }
-                a[0] = ctx.create_string(i.to_string());
-            }
-        } else {
-            return Err(RedisError::Str("ERR Failed to list graphs"));
+            _ => return Err(RedisError::Str("ERR Failed to list graphs")),
         }
     }
-    Ok(RedisValue::Array(res))
 }
 
 fn graph_parse(_ctx: &Context, args: Vec<RedisString>) -> RedisResult {
