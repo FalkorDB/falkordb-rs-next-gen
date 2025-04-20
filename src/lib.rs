@@ -164,6 +164,52 @@ fn graph_delete(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     }
 }
 
+#[inline]
+fn query_mut(graph: &mut Graph, debug: u64, query: &str) -> Result<RedisValue, RedisError> {
+    let mut res = Vec::new();
+    graph
+        .query(
+            query,
+            &mut |g, r| {
+                res.push(raw_value_to_redis_value(g, &r));
+            },
+            debug > 0,
+        )
+        .map(|summary| {
+            vec![
+                vec![
+                    vec![
+                        RedisValue::Integer(1),
+                        RedisValue::SimpleString("a".to_string()),
+                    ]
+                    .into(),
+                ],
+                res,
+                vec![
+                    RedisValue::SimpleString(format!("Labels added: {}", summary.labels_added)),
+                    RedisValue::SimpleString(format!(
+                        "Nodes created: {}",
+                        summary.nodes_created
+                    )),
+                    RedisValue::SimpleString(format!(
+                        "Nodes deleted: {}",
+                        summary.nodes_deleted
+                    )),
+                    RedisValue::SimpleString(format!(
+                        "Properties set: {}",
+                        summary.properties_set
+                    )),
+                    RedisValue::SimpleString(format!(
+                        "Relationships created: {}",
+                        summary.relationships_created
+                    )),
+                ],
+            ]
+            .into()
+        })
+        .map_err(RedisError::String)
+}
+
 fn graph_query(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     let mut args = args.into_iter().skip(1);
     let key = args.next_arg()?;
@@ -172,56 +218,11 @@ fn graph_query(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
 
     let key = ctx.open_key_writable(&key);
 
-    let graph_action = |graph: &mut Graph| {
-        let mut res = Vec::new();
-        graph
-            .query(
-                query,
-                &mut |g, r| {
-                    res.push(raw_value_to_redis_value(g, &r));
-                },
-                debug > 0,
-            )
-            .map(|summary| {
-                vec![
-                    vec![
-                        vec![
-                            RedisValue::Integer(1),
-                            RedisValue::SimpleString("a".to_string()),
-                        ]
-                        .into(),
-                    ],
-                    res,
-                    vec![
-                        RedisValue::SimpleString(format!("Labels added: {}", summary.labels_added)),
-                        RedisValue::SimpleString(format!(
-                            "Nodes created: {}",
-                            summary.nodes_created
-                        )),
-                        RedisValue::SimpleString(format!(
-                            "Nodes deleted: {}",
-                            summary.nodes_deleted
-                        )),
-                        RedisValue::SimpleString(format!(
-                            "Properties set: {}",
-                            summary.properties_set
-                        )),
-                        RedisValue::SimpleString(format!(
-                            "Relationships created: {}",
-                            summary.relationships_created
-                        )),
-                    ],
-                ]
-                .into()
-            })
-            .map_err(RedisError::String)
-    };
-
     if let Some(graph) = key.get_value::<Graph>(&GRAPH_TYPE)? {
-        graph_action(graph)
+        query_mut(graph, debug, query)
     } else {
         let mut value = Graph::new(16384, 16384);
-        let res = graph_action(&mut value);
+        let res = query_mut(&mut value, debug, query);
         key.set_value(&GRAPH_TYPE, value)?;
         res
     }
