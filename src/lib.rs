@@ -239,11 +239,9 @@ fn graph_ro_query(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     let key = ctx.open_key(&key);
 
     // We check if the key exists and is of type Graph if wrong type `get_value` return an error
-    (key.get_value::<Graph>(&GRAPH_TYPE)?).map_or_else(
-        || {
-            // If the key does not exist, we return an error
-            EMPTY_KEY_ERR
-        },
+    (key.get_value::<Graph>(&GRAPH_TYPE)?).map_or(
+        // If the key does not exist, we return an error
+        EMPTY_KEY_ERR,
         |graph| {
             let mut res = Vec::new();
             match graph.ro_query(
