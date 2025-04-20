@@ -57,9 +57,7 @@ impl QueryExprIR {
             }
             Self::Parameter(_) => Ok(()),
             Self::And(exprs) | Self::Or(exprs) | Self::Xor(exprs) => {
-                if exprs.len() < 2 {
-                    return Err("Logical operators require at least two operands".to_string());
-                }
+                debug_assert!(exprs.len() > 1);
                 for expr in exprs {
                     if let _e @ (Self::Integer(_)
                     | Self::Float(_)
