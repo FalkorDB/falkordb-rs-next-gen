@@ -4,9 +4,12 @@ use crate::{
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
+type ReadFn = fn(&Graph, &mut Runtime, Value) -> Result<Value, String>;
+type WriteFn = fn(&mut Graph, &mut Runtime, Value) -> Result<Value, String>;
+
 pub struct Runtime {
-    write_functions: BTreeMap<String, fn(&mut Graph, &mut Runtime, Value) -> Result<Value, String>>,
-    read_functions: BTreeMap<String, fn(&Graph, &mut Runtime, Value) -> Result<Value, String>>,
+    read_functions: BTreeMap<String, ReadFn>,
+    write_functions: BTreeMap<String, WriteFn>,
     iters: Vec<Iter<bool>>,
     parameters: BTreeMap<String, Value>,
     pub nodes_created: i32,
@@ -20,14 +23,8 @@ pub struct Runtime {
 impl Runtime {
     #[must_use]
     pub fn new(parameters: BTreeMap<String, Value>) -> Self {
-        let mut write_functions: BTreeMap<
-            String,
-            fn(&mut Graph, &mut Runtime, Value) -> Result<Value, String>,
-        > = BTreeMap::new();
-        let mut read_functions: BTreeMap<
-            String,
-            fn(&Graph, &mut Runtime, Value) -> Result<Value, String>,
-        > = BTreeMap::new();
+        let mut write_functions: BTreeMap<String, WriteFn> = BTreeMap::new();
+        let mut read_functions: BTreeMap<String, ReadFn> = BTreeMap::new();
 
         // write functions
         write_functions.insert("create_node".to_string(), Self::create_node);
@@ -79,6 +76,7 @@ impl Runtime {
         }
     }
 
+    #[allow(clippy::unnecessary_wraps)]
     fn create_node(g: &mut Graph, runtime: &mut Self, args: Value) -> Result<Value, String> {
         match args {
             Value::List(args) => {
@@ -112,6 +110,7 @@ impl Runtime {
         }
     }
 
+    #[allow(clippy::unnecessary_wraps)]
     fn delete_entity(g: &mut Graph, runtime: &mut Self, args: Value) -> Result<Value, String> {
         match args {
             Value::List(nodes) => {
@@ -245,23 +244,25 @@ impl Runtime {
     fn value_to_integer(_g: &Graph, _runtime: &mut Self, args: Value) -> Result<Value, String> {
         match args {
             Value::List(params) => match params.as_slice() {
-                [Value::String(s)] => {
-                    s.parse::<i64>()
-                        .map(Value::Int)
-                        .or_else(|_| {
-                            s.parse::<f64>()
-                                .map(|f| Value::Int(f as i64))
-                                .map_err(|_| format!("Failed to parse string `{}` as integer", s))
-                        })
-                }
+                [Value::String(s)] => s.parse::<i64>().map(Value::Int).or_else(|_| {
+                    s.parse::<f64>()
+                        .map(|f| Value::Int(f as i64))
+                        .map_err(|_| format!("Failed to parse string `{}` as integer", s))
+                }),
                 [Value::Int(i)] => Ok(Value::Int(*i)),
                 [Value::Float(f)] => Ok(Value::Int(*f as i64)),
                 [Value::Null] => Ok(Value::Null),
                 [Value::Bool(b)] => Ok(Value::Int(if *b { 1 } else { 0 })),
-                [arg]  => Err(format!("Invalid input for function 'toInteger()': Expected a String, Float, Integer or Boolean, got: {}", arg.name())),
-                args => Err(format!("Expected one argument for value_to_integer, instead {}", args.len())),
+                [arg] => Err(format!(
+                    "Invalid input for function 'toInteger()': Expected a String, Float, Integer or Boolean, got: {}",
+                    arg.name()
+                )),
+                args => Err(format!(
+                    "Expected one argument for value_to_integer, instead {}",
+                    args.len()
+                )),
             },
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
 
@@ -283,6 +284,7 @@ impl Runtime {
             _ => unreachable!(),
         }
     }
+
     fn head(_: &Graph, _: &mut Self, args: Value) -> Result<Value, String> {
         match args {
             Value::List(arr) => match arr.as_slice() {
@@ -376,7 +378,7 @@ impl Runtime {
         match args {
             Value::List(arr) => match arr.as_slice() {
                 // Handle NULL input case
-                [Value::Null] => Ok(Value::Null),
+                [Value::Null] => todo!("Handle NULL input case with parameters"),
 
                 // Two-argument version: (string, start)
                 [Value::String(s), Value::Int(start)] => {
@@ -384,15 +386,9 @@ impl Runtime {
                     if start < 0 {
                         return Err("substring(): start index cannot be negative".into());
                     }
-                    let chars: Vec<char> = s.chars().collect();
                     let start = start as usize;
 
-                    Ok(Value::String(
-                        chars
-                            .get(start..)
-                            .map(|slice| slice.iter().collect())
-                            .unwrap_or_default(),
-                    ))
+                    Ok(Value::String(s[start..].to_string()))
                 }
 
                 // Three-argument version: (string, start, length)
@@ -402,17 +398,11 @@ impl Runtime {
                     if start < 0 || length < 0 {
                         return Err("substring(): start/length cannot be negative".into());
                     }
-                    let chars: Vec<char> = s.chars().collect();
                     let start = start as usize;
                     let length = length as usize;
 
-                    let end = start.saturating_add(length).min(chars.len());
-                    Ok(Value::String(
-                        chars
-                            .get(start..end)
-                            .map(|slice| slice.iter().collect())
-                            .unwrap_or_default(),
-                    ))
+                    let end = start.saturating_add(length).min(s.len());
+                    Ok(Value::String(s[start..end].to_string()))
                 }
 
                 // Type mismatch handling
@@ -444,8 +434,7 @@ impl Runtime {
                         Ok(Value::List(parts))
                     }
                 }
-                [Value::Null, _] => Ok(Value::Null),
-                [_, Value::Null] => Ok(Value::Null),
+                [Value::Null, _] | [_, Value::Null] => Ok(Value::Null),
                 [arg1, arg2] => Err(format!(
                     "Type mismatch: expected 2 String or null arguments, but was {} {}",
                     arg1.name(),
@@ -467,10 +456,7 @@ impl Runtime {
     fn string_to_lower(_: &Graph, _: &mut Self, args: Value) -> Result<Value, String> {
         match args {
             Value::List(arr) => match arr.as_slice() {
-                [Value::String(s)] => {
-                    let lower = s.to_lowercase();
-                    Ok(Value::String(lower))
-                }
+                [Value::String(s)] => Ok(Value::String(s.to_lowercase())),
                 [Value::Null] => Ok(Value::Null),
                 [arg] => Err(format!(
                     "Type mismatch: expected List, String or null, but was {}",
@@ -488,10 +474,7 @@ impl Runtime {
     fn string_to_upper(_: &Graph, _: &mut Self, args: Value) -> Result<Value, String> {
         match args {
             Value::List(arr) => match arr.as_slice() {
-                [Value::String(s)] => {
-                    let upper = s.to_uppercase();
-                    Ok(Value::String(upper))
-                }
+                [Value::String(s)] => Ok(Value::String(s.to_uppercase())),
                 [Value::Null] => Ok(Value::Null),
                 [arg] => Err(format!(
                     "Type mismatch: expected List, String or null, but was {}",
@@ -508,9 +491,11 @@ impl Runtime {
     fn string_replace(_: &Graph, _: &mut Self, args: Value) -> Result<Value, String> {
         match args {
             Value::List(arr) => match arr.as_slice() {
-                [Value::String(s), Value::String(search), Value::String(replacement)] => {
-                    Ok(Value::String(s.replace(search, replacement)))
-                }
+                [
+                    Value::String(s),
+                    Value::String(search),
+                    Value::String(replacement),
+                ] => Ok(Value::String(s.replace(search, replacement))),
                 [Value::Null, _, _] | [_, Value::Null, _] | [_, _, Value::Null] => Ok(Value::Null),
                 [arg1, arg2, arg3] => Err(format!(
                     "Type mismatch: expected (String, String, String) or null, but was: ({}, {}, {})",
@@ -534,8 +519,7 @@ impl Runtime {
                     if *n < 0 {
                         Err("Invalid input for function 'left': 'n' cannot be negative".to_string())
                     } else {
-                        let n = *n as usize;
-                        Ok(Value::String(s.chars().take(n).collect()))
+                        Ok(Value::String(s.chars().take(*n as usize).collect()))
                     }
                 }
                 [Value::Null, _] | [_, Value::Null] => Ok(Value::Null),
@@ -556,10 +540,7 @@ impl Runtime {
     fn string_ltrim(_: &Graph, _: &mut Self, args: Value) -> Result<Value, String> {
         match args {
             Value::List(arr) => match arr.as_slice() {
-                [Value::String(s)] => {
-                    let trimmed = s.trim_start();
-                    Ok(Value::String(trimmed.to_string()))
-                }
+                [Value::String(s)] => Ok(Value::String(s.trim_start().to_string())),
                 [Value::Null] => Ok(Value::Null),
                 [arg] => Err(format!(
                     "Type mismatch: expected String or null, but was {}",
@@ -582,9 +563,7 @@ impl Runtime {
                         Err("Invalid input for function 'right': 'n' cannot be negative"
                             .to_string())
                     } else {
-                        let n = *n as usize;
-                        let len = s.chars().count();
-                        let start = len.saturating_sub(n);
+                        let start = s.len().saturating_sub(*n as usize);
                         Ok(Value::String(s.chars().skip(start).collect()))
                     }
                 }
@@ -612,8 +591,7 @@ impl Runtime {
             Value::List(arr) => match arr.as_slice() {
                 [Value::String(s), Value::String(prefix)] => Ok(Value::Bool(s.starts_with(prefix))),
 
-                [Value::Null, _] => Ok(Value::Null),
-                [_, Value::Null] => Ok(Value::Null),
+                [_, Value::Null] | [Value::Null, _] => Ok(Value::Null),
                 [arg1, arg2] => Err(format!(
                     "Type mismatch: expected String or null, but was: ({}, {})",
                     arg1.name(),
@@ -629,9 +607,7 @@ impl Runtime {
         match args {
             Value::List(arr) => match arr.as_slice() {
                 [Value::String(s), Value::String(suffix)] => Ok(Value::Bool(s.ends_with(suffix))),
-
-                [Value::Null, _] => Ok(Value::Null),
-                [_, Value::Null] => Ok(Value::Null),
+                [_, Value::Null] | [Value::Null, _] => Ok(Value::Null),
                 [arg1, arg2] => Err(format!(
                     "Type mismatch: expected String or null, but was: ({}, {})",
                     arg1.name(),
@@ -649,9 +625,7 @@ impl Runtime {
                 [Value::String(s), Value::String(substring)] => {
                     Ok(Value::Bool(s.contains(substring)))
                 }
-
-                [Value::Null, _] => Ok(Value::Null),
-                [_, Value::Null] => Ok(Value::Null),
+                [_, Value::Null] | [Value::Null, _] => Ok(Value::Null),
                 [arg1, arg2] => Err(format!(
                     "Type mismatch: expected String or null, but was: ({}, {})",
                     arg1.name(),
@@ -670,7 +644,7 @@ impl Runtime {
                     // Compile the regex pattern
                     match regex::Regex::new(pattern) {
                         Ok(re) => Ok(Value::Bool(re.is_match(s))),
-                        Err(e) => Err(format!("Invalid regex pattern: {}", e)),
+                        Err(e) => Err(format!("Invalid regex pattern: {e}")),
                     }
                 }
                 [Value::Null, _] | [_, Value::Null] => Ok(Value::Null),
@@ -684,6 +658,8 @@ impl Runtime {
             _ => unreachable!(),
         }
     }
+
+    #[allow(clippy::unnecessary_wraps)]
     fn db_labels(g: &Graph, _runtime: &mut Self, _args: Value) -> Result<Value, String> {
         Ok(Value::List(
             g.get_labels()
@@ -692,6 +668,7 @@ impl Runtime {
         ))
     }
 
+    #[allow(clippy::unnecessary_wraps)]
     fn db_types(g: &Graph, _runtime: &mut Self, _args: Value) -> Result<Value, String> {
         Ok(Value::List(
             g.get_types()
@@ -700,6 +677,7 @@ impl Runtime {
         ))
     }
 
+    #[allow(clippy::unnecessary_wraps)]
     fn db_properties(g: &Graph, _runtime: &mut Self, _args: Value) -> Result<Value, String> {
         Ok(Value::List(
             g.get_properties()
@@ -1316,7 +1294,7 @@ where
 }
 
 #[inline]
-fn logical_xor(a: bool, b: bool) -> bool {
+const fn logical_xor(a: bool, b: bool) -> bool {
     (a && !b) || (!a && b)
 }
 
@@ -1346,7 +1324,7 @@ fn add_all(values: Vec<Value>) -> Result<Value, String> {
                     "Unexpected types for add operator ({}, {})",
                     a.name(),
                     b.name()
-                ))
+                ));
             }
         };
     }
