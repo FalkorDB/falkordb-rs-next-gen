@@ -224,9 +224,9 @@ fn graph_query(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
 /// This function is used to execute a read only query on a graph
 ///
 /// See: https://docs.falkordb.com/commands/graph.ro_query.html
-/// 
+///
 /// # Example
-/// 
+///
 /// ```sh
 /// GRAPH.RO_QUERY graph "MATCH (n) RETURN n"
 /// ```
