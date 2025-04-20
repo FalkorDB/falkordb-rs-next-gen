@@ -1,7 +1,7 @@
 use graph::{cypher::Parser, graph::Graph, planner::Planner, runtime::Value};
 use redis_module::{
-    Context, NextArg, REDISMODULE_TYPE_METHOD_VERSION, RedisModuleTypeMethods, RedisResult,
-    RedisString, RedisValue, Status, native_types::RedisType, redis_module,
+    Context, NextArg, RedisError, REDISMODULE_TYPE_METHOD_VERSION, RedisModuleTypeMethods, 
+    RedisResult, RedisString, RedisValue, Status, native_types::RedisType, redis_module,
     redisvalue::RedisValueKey,
 };
 use std::os::raw::c_void;
@@ -22,7 +22,7 @@ static GRAPH_TYPE: RedisType = RedisType::new(
 
         // Aux data
         aux_load: None,
-        aux_save: None,
+        aux_save: None,RedisError
         aux_save2: None,
         aux_save_triggers: 0,
 
@@ -139,13 +139,29 @@ fn inner_raw_value_to_redis_value(g: &Graph, r: &Value) -> RedisValue {
     }
 }
 
+/// This function is used to delete a graph
+///
+/// See: https://docs.falkordb.com/commands/graph.delete.html
+///
+/// # Example
+///
+/// ```sh
+/// 127.0.0.1:6379> GRAPH.DELETE graph
+/// OK
+/// ```
 fn graph_delete(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+    if args.len() != 2 {
+        return Err(RedisError::WrongArity);
+    }
+
     let mut args = args.into_iter().skip(1);
     let key = args.next_arg()?;
-
     let key = ctx.open_key_writable(&key);
-
-    key.delete()
+    if key.get_value::<Graph>(&GRAPH_TYPE)?.is_some() {
+        key.delete()
+    } else {
+        Err(RedisError::Str("ERR Invalid graph operation on empty key"))
+    }
 }
 
 fn graph_query(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
@@ -286,10 +302,10 @@ redis_module! {
     data_types: [GRAPH_TYPE],
     init: graph_init,
     commands: [
-        ["graph.delete", graph_delete, "write deny-oom", 1, 1, 1, ""],
-        ["graph.query", graph_query, "write deny-oom", 1, 1, 1, ""],
-        ["graph.ro_query", graph_ro_query, "readonly", 1, 1, 1, ""],
-        ["graph.parse", graph_parse, "readonly", 0, 0, 0, ""],
-        ["graph.plan", graph_plan, "readonly", 0, 0, 0, ""],
+        ["graph.DELETE", graph_delete, "write", 1, 1, 1, ""],
+        ["graph.QUERY", graph_query, "write deny-oom", 1, 1, 1, ""],
+        ["graph.RO_QUERY", graph_ro_query, "readonly", 1, 1, 1, ""],
+        ["graph.PARSE", graph_parse, "readonly", 0, 0, 0, ""],
+        ["graph.PLAN", graph_plan, "readonly", 0, 0, 0, ""],
     ],
 }
