@@ -258,5 +258,8 @@ def test_graph_list():
     client.connection.set("ng", "ng")
     graphs = client.list_graphs()
 
-    # ['g1', 'test', 'g3', 'g2'] test is the default graph
     assert len(graphs) == 4
+    assert 'g1' in graphs
+    assert 'g2' in graphs
+    assert 'g3' in graphs
+    assert 'test' in graphs
