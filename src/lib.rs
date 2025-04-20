@@ -164,62 +164,74 @@ fn graph_delete(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     }
 }
 
+#[inline]
+fn query_mut(graph: &mut Graph, debug: u64, query: &str) -> Result<RedisValue, RedisError> {
+    let mut res = Vec::new();
+    graph
+        .query(
+            query,
+            &mut |g, r| {
+                res.push(raw_value_to_redis_value(g, &r));
+            },
+            debug > 0,
+        )
+        .map(|summary| {
+            vec![
+                vec![
+                    vec![
+                        RedisValue::Integer(1),
+                        RedisValue::SimpleString("a".to_string()),
+                    ]
+                    .into(),
+                ],
+                res,
+                vec![
+                    RedisValue::SimpleString(format!("Labels added: {}", summary.labels_added)),
+                    RedisValue::SimpleString(format!(
+                        "Nodes created: {}",
+                        summary.nodes_created
+                    )),
+                    RedisValue::SimpleString(format!(
+                        "Nodes deleted: {}",
+                        summary.nodes_deleted
+                    )),
+                    RedisValue::SimpleString(format!(
+                        "Properties set: {}",
+                        summary.properties_set
+                    )),
+                    RedisValue::SimpleString(format!(
+                        "Relationships created: {}",
+                        summary.relationships_created
+                    )),
+                ],
+            ]
+            .into()
+        })
+        .map_err(RedisError::String)
+}
+
 fn graph_query(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     let mut args = args.into_iter().skip(1);
     let key = args.next_arg()?;
-    let query = args.next_string()?;
+    let query = args.next_str()?;
     let debug = args.next_u64().unwrap_or(0);
 
     let key = ctx.open_key_writable(&key);
 
-    let graph = if let Some(graph) = key.get_value::<Graph>(&GRAPH_TYPE)? {
-        graph
+    if let Some(graph) = key.get_value::<Graph>(&GRAPH_TYPE)? {
+        query_mut(graph, debug, query)
     } else {
-        let value = Graph::new(16384, 16384);
-
+        let mut value = Graph::new(16384, 16384);
+        let res = query_mut(&mut value, debug, query);
         key.set_value(&GRAPH_TYPE, value)?;
-        key.get_value::<Graph>(&GRAPH_TYPE)?.unwrap()
-    };
-    let mut res = Vec::new();
-    match graph.query(
-        query.as_str(),
-        &mut |g, r| {
-            res.push(raw_value_to_redis_value(g, &r));
-        },
-        debug > 0,
-    ) {
-        Ok(summary) => Ok(vec![
-            vec![
-                vec![
-                    RedisValue::Integer(1),
-                    RedisValue::SimpleString("a".to_string()),
-                ]
-                .into(),
-            ],
-            res,
-            vec![
-                RedisValue::SimpleString(format!("Labels added: {}", summary.labels_added)),
-                RedisValue::SimpleString(format!("Nodes created: {}", summary.nodes_created)),
-                RedisValue::SimpleString(format!("Nodes deleted: {}", summary.nodes_deleted)),
-                RedisValue::SimpleString(format!("Properties set: {}", summary.properties_set)),
-                RedisValue::SimpleString(format!(
-                    "Relationships created: {}",
-                    summary.relationships_created
-                )),
-            ],
-        ]
-        .into()),
-        Err(err) => {
-            ctx.reply_error_string(err.as_str());
-            Ok(RedisValue::NoReply)
-        }
+        res
     }
 }
 
 fn graph_ro_query(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     let mut args = args.into_iter().skip(1);
     let key = args.next_arg()?;
-    let query = args.next_string()?;
+    let query = args.next_str()?;
     let debug = args.next_u64().unwrap_or(0);
 
     let key = ctx.open_key(&key);
@@ -229,7 +241,7 @@ fn graph_ro_query(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
         |graph| {
             let mut res = Vec::new();
             match graph.ro_query(
-                query.as_str(),
+                query,
                 &mut |g, r| {
                     res.push(raw_value_to_redis_value(g, &r));
                 },
@@ -247,44 +259,35 @@ fn graph_ro_query(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
                     vec![],
                 ]
                 .into()),
-                Err(err) => {
-                    ctx.reply_error_string(err.as_str());
-                    Ok(RedisValue::NoReply)
-                }
+                Err(err) => Err(RedisError::String(err)),
             }
         },
     )
 }
 
-fn graph_parse(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+fn graph_parse(_ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     let mut args = args.into_iter().skip(1);
-    let query = args.next_string()?;
+    let query = args.next_str()?;
 
-    let mut parser = Parser::new(&query);
+    let mut parser = Parser::new(query);
     match parser.parse() {
         Ok(ir) => Ok(RedisValue::SimpleString(format!("{ir:?}"))),
-        Err(err) => {
-            ctx.reply_error_string(err.as_str());
-            Ok(RedisValue::NoReply)
-        }
+        Err(err) => Err(RedisError::String(err)),
     }
 }
 
-fn graph_plan(ctx: &Context, args: Vec<RedisString>) -> RedisResult {
+fn graph_plan(_ctx: &Context, args: Vec<RedisString>) -> RedisResult {
     let mut args = args.into_iter().skip(1);
-    let query = args.next_string()?;
+    let query = args.next_str()?;
 
-    let mut parser = Parser::new(&query);
+    let mut parser = Parser::new(query);
     match parser.parse() {
         Ok(ir) => {
             let mut planner = Planner::new();
             let ir = planner.plan(ir, false);
             Ok(RedisValue::SimpleString(format!("{ir:?}")))
         }
-        Err(err) => {
-            ctx.reply_error_string(err.as_str());
-            Ok(RedisValue::NoReply)
-        }
+        Err(err) => Err(RedisError::String(err)),
     }
 }
 
