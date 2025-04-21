@@ -28,7 +28,6 @@ jobs:
           else
             echo "changed=false" >> $GITHUB_ENV
           fi
-
   docker:
     needs: check-files
     if: needs.check-files.outputs.file_changed == 'true'
