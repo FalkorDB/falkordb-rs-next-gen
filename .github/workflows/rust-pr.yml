@@ -41,7 +41,10 @@ jobs:
       - name: Print changed files
         run: |
           echo "Changed files:"
-          echo "${{ github.event.pull_request.changed_files }}"
+          for file in $(jq -r '.pull_request.files[].filename' $GITHUB_EVENT_PATH); do
+            echo "File: $file"
+            cat "$file"
+          done
       - uses: actions/checkout@v3
       - name: Format
         run: |
