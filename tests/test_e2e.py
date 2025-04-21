@@ -11,7 +11,7 @@ g = None
 shutdown = False
 
 def setup_module(module):
-    global redis_server, client, g
+    global redis_server, client, g, shutdown
     target = os.environ.get("TARGET", "target/debug/libfalkordb.dylib" if platform.system() == "Darwin" else "target/debug/libfalkordb.so")
     r = Redis()
     try:
