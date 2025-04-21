@@ -72,7 +72,7 @@ jobs:
           pytest tests/test_e2e.py
   coverage:
     runs-on: ubuntu-latest
-    container: aviavni/falkordb-build:latest
+    container: aviavni/falkordb-build:${{ contains(github.event.pull_request.changed_files, 'build/Dockerfile') && github.event.pull_request.number || 'latest' }}
     needs: docker
     if: always()
     steps:
