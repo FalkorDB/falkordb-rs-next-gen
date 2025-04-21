@@ -1,21 +1,37 @@
-name: Rust CI
+name: Rust Push
 
 on:
   push:
     branches: ["main"]
-  pull_request:
-    branches: ["main"]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  check-files:
+    runs-on: ubuntu-latest
+    outputs:
+      file_changed: ${{ steps.check.outputs.changed }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check if specific file changed
+        id: check
+        run: |
+          if git diff --name-only HEAD~1 HEAD | grep -q "build/Dockerfilet"; then
+            echo "changed=true" >> $GITHUB_ENV
+          else
+            echo "changed=false" >> $GITHUB_ENV
+          fi
+
   docker:
-    if: ${{ !contains(github.event.pull_request.changed_files, 'build/Dockerfile') }}
+    needs: check-files
+    if: needs.check-files.outputs.file_changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
