@@ -254,7 +254,7 @@ impl Runtime {
                 [Value::Null] => Ok(Value::Null),
                 [Value::Bool(b)] => Ok(Value::Int(if *b { 1 } else { 0 })),
                 [arg] => Err(format!(
-                    "Invalid input for function 'toInteger()': Expected a String, Float, Integer or Boolean, got: {}",
+                    "Type mismatch: expected String, Boolean, Integer, Float, or Null but was {}",
                     arg.name()
                 )),
                 args => Err(format!(
@@ -297,7 +297,7 @@ impl Runtime {
                 }
                 [Value::Null] => Ok(Value::Null),
                 [arg] => Err(format!(
-                    "Type mismatch: expected List, but was {}",
+                    "Type mismatch: expected List or Null but was {}",
                     arg.name()
                 )),
                 args => Err(format!(
@@ -315,7 +315,7 @@ impl Runtime {
                 [Value::List(v)] => Ok(v.last().unwrap_or(&Value::Null).clone()),
                 [Value::Null] => Ok(Value::Null),
                 [arg] => Err(format!(
-                    "Type mismatch: expected List, but was {}",
+                    "Type mismatch: expected List or Null but was {}",
                     arg.name()
                 )),
                 args => Err(format!(
@@ -339,7 +339,7 @@ impl Runtime {
                 }
                 [Value::Null] => Ok(Value::Null),
                 [arg] => Err(format!(
-                    "Type mismatch: expected List, but was {}",
+                    "Type mismatch: expected List or Null but was {}",
                     arg.name()
                 )),
                 args => Err(format!(
@@ -519,12 +519,13 @@ impl Runtime {
             Value::List(arr) => match arr.as_slice() {
                 [Value::String(s), Value::Int(n)] => {
                     if *n < 0 {
-                        Err("Invalid input for function 'left': 'n' cannot be negative".to_string())
+                        Err("length must be a non-negative integer".to_string())
                     } else {
                         Ok(Value::String(s.chars().take(*n as usize).collect()))
                     }
                 }
-                [Value::Null, _] | [_, Value::Null] => Ok(Value::Null),
+                [Value::Null, _] => Ok(Value::Null),
+                [_, Value::Null] => Err("length must be a non-negative integer".to_string()),
                 [arg1, arg2] => Err(format!(
                     "Type mismatch: expected (String, Integer) or null, but was: ({}, {})",
                     arg1.name(),
@@ -562,14 +563,14 @@ impl Runtime {
             Value::List(arr) => match arr.as_slice() {
                 [Value::String(s), Value::Int(n)] => {
                     if *n < 0 {
-                        Err("Invalid input for function 'right': 'n' cannot be negative"
-                            .to_string())
+                        Err("length must be a non-negative integer".to_string())
                     } else {
                         let start = s.len().saturating_sub(*n as usize);
                         Ok(Value::String(s.chars().skip(start).collect()))
                     }
                 }
-                [Value::Null, _] | [_, Value::Null] => Ok(Value::Null),
+                [Value::Null, _] => Ok(Value::Null),
+                [_, Value::Null] => Err("length must be a non-negative integer".to_string()),
                 [arg1, arg2] => Err(format!(
                     "Type mismatch: expected (String, Integer) or null, but was: ({}, {})",
                     arg1.name(),
@@ -595,7 +596,7 @@ impl Runtime {
 
                 [_, Value::Null] | [Value::Null, _] => Ok(Value::Null),
                 [arg1, arg2] => Err(format!(
-                    "Type mismatch: expected String or null, but was: ({}, {})",
+                    "Type mismatch: expected String or Null but was ({}, {})",
                     arg1.name(),
                     arg2.name()
                 )),
@@ -611,7 +612,7 @@ impl Runtime {
                 [Value::String(s), Value::String(suffix)] => Ok(Value::Bool(s.ends_with(suffix))),
                 [_, Value::Null] | [Value::Null, _] => Ok(Value::Null),
                 [arg1, arg2] => Err(format!(
-                    "Type mismatch: expected String or null, but was: ({}, {})",
+                    "Type mismatch: Type mismatch: expected String or Null but was ({}, {})",
                     arg1.name(),
                     arg2.name()
                 )),
@@ -629,7 +630,7 @@ impl Runtime {
                 }
                 [_, Value::Null] | [Value::Null, _] => Ok(Value::Null),
                 [arg1, arg2] => Err(format!(
-                    "Type mismatch: expected String or null, but was: ({}, {})",
+                    "Type mismatch: expected String or Null but was ({}, {})",
                     arg1.name(),
                     arg2.name()
                 )),
@@ -1321,6 +1322,7 @@ fn add_all(values: Vec<Value>) -> Result<Value, String> {
             (Value::String(a), Value::String(b)) => Value::String(a + &b),
             (Value::String(s), Value::Int(i)) => Value::String(s + &i.to_string()),
             (Value::String(s), Value::Float(f)) => Value::String(s + &f.to_string()),
+            (Value::String(s), Value::Bool(f)) => Value::String(s + &f.to_string().to_lowercase()),
             (a, b) => {
                 return Err(format!(
                     "Unexpected types for add operator ({}, {})",
