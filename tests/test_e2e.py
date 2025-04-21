@@ -8,18 +8,22 @@ from redis import Redis, ResponseError
 redis_server = None
 client = None
 g = None
+shutdown = False
 
 def setup_module(module):
     global redis_server, client, g
     target = os.environ.get("TARGET", "target/debug/libfalkordb.dylib" if platform.system() == "Darwin" else "target/debug/libfalkordb.so")
+    r = Redis()
     try:
-        client.ping()
+        r.ping()
+        client = FalkorDB()
+        g = client.select_graph("test")
         return
     except:
+        shutdown = True
         if os.path.exists("redis-test.log"):
             os.remove("redis-test.log")
         redis_server = subprocess.Popen(executable="/usr/local/bin/redis-server", args=["--save", "", "--logfile", "redis-test.log", "--loadmodule", target], stdout=subprocess.PIPE)
-    r = Redis()
     while True:
         try:
             r.ping()
@@ -31,8 +35,9 @@ def setup_module(module):
 
 
 def teardown_module(module):
-    client.connection.shutdown(nosave=True)
-    redis_server.wait()
+    if shutdown:
+        client.connection.shutdown(nosave=True)
+        redis_server.wait()
 
 def query(query: str, params = None, write: bool = False):
     if write:
