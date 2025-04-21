@@ -2,6 +2,8 @@ import os
 import platform
 import itertools
 import subprocess
+
+import pytest
 from falkordb import FalkorDB, Node, Edge
 from redis import Redis, ResponseError
 
@@ -817,46 +819,46 @@ def test_replace():
         except ResponseError as e:
             assert "Type mismatch" in str(e)
 
+@pytest.mark.extra
+def test_regex_matches():
+    res = query("RETURN 'abc' =~ 'a.*' AS result")
+    assert res.result_set == [[True]]
 
-# def test_regex_matches():
-#     res = query("RETURN 'abc' =~ 'a.*' AS result")
-#     assert res.result_set == [[True]]
-#
-#     res = query("RETURN 'abc' =~ 'd.*' AS result")
-#     assert res.result_set == [[False]]
-#
-#     res = query("RETURN 'abc' =~ 'a.*c' AS result")
-#     assert res.result_set == [[True]]
-#
-#     res = query("RETURN 'abc' =~ 'a.*d' AS result")
-#     assert res.result_set == [[False]]
-#
-#     res = query("RETURN 'abc' =~ '^a.*c$' AS result")
-#     assert res.result_set == [[True]]
-#
-#     res = query("RETURN 'abc' =~ '^d.*c$' AS result")
-#     assert res.result_set == [[False]]
-#
-#     # Null handling
-#     res = query("RETURN null =~ 'a.*' AS result")
-#     assert res.result_set == [[None]]
-#
-#     res = query("RETURN 'abc' =~ null AS result")
-#     assert res.result_set == [[None]]
-#
-#     # Type mismatch
-#     for value, name in [(1, 'Integer'), (1.0, 'Float'), (True, 'Boolean'), ({}, 'Map'), ([], 'List')]:
-#         try:
-#             query(f"RETURN {value} =~ 'a.*' AS result")
-#             assert False, "Expected an error"
-#         except ResponseError as e:
-#             assert "Type mismatch" in str(e)
-#
-#         try:
-#             query(f"RETURN 'abc' =~ {value} AS result")
-#             assert False, "Expected an error"
-#         except ResponseError as e:
-#             assert "Type mismatch" in str(e)
+    res = query("RETURN 'abc' =~ 'd.*' AS result")
+    assert res.result_set == [[False]]
+
+    res = query("RETURN 'abc' =~ 'a.*c' AS result")
+    assert res.result_set == [[True]]
+
+    res = query("RETURN 'abc' =~ 'a.*d' AS result")
+    assert res.result_set == [[False]]
+
+    res = query("RETURN 'abc' =~ '^a.*c$' AS result")
+    assert res.result_set == [[True]]
+
+    res = query("RETURN 'abc' =~ '^d.*c$' AS result")
+    assert res.result_set == [[False]]
+
+    # Null handling
+    res = query("RETURN null =~ 'a.*' AS result")
+    assert res.result_set == [[None]]
+
+    res = query("RETURN 'abc' =~ null AS result")
+    assert res.result_set == [[None]]
+
+    # Type mismatch
+    for value, name in [(1, 'Integer'), (1.0, 'Float'), (True, 'Boolean'), ({}, 'Map'), ([], 'List')]:
+        try:
+            query(f"RETURN {value} =~ 'a.*' AS result")
+            assert False, "Expected an error"
+        except ResponseError as e:
+            assert "Type mismatch" in str(e)
+
+        try:
+            query(f"RETURN 'abc' =~ {value} AS result")
+            assert False, "Expected an error"
+        except ResponseError as e:
+            assert "Type mismatch" in str(e)
 
 def test_left():
         # Null handling
