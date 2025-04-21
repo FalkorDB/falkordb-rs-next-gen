@@ -1022,3 +1022,17 @@ def test_substring():
         assert False, "Expected an error"
     except ResponseError as e:
         assert "Type mismatch" in str(e)
+
+def test_graph_list():
+
+    assert client is not None
+    for i in range(1000):
+        client.select_graph(f"g{i}").query("return 1")
+        client.connection.set(f"ng{i}", "ng")
+    graphs = client.list_graphs()
+
+    assert len(graphs) == 1001
+    for i in range(1000):
+        assert f'g{i}' in graphs
+    assert 'test' in graphs
+
