@@ -23,7 +23,7 @@ jobs:
       - name: Check if specific file changed
         id: check
         run: |
-          if [ git diff --name-only ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }} | grep -q "build/Dockerfilet" ]; then
+          if [ git diff --name-only ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }} | grep "build/Dockerfilet" ]; then
             echo "changed=true" >> $GITHUB_ENV
           else
             echo "changed=false" >> $GITHUB_ENV
