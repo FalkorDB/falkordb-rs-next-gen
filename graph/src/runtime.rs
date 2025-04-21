@@ -378,13 +378,12 @@ impl Runtime {
         match args {
             Value::List(arr) => match arr.as_slice() {
                 // Handle NULL input case
-                [Value::Null] => todo!("Handle NULL input case with parameters"),
-
+                [Value::Null, _] | [Value::Null, _, _] => Ok(Value::Null),
                 // Two-argument version: (string, start)
                 [Value::String(s), Value::Int(start)] => {
                     let start = *start;
                     if start < 0 {
-                        return Err("substring(): start index cannot be negative".into());
+                        return Err("start must be a non-negative integer".into());
                     }
                     let start = start as usize;
 
@@ -395,8 +394,11 @@ impl Runtime {
                 [Value::String(s), Value::Int(start), Value::Int(length)] => {
                     let start = *start;
                     let length = *length;
-                    if start < 0 || length < 0 {
-                        return Err("substring(): start/length cannot be negative".into());
+                    if length < 0 {
+                        return Err("length must be a non-negative integer".into());
+                    }
+                    if start < 0 {
+                        return Err("start must be a non-negative integer".into());
                     }
                     let start = start as usize;
                     let length = length as usize;

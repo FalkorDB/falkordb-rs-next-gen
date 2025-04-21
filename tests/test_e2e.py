@@ -967,3 +967,64 @@ def test_right():
             assert False, "Expected an error"
         except ResponseError as e:
             assert "Type mismatch" in str(e)
+
+def test_substring():
+    # Null handling
+    res = query("RETURN substring(null, 0, 2) AS result")
+    assert res.result_set == [[None]]
+
+    # Basic functionality
+    res = query("RETURN substring('abc', 0, 2) AS result")
+    assert res.result_set == [["ab"]]
+
+    res = query("RETURN substring('abc', 1, 2) AS result")
+    assert res.result_set == [["bc"]]
+
+    res = query("RETURN substring('abc', 0, 3) AS result")
+    assert res.result_set == [["abc"]]  # n > length of string
+
+    # Negative values for start and length
+    try:
+        query("RETURN substring('abc', -1, 2) AS result")
+        assert False, "Expected an error"
+    except ResponseError as e:
+        assert "start must be a non-negative integer" in str(e)
+
+    try:
+        query("RETURN substring('abc', 0, -1) AS result")
+        assert False, "Expected an error"
+    except ResponseError as e:
+        assert "length must be a non-negative integer" in str(e)
+
+    # Type mismatch
+    for value, name in [(1.0, 'Float'), (True, 'Boolean'), ({}, 'Map'), ([], 'List')]:
+        try:
+            query(f"RETURN substring({value}, 0, 2) AS result")
+            assert False, "Expected an error"
+        except ResponseError as e:
+            assert "Type mismatch" in str(e)
+
+        try:
+            query(f"RETURN substring('abc', {value}, 2) AS result")
+            assert False, "Expected an error"
+        except ResponseError as e:
+            assert "Type mismatch" in str(e)
+
+        try:
+            query(f"RETURN substring('abc', 0, {value}) AS result")
+            assert False, "Expected an error"
+        except ResponseError as e:
+            assert "Type mismatch" in str(e)
+
+
+    try:
+        query(f"RETURN substring('abc', null, 2) AS result")
+        assert False, "Expected an error"
+    except ResponseError as e:
+        assert "Type mismatch" in str(e)
+
+    try:
+        query(f"RETURN substring('abc', 0, null) AS result")
+        assert False, "Expected an error"
+    except ResponseError as e:
+        assert "Type mismatch" in str(e)
