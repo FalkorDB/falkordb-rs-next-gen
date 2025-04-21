@@ -110,6 +110,6 @@ jobs:
         run: |
           sudo apt install -y python3-venv
           python3 -m venv venv
-          venv/bin/pip install falkordb pytest
           . venv/bin/activate
-          pytest ./tests/test_e2e.py
+          pip install -r  tests/requierment.txt
+          pytest -v tests/test_e2e.py
