@@ -23,7 +23,7 @@ jobs:
       - name: Check if specific file changed
         id: check
         run: |
-          if git diff --name-only ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }} | grep -q "build/Dockerfilet"; then
+          if [ git diff --name-only ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }} | grep -q "build/Dockerfilet"; ] then
             echo "changed=true" >> $GITHUB_ENV
           else
             echo "changed=false" >> $GITHUB_ENV
@@ -104,4 +104,4 @@ jobs:
         run: |
           curl -X DELETE \
             -u "$DOCKERHUB_USERNAME:$DOCKERHUB_TOKEN" \
-            "https://hub.docker.com/v2/repositories/aviavni/falkordb-build/tags/github.event.pull_request.number"
+            "https://hub.docker.com/v2/repositories/aviavni/falkordb-build/tags/${{ github.event.pull_request.number }}"
