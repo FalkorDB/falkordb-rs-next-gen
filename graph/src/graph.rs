@@ -396,9 +396,9 @@ impl Graph {
         self.node_count -= 1;
         self.all_nodes_matrix.remove(id, id);
 
-        for (label_id, label_matrix) in self.labels_matices.iter_mut().map(|(_, m)| m).enumerate() {
+        for (label_id, label_matrix) in self.labels_matices.iter_mut() {
             label_matrix.remove(id, id);
-            self.node_labels_matrix.remove(id, label_id as _);
+            self.node_labels_matrix.remove(id, *label_id as _);
         }
 
         self.node_properties_map.remove(&id);

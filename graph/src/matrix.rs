@@ -230,22 +230,24 @@ impl<T> Drop for UnaryOp<T> {
 }
 
 impl UnaryOp<u64> {
-    pub fn new(function: GxB_unary_function) -> Self {
-        unsafe {
-            let mut op: MaybeUninit<GrB_UnaryOp> = MaybeUninit::uninit();
-            let info = GrB_UnaryOp_new(op.as_mut_ptr(), function, GrB_UINT64, GrB_UINT64);
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
-            Self {
-                op: op.assume_init(),
-                phantom: PhantomData,
-            }
-        }
-    }
-
+    #[must_use]
     pub const fn default() -> Self {
         Self {
             op: null_mut(),
             phantom: PhantomData,
+        }
+    }
+
+    pub fn set(
+        &mut self,
+        function: GxB_unary_function,
+    ) {
+        debug_assert!(self.op.is_null());
+        unsafe {
+            let mut op: MaybeUninit<GrB_UnaryOp> = MaybeUninit::uninit();
+            let info = GrB_UnaryOp_new(op.as_mut_ptr(), function, GrB_UINT64, GrB_UINT64);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            self.op = op.assume_init();
         }
     }
 }

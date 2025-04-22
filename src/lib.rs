@@ -1,9 +1,9 @@
 use graph::{cypher::Parser, graph::Graph, matrix::init, planner::Planner, runtime::Value};
 use redis_module::{
-    native_types::RedisType, redis_module, redisvalue::RedisValueKey, Context, NextArg, RedisError,
-    RedisModuleTypeMethods, RedisModule_Alloc, RedisModule_Calloc, RedisModule_Free,
-    RedisModule_Realloc, RedisResult, RedisString, RedisValue, Status,
-    REDISMODULE_TYPE_METHOD_VERSION,
+    Context, NextArg, REDISMODULE_TYPE_METHOD_VERSION, RedisError, RedisModule_Alloc,
+    RedisModule_Calloc, RedisModule_Free, RedisModule_Realloc, RedisModuleTypeMethods, RedisResult,
+    RedisString, RedisValue, Status, native_types::RedisType, redis_module,
+    redisvalue::RedisValueKey,
 };
 use std::os::raw::c_void;
 
@@ -210,6 +210,10 @@ fn query_mut(
                         "Relationships created: {}",
                         summary.relationships_created
                     )),
+                    RedisValue::SimpleString(format!(
+                        "Relationships deleted: {}",
+                        summary.relationships_deleted
+                    )),
                 ],
             ]
             .into()
@@ -234,43 +238,7 @@ fn graph_query(
         let mut value = Graph::new(16384, 16384);
         let res = query_mut(&mut value, debug, query);
         key.set_value(&GRAPH_TYPE, value)?;
-        key.get_value::<Graph>(&GRAPH_TYPE)?.unwrap()
-    };
-    let mut res = Vec::new();
-    match graph.query(
-        query.as_str(),
-        &mut |g, r| {
-            res.push(raw_value_to_redis_value(g, &r));
-        },
-        debug > 0,
-    ) {
-        Ok(summary) => Ok(vec![
-            vec![vec![
-                RedisValue::Integer(1),
-                RedisValue::SimpleString("a".to_string()),
-            ]
-            .into()],
-            res,
-            vec![
-                RedisValue::SimpleString(format!("Labels added: {}", summary.labels_added)),
-                RedisValue::SimpleString(format!("Nodes created: {}", summary.nodes_created)),
-                RedisValue::SimpleString(format!("Nodes deleted: {}", summary.nodes_deleted)),
-                RedisValue::SimpleString(format!("Properties set: {}", summary.properties_set)),
-                RedisValue::SimpleString(format!(
-                    "Relationships created: {}",
-                    summary.relationships_created
-                )),
-                RedisValue::SimpleString(format!(
-                    "Relationships deleted: {}",
-                    summary.relationships_deleted
-                )),
-            ],
-        ]
-        .into()),
-        Err(err) => {
-            ctx.reply_error_string(err.as_str());
-            Ok(RedisValue::NoReply)
-        }
+        res
     }
 }
 

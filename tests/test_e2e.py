@@ -35,7 +35,8 @@ def teardown_module(module):
 
 def setup_function(function):
     global g
-    g.delete()
+    if g.name in client.list_graphs():
+        g.delete()
 
 def query(query: str, params = None, write: bool = False):
     if write:
@@ -285,10 +286,9 @@ def test_graph_list():
         client.connection.set(f"ng{i}", "ng")
     graphs = client.list_graphs()
 
-    assert len(graphs) == 1001
+    assert len(graphs) == 1000
     for i in range(1000):
         assert f'g{i}' in graphs
-    assert 'test' in graphs
 
 def test_aggregation():
     res = query("UNWIND range(1, 10) AS x RETURN collect(x)")

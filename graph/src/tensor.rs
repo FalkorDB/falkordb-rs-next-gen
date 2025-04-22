@@ -1,9 +1,12 @@
-use std::{ffi::c_void, sync::Once};
+use std::{
+    ffi::c_void,
+    sync::{Once, atomic::AtomicPtr},
+};
 
 use crate::{
+    GraphBLAS::GrB_Vector,
     matrix::{self, Matrix, Remove, Set, Size, UnaryOp},
     vector::{self, Vector},
-    GraphBLAS::GrB_Vector,
 };
 
 #[allow(non_upper_case_globals)]
@@ -37,7 +40,7 @@ macro_rules! clear_msb {
 static INIT: Once = Once::new();
 static mut UNARYOP: UnaryOp<u64> = UnaryOp::default();
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(non_snake_case)]
 unsafe extern "C" fn _free_vectors(
     _z: *mut c_void,
@@ -49,11 +52,12 @@ unsafe extern "C" fn _free_vectors(
     }
 }
 
+#[allow(static_mut_refs)]
 impl Drop for Tensor {
     fn drop(&mut self) {
         unsafe {
             INIT.call_once(|| {
-                UNARYOP = UnaryOp::new(Some(_free_vectors));
+                UNARYOP.set(Some(_free_vectors));
             });
 
             self.m.apply(&UNARYOP);
