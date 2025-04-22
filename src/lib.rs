@@ -75,7 +75,7 @@ fn inner_raw_value_to_redis_value(
         Value::Int(x) => RedisValue::Array(vec![RedisValue::Integer(3), RedisValue::Integer(*x)]),
         Value::Float(x) => RedisValue::Array(vec![
             RedisValue::Integer(5),
-            RedisValue::SimpleString(format!("{:.15}", *x)),
+            RedisValue::SimpleString(format!("{:.14e}", *x)),
         ]),
         Value::String(x) => RedisValue::Array(vec![
             RedisValue::Integer(2),
