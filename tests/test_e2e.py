@@ -119,6 +119,20 @@ def test_operators():
 
     for a in range(-10, 10):
         for b in range(-10, 10):
+            res = query(f"RETURN {a} + {b}")
+            assert res.result_set == [[a + b]]
+
+            res = query(f"RETURN {a} * {b}")
+            assert res.result_set == [[a * b]]
+
+            if a != 0:
+                res = query(f"RETURN {a} ^ {b}")
+                assert res.result_set == [[pow(a, b)]]
+
+            if a >= 0 and b > 0:
+                res = query(f"RETURN {a} % {b}")
+                assert res.result_set == [[a % b]]
+
             res = query(f"RETURN {a} + {b} * ({a} + {b})")
             assert res.result_set == [[a + b * (a + b)]]
 
