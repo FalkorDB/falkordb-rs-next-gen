@@ -19,7 +19,10 @@ def empty_graph():
     falkordb_con = _brand_new_redis()
     graph = falkordb_con.select_graph("G")
 
-    graph.delete()
+    try:
+        graph.delete()
+    except:
+        pass
 
     graph.query("RETURN 1")
 

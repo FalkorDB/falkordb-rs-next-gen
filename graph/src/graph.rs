@@ -10,8 +10,9 @@ use crate::{
     cypher::Parser,
     matrix::{self, Matrix, Remove, Set, Size},
     planner::{IR, Planner},
-    runtime::{Runtime, Value, evaluate_param, ro_run, run},
+    runtime::{Runtime, evaluate_param, ro_run, run},
     tensor::{self, Tensor},
+    value::Value,
 };
 
 pub struct Graph {

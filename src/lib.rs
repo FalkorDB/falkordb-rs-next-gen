@@ -1,4 +1,4 @@
-use graph::{cypher::Parser, graph::Graph, matrix::init, planner::Planner, runtime::Value};
+use graph::{cypher::Parser, graph::Graph, matrix::init, planner::Planner, value::Value};
 use redis_module::{
     Context, NextArg, REDISMODULE_TYPE_METHOD_VERSION, RedisError, RedisModule_Alloc,
     RedisModule_Calloc, RedisModule_Free, RedisModule_Realloc, RedisModuleTypeMethods, RedisResult,
@@ -74,7 +74,10 @@ fn inner_raw_value_to_redis_value(
             RedisValue::SimpleString((if *x { "true" } else { "false" }).to_string()),
         ]),
         Value::Int(x) => RedisValue::Array(vec![RedisValue::Integer(3), RedisValue::Integer(*x)]),
-        Value::Float(x) => RedisValue::Array(vec![RedisValue::Integer(5), RedisValue::Float(*x)]),
+        Value::Float(x) => RedisValue::Array(vec![
+            RedisValue::Integer(5),
+            RedisValue::SimpleString(format!("{:.14e}", *x)),
+        ]),
         Value::String(x) => RedisValue::Array(vec![
             RedisValue::Integer(2),
             RedisValue::SimpleString(x.to_string()),

@@ -24,6 +24,7 @@ pub enum QueryExprIR {
     Gt(Vec<QueryExprIR>),
     Le(Vec<QueryExprIR>),
     Ge(Vec<QueryExprIR>),
+    In(Box<(QueryExprIR, QueryExprIR)>),
     Add(Vec<QueryExprIR>),
     Sub(Vec<QueryExprIR>),
     Mul(Vec<QueryExprIR>),
@@ -36,6 +37,10 @@ pub enum QueryExprIR {
     Property(Box<QueryExprIR>, String),
     FuncInvocation(String, Vec<QueryExprIR>),
     Map(BTreeMap<String, QueryExprIR>),
+    StartsWith(Box<(QueryExprIR, QueryExprIR)>),
+    EndsWith(Box<(QueryExprIR, QueryExprIR)>),
+    Contains(Box<(QueryExprIR, QueryExprIR)>),
+    RegexMatches(Box<(QueryExprIR, QueryExprIR)>),
 }
 
 impl QueryExprIR {
@@ -56,6 +61,7 @@ impl QueryExprIR {
             }
             Self::Parameter(_) => Ok(()),
             Self::And(exprs) | Self::Or(exprs) | Self::Xor(exprs) => {
+                debug_assert!(exprs.len() > 1);
                 for expr in exprs {
                     if let _e @ (Self::Integer(_)
                     | Self::Float(_)
@@ -86,6 +92,26 @@ impl QueryExprIR {
                     expr.inner_validate(env)?;
                 }
                 Ok(())
+            }
+            Self::In(op) => {
+                op.0.inner_validate(env)?;
+                op.1.inner_validate(env)
+            }
+            Self::StartsWith(op) => {
+                op.0.inner_validate(env)?;
+                op.1.inner_validate(env)
+            }
+            Self::EndsWith(op) => {
+                op.0.inner_validate(env)?;
+                op.1.inner_validate(env)
+            }
+            Self::Contains(op) => {
+                op.0.inner_validate(env)?;
+                op.1.inner_validate(env)
+            }
+            Self::RegexMatches(op) => {
+                op.0.inner_validate(env)?;
+                op.1.inner_validate(env)
             }
             Self::Map(exprs) => {
                 for expr in exprs.values() {
