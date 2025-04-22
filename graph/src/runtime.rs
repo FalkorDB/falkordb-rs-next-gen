@@ -1440,7 +1440,7 @@ where
 {
     let first = values
         .next()
-        .expect("add is used with at least 2 values, irs should not be empty");
+        .ok_or_else(|| "Add operator requires at least one operand".to_string())?;
     values.try_fold(first, |acc, value| acc + value)
 }
 
