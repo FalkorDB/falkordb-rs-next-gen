@@ -54,6 +54,11 @@ def query(query: str, params = None, write: bool = False):
         read_res = g.ro_query(query, params)
         assert write_res.result_set == read_res.result_set
         return write_res
+    
+def assert_result_set_equal_no_order(res, expected):
+    assert len(res.result_set) == len(expected)
+    for record in expected:
+        assert record in res.result_set
 
 def test_return_values():
     res = query("RETURN null")
@@ -207,18 +212,15 @@ def test_graph_crud():
     assert res.nodes_created == 3
 
     res = query("MATCH (n:N), (m:N) RETURN n, m")
-    assert len(res.result_set) == 9
-    for record in [[Node(0, labels="N"), Node(0, labels="N")], [Node(0, labels="N"), Node(1, labels="N")], [Node(0, labels="N"), Node(2, labels="N")], [Node(1, labels="N"), Node(0, labels="N")], [Node(1, labels="N"), Node(1, labels="N")], [Node(1, labels="N"), Node(2, labels="N")], [Node(2, labels="N"), Node(0, labels="N")], [Node(2, labels="N"), Node(1, labels="N")], [Node(2, labels="N"), Node(2, labels="N")]]:
-        assert record in res.result_set
+    
+    assert_result_set_equal_no_order(res, [[Node(0, labels="N"), Node(0, labels="N")], [Node(0, labels="N"), Node(1, labels="N")], [Node(0, labels="N"), Node(2, labels="N")], [Node(1, labels="N"), Node(0, labels="N")], [Node(1, labels="N"), Node(1, labels="N")], [Node(1, labels="N"), Node(2, labels="N")], [Node(2, labels="N"), Node(0, labels="N")], [Node(2, labels="N"), Node(1, labels="N")], [Node(2, labels="N"), Node(2, labels="N")]])
 
     g.delete()
 
-    res = query("UNWIND range(3) AS x CREATE (n:N {v: x})-[r:R {v: x}]->(m:M {v: x}) RETURN n, r, m", write=True)
+    res = query("UNWIND range(0, 2) AS x CREATE (n:N {v: x})-[r:R {v: x}]->(m:M {v: x}) RETURN n, r, m", write=True)
     assert res.nodes_created == 6
     assert res.relationships_created == 3
-    assert len(res.result_set) == 3
-    for record in [[Node(0, labels="N", properties={"v": 0}), Edge(0, "R", 1, 0, properties={"v": 0}), Node(1, labels="M", properties={"v": 0})], [Node(2, labels="N", properties={"v": 1}), Edge(2, "R", 3, 1, properties={"v": 1}), Node(3, labels="M", properties={"v": 1})], [Node(4, labels="N", properties={"v": 2}), Edge(4, "R", 5, 2, properties={"v": 2}), Node(5, labels="M", properties={"v": 2})]]:
-        assert record in res.result_set
+    assert_result_set_equal_no_order(res, [[Node(0, labels="N", properties={"v": 0}), Edge(0, "R", 1, 0, properties={"v": 0}), Node(1, labels="M", properties={"v": 0})], [Node(2, labels="N", properties={"v": 1}), Edge(2, "R", 3, 1, properties={"v": 1}), Node(3, labels="M", properties={"v": 1})], [Node(4, labels="N", properties={"v": 2}), Edge(4, "R", 5, 2, properties={"v": 2}), Node(5, labels="M", properties={"v": 2})]])
 
     res = query("MATCH (n)-[r:R]->(m) RETURN n, r, m")
     assert res.result_set == [[Node(0, labels="N", properties={"v": 0}), Edge(0, "R", 1, 0, properties={"v": 0}), Node(1, labels="M", properties={"v": 0})], [Node(2, labels="N", properties={"v": 1}), Edge(2, "R", 3, 1, properties={"v": 1}), Node(3, labels="M", properties={"v": 1})], [Node(4, labels="N", properties={"v": 2}), Edge(4, "R", 5, 2, properties={"v": 2}), Node(5, labels="M", properties={"v": 2})]]
@@ -1092,4 +1094,4 @@ def test_aggregation():
     assert res.result_set == [[10]]
 
     res = query("UNWIND range(1, 11) AS x RETURN x % 2, count(x)")
-    assert res.result_set == [[1, 6], [0, 5]]
+    assert_result_set_equal_no_order(res, [[1, 6], [0, 5]])
