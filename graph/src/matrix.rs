@@ -300,6 +300,17 @@ impl<T> Remove<T> for Matrix<T> {
 }
 
 impl Get<bool> for Matrix<bool> {
+    /// Retrieves the boolean value at the specified position in the matrix.
+    /// Returns `None` if the element does not exist.
+    ///
+    /// # Parameters
+    /// - `i`: The row index.
+    /// - `j`: The column index.
+    ///
+    /// # Returns
+    /// - `Some(bool)`: The boolean value at the specified position.
+    /// - `None`: The element does not exist.
+    #[must_use]
     fn get(
         &self,
         i: u64,

@@ -7,6 +7,8 @@ use redis_module::{
 };
 use std::os::raw::c_void;
 
+const EMPTY_KEY_ERR: RedisResult = Err(RedisError::Str("ERR Invalid graph operation on empty key"));
+
 static GRAPH_TYPE: RedisType = RedisType::new(
     "graphdata",
     0,
@@ -39,9 +41,11 @@ static GRAPH_TYPE: RedisType = RedisType::new(
     },
 );
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 unsafe extern "C" fn my_free(value: *mut c_void) {
-    drop(Box::from_raw(value.cast::<Graph>()));
+    unsafe {
+        drop(Box::from_raw(value.cast::<Graph>()));
+    }
 }
 
 fn raw_value_to_redis_value(
@@ -168,8 +172,49 @@ fn graph_delete(
     if key.get_value::<Graph>(&GRAPH_TYPE)?.is_some() {
         key.delete()
     } else {
-        Err(RedisError::Str("ERR Invalid graph operation on empty key"))
+        EMPTY_KEY_ERR
     }
+}
+
+#[inline]
+fn query_mut(
+    graph: &mut Graph,
+    debug: u64,
+    query: &str,
+) -> Result<RedisValue, RedisError> {
+    let mut res = Vec::new();
+    graph
+        .query(
+            query,
+            &mut |g, r| {
+                res.push(raw_value_to_redis_value(g, &r));
+            },
+            debug > 0,
+        )
+        .map(|summary| {
+            vec![
+                vec![
+                    vec![
+                        RedisValue::Integer(1),
+                        RedisValue::SimpleString("a".to_string()),
+                    ]
+                    .into(),
+                ],
+                res,
+                vec![
+                    RedisValue::SimpleString(format!("Labels added: {}", summary.labels_added)),
+                    RedisValue::SimpleString(format!("Nodes created: {}", summary.nodes_created)),
+                    RedisValue::SimpleString(format!("Nodes deleted: {}", summary.nodes_deleted)),
+                    RedisValue::SimpleString(format!("Properties set: {}", summary.properties_set)),
+                    RedisValue::SimpleString(format!(
+                        "Relationships created: {}",
+                        summary.relationships_created
+                    )),
+                ],
+            ]
+            .into()
+        })
+        .map_err(RedisError::String)
 }
 
 fn graph_query(
@@ -178,16 +223,16 @@ fn graph_query(
 ) -> RedisResult {
     let mut args = args.into_iter().skip(1);
     let key = args.next_arg()?;
-    let query = args.next_string()?;
+    let query = args.next_str()?;
     let debug = args.next_u64().unwrap_or(0);
 
     let key = ctx.open_key_writable(&key);
 
-    let graph = if let Some(graph) = key.get_value::<Graph>(&GRAPH_TYPE)? {
-        graph
+    if let Some(graph) = key.get_value::<Graph>(&GRAPH_TYPE)? {
+        query_mut(graph, debug, query)
     } else {
-        let value = Graph::new(16384, 16384);
-
+        let mut value = Graph::new(16384, 16384);
+        let res = query_mut(&mut value, debug, query);
         key.set_value(&GRAPH_TYPE, value)?;
         key.get_value::<Graph>(&GRAPH_TYPE)?.unwrap()
     };
@@ -229,82 +274,139 @@ fn graph_query(
     }
 }
 
+/// This function is used to execute a read only query on a graph
+///
+/// See: https://docs.falkordb.com/commands/graph.ro_query.html
+///
+/// # Example
+///
+/// ```sh
+/// GRAPH.RO_QUERY graph "MATCH (n) RETURN n"
+/// ```
 fn graph_ro_query(
     ctx: &Context,
     args: Vec<RedisString>,
 ) -> RedisResult {
     let mut args = args.into_iter().skip(1);
     let key = args.next_arg()?;
-    let query = args.next_string()?;
+    let query = args.next_str()?;
     let debug = args.next_u64().unwrap_or(0);
 
     let key = ctx.open_key(&key);
 
-    (key.get_value::<Graph>(&GRAPH_TYPE)?).map_or_else(
-        || Ok(RedisValue::Null),
+    // We check if the key exists and is of type Graph if wrong type `get_value` return an error
+    (key.get_value::<Graph>(&GRAPH_TYPE)?).map_or(
+        // If the key does not exist, we return an error
+        EMPTY_KEY_ERR,
         |graph| {
             let mut res = Vec::new();
             match graph.ro_query(
-                query.as_str(),
+                query,
                 &mut |g, r| {
                     res.push(raw_value_to_redis_value(g, &r));
                 },
                 debug > 0,
             ) {
                 Ok(_) => Ok(vec![
-                    vec![vec![
-                        RedisValue::Integer(1),
-                        RedisValue::SimpleString("a".to_string()),
-                    ]
-                    .into()],
+                    vec![
+                        vec![
+                            RedisValue::Integer(1),
+                            RedisValue::SimpleString("a".to_string()),
+                        ]
+                        .into(),
+                    ],
                     res,
                     vec![],
                 ]
                 .into()),
-                Err(err) => {
-                    ctx.reply_error_string(err.as_str());
-                    Ok(RedisValue::NoReply)
-                }
+                Err(err) => Err(RedisError::String(err)),
             }
         },
     )
 }
 
-fn graph_parse(
+/// This function is used to list all the graphs
+/// in the database. It returns a list of graphs IDs
+/// that are currently stored in the database.
+///
+/// See: https://docs.falkordb.com/commands/graph.list.html
+///
+/// # Example
+///
+/// ```sh
+/// 127.0.0.1:6379> GRAPH.LIST
+/// 2) G
+/// 3) resources
+/// 4) players
+/// ```
+fn graph_list(
     ctx: &Context,
     args: Vec<RedisString>,
 ) -> RedisResult {
-    let mut args = args.into_iter().skip(1);
-    let query = args.next_string()?;
+    if args.len() != 1 {
+        return Err(RedisError::WrongArity);
+    }
 
-    let mut parser = Parser::new(&query);
-    match parser.parse() {
-        Ok(ir) => Ok(RedisValue::SimpleString(format!("{ir:?}"))),
-        Err(err) => {
-            ctx.reply_error_string(err.as_str());
-            Ok(RedisValue::NoReply)
+    let mut a = [
+        ctx.create_string("0"),
+        ctx.create_string("TYPE"),
+        ctx.create_string("graphdata"),
+    ];
+    let mut res = Vec::new();
+    loop {
+        let call_res = ctx.call("SCAN", a.iter().collect::<Vec<_>>().as_slice())?;
+        match call_res {
+            RedisValue::Array(arr) => {
+                if let RedisValue::Array(arr) = &arr[1] {
+                    res.extend(arr.iter().filter_map(|v| {
+                        if let RedisValue::SimpleString(key) = v {
+                            Some(RedisValue::SimpleString(key.to_string()))
+                        } else {
+                            None
+                        }
+                    }));
+                }
+                if let RedisValue::SimpleString(i) = &arr[0] {
+                    if i == "0" {
+                        return Ok(RedisValue::Array(res));
+                    }
+                    a[0] = ctx.create_string(i.to_string());
+                }
+            }
+            _ => return Err(RedisError::Str("ERR Failed to list graphs")),
         }
     }
 }
 
-fn graph_plan(
-    ctx: &Context,
+fn graph_parse(
+    _ctx: &Context,
     args: Vec<RedisString>,
 ) -> RedisResult {
     let mut args = args.into_iter().skip(1);
-    let query = args.next_string()?;
+    let query = args.next_str()?;
 
-    let mut parser = Parser::new(&query);
+    let mut parser = Parser::new(query);
+    match parser.parse() {
+        Ok(ir) => Ok(RedisValue::SimpleString(format!("{ir:?}"))),
+        Err(err) => Err(RedisError::String(err)),
+    }
+}
+
+fn graph_plan(
+    _ctx: &Context,
+    args: Vec<RedisString>,
+) -> RedisResult {
+    let mut args = args.into_iter().skip(1);
+    let query = args.next_str()?;
+
+    let mut parser = Parser::new(query);
     match parser.parse() {
         Ok(ir) => {
             let mut planner = Planner::new();
             let ir = planner.plan(ir, false);
             Ok(RedisValue::SimpleString(format!("{ir:?}")))
         }
-        Err(err) => {
-            ctx.reply_error_string(err.as_str());
-            Ok(RedisValue::NoReply)
-        }
+        Err(err) => Err(RedisError::String(err)),
     }
 }
 
@@ -335,6 +437,7 @@ redis_module! {
         ["graph.DELETE", graph_delete, "write", 1, 1, 1, ""],
         ["graph.QUERY", graph_query, "write deny-oom", 1, 1, 1, ""],
         ["graph.RO_QUERY", graph_ro_query, "readonly", 1, 1, 1, ""],
+        ["graph.LIST", graph_list, "readonly", 0, 0, 0, ""],
         ["graph.PARSE", graph_parse, "readonly", 0, 0, 0, ""],
         ["graph.PLAN", graph_plan, "readonly", 0, 0, 0, ""],
     ],
