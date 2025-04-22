@@ -982,10 +982,13 @@ pub fn ro_run(
             let list = ro_run(vars, g, runtime, result_fn, &op.1)?;
             list_contains(&list, &value)
         }
-        IR::Add(irs) => add_values(
-            irs.into_iter()
-                .flat_map(|ir| ro_run(vars, g, runtime, result_fn, ir)),
-        ),
+        IR::Add(irs) => {
+            let values = irs
+                .iter()
+                .map(|ir| ro_run(vars, g, runtime, result_fn, ir))
+                .collect::<Result<Vec<_>, _>>()?;
+            add_values(values.into_iter())
+        }
         IR::Sub(irs) => irs
             .iter()
             .flat_map(|ir| ro_run(vars, g, runtime, result_fn, ir))
@@ -1269,10 +1272,13 @@ pub fn run(
             let list = run(vars, g, runtime, result_fn, &op.1)?;
             list_contains(&list, &value)
         }
-        IR::Add(irs) => add_values(
-            irs.into_iter()
-                .flat_map(|ir| run(vars, g, runtime, result_fn, ir)),
-        ),
+        IR::Add(irs) => {
+            let values = irs
+                .iter()
+                .map(|ir| run(vars, g, runtime, result_fn, ir))
+                .collect::<Result<Vec<_>, _>>()?;
+            add_values(values.into_iter())
+        }
         IR::Sub(irs) => irs
             .iter()
             .flat_map(|ir| run(vars, g, runtime, result_fn, ir))

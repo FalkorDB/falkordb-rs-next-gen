@@ -26,6 +26,9 @@ impl Add for Value {
             (Value::Null, _) | (_, Value::Null) => Ok(Value::Null),
             (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a + b)),
             (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a + b)),
+            (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a + b as f64)),
+            (Value::Int(a), Value::Float(b)) => Ok(Value::Float(a as f64 + b)),
+
             (Value::List(a), Value::List(b)) => Ok(Value::List(a.into_iter().chain(b).collect())),
             (Value::List(mut l), scalar) => {
                 if l.is_empty() {
