@@ -10,7 +10,7 @@ use crate::{
     cypher::Parser,
     matrix::{self, Matrix, Remove, Set, Size},
     planner::{IR, Planner},
-    runtime::{Value, Runtime, evaluate_param, ro_run, run},
+    runtime::{Runtime, Value, evaluate_param, ro_run, run},
     tensor::{self, Tensor},
 };
 
