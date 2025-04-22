@@ -1,30 +1,11 @@
-use crate::{
-    ast::QueryExprIR, graph::Graph, matrix::Iter, planner::IR, value::Contains, value::Value,
-};
+use crate::{ast::QueryExprIR, graph::Graph, planner::IR, value::Contains, value::Value};
+use crate::{matrix, tensor};
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
+use std::hash::{DefaultHasher, Hash, Hasher};
 
 type ReadFn = fn(&Graph, &mut Runtime, Value) -> Result<Value, String>;
 type WriteFn = fn(&mut Graph, &mut Runtime, Value) -> Result<Value, String>;
-
-impl Hash for Value {
-    fn hash<H: std::hash::Hasher>(
-        &self,
-        state: &mut H,
-    ) {
-        match self {
-            Self::Null => todo!(),
-            Self::Bool(x) => x.hash(state),
-            Self::Int(x) => x.hash(state),
-            Self::Float(_) => todo!(),
-            Self::String(x) => x.hash(state),
-            Self::List(x) => x.hash(state),
-            Self::Map(x) => x.hash(state),
-            Self::Node(x) => x.hash(state),
-            Self::Relationship(_, _, _) => todo!(),
-        }
-    }
-}
 
 pub struct Runtime {
     read_functions: BTreeMap<String, ReadFn>,
@@ -82,7 +63,7 @@ impl Runtime {
         read_functions.insert("left".to_string(), Self::string_left);
         read_functions.insert("ltrim".to_string(), Self::string_ltrim);
         read_functions.insert("right".to_string(), Self::string_right);
-      
+
         // aggregation functions
         read_functions.insert("collect".to_string(), Self::collect);
         read_functions.insert("count".to_string(), Self::count);
@@ -223,7 +204,7 @@ impl Runtime {
         _g: &Graph,
         runtime: &mut Self,
         args: Value,
-    ) -> Value {
+    ) -> Result<Value, String> {
         let mut hasher = DefaultHasher::new();
         args.hash(&mut hasher);
         let key = hasher.finish();
@@ -231,7 +212,7 @@ impl Runtime {
             .agg_ctxs
             .entry(key)
             .or_insert_with(|| (args, Value::Null));
-        Value::Int(key as i64)
+        Ok(Value::Int(key as i64))
     }
 
     fn create_node_iter(
@@ -279,7 +260,7 @@ impl Runtime {
             Value::List(args) => match args.as_slice() {
                 [Value::Int(iter)] => runtime.node_iters[*iter as usize]
                     .next()
-                    .map_or(Ok(Value::Null), |(n, _)| Value::Node(n)),
+                    .map_or(Ok(Value::Null), |(n, _)| Ok(Value::Node(n))),
                 _ => todo!(),
             },
             _ => todo!(),
@@ -290,7 +271,7 @@ impl Runtime {
         g: &Graph,
         runtime: &mut Self,
         args: Value,
-    ) -> Value {
+    ) -> Result<Value, String> {
         match args {
             Value::List(args) => {
                 let mut iter = args.into_iter();
@@ -299,7 +280,7 @@ impl Runtime {
                         runtime
                             .relationship_iters
                             .push(g.get_relationships(&[raw_type]).unwrap());
-                        Value::Int(runtime.relationship_iters.len() as i64 - 1)
+                        Ok(Value::Int(runtime.relationship_iters.len() as i64 - 1))
                     }
                     _ => todo!(),
                 }
@@ -312,15 +293,14 @@ impl Runtime {
         _g: &Graph,
         runtime: &mut Self,
         args: Value,
-    ) -> Value {
+    ) -> Result<Value, String> {
         match args {
             Value::List(args) => match args.as_slice() {
                 [Value::Int(iter)] => runtime.relationship_iters[*iter as usize]
                     .next()
-                    .map_or(Value::Null, |(src, dest, id)| {
-                        Value::Relationship(id, src, dest)
+                    .map_or(Ok(Value::Null), |(src, dest, id)| {
+                        Ok(Value::Relationship(id, src, dest))
                     }),
-                    .map_or(Ok(Value::Null), |(n, _)| Ok(Value::Node(n))),
                 _ => todo!(),
             },
             _ => unreachable!(),
@@ -371,11 +351,11 @@ impl Runtime {
         _g: &Graph,
         _runtime: &mut Self,
         args: Value,
-    ) -> Value {
+    ) -> Result<Value, String> {
         match args {
             Value::List(arr) => match arr.as_slice() {
-                [Value::Relationship(_, src, _)] => Value::Node(*src),
-                _ => Value::Null,
+                [Value::Relationship(_, src, _)] => Ok(Value::Node(*src)),
+                _ => Ok(Value::Null),
             },
             _ => unimplemented!(),
         }
@@ -385,11 +365,11 @@ impl Runtime {
         _g: &Graph,
         _runtime: &mut Self,
         args: Value,
-    ) -> Value {
+    ) -> Result<Value, String> {
         match args {
             Value::List(arr) => match arr.as_slice() {
-                [Value::Relationship(_, _, dest)] => Value::Node(*dest),
-                _ => Value::Null,
+                [Value::Relationship(_, _, dest)] => Ok(Value::Node(*dest)),
+                _ => Ok(Value::Null),
             },
             _ => unimplemented!(),
         }
@@ -399,7 +379,7 @@ impl Runtime {
         _g: &Graph,
         runtime: &mut Self,
         args: Value,
-    ) -> Value {
+    ) -> Result<Value, String> {
         if let Value::List(arr) = args {
             if let [x, Value::Int(hash)] = arr.as_slice() {
                 runtime.agg_ctxs.entry(*hash as _).and_modify(|v| {
@@ -411,14 +391,14 @@ impl Runtime {
                 });
             }
         };
-        Value::Null
+        Ok(Value::Null)
     }
 
     fn count(
         _g: &Graph,
         runtime: &mut Self,
         args: Value,
-    ) -> Value {
+    ) -> Result<Value, String> {
         if let Value::List(arr) = args {
             match arr.as_slice() {
                 [Value::Null, _] => {}
@@ -434,14 +414,14 @@ impl Runtime {
                 _ => (),
             }
         };
-        Value::Null
+        Ok(Value::Null)
     }
 
     fn sum(
         _g: &Graph,
         runtime: &mut Self,
         args: Value,
-    ) -> Value {
+    ) -> Result<Value, String> {
         if let Value::List(arr) = args {
             match arr.as_slice() {
                 [Value::Int(a), Value::Int(hash)] => {
@@ -456,14 +436,14 @@ impl Runtime {
                 _ => (),
             }
         };
-        Value::Null
+        Ok(Value::Null)
     }
 
     fn max(
         _g: &Graph,
         runtime: &mut Self,
         args: Value,
-    ) -> Value {
+    ) -> Result<Value, String> {
         if let Value::List(arr) = args {
             if let [Value::Int(a), Value::Int(hash)] = arr.as_slice() {
                 runtime.agg_ctxs.entry(*hash as _).and_modify(|v| {
@@ -477,14 +457,14 @@ impl Runtime {
                 });
             }
         };
-        Value::Null
+        Ok(Value::Null)
     }
 
     fn min(
         _g: &Graph,
         runtime: &mut Self,
         args: Value,
-    ) -> Value {
+    ) -> Result<Value, String> {
         if let Value::List(arr) = args {
             if let [Value::Int(a), Value::Int(hash)] = arr.as_slice() {
                 runtime.agg_ctxs.entry(*hash as _).and_modify(|v| {
@@ -498,7 +478,7 @@ impl Runtime {
                 });
             }
         };
-        Value::Null
+        Ok(Value::Null)
     }
 
     fn value_to_integer(

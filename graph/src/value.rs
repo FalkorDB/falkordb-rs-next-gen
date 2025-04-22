@@ -1,5 +1,6 @@
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
+use std::hash::Hash;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
@@ -12,6 +13,25 @@ pub enum Value {
     Map(BTreeMap<String, Value>),
     Node(u64),
     Relationship(u64, u64, u64),
+}
+
+impl Hash for Value {
+    fn hash<H: std::hash::Hasher>(
+        &self,
+        state: &mut H,
+    ) {
+        match self {
+            Self::Null => todo!(),
+            Self::Bool(x) => x.hash(state),
+            Self::Int(x) => x.hash(state),
+            Self::Float(_) => todo!(),
+            Self::String(x) => x.hash(state),
+            Self::List(x) => x.hash(state),
+            Self::Map(x) => x.hash(state),
+            Self::Node(x) => x.hash(state),
+            Self::Relationship(_, _, _) => todo!(),
+        }
+    }
 }
 
 trait OrderedEnum {
