@@ -30,6 +30,7 @@ pub enum QueryExprIR {
     Mul(Vec<QueryExprIR>),
     Div(Vec<QueryExprIR>),
     Pow(Vec<QueryExprIR>),
+    Modulo(Vec<QueryExprIR>),
     IsNull(Box<QueryExprIR>),
     GetElement(Box<(QueryExprIR, QueryExprIR)>),
     GetElements(Box<(QueryExprIR, Option<QueryExprIR>, Option<QueryExprIR>)>),
@@ -85,7 +86,8 @@ impl QueryExprIR {
             | Self::Sub(exprs)
             | Self::Mul(exprs)
             | Self::Div(exprs)
-            | Self::Pow(exprs) => {
+            | Self::Pow(exprs)
+            | Self::Modulo(exprs) => {
                 for expr in exprs {
                     expr.inner_validate(env)?;
                 }

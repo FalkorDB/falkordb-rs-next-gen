@@ -34,6 +34,7 @@ pub enum IR {
     Mul(Vec<IR>),
     Div(Vec<IR>),
     Pow(Vec<IR>),
+    Modulo(Vec<IR>),
     FuncInvocation(String, Vec<IR>),
     Map(BTreeMap<String, IR>),
     Set(String, Box<IR>),
@@ -106,7 +107,12 @@ impl Planner {
             QueryExprIR::Div(exprs) => {
                 IR::Div(exprs.into_iter().map(|ir| self.plan_expr(ir)).collect())
             }
-            QueryExprIR::Pow(_) => todo!(),
+            QueryExprIR::Pow(exprs) => {
+                IR::Pow(exprs.into_iter().map(|ir| self.plan_expr(ir)).collect())
+            }
+            QueryExprIR::Modulo(exprs) => {
+                IR::Modulo(exprs.into_iter().map(|ir| self.plan_expr(ir)).collect())
+            }
             QueryExprIR::IsNull(expr) => IR::IsNull(Box::new(self.plan_expr(*expr))),
             QueryExprIR::GetElement(op) => {
                 IR::GetElement(Box::new((self.plan_expr(op.0), self.plan_expr(op.1))))
