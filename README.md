@@ -1,6 +1,6 @@
 # The Rust implemenation of falkordb
 
-[![Rust](https://github.com/FalkorDB/falkordb-rs-next-gen/actions/workflows/rust.yml/badge.svg)](https://github.com/FalkorDB/falkordb-rs-next-gen/actions/workflows/rust.yml)
+[![Rust](https://github.com/FalkorDB/falkordb-rs-next-gen/actions/workflows/rust-push.yml/badge.svg)](https://github.com/FalkorDB/falkordb-rs-next-gen/actions/workflows/rust-push.yml)
 [![codecov](https://codecov.io/gh/FalkorDB/falkordb-rs-next-gen/branch/main/graph/badge.svg)](https://codecov.io/gh/FalkorDB/falkordb-rs-next-gen)
 
 #### Developer Guide

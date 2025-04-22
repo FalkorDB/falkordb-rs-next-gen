@@ -74,7 +74,10 @@ impl<'a> Lexer<'a> {
         self.cached_current = Self::get_token(self.str, self.pos);
     }
 
-    fn read_spaces(str: &'a str, pos: usize) -> usize {
+    fn read_spaces(
+        str: &'a str,
+        pos: usize,
+    ) -> usize {
         let mut len = 0;
         let mut chars = str[pos..].chars();
         while let Some(' ' | '\t' | '\n') = chars.next() {
@@ -89,7 +92,10 @@ impl<'a> Lexer<'a> {
 
     #[inline]
     #[allow(clippy::too_many_lines)]
-    fn get_token(str: &'a str, pos: usize) -> (Token, usize) {
+    fn get_token(
+        str: &'a str,
+        pos: usize,
+    ) -> (Token, usize) {
         let mut chars = str[pos..].chars();
         if let Some(char) = chars.next() {
             match char {
@@ -410,7 +416,10 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    pub fn format_error(&self, err: &str) -> String {
+    pub fn format_error(
+        &self,
+        err: &str,
+    ) -> String {
         format!("{}\n{}^{}", self.str, " ".repeat(self.pos), err)
     }
 }
@@ -583,7 +592,10 @@ impl<'a> Parser<'a> {
         Ok(QueryIR::Return(self.parse_named_exprs()?))
     }
 
-    fn parse_pattern(&mut self, clause: Token) -> Result<Pattern, String> {
+    fn parse_pattern(
+        &mut self,
+        clause: Token,
+    ) -> Result<Pattern, String> {
         let mut nodes = Vec::new();
         let mut nodes_alias = HashSet::new();
         let mut relationships = Vec::new();

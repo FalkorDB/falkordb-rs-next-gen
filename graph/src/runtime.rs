@@ -1216,7 +1216,11 @@ pub fn evaluate_param(expr: QueryExprIR) -> Value {
     }
 }
 
-fn get_elements(arr: Value, start: Option<Value>, end: Option<Value>) -> Result<Value, String> {
+fn get_elements(
+    arr: Value,
+    start: Option<Value>,
+    end: Option<Value>,
+) -> Result<Value, String> {
     match (arr, start, end) {
         (Value::List(values), Some(Value::Int(mut start)), Some(Value::Int(mut end))) => {
             if start < 0 {
