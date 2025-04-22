@@ -102,6 +102,8 @@ jobs:
 
   falkordb-e2e-compatibility:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     services:
       falkordb:
         image: falkordb/falkordb:edge
