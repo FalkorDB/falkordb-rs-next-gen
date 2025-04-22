@@ -1,0 +1,6 @@
+repos:
+  - repo: https://github.com/rust-lang/rustfmt
+    rev: stable # Use the latest stable version
+    hooks:
+      - id: rustfmt
+        args: ["--check"]
