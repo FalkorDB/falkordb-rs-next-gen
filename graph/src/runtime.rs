@@ -67,7 +67,11 @@ impl Runtime {
         }
     }
 
-    fn create_node(g: &mut Graph, runtime: &mut Self, args: Value) -> Value {
+    fn create_node(
+        g: &mut Graph,
+        runtime: &mut Self,
+        args: Value,
+    ) -> Value {
         match args {
             Value::List(args) => {
                 let mut iter = args.into_iter();
@@ -100,7 +104,11 @@ impl Runtime {
         }
     }
 
-    fn delete_entity(g: &mut Graph, runtime: &mut Self, args: Value) -> Value {
+    fn delete_entity(
+        g: &mut Graph,
+        runtime: &mut Self,
+        args: Value,
+    ) -> Value {
         match args {
             Value::List(nodes) => {
                 for n in nodes {
@@ -116,7 +124,11 @@ impl Runtime {
         Value::Null
     }
 
-    fn create_relationship(g: &mut Graph, runtime: &mut Self, args: Value) -> Value {
+    fn create_relationship(
+        g: &mut Graph,
+        runtime: &mut Self,
+        args: Value,
+    ) -> Value {
         match args {
             Value::List(args) => {
                 let mut iter = args.into_iter();
@@ -151,7 +163,11 @@ impl Runtime {
         }
     }
 
-    fn create_node_iter(g: &Graph, runtime: &mut Self, args: Value) -> Value {
+    fn create_node_iter(
+        g: &Graph,
+        runtime: &mut Self,
+        args: Value,
+    ) -> Value {
         match args {
             Value::List(args) => {
                 let mut iter = args.into_iter();
@@ -182,7 +198,11 @@ impl Runtime {
         }
     }
 
-    fn next_node(_g: &Graph, runtime: &mut Self, args: Value) -> Value {
+    fn next_node(
+        _g: &Graph,
+        runtime: &mut Self,
+        args: Value,
+    ) -> Value {
         match args {
             Value::List(args) => match args.as_slice() {
                 [Value::Int(iter)] => runtime.iters[*iter as usize]
@@ -194,7 +214,11 @@ impl Runtime {
         }
     }
 
-    fn property(g: &Graph, _runtime: &mut Self, args: Value) -> Value {
+    fn property(
+        g: &Graph,
+        _runtime: &mut Self,
+        args: Value,
+    ) -> Value {
         match args {
             Value::List(arr) => match arr.as_slice() {
                 [Value::Node(node_id), Value::String(property)] => g
@@ -212,7 +236,11 @@ impl Runtime {
         }
     }
 
-    fn labels(g: &Graph, _runtime: &mut Self, args: Value) -> Value {
+    fn labels(
+        g: &Graph,
+        _runtime: &mut Self,
+        args: Value,
+    ) -> Value {
         match args {
             Value::List(arr) => match arr.as_slice() {
                 [Value::Node(node_id)] => Value::List(
@@ -226,7 +254,11 @@ impl Runtime {
         }
     }
 
-    fn value_to_integer(_g: &Graph, _runtime: &mut Self, args: Value) -> Value {
+    fn value_to_integer(
+        _g: &Graph,
+        _runtime: &mut Self,
+        args: Value,
+    ) -> Value {
         match args {
             Value::List(params) => match params.as_slice() {
                 #[allow(clippy::cast_possible_truncation)]
@@ -246,7 +278,11 @@ impl Runtime {
         }
     }
 
-    fn db_labels(g: &Graph, _runtime: &mut Self, _args: Value) -> Value {
+    fn db_labels(
+        g: &Graph,
+        _runtime: &mut Self,
+        _args: Value,
+    ) -> Value {
         Value::List(
             g.get_labels()
                 .map(|n| Value::String(n.to_string()))
@@ -254,7 +290,11 @@ impl Runtime {
         )
     }
 
-    fn db_types(g: &Graph, _runtime: &mut Self, _args: Value) -> Value {
+    fn db_types(
+        g: &Graph,
+        _runtime: &mut Self,
+        _args: Value,
+    ) -> Value {
         Value::List(
             g.get_types()
                 .map(|n| Value::String(n.to_string()))
@@ -262,7 +302,11 @@ impl Runtime {
         )
     }
 
-    fn db_properties(g: &Graph, _runtime: &mut Self, _args: Value) -> Value {
+    fn db_properties(
+        g: &Graph,
+        _runtime: &mut Self,
+        _args: Value,
+    ) -> Value {
         Value::List(
             g.get_properties()
                 .map(|n| Value::String(n.to_string()))
@@ -778,7 +822,11 @@ pub fn evaluate_param(expr: QueryExprIR) -> Value {
     }
 }
 
-fn get_elements(arr: Value, start: Option<Value>, end: Option<Value>) -> Result<Value, String> {
+fn get_elements(
+    arr: Value,
+    start: Option<Value>,
+    end: Option<Value>,
+) -> Result<Value, String> {
     match (arr, start, end) {
         (Value::List(values), Some(Value::Int(mut start)), Some(Value::Int(mut end))) => {
             if start < 0 {
@@ -817,14 +865,20 @@ fn get_elements(arr: Value, start: Option<Value>, end: Option<Value>) -> Result<
 }
 
 #[inline]
-fn is_equal(a: &Value, b: &Value) -> Value {
+fn is_equal(
+    a: &Value,
+    b: &Value,
+) -> Value {
     match (a, b) {
         (Value::List(l1), Value::List(l2)) => is_equal_lists(l1, l2),
         _ => Value::Bool(a == b),
     }
 }
 #[inline]
-fn is_equal_lists(l1: &Vec<Value>, l2: &Vec<Value>) -> Value {
+fn is_equal_lists(
+    l1: &Vec<Value>,
+    l2: &Vec<Value>,
+) -> Value {
     if l1.len() != l2.len() {
         return Value::Bool(false);
     }
@@ -854,7 +908,10 @@ fn is_equal_lists(l1: &Vec<Value>, l2: &Vec<Value>) -> Value {
     }
 }
 
-fn add_list_scalar(mut l: Vec<Value>, scalar: Value) -> Value {
+fn add_list_scalar(
+    mut l: Vec<Value>,
+    scalar: Value,
+) -> Value {
     if l.is_empty() {
         return Value::List(vec![scalar]);
     }

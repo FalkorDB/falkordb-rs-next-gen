@@ -58,7 +58,10 @@ impl Planner {
         format!("var_{id}")
     }
 
-    fn plan_expr(&mut self, expr: QueryExprIR) -> IR {
+    fn plan_expr(
+        &mut self,
+        expr: QueryExprIR,
+    ) -> IR {
         match expr {
             QueryExprIR::Null => IR::Null,
             QueryExprIR::Bool(x) => IR::Bool(x),
@@ -151,7 +154,11 @@ impl Planner {
         }
     }
 
-    fn plan_create(&mut self, pattern: Pattern, iter: &mut IntoIter<QueryIR>) -> IR {
+    fn plan_create(
+        &mut self,
+        pattern: Pattern,
+        iter: &mut IntoIter<QueryIR>,
+    ) -> IR {
         let create_nodes = pattern
             .nodes
             .into_iter()
@@ -212,7 +219,11 @@ impl Planner {
         }
     }
 
-    fn plan_delete(&mut self, exprs: Vec<QueryExprIR>, iter: &mut IntoIter<QueryIR>) -> IR {
+    fn plan_delete(
+        &mut self,
+        exprs: Vec<QueryExprIR>,
+        iter: &mut IntoIter<QueryIR>,
+    ) -> IR {
         let deleted_entities = exprs.into_iter().map(|ir| self.plan_expr(ir)).collect();
         match iter.next() {
             Some(body_ir) => IR::Block(vec![
@@ -282,7 +293,11 @@ impl Planner {
         }
     }
 
-    fn plan_node_scan(&mut self, node: NodePattern, body: IR) -> IR {
+    fn plan_node_scan(
+        &mut self,
+        node: NodePattern,
+        body: IR,
+    ) -> IR {
         let init = IR::Block(vec![
             IR::Set(
                 format!("iter_{}", node.alias),
@@ -310,7 +325,11 @@ impl Planner {
         IR::For(Box::new((init, condition, next, body)))
     }
 
-    fn plan_match(&mut self, pattern: Pattern, iter: &mut IntoIter<QueryIR>) -> IR {
+    fn plan_match(
+        &mut self,
+        pattern: Pattern,
+        iter: &mut IntoIter<QueryIR>,
+    ) -> IR {
         if pattern.relationships.is_empty() {
             let mut body = self.plan_query(iter.next().unwrap(), iter);
             for node in pattern.nodes.into_iter().rev() {
@@ -321,7 +340,11 @@ impl Planner {
         IR::Null
     }
 
-    fn plan_query(&mut self, ir: QueryIR, iter: &mut IntoIter<QueryIR>) -> IR {
+    fn plan_query(
+        &mut self,
+        ir: QueryIR,
+        iter: &mut IntoIter<QueryIR>,
+    ) -> IR {
         match ir {
             QueryIR::Call(name, exprs) => IR::For(Box::new((
                 IR::Block(vec![
@@ -370,7 +393,11 @@ impl Planner {
     }
 
     #[must_use]
-    pub fn plan(&mut self, ir: QueryIR, _debug: bool) -> IR {
+    pub fn plan(
+        &mut self,
+        ir: QueryIR,
+        _debug: bool,
+    ) -> IR {
         self.plan_query(ir, &mut Vec::new().into_iter())
     }
 }
