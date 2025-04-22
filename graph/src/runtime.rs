@@ -842,7 +842,7 @@ pub fn ro_run(
                     }
                 }
                 (Value::List(_), v) => Err(format!("Type mismatch: expected Bool but was {v:?}")),
-                v => Err(format!("Type mismatch: expected Lust but was {v:?}")),
+                v => Err(format!("Type mismatch: expected List but was {v:?}")),
             }
         }
         IR::GetElements(op) => {
@@ -862,7 +862,27 @@ pub fn ro_run(
                 ),
             }
         }
-        IR::Range(_) => Err("Range operator not implemented".to_string()),
+        IR::Range(op) => {
+            let start = ro_run(vars, g, runtime, result_fn, &op.0)?;
+            let end = ro_run(vars, g, runtime, result_fn, &op.1)?;
+            let step = ro_run(vars, g, runtime, result_fn, &op.2)?;
+            match (start, end, step) {
+                (Value::Int(start), Value::Int(end), Value::Int(step)) => {
+                    Ok(Value::List(if step < 0 {
+                        (end..=start)
+                            .step_by((-step) as usize)
+                            .map(Value::Int)
+                            .collect()
+                    } else {
+                        (start..=end)
+                            .step_by(step as usize)
+                            .map(Value::Int)
+                            .collect()
+                    }))
+                }
+                _ => Err("Range operator requires two integers".to_string()),
+            }
+        }
         IR::IsNull(ir) => match ro_run(vars, g, runtime, result_fn, ir)? {
             Value::Null => Ok(Value::Bool(true)),
             _ => Ok(Value::Bool(false)),
@@ -1104,7 +1124,7 @@ pub fn run(
                     }
                 }
                 (Value::List(_), v) => Err(format!("Type mismatch: expected Bool but was {v:?}")),
-                v => Err(format!("Type mismatch: expected Lust but was {v:?}")),
+                v => Err(format!("Type mismatch: expected List but was {v:?}")),
             }
         }
         IR::GetElements(op) => {
@@ -1124,7 +1144,34 @@ pub fn run(
                 ),
             }
         }
-        IR::Range(_) => Err("Range operator not implemented".to_string()),
+        IR::Range(op) => {
+            let start = run(vars, g, runtime, result_fn, &op.0)?;
+            let end = run(vars, g, runtime, result_fn, &op.1)?;
+            let step = run(vars, g, runtime, result_fn, &op.2)?;
+            match (start, end, step) {
+                (Value::Int(start), Value::Int(end), Value::Int(step)) => {
+                    if start >= end && step < 0 {
+                        Ok(Value::List(
+                            (end..=start)
+                                .rev()
+                                .step_by(step.abs() as usize)
+                                .map(Value::Int)
+                                .collect(),
+                        ))
+                    } else if step < 0 {
+                        Ok(Value::List(vec![]))
+                    } else {
+                        Ok(Value::List(
+                            (start..=end)
+                                .step_by(step as usize)
+                                .map(Value::Int)
+                                .collect(),
+                        ))
+                    }
+                }
+                _ => Err("Range operator requires two integers".to_string()),
+            }
+        }
         IR::IsNull(ir) => match run(vars, g, runtime, result_fn, ir)? {
             Value::Null => Ok(Value::Bool(true)),
             _ => Ok(Value::Bool(false)),
