@@ -554,6 +554,7 @@ impl Runtime {
             _ => unreachable!(),
         }
     }
+
     fn string_replace(
         _: &Graph,
         _: &mut Self,
@@ -1414,15 +1415,14 @@ where
     I: Iterator<Item = Result<Value, String>>,
 {
     if let Some(first) = iter.next() {
-        let mut prev = first?;
+        let prev = first?;
         for next in iter {
             let next = next?;
             match prev.partial_cmp(&next) {
                 None => return Ok(Value::Null),
-                Some(Ordering::Less) | Some(Ordering::Greater) => return Ok(Value::Bool(false)),
+                Some(Ordering::Less | Ordering::Greater) => return Ok(Value::Bool(false)),
                 Some(Ordering::Equal) => {}
             }
-            prev = next;
         }
         Ok(Value::Bool(true))
     } else {

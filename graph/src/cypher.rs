@@ -858,6 +858,7 @@ impl<'a> Parser<'a> {
             }
         }
     }
+
     fn parser_string_list_null_predicate_expr(&mut self) -> Result<QueryExprIR, String> {
         let lhs = self.parse_add_expr()?;
         match self.lexer.current() {
