@@ -742,7 +742,7 @@ pub fn ro_run(
             .iter()
             .flat_map(|ir| ro_run(vars, g, runtime, result_fn, ir))
             .reduce(|a, b| match (a, b) {
-                (Value::Int(a), Value::Int(b)) => Value::Int(a ^ b),
+                (Value::Int(a), Value::Int(b)) => Value::Float((a as f64).powf(b as _)),
                 _ => Value::Null,
             })
             .ok_or_else(|| "Pow operator requires at least one argument".to_string()),
@@ -1011,7 +1011,7 @@ pub fn run(
             .iter()
             .flat_map(|ir| run(vars, g, runtime, result_fn, ir))
             .reduce(|a, b| match (a, b) {
-                (Value::Int(a), Value::Int(b)) => Value::Int(a ^ b),
+                (Value::Int(a), Value::Int(b)) => Value::Float((a as f64).powf(b as _)),
                 _ => Value::Null,
             })
             .ok_or_else(|| "Pow operator requires at least one argument".to_string()),

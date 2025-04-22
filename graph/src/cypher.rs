@@ -32,6 +32,7 @@ enum Token {
     And,
     Not,
     Modulo,
+    Power,
     Star,
     Plus,
     Dash,
@@ -100,6 +101,7 @@ impl<'a> Lexer<'a> {
                 '(' => return (Token::LParen, 1),
                 ')' => return (Token::RParen, 1),
                 '%' => return (Token::Modulo, 1),
+                '^' => return (Token::Power, 1),
                 '*' => return (Token::Star, 1),
                 '+' => return (Token::Plus, 1),
                 '-' => {
@@ -628,10 +630,29 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_mul_expr(&mut self) -> Result<QueryExprIR, String> {
+    fn parse_power_expr(&mut self) -> Result<QueryExprIR, String> {
         let mut vec = Vec::new();
         loop {
             vec.push(self.parse_modulo_expr()?);
+
+            match self.lexer.current() {
+                Token::Power => {
+                    self.lexer.next();
+                }
+                _ => {
+                    if vec.len() == 1 {
+                        return Ok(vec.pop().unwrap());
+                    }
+                    return Ok(QueryExprIR::Pow(vec));
+                }
+            }
+        }
+    }
+
+    fn parse_mul_expr(&mut self) -> Result<QueryExprIR, String> {
+        let mut vec = Vec::new();
+        loop {
+            vec.push(self.parse_power_expr()?);
 
             match self.lexer.current() {
                 Token::Star => {
