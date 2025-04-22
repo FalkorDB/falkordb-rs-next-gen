@@ -37,7 +37,10 @@ pub struct Graph {
 
 impl Graph {
     #[must_use]
-    pub fn new(n: u64, e: u64) -> Self {
+    pub fn new(
+        n: u64,
+        e: u64,
+    ) -> Self {
         Self {
             node_cap: n,
             relationship_cap: e,
@@ -73,7 +76,10 @@ impl Graph {
         self.node_labels.iter()
     }
 
-    pub fn get_label_by_id(&self, id: u64) -> &String {
+    pub fn get_label_by_id(
+        &self,
+        id: u64,
+    ) -> &String {
         &self.node_labels[id as usize]
     }
 
@@ -87,14 +93,20 @@ impl Graph {
             .chain(self.relationship_properties.iter())
     }
 
-    pub fn get_label_id(&self, label: &str) -> Option<u64> {
+    pub fn get_label_id(
+        &self,
+        label: &str,
+    ) -> Option<u64> {
         self.node_labels
             .iter()
             .position(|l| l == label)
             .map(|p| p as u64)
     }
 
-    pub fn get_type_id(&self, relationship_type: &str) -> Option<u64> {
+    pub fn get_type_id(
+        &self,
+        relationship_type: &str,
+    ) -> Option<u64> {
         self.relationship_types
             .iter()
             .position(|t| t == relationship_type)
@@ -238,14 +250,20 @@ impl Graph {
         })
     }
 
-    fn get_label_matrix(&self, label: &String) -> Option<&Matrix<bool>> {
+    fn get_label_matrix(
+        &self,
+        label: &String,
+    ) -> Option<&Matrix<bool>> {
         self.node_labels
             .iter()
             .position(|l| l == label)
             .map(|i| &self.labels_matices[&i])
     }
 
-    fn get_label_matrix_mut(&mut self, label: &String) -> &mut Matrix<bool> {
+    fn get_label_matrix_mut(
+        &mut self,
+        label: &String,
+    ) -> &mut Matrix<bool> {
         if !self.node_labels.contains(label) {
             self.node_labels.push(label.to_string());
 
@@ -260,7 +278,10 @@ impl Graph {
             .unwrap()
     }
 
-    fn get_relationship_matrix_mut(&mut self, relationship_type: &String) -> &mut Matrix<bool> {
+    fn get_relationship_matrix_mut(
+        &mut self,
+        relationship_type: &String,
+    ) -> &mut Matrix<bool> {
         if !self.relationship_types.contains(relationship_type) {
             self.relationship_types.push(relationship_type.to_string());
 
@@ -281,14 +302,20 @@ impl Graph {
             .unwrap()
     }
 
-    pub fn get_node_property_id(&self, key: &String) -> Option<u64> {
+    pub fn get_node_property_id(
+        &self,
+        key: &String,
+    ) -> Option<u64> {
         self.node_properties
             .iter()
             .position(|p| p == key)
             .map(|property_id| property_id as u64)
     }
 
-    pub fn get_or_add_node_property_id(&mut self, key: &String) -> u64 {
+    pub fn get_or_add_node_property_id(
+        &mut self,
+        key: &String,
+    ) -> u64 {
         let property_id = self
             .node_properties
             .iter()
@@ -301,7 +328,10 @@ impl Graph {
         property_id as u64
     }
 
-    fn get_relationship_property_id(&mut self, key: &String) -> u64 {
+    fn get_relationship_property_id(
+        &mut self,
+        key: &String,
+    ) -> u64 {
         let property_id = self
             .relationship_properties
             .iter()
@@ -314,7 +344,11 @@ impl Graph {
         property_id as u64
     }
 
-    pub fn create_node(&mut self, labels: &Vec<String>, attrs: BTreeMap<String, Value>) -> Value {
+    pub fn create_node(
+        &mut self,
+        labels: &Vec<String>,
+        attrs: BTreeMap<String, Value>,
+    ) -> Value {
         let id = self.deleted_nodes.min().unwrap_or(self.node_count);
         self.deleted_nodes.remove(id);
         self.node_count += 1;
@@ -344,7 +378,10 @@ impl Graph {
         Value::Node(id)
     }
 
-    pub fn delete_node(&mut self, id: u64) {
+    pub fn delete_node(
+        &mut self,
+        id: u64,
+    ) {
         self.deleted_nodes.insert(id);
         self.node_count -= 1;
         self.all_nodes_matrix.delete(id, id);
@@ -357,7 +394,10 @@ impl Graph {
         self.node_properties_map.remove(&id);
     }
 
-    pub fn get_nodes(&self, labels: &[String]) -> Option<Iter<bool>> {
+    pub fn get_nodes(
+        &self,
+        labels: &[String],
+    ) -> Option<Iter<bool>> {
         if labels.is_empty() {
             return Some(self.all_nodes_matrix.iter());
         }
@@ -365,11 +405,18 @@ impl Graph {
             .map(super::matrix::Matrix::iter)
     }
 
-    pub fn get_node_label_ids(&self, id: u64) -> impl Iterator<Item = u64> {
+    pub fn get_node_label_ids(
+        &self,
+        id: u64,
+    ) -> impl Iterator<Item = u64> {
         self.node_labels_matrix.iter_row(id).map(|(_, l)| l)
     }
 
-    pub fn get_node_property(&self, node_id: u64, property_id: u64) -> Option<Value> {
+    pub fn get_node_property(
+        &self,
+        node_id: u64,
+        property_id: u64,
+    ) -> Option<Value> {
         self.node_properties_map
             .get(&node_id)
             .unwrap()
@@ -420,7 +467,10 @@ impl Graph {
         Value::Relationship(id, from, to)
     }
 
-    pub fn get_relationship_type_id(&self, id: u64) -> u64 {
+    pub fn get_relationship_type_id(
+        &self,
+        id: u64,
+    ) -> u64 {
         self.relationship_type_matrix
             .iter_row(id)
             .map(|(_, l)| l)
@@ -460,13 +510,19 @@ impl Graph {
         }
     }
 
-    pub fn get_node_properties(&self, id: u64) -> &BTreeMap<u64, Value> {
+    pub fn get_node_properties(
+        &self,
+        id: u64,
+    ) -> &BTreeMap<u64, Value> {
         self.node_properties_map
             .get(&id)
             .unwrap_or_else(|| panic!("Node with id {id} not found"))
     }
 
-    pub fn get_relationship_properties(&self, id: u64) -> &BTreeMap<u64, Value> {
+    pub fn get_relationship_properties(
+        &self,
+        id: u64,
+    ) -> &BTreeMap<u64, Value> {
         self.relationship_properties_map
             .get(&id)
             .unwrap_or_else(|| panic!("Relationship with id {id} not found"))

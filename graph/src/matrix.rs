@@ -40,7 +40,11 @@ pub trait Size<T> {
     /// # Parameters
     /// - `nrows`: The new number of rows.
     /// - `ncols`: The new number of columns.
-    fn resize(&mut self, nrows: u64, ncols: u64);
+    fn resize(
+        &mut self,
+        nrows: u64,
+        ncols: u64,
+    );
 }
 
 /// A trait for retrieving elements from a matrix.
@@ -55,7 +59,11 @@ pub trait Get<T> {
     /// # Returns
     /// - `Some(T)`: The element at the specified position.
     /// - `None`: The element does not exist.
-    fn get(&self, i: u64, j: u64) -> Option<T>;
+    fn get(
+        &self,
+        i: u64,
+        j: u64,
+    ) -> Option<T>;
 }
 
 /// A trait for setting elements in a matrix.
@@ -66,7 +74,12 @@ pub trait Set<T> {
     /// - `i`: The row index.
     /// - `j`: The column index.
     /// - `value`: The value to set.
-    fn set(&mut self, i: u64, j: u64, value: T);
+    fn set(
+        &mut self,
+        i: u64,
+        j: u64,
+        value: T,
+    );
 }
 
 /// A trait for deleting elements from a matrix.
@@ -76,7 +89,11 @@ pub trait Delete<T> {
     /// # Parameters
     /// - `i`: The row index.
     /// - `j`: The column index.
-    fn delete(&mut self, i: u64, j: u64);
+    fn delete(
+        &mut self,
+        i: u64,
+        j: u64,
+    );
 }
 
 /// A wrapper around a GraphBLAS matrix with type safety for elements.
@@ -143,7 +160,10 @@ impl<T> Iter<Row<T>> {
     /// - `m`: The matrix to iterate over.
     /// - `row`: The row index.
     #[must_use]
-    pub fn new(m: &Matrix<T>, row: u64) -> Self {
+    pub fn new(
+        m: &Matrix<T>,
+        row: u64,
+    ) -> Self {
         unsafe {
             let mut iter = MaybeUninit::uninit();
             GxB_Iterator_new(iter.as_mut_ptr());
@@ -242,7 +262,10 @@ impl<T> Matrix<T> {
     /// # Returns
     /// - `Iter<Row<T>>`: An iterator for the specified row.
     #[must_use]
-    pub fn iter_row(&self, row: u64) -> Iter<Row<T>> {
+    pub fn iter_row(
+        &self,
+        row: u64,
+    ) -> Iter<Row<T>> {
         Iter::<Row<T>>::new(self, row)
     }
 }
@@ -281,7 +304,11 @@ impl<T> Size<T> for Matrix<T> {
     /// # Parameters
     /// - `nrows`: The new number of rows.
     /// - `ncols`: The new number of columns.
-    fn resize(&mut self, nrows: u64, ncols: u64) {
+    fn resize(
+        &mut self,
+        nrows: u64,
+        ncols: u64,
+    ) {
         unsafe {
             let info = GrB_Matrix_resize(*self.m, nrows, ncols);
             assert_eq!(info, GrB_Info::GrB_SUCCESS);
@@ -299,7 +326,10 @@ impl Matrix<bool> {
     /// # Returns
     /// - `Matrix<bool>`: A new boolean matrix.
     #[must_use]
-    pub fn new(nrows: u64, ncols: u64) -> Self {
+    pub fn new(
+        nrows: u64,
+        ncols: u64,
+    ) -> Self {
         unsafe {
             let mut m: MaybeUninit<GrB_Matrix> = MaybeUninit::uninit();
             GrB_Matrix_new(m.as_mut_ptr(), GrB_BOOL, nrows, ncols);
@@ -326,7 +356,11 @@ impl<T> Delete<T> for Matrix<T> {
     /// # Parameters
     /// - `i`: The row index.
     /// - `j`: The column index.
-    fn delete(&mut self, i: u64, j: u64) {
+    fn delete(
+        &mut self,
+        i: u64,
+        j: u64,
+    ) {
         unsafe {
             let info = GrB_Matrix_removeElement(*self.m, i, j);
             assert_eq!(info, GrB_Info::GrB_SUCCESS);
@@ -346,7 +380,11 @@ impl Get<bool> for Matrix<bool> {
     /// - `Some(bool)`: The boolean value at the specified position.
     /// - `None`: The element does not exist.
     #[must_use]
-    fn get(&self, i: u64, j: u64) -> Option<bool> {
+    fn get(
+        &self,
+        i: u64,
+        j: u64,
+    ) -> Option<bool> {
         unsafe {
             let mut m: MaybeUninit<bool> = MaybeUninit::uninit();
             let info = GrB_Matrix_extractElement_BOOL(m.as_mut_ptr(), *self.m, i, j);
@@ -366,7 +404,12 @@ impl Set<bool> for Matrix<bool> {
     /// - `i`: The row index.
     /// - `j`: The column index.
     /// - `value`: The value to set.
-    fn set(&mut self, i: u64, j: u64, value: bool) {
+    fn set(
+        &mut self,
+        i: u64,
+        j: u64,
+        value: bool,
+    ) {
         unsafe {
             let info = GrB_Matrix_setElement_BOOL(*self.m, value, i, j);
             assert_eq!(info, GrB_Info::GrB_SUCCESS);
