@@ -77,7 +77,11 @@ impl Runtime {
     }
 
     #[allow(clippy::unnecessary_wraps)]
-    fn create_node(g: &mut Graph, runtime: &mut Self, args: Value) -> Result<Value, String> {
+    fn create_node(
+        g: &mut Graph,
+        runtime: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
         match args {
             Value::List(args) => {
                 let mut iter = args.into_iter();
@@ -111,7 +115,11 @@ impl Runtime {
     }
 
     #[allow(clippy::unnecessary_wraps)]
-    fn delete_entity(g: &mut Graph, runtime: &mut Self, args: Value) -> Result<Value, String> {
+    fn delete_entity(
+        g: &mut Graph,
+        runtime: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
         match args {
             Value::List(nodes) => {
                 for n in nodes {
@@ -166,7 +174,11 @@ impl Runtime {
         }
     }
 
-    fn create_node_iter(g: &Graph, runtime: &mut Self, args: Value) -> Result<Value, String> {
+    fn create_node_iter(
+        g: &Graph,
+        runtime: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
         match args {
             Value::List(args) => {
                 let mut iter = args.into_iter();
@@ -197,7 +209,11 @@ impl Runtime {
         }
     }
 
-    fn next_node(_g: &Graph, runtime: &mut Self, args: Value) -> Result<Value, String> {
+    fn next_node(
+        _g: &Graph,
+        runtime: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
         match args {
             Value::List(args) => match args.as_slice() {
                 [Value::Int(iter)] => runtime.iters[*iter as usize]
@@ -209,7 +225,11 @@ impl Runtime {
         }
     }
 
-    fn property(g: &Graph, _runtime: &mut Self, args: Value) -> Result<Value, String> {
+    fn property(
+        g: &Graph,
+        _runtime: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
         match args {
             Value::List(arr) => match arr.as_slice() {
                 [Value::Node(node_id), Value::String(property)] => g
@@ -227,7 +247,11 @@ impl Runtime {
         }
     }
 
-    fn labels(g: &Graph, _runtime: &mut Self, args: Value) -> Result<Value, String> {
+    fn labels(
+        g: &Graph,
+        _runtime: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
         match args {
             Value::List(arr) => match arr.as_slice() {
                 [Value::Node(node_id)] => Ok(Value::List(
@@ -241,7 +265,11 @@ impl Runtime {
         }
     }
 
-    fn value_to_integer(_g: &Graph, _runtime: &mut Self, args: Value) -> Result<Value, String> {
+    fn value_to_integer(
+        _g: &Graph,
+        _runtime: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
         match args {
             Value::List(params) => match params.as_slice() {
                 [Value::String(s)] => s.parse::<i64>().map(Value::Int).or_else(|_| {
@@ -266,7 +294,11 @@ impl Runtime {
         }
     }
 
-    fn size(_: &Graph, _: &mut Self, args: Value) -> Result<Value, String> {
+    fn size(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
         match args {
             Value::List(arr) => match arr.as_slice() {
                 [Value::String(s)] => Ok(Value::Int(s.len() as i64)),
@@ -285,7 +317,11 @@ impl Runtime {
         }
     }
 
-    fn head(_: &Graph, _: &mut Self, args: Value) -> Result<Value, String> {
+    fn head(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
         match args {
             Value::List(arr) => match arr.as_slice() {
                 [Value::List(v)] => {
@@ -309,7 +345,11 @@ impl Runtime {
         }
     }
 
-    fn last(_: &Graph, _: &mut Self, args: Value) -> Result<Value, String> {
+    fn last(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
         match args {
             Value::List(arr) => match arr.as_slice() {
                 [Value::List(v)] => Ok(v.last().unwrap_or(&Value::Null).clone()),
@@ -327,7 +367,11 @@ impl Runtime {
         }
     }
 
-    fn tail(_: &Graph, _: &mut Self, args: Value) -> Result<Value, String> {
+    fn tail(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
         match args {
             Value::List(arr) => match arr.as_slice() {
                 [Value::List(v)] => {
@@ -351,7 +395,11 @@ impl Runtime {
         }
     }
 
-    fn reverse(_: &Graph, _: &mut Self, args: Value) -> Result<Value, String> {
+    fn reverse(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
         match args {
             Value::List(arr) => match arr.as_slice() {
                 [Value::List(v)] => {
@@ -374,7 +422,11 @@ impl Runtime {
         }
     }
 
-    fn substring(_: &Graph, _: &mut Self, args: Value) -> Result<Value, String> {
+    fn substring(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
         match args {
             Value::List(arr) => match arr.as_slice() {
                 // Handle NULL input case
@@ -417,7 +469,11 @@ impl Runtime {
         }
     }
 
-    fn split(_: &Graph, _: &mut Self, args: Value) -> Result<Value, String> {
+    fn split(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
         match args {
             Value::List(arr) => match arr.as_slice() {
                 [Value::String(string), Value::String(delimiter)] => {
@@ -455,7 +511,11 @@ impl Runtime {
         }
     }
 
-    fn string_to_lower(_: &Graph, _: &mut Self, args: Value) -> Result<Value, String> {
+    fn string_to_lower(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
         match args {
             Value::List(arr) => match arr.as_slice() {
                 [Value::String(s)] => Ok(Value::String(s.to_lowercase())),
@@ -473,7 +533,11 @@ impl Runtime {
         }
     }
 
-    fn string_to_upper(_: &Graph, _: &mut Self, args: Value) -> Result<Value, String> {
+    fn string_to_upper(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
         match args {
             Value::List(arr) => match arr.as_slice() {
                 [Value::String(s)] => Ok(Value::String(s.to_uppercase())),
@@ -490,7 +554,11 @@ impl Runtime {
             _ => unreachable!(),
         }
     }
-    fn string_replace(_: &Graph, _: &mut Self, args: Value) -> Result<Value, String> {
+    fn string_replace(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
         match args {
             Value::List(arr) => match arr.as_slice() {
                 [
@@ -514,7 +582,11 @@ impl Runtime {
         }
     }
 
-    fn string_left(_: &Graph, _: &mut Self, args: Value) -> Result<Value, String> {
+    fn string_left(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
         match args {
             Value::List(arr) => match arr.as_slice() {
                 [Value::String(s), Value::Int(n)] => {
@@ -540,7 +612,11 @@ impl Runtime {
         }
     }
 
-    fn string_ltrim(_: &Graph, _: &mut Self, args: Value) -> Result<Value, String> {
+    fn string_ltrim(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
         match args {
             Value::List(arr) => match arr.as_slice() {
                 [Value::String(s)] => Ok(Value::String(s.trim_start().to_string())),
@@ -558,7 +634,11 @@ impl Runtime {
         }
     }
 
-    fn string_right(_: &Graph, _: &mut Self, args: Value) -> Result<Value, String> {
+    fn string_right(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
         match args {
             Value::List(arr) => match arr.as_slice() {
                 [Value::String(s), Value::Int(n)] => {
@@ -589,7 +669,11 @@ impl Runtime {
     // Internal functions
     //
 
-    fn internal_starts_with(_: &Graph, _: &mut Self, args: Value) -> Result<Value, String> {
+    fn internal_starts_with(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
         match args {
             Value::List(arr) => match arr.as_slice() {
                 [Value::String(s), Value::String(prefix)] => Ok(Value::Bool(s.starts_with(prefix))),
@@ -606,7 +690,11 @@ impl Runtime {
         }
     }
 
-    fn internal_ends_with(_: &Graph, _: &mut Self, args: Value) -> Result<Value, String> {
+    fn internal_ends_with(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
         match args {
             Value::List(arr) => match arr.as_slice() {
                 [Value::String(s), Value::String(suffix)] => Ok(Value::Bool(s.ends_with(suffix))),
@@ -622,7 +710,11 @@ impl Runtime {
         }
     }
 
-    fn internal_contains(_: &Graph, _: &mut Self, args: Value) -> Result<Value, String> {
+    fn internal_contains(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
         match args {
             Value::List(arr) => match arr.as_slice() {
                 [Value::String(s), Value::String(substring)] => {
@@ -640,7 +732,11 @@ impl Runtime {
         }
     }
 
-    fn internal_regex_matches(_: &Graph, _: &mut Self, args: Value) -> Result<Value, String> {
+    fn internal_regex_matches(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
         match args {
             Value::List(arr) => match arr.as_slice() {
                 [Value::String(s), Value::String(pattern)] => {
@@ -663,7 +759,11 @@ impl Runtime {
     }
 
     #[allow(clippy::unnecessary_wraps)]
-    fn db_labels(g: &Graph, _runtime: &mut Self, _args: Value) -> Result<Value, String> {
+    fn db_labels(
+        g: &Graph,
+        _runtime: &mut Self,
+        _args: Value,
+    ) -> Result<Value, String> {
         Ok(Value::List(
             g.get_labels()
                 .map(|n| Value::String(n.to_string()))
@@ -672,7 +772,11 @@ impl Runtime {
     }
 
     #[allow(clippy::unnecessary_wraps)]
-    fn db_types(g: &Graph, _runtime: &mut Self, _args: Value) -> Result<Value, String> {
+    fn db_types(
+        g: &Graph,
+        _runtime: &mut Self,
+        _args: Value,
+    ) -> Result<Value, String> {
         Ok(Value::List(
             g.get_types()
                 .map(|n| Value::String(n.to_string()))
@@ -681,7 +785,11 @@ impl Runtime {
     }
 
     #[allow(clippy::unnecessary_wraps)]
-    fn db_properties(g: &Graph, _runtime: &mut Self, _args: Value) -> Result<Value, String> {
+    fn db_properties(
+        g: &Graph,
+        _runtime: &mut Self,
+        _args: Value,
+    ) -> Result<Value, String> {
         Ok(Value::List(
             g.get_properties()
                 .map(|n| Value::String(n.to_string()))
@@ -1258,7 +1366,10 @@ fn get_elements(
     }
 }
 
-fn add_list_scalar(mut l: Vec<Value>, scalar: Value) -> Value {
+fn add_list_scalar(
+    mut l: Vec<Value>,
+    scalar: Value,
+) -> Value {
     if l.is_empty() {
         return Value::List(vec![scalar]);
     }
@@ -1267,7 +1378,10 @@ fn add_list_scalar(mut l: Vec<Value>, scalar: Value) -> Value {
     Value::List(l)
 }
 
-fn list_contains(list: &Value, value: &Value) -> Result<Value, String> {
+fn list_contains(
+    list: &Value,
+    value: &Value,
+) -> Result<Value, String> {
     match list {
         Value::List(l) => Ok(Contains::contains(l, value)),
         Value::Null => Ok(Value::Null),
@@ -1301,7 +1415,10 @@ where
 }
 
 #[inline]
-const fn logical_xor(a: bool, b: bool) -> bool {
+const fn logical_xor(
+    a: bool,
+    b: bool,
+) -> bool {
     (a && !b) || (!a && b)
 }
 

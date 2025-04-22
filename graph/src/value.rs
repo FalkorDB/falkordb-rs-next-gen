@@ -57,7 +57,10 @@ impl Value {
         }
     }
 
-    fn compare_value(&self, b: &Self) -> (Ordering, DisjointOrNull) {
+    fn compare_value(
+        &self,
+        b: &Self,
+    ) -> (Ordering, DisjointOrNull) {
         match (self, b) {
             (Self::Int(a), Self::Int(b)) => (a.cmp(b), DisjointOrNull::None),
             (Self::Bool(a), Self::Bool(b)) => (a.cmp(b), DisjointOrNull::None),
@@ -86,7 +89,10 @@ impl Value {
         }
     }
 
-    fn compare_list(a: &[Self], b: &[Self]) -> (Ordering, DisjointOrNull) {
+    fn compare_list(
+        a: &[Self],
+        b: &[Self],
+    ) -> (Ordering, DisjointOrNull) {
         let array_a_len = a.len();
         let array_b_len = b.len();
         if array_a_len == 0 && array_b_len == 0 {
@@ -175,11 +181,17 @@ impl Value {
 }
 
 pub trait Contains {
-    fn contains(&self, value: &Value) -> Value;
+    fn contains(
+        &self,
+        value: &Value,
+    ) -> Value;
 }
 
 impl Contains for Vec<Value> {
-    fn contains(&self, value: &Value) -> Value {
+    fn contains(
+        &self,
+        value: &Value,
+    ) -> Value {
         let mut is_null = false;
         for item in self {
             let (res, dis) = value.compare_value(item);
@@ -201,7 +213,10 @@ impl Contains for Vec<Value> {
 }
 
 impl PartialOrd for Value {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+    fn partial_cmp(
+        &self,
+        other: &Self,
+    ) -> Option<Ordering> {
         let (ordering, disjoint_or_null) = self.compare_value(other);
         if disjoint_or_null == DisjointOrNull::ComparedNull {
             None
@@ -211,7 +226,10 @@ impl PartialOrd for Value {
     }
 }
 
-fn compare_floats(a: f64, b: f64) -> (Ordering, DisjointOrNull) {
+fn compare_floats(
+    a: f64,
+    b: f64,
+) -> (Ordering, DisjointOrNull) {
     match a.partial_cmp(&b) {
         Some(Ordering::Equal) => (Ordering::Equal, DisjointOrNull::None),
         Some(Ordering::Less) => (Ordering::Less, DisjointOrNull::None),

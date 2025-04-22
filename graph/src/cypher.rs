@@ -228,7 +228,10 @@ impl<'a> Lexer<'a> {
     }
 
     #[allow(clippy::too_many_lines)]
-    fn lex_number(input: &str, start_pos: usize) -> (Token, usize) {
+    fn lex_number(
+        input: &str,
+        start_pos: usize,
+    ) -> (Token, usize) {
         let mut chars = input[start_pos..].chars().peekable();
         let mut len = 0;
 
