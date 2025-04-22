@@ -66,10 +66,13 @@ jobs:
           cargo fmt --all --check
       - name: Lint
         run: |
-          cargo clippy --all
+          cargo clippy --all --all-targets
       - name: Build
         run: |
           cargo build
+      - name: Run unit tests
+        run: |
+          cargo test -p graph
       - name: Run tests
         run: |
           . /data/venv/bin/activate
@@ -87,14 +90,49 @@ jobs:
         run: |
           rustup default stable
           RUSTFLAGS="-C instrument-coverage" cargo build
+          RUSTFLAGS="-C instrument-coverage" cargo test -p graph
           mkdir cov
           cd cov
           . /data/venv/bin/activate
           TARGET=../target/debug/libfalkordb.so pytest ../tests/test_e2e.py
-          llvm-profdata-20 merge --sparse `ls *.profraw` -o cov.profdata
+          llvm-profdata-20 merge --sparse `find . -name "*.profraw"` -o cov.profdata
           llvm-cov-20 export --format=lcov --instr-profile cov.profdata ../target/debug/libfalkordb.so > codecov.txt.all
           lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
+  falkordb-e2e-compatibility:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    services:
+      falkordb:
+        image: falkordb/falkordb:latest
+        ports:
+          - 6379:6379
+        volumes:
+          - ./data:/var/lib/falkordb/data
+        options: >-
+          --rm
+          -it
+    steps:
+      - uses: actions/checkout@v4
+      - name: Wait for FalkorDB to be ready
+        run: |
+          # Wait until port 6379 is open (max 30 seconds)
+          for i in {1..30}; do
+            if nc -z localhost 6379; then
+              echo "FalkorDB is up!"
+              break
+            fi
+            echo "Waiting for FalkorDB..."
+            sleep 1
+          done
+      - name: Run FalkorDB e2e tests
+        run: |
+          sudo apt install -y python3-venv
+          python3 -m venv venv
+          . venv/bin/activate
+          pip install -r  tests/requierment.txt
+          pytest -v -m "not extra" tests/test_e2e.py

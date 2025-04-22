@@ -1,23 +1,15 @@
+use crate::{
+    ast::QueryExprIR, graph::Graph, matrix::Iter, planner::IR, value::Contains, value::Value,
+};
+use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
-use crate::{ast::QueryExprIR, graph::Graph, matrix::Iter, planner::IR};
-
-#[derive(Clone, PartialEq, Debug)]
-pub enum Value {
-    Null,
-    Bool(bool),
-    Int(i64),
-    Float(f64),
-    String(String),
-    List(Vec<Value>),
-    Map(BTreeMap<String, Value>),
-    Node(u64),
-    Relationship(u64, u64, u64),
-}
+type ReadFn = fn(&Graph, &mut Runtime, Value) -> Result<Value, String>;
+type WriteFn = fn(&mut Graph, &mut Runtime, Value) -> Result<Value, String>;
 
 pub struct Runtime {
-    write_functions: BTreeMap<String, fn(&mut Graph, &mut Runtime, Value) -> Value>,
-    read_functions: BTreeMap<String, fn(&Graph, &mut Runtime, Value) -> Value>,
+    read_functions: BTreeMap<String, ReadFn>,
+    write_functions: BTreeMap<String, WriteFn>,
     iters: Vec<Iter<bool>>,
     parameters: BTreeMap<String, Value>,
     pub nodes_created: i32,
@@ -31,10 +23,8 @@ pub struct Runtime {
 impl Runtime {
     #[must_use]
     pub fn new(parameters: BTreeMap<String, Value>) -> Self {
-        let mut write_functions: BTreeMap<String, fn(&mut Graph, &mut Runtime, Value) -> Value> =
-            BTreeMap::new();
-        let mut read_functions: BTreeMap<String, fn(&Graph, &mut Runtime, Value) -> Value> =
-            BTreeMap::new();
+        let mut write_functions: BTreeMap<String, WriteFn> = BTreeMap::new();
+        let mut read_functions: BTreeMap<String, ReadFn> = BTreeMap::new();
 
         // write functions
         write_functions.insert("create_node".to_string(), Self::create_node);
@@ -47,6 +37,25 @@ impl Runtime {
         read_functions.insert("property".to_string(), Self::property);
         read_functions.insert("toInteger".to_string(), Self::value_to_integer);
         read_functions.insert("labels".to_string(), Self::labels);
+        read_functions.insert("size".to_string(), Self::size);
+        read_functions.insert("head".to_string(), Self::head);
+        read_functions.insert("last".to_string(), Self::last);
+        read_functions.insert("tail".to_string(), Self::tail);
+        read_functions.insert("reverse".to_string(), Self::reverse);
+        read_functions.insert("substring".to_string(), Self::substring);
+        read_functions.insert("split".to_string(), Self::split);
+        read_functions.insert("toLower".to_string(), Self::string_to_lower);
+        read_functions.insert("toUpper".to_string(), Self::string_to_upper);
+        read_functions.insert("replace".to_string(), Self::string_replace);
+        read_functions.insert("left".to_string(), Self::string_left);
+        read_functions.insert("ltrim".to_string(), Self::string_ltrim);
+        read_functions.insert("right".to_string(), Self::string_right);
+
+        // internal functions are not accessible from Cypher
+        read_functions.insert("@starts_with".to_string(), Self::internal_starts_with);
+        read_functions.insert("@ends_with".to_string(), Self::internal_ends_with);
+        read_functions.insert("@contains".to_string(), Self::internal_contains);
+        read_functions.insert("@regex_matches".to_string(), Self::internal_regex_matches);
 
         // procedures
         read_functions.insert("db.labels".to_string(), Self::db_labels);
@@ -67,11 +76,12 @@ impl Runtime {
         }
     }
 
+    #[allow(clippy::unnecessary_wraps)]
     fn create_node(
         g: &mut Graph,
         runtime: &mut Self,
         args: Value,
-    ) -> Value {
+    ) -> Result<Value, String> {
         match args {
             Value::List(args) => {
                 let mut iter = args.into_iter();
@@ -95,20 +105,21 @@ impl Runtime {
                                 _ => 1,
                             })
                             .sum::<i32>();
-                        g.create_node(&labels, attrs)
+                        Ok(g.create_node(&labels, attrs))
                     }
-                    _ => Value::Null,
+                    _ => Ok(Value::Null),
                 }
             }
-            _ => Value::Null,
+            _ => Ok(Value::Null),
         }
     }
 
+    #[allow(clippy::unnecessary_wraps)]
     fn delete_entity(
         g: &mut Graph,
         runtime: &mut Self,
         args: Value,
-    ) -> Value {
+    ) -> Result<Value, String> {
         match args {
             Value::List(nodes) => {
                 for n in nodes {
@@ -121,14 +132,14 @@ impl Runtime {
             _ => todo!(),
         }
 
-        Value::Null
+        Ok(Value::Null)
     }
 
     fn create_relationship(
         g: &mut Graph,
         runtime: &mut Self,
         args: Value,
-    ) -> Value {
+    ) -> Result<Value, String> {
         match args {
             Value::List(args) => {
                 let mut iter = args.into_iter();
@@ -154,12 +165,12 @@ impl Runtime {
                                 _ => 1,
                             })
                             .sum::<i32>();
-                        g.create_relationship(&relationship_type, from, to, attrs)
+                        Ok(g.create_relationship(&relationship_type, from, to, attrs))
                     }
                     _ => todo!(),
                 }
             }
-            _ => todo!(),
+            _ => unreachable!(),
         }
     }
 
@@ -167,7 +178,7 @@ impl Runtime {
         g: &Graph,
         runtime: &mut Self,
         args: Value,
-    ) -> Value {
+    ) -> Result<Value, String> {
         match args {
             Value::List(args) => {
                 let mut iter = args.into_iter();
@@ -189,12 +200,12 @@ impl Runtime {
                             )
                             .unwrap(),
                         );
-                        Value::Int(runtime.iters.len() as i64 - 1)
+                        Ok(Value::Int(runtime.iters.len() as i64 - 1))
                     }
                     _ => todo!(),
                 }
             }
-            _ => todo!(),
+            _ => unreachable!(),
         }
     }
 
@@ -202,15 +213,15 @@ impl Runtime {
         _g: &Graph,
         runtime: &mut Self,
         args: Value,
-    ) -> Value {
+    ) -> Result<Value, String> {
         match args {
             Value::List(args) => match args.as_slice() {
                 [Value::Int(iter)] => runtime.iters[*iter as usize]
                     .next()
-                    .map_or_else(|| Value::Null, |(n, _)| Value::Node(n)),
+                    .map_or_else(|| Ok(Value::Null), |(n, _)| Ok(Value::Node(n))),
                 _ => todo!(),
             },
-            _ => todo!(),
+            _ => unreachable!(),
         }
     }
 
@@ -218,21 +229,21 @@ impl Runtime {
         g: &Graph,
         _runtime: &mut Self,
         args: Value,
-    ) -> Value {
+    ) -> Result<Value, String> {
         match args {
             Value::List(arr) => match arr.as_slice() {
                 [Value::Node(node_id), Value::String(property)] => g
                     .get_node_property_id(property)
-                    .map_or(Value::Null, |property_id| {
+                    .map_or(Ok(Value::Null), |property_id| {
                         g.get_node_property(*node_id, property_id)
-                            .map_or(Value::Null, |n| n)
+                            .map_or(Ok(Value::Null), |n| Ok(n))
                     }),
                 [Value::Map(map), Value::String(property)] => {
-                    map.get(property).unwrap_or(&Value::Null).clone()
+                    Ok(map.get(property).unwrap_or(&Value::Null).clone())
                 }
-                _ => Value::Null,
+                _ => Ok(Value::Null),
             },
-            _ => unimplemented!(),
+            _ => unreachable!(),
         }
     }
 
@@ -240,17 +251,17 @@ impl Runtime {
         g: &Graph,
         _runtime: &mut Self,
         args: Value,
-    ) -> Value {
+    ) -> Result<Value, String> {
         match args {
             Value::List(arr) => match arr.as_slice() {
-                [Value::Node(node_id)] => Value::List(
+                [Value::Node(node_id)] => Ok(Value::List(
                     g.get_node_label_ids(*node_id)
                         .map(|label_id| Value::String(g.get_label_by_id(label_id).to_string()))
                         .collect(),
-                ),
-                _ => Value::Null,
+                )),
+                _ => Ok(Value::Null),
             },
-            _ => unimplemented!(),
+            _ => unreachable!(),
         }
     }
 
@@ -258,60 +269,533 @@ impl Runtime {
         _g: &Graph,
         _runtime: &mut Self,
         args: Value,
-    ) -> Value {
+    ) -> Result<Value, String> {
         match args {
             Value::List(params) => match params.as_slice() {
-                #[allow(clippy::cast_possible_truncation)]
-                [Value::String(s)] => s.parse::<i64>().map_or_else(
-                    |_| {
-                        s.parse::<f64>()
-                            .map_or(Value::Null, |f| Value::Int(f as i64))
-                    },
-                    Value::Int,
-                ),
-                [Value::Int(i)] => Value::Int(*i),
-                #[allow(clippy::cast_possible_truncation)]
-                [Value::Float(f)] => Value::Int(*f as i64),
-                _ => Value::Null,
+                [Value::String(s)] => s.parse::<i64>().map(Value::Int).or_else(|_| {
+                    s.parse::<f64>()
+                        .map(|f| Value::Int(f as i64))
+                        .or(Ok(Value::Null))
+                }),
+                [Value::Int(i)] => Ok(Value::Int(*i)),
+                [Value::Float(f)] => Ok(Value::Int(*f as i64)),
+                [Value::Null] => Ok(Value::Null),
+                [Value::Bool(b)] => Ok(Value::Int(if *b { 1 } else { 0 })),
+                [arg] => Err(format!(
+                    "Type mismatch: expected String, Boolean, Integer, Float, or Null but was {}",
+                    arg.name()
+                )),
+                args => Err(format!(
+                    "Expected one argument for value_to_integer, instead {}",
+                    args.len()
+                )),
             },
-            _ => Value::Null,
+            _ => unreachable!(),
         }
     }
 
+    fn size(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [Value::String(s)] => Ok(Value::Int(s.len() as i64)),
+                [Value::List(v)] => Ok(Value::Int(v.len() as i64)),
+                [Value::Null] => Ok(Value::Null),
+                [arg] => Err(format!(
+                    "Type mismatch: expected List, String, or Null but was {}",
+                    arg.name()
+                )),
+                args => Err(format!(
+                    "Expected one argument for size, instead {}",
+                    args.len()
+                )),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    fn head(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [Value::List(v)] => {
+                    if v.is_empty() {
+                        Ok(Value::Null)
+                    } else {
+                        Ok(v[0].clone())
+                    }
+                }
+                [Value::Null] => Ok(Value::Null),
+                [arg] => Err(format!(
+                    "Type mismatch: expected List or Null but was {}",
+                    arg.name()
+                )),
+                args => Err(format!(
+                    "Expected one argument for head, instead {}",
+                    args.len()
+                )),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    fn last(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [Value::List(v)] => Ok(v.last().unwrap_or(&Value::Null).clone()),
+                [Value::Null] => Ok(Value::Null),
+                [arg] => Err(format!(
+                    "Type mismatch: expected List or Null but was {}",
+                    arg.name()
+                )),
+                args => Err(format!(
+                    "Expected one argument for last, instead {}",
+                    args.len()
+                )),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    fn tail(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [Value::List(v)] => {
+                    if v.is_empty() {
+                        Ok(Value::List(vec![]))
+                    } else {
+                        Ok(Value::List(v[1..].to_vec()))
+                    }
+                }
+                [Value::Null] => Ok(Value::Null),
+                [arg] => Err(format!(
+                    "Type mismatch: expected List or Null but was {}",
+                    arg.name()
+                )),
+                args => Err(format!(
+                    "Expected one argument for tail, instead {}",
+                    args.len()
+                )),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    fn reverse(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [Value::List(v)] => {
+                    let mut v = v.clone();
+                    v.reverse();
+                    Ok(Value::List(v))
+                }
+                [Value::Null] => Ok(Value::Null),
+                [Value::String(s)] => Ok(Value::String(s.chars().rev().collect())),
+                [arg] => Err(format!(
+                    "Type mismatch: expected List, String or null, but was {}",
+                    arg.name()
+                )),
+                args => Err(format!(
+                    "Expected one argument for reverse, instead {}",
+                    args.len()
+                )),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    fn substring(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                // Handle NULL input case
+                [Value::Null, _] | [Value::Null, _, _] => Ok(Value::Null),
+                // Two-argument version: (string, start)
+                [Value::String(s), Value::Int(start)] => {
+                    let start = *start;
+                    if start < 0 {
+                        return Err("start must be a non-negative integer".into());
+                    }
+                    let start = start as usize;
+
+                    Ok(Value::String(s[start..].to_string()))
+                }
+
+                // Three-argument version: (string, start, length)
+                [Value::String(s), Value::Int(start), Value::Int(length)] => {
+                    let start = *start;
+                    let length = *length;
+                    if length < 0 {
+                        return Err("length must be a non-negative integer".into());
+                    }
+                    if start < 0 {
+                        return Err("start must be a non-negative integer".into());
+                    }
+                    let start = start as usize;
+                    let length = length as usize;
+
+                    let end = start.saturating_add(length).min(s.len());
+                    Ok(Value::String(s[start..end].to_string()))
+                }
+
+                // Type mismatch handling
+                args => Err(format!(
+                    "Type mismatch: expected substring(String, Integer) [+ Integer] but got {:?}",
+                    args.iter().map(Value::name).collect::<Vec<_>>()
+                )),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    fn split(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [Value::String(string), Value::String(delimiter)] => {
+                    if delimiter.is_empty() {
+                        // split string to characters
+                        let parts: Vec<Value> = string
+                            .chars()
+                            .map(|c| Value::String(c.to_string()))
+                            .collect();
+                        Ok(Value::List(parts))
+                    } else {
+                        let parts: Vec<Value> = string
+                            .split(delimiter.as_str())
+                            .map(|s| Value::String(s.to_string()))
+                            .collect();
+                        Ok(Value::List(parts))
+                    }
+                }
+                [Value::Null, _] | [_, Value::Null] => Ok(Value::Null),
+                [arg1, arg2] => Err(format!(
+                    "Type mismatch: expected 2 String or null arguments, but was {} {}",
+                    arg1.name(),
+                    arg2.name()
+                )),
+                [arg] => Err(format!(
+                    "Type mismatch: expected 2 String or null arguments, but was {}",
+                    arg.name()
+                )),
+                args => Err(format!(
+                    "Expected two arguments for split, instead {}",
+                    args.len()
+                )),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    fn string_to_lower(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [Value::String(s)] => Ok(Value::String(s.to_lowercase())),
+                [Value::Null] => Ok(Value::Null),
+                [arg] => Err(format!(
+                    "Type mismatch: expected List, String or null, but was {}",
+                    arg.name()
+                )),
+                args => Err(format!(
+                    "Expected one argument for toLower, instead {}",
+                    args.len()
+                )),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    fn string_to_upper(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [Value::String(s)] => Ok(Value::String(s.to_uppercase())),
+                [Value::Null] => Ok(Value::Null),
+                [arg] => Err(format!(
+                    "Type mismatch: expected List, String or null, but was {}",
+                    arg.name()
+                )),
+                args => Err(format!(
+                    "Expected one argument for toUpper, instead {}",
+                    args.len()
+                )),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    fn string_replace(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [
+                    Value::String(s),
+                    Value::String(search),
+                    Value::String(replacement),
+                ] => Ok(Value::String(s.replace(search, replacement))),
+                [Value::Null, _, _] | [_, Value::Null, _] | [_, _, Value::Null] => Ok(Value::Null),
+                [arg1, arg2, arg3] => Err(format!(
+                    "Type mismatch: expected (String, String, String) or null, but was: ({}, {}, {})",
+                    arg1.name(),
+                    arg2.name(),
+                    arg3.name()
+                )),
+                args => Err(format!(
+                    "Expected three arguments for replace, instead {}",
+                    args.len()
+                )),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    fn string_left(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [Value::String(s), Value::Int(n)] => {
+                    if *n < 0 {
+                        Err("length must be a non-negative integer".to_string())
+                    } else {
+                        Ok(Value::String(s.chars().take(*n as usize).collect()))
+                    }
+                }
+                [Value::Null, _] => Ok(Value::Null),
+                [_, Value::Null] => Err("length must be a non-negative integer".to_string()),
+                [arg1, arg2] => Err(format!(
+                    "Type mismatch: expected (String, Integer) or null, but was: ({}, {})",
+                    arg1.name(),
+                    arg2.name()
+                )),
+                args => Err(format!(
+                    "Expected two arguments for function 'left', instead {}",
+                    args.len()
+                )),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    fn string_ltrim(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [Value::String(s)] => Ok(Value::String(s.trim_start().to_string())),
+                [Value::Null] => Ok(Value::Null),
+                [arg] => Err(format!(
+                    "Type mismatch: expected String or null, but was {}",
+                    arg.name()
+                )),
+                args => Err(format!(
+                    "Expected one argument for ltrim, instead {}",
+                    args.len()
+                )),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    fn string_right(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [Value::String(s), Value::Int(n)] => {
+                    if *n < 0 {
+                        Err("length must be a non-negative integer".to_string())
+                    } else {
+                        let start = s.len().saturating_sub(*n as usize);
+                        Ok(Value::String(s.chars().skip(start).collect()))
+                    }
+                }
+                [Value::Null, _] => Ok(Value::Null),
+                [_, Value::Null] => Err("length must be a non-negative integer".to_string()),
+                [arg1, arg2] => Err(format!(
+                    "Type mismatch: expected (String, Integer) or null, but was: ({}, {})",
+                    arg1.name(),
+                    arg2.name()
+                )),
+                args => Err(format!(
+                    "Expected two arguments for function 'right', instead {}",
+                    args.len()
+                )),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    //
+    // Internal functions
+    //
+
+    fn internal_starts_with(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [Value::String(s), Value::String(prefix)] => Ok(Value::Bool(s.starts_with(prefix))),
+
+                [_, Value::Null] | [Value::Null, _] => Ok(Value::Null),
+                [arg1, arg2] => Err(format!(
+                    "Type mismatch: expected String or Null but was ({}, {})",
+                    arg1.name(),
+                    arg2.name()
+                )),
+                _ => unreachable!(),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    fn internal_ends_with(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [Value::String(s), Value::String(suffix)] => Ok(Value::Bool(s.ends_with(suffix))),
+                [_, Value::Null] | [Value::Null, _] => Ok(Value::Null),
+                [arg1, arg2] => Err(format!(
+                    "Type mismatch: Type mismatch: expected String or Null but was ({}, {})",
+                    arg1.name(),
+                    arg2.name()
+                )),
+                _ => unreachable!(),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    fn internal_contains(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [Value::String(s), Value::String(substring)] => {
+                    Ok(Value::Bool(s.contains(substring)))
+                }
+                [_, Value::Null] | [Value::Null, _] => Ok(Value::Null),
+                [arg1, arg2] => Err(format!(
+                    "Type mismatch: expected String or Null but was ({}, {})",
+                    arg1.name(),
+                    arg2.name()
+                )),
+                _ => unreachable!(),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    fn internal_regex_matches(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [Value::String(s), Value::String(pattern)] => {
+                    // Compile the regex pattern
+                    match regex::Regex::new(pattern) {
+                        Ok(re) => Ok(Value::Bool(re.is_match(s))),
+                        Err(e) => Err(format!("Invalid regex pattern: {e}")),
+                    }
+                }
+                [Value::Null, _] | [_, Value::Null] => Ok(Value::Null),
+                [arg1, arg2] => Err(format!(
+                    "Type mismatch: expected (String, String) or null, but was: ({}, {})",
+                    arg1.name(),
+                    arg2.name()
+                )),
+                _ => Err("Expected two arguments for regex matching".to_string()),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(clippy::unnecessary_wraps)]
     fn db_labels(
         g: &Graph,
         _runtime: &mut Self,
         _args: Value,
-    ) -> Value {
-        Value::List(
+    ) -> Result<Value, String> {
+        Ok(Value::List(
             g.get_labels()
                 .map(|n| Value::String(n.to_string()))
                 .collect(),
-        )
+        ))
     }
 
+    #[allow(clippy::unnecessary_wraps)]
     fn db_types(
         g: &Graph,
         _runtime: &mut Self,
         _args: Value,
-    ) -> Value {
-        Value::List(
+    ) -> Result<Value, String> {
+        Ok(Value::List(
             g.get_types()
                 .map(|n| Value::String(n.to_string()))
                 .collect(),
-        )
+        ))
     }
 
+    #[allow(clippy::unnecessary_wraps)]
     fn db_properties(
         g: &Graph,
         _runtime: &mut Self,
         _args: Value,
-    ) -> Value {
-        Value::List(
+    ) -> Result<Value, String> {
+        Ok(Value::List(
             g.get_properties()
                 .map(|n| Value::String(n.to_string()))
                 .collect(),
-        )
+        ))
     }
 }
 
@@ -358,7 +842,7 @@ pub fn ro_run(
                     }
                 }
                 (Value::List(_), v) => Err(format!("Type mismatch: expected Bool but was {v:?}")),
-                v => Err(format!("Type mismatch: expected Lust but was {v:?}")),
+                v => Err(format!("Type mismatch: expected List but was {v:?}")),
             }
         }
         IR::GetElements(op) => {
@@ -378,7 +862,27 @@ pub fn ro_run(
                 ),
             }
         }
-        IR::Range(_) => Err("Range operator not implemented".to_string()),
+        IR::Range(op) => {
+            let start = ro_run(vars, g, runtime, result_fn, &op.0)?;
+            let end = ro_run(vars, g, runtime, result_fn, &op.1)?;
+            let step = ro_run(vars, g, runtime, result_fn, &op.2)?;
+            match (start, end, step) {
+                (Value::Int(start), Value::Int(end), Value::Int(step)) => {
+                    Ok(Value::List(if step < 0 {
+                        (end..=start)
+                            .step_by((-step) as usize)
+                            .map(Value::Int)
+                            .collect()
+                    } else {
+                        (start..=end)
+                            .step_by(step as usize)
+                            .map(Value::Int)
+                            .collect()
+                    }))
+                }
+                _ => Err("Range operator requires two integers".to_string()),
+            }
+        }
         IR::IsNull(ir) => match ro_run(vars, g, runtime, result_fn, ir)? {
             Value::Null => Ok(Value::Bool(true)),
             _ => Ok(Value::Bool(false)),
@@ -403,7 +907,18 @@ pub fn ro_run(
 
             Ok(Value::Bool(false))
         }
-        IR::Xor(_irs) => Err("Xor operator not implemented".to_string()),
+        IR::Xor(irs) => {
+            let mut last = None;
+            for ir in irs {
+                match ro_run(vars, g, runtime, result_fn, ir)? {
+                    Value::Bool(b) => last = Some(last.map_or(b, |l| logical_xor(l, b))),
+                    Value::Null => return Ok(Value::Null),
+                    _ => return Err(format!("Type mismatch: expected Bool but was {ir:?}")),
+                }
+            }
+            Ok(Value::Bool(last.unwrap_or(false)))
+        }
+
         IR::And(irs) => {
             let mut is_null = false;
             for ir in irs {
@@ -422,13 +937,13 @@ pub fn ro_run(
         }
         IR::Not(ir) => match ro_run(vars, g, runtime, result_fn, ir)? {
             Value::Bool(b) => Ok(Value::Bool(!b)),
-            _ => Err("Not operator requires a boolean".to_string()),
+            Value::Null => Ok(Value::Null),
+            _ => Err("InvalidArgumentType: Not operator requires a boolean or null".to_string()),
         },
-        IR::Eq(irs) => irs
-            .iter()
-            .flat_map(|ir| ro_run(vars, g, runtime, result_fn, ir))
-            .reduce(|a, b| is_equal(&a, &b))
-            .ok_or_else(|| "Eq operator requires at least one argument".to_string()),
+        IR::Eq(irs) => {
+            let iter = irs.iter().map(|ir| ro_run(vars, g, runtime, result_fn, ir));
+            all_equals(iter)
+        }
         IR::Neq(irs) => irs
             .iter()
             .flat_map(|ir| ro_run(vars, g, runtime, result_fn, ir))
@@ -462,17 +977,16 @@ pub fn ro_run(
             (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a >= b)),
             _ => Err("Ge operator requires two integers".to_string()),
         },
-        IR::Add(irs) => irs
-            .iter()
-            .flat_map(|ir| ro_run(vars, g, runtime, result_fn, ir))
-            .reduce(|a, b| match (a, b) {
-                (Value::Int(a), Value::Int(b)) => Value::Int(a + b),
-                (Value::Float(a), Value::Float(b)) => Value::Float(a + b),
-                (Value::List(a), Value::List(b)) => Value::List(a.into_iter().chain(b).collect()),
-                (Value::List(a), b) => add_list_scalar(a, b),
-                _ => Value::Null,
-            })
-            .ok_or_else(|| "Add operator requires at least one argument".to_string()),
+        IR::In(op) => {
+            let value = ro_run(vars, g, runtime, result_fn, &op.0)?;
+            let list = ro_run(vars, g, runtime, result_fn, &op.1)?;
+            list_contains(&list, &value)
+        }
+        IR::Add(irs) => add_all(
+            irs.iter()
+                .flat_map(|ir| ro_run(vars, g, runtime, result_fn, ir))
+                .collect::<Vec<Value>>(),
+        ),
         IR::Sub(irs) => irs
             .iter()
             .flat_map(|ir| ro_run(vars, g, runtime, result_fn, ir))
@@ -520,7 +1034,7 @@ pub fn ro_run(
                 .collect::<Result<Vec<_>, _>>()?;
             #[allow(clippy::option_if_let_else)]
             if let Some(func) = runtime.read_functions.get(name) {
-                Ok(func(g, runtime, Value::List(args)))
+                func(g, runtime, Value::List(args))
             } else {
                 Err(format!("Function {name} not found"))
             }
@@ -610,7 +1124,7 @@ pub fn run(
                     }
                 }
                 (Value::List(_), v) => Err(format!("Type mismatch: expected Bool but was {v:?}")),
-                v => Err(format!("Type mismatch: expected Lust but was {v:?}")),
+                v => Err(format!("Type mismatch: expected List but was {v:?}")),
             }
         }
         IR::GetElements(op) => {
@@ -630,7 +1144,34 @@ pub fn run(
                 ),
             }
         }
-        IR::Range(_) => Err("Range operator not implemented".to_string()),
+        IR::Range(op) => {
+            let start = run(vars, g, runtime, result_fn, &op.0)?;
+            let end = run(vars, g, runtime, result_fn, &op.1)?;
+            let step = run(vars, g, runtime, result_fn, &op.2)?;
+            match (start, end, step) {
+                (Value::Int(start), Value::Int(end), Value::Int(step)) => {
+                    if start >= end && step < 0 {
+                        Ok(Value::List(
+                            (end..=start)
+                                .rev()
+                                .step_by(step.abs() as usize)
+                                .map(Value::Int)
+                                .collect(),
+                        ))
+                    } else if step < 0 {
+                        Ok(Value::List(vec![]))
+                    } else {
+                        Ok(Value::List(
+                            (start..=end)
+                                .step_by(step as usize)
+                                .map(Value::Int)
+                                .collect(),
+                        ))
+                    }
+                }
+                _ => Err("Range operator requires two integers".to_string()),
+            }
+        }
         IR::IsNull(ir) => match run(vars, g, runtime, result_fn, ir)? {
             Value::Null => Ok(Value::Bool(true)),
             _ => Ok(Value::Bool(false)),
@@ -655,7 +1196,17 @@ pub fn run(
 
             Ok(Value::Bool(false))
         }
-        IR::Xor(_irs) => Err("Xor operator not implemented".to_string()),
+        IR::Xor(irs) => {
+            let mut last = None;
+            for ir in irs {
+                match run(vars, g, runtime, result_fn, ir)? {
+                    Value::Bool(b) => last = Some(last.map_or(b, |l| logical_xor(l, b))),
+                    Value::Null => return Ok(Value::Null),
+                    _ => return Err(format!("Type mismatch: expected Bool but was {ir:?}")),
+                }
+            }
+            Ok(Value::Bool(last.unwrap_or(false)))
+        }
         IR::And(irs) => {
             let mut is_null = false;
             for ir in irs {
@@ -674,13 +1225,13 @@ pub fn run(
         }
         IR::Not(ir) => match run(vars, g, runtime, result_fn, ir)? {
             Value::Bool(b) => Ok(Value::Bool(!b)),
-            _ => Err("Not operator requires a boolean".to_string()),
+            Value::Null => Ok(Value::Null),
+            _ => Err("InvalidArgumentType: Not operator requires a boolean or null".to_string()),
         },
-        IR::Eq(irs) => irs
-            .iter()
-            .flat_map(|ir| run(vars, g, runtime, result_fn, ir))
-            .reduce(|a, b| is_equal(&a, &b))
-            .ok_or_else(|| "Eq operator requires at least one argument".to_string()),
+        IR::Eq(irs) => {
+            let iter = irs.iter().map(|ir| run(vars, g, runtime, result_fn, ir));
+            all_equals(iter)
+        }
         IR::Neq(irs) => irs
             .iter()
             .flat_map(|ir| run(vars, g, runtime, result_fn, ir))
@@ -714,17 +1265,16 @@ pub fn run(
             (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a >= b)),
             _ => Err("Ge operator requires two integers".to_string()),
         },
-        IR::Add(irs) => irs
-            .iter()
-            .flat_map(|ir| run(vars, g, runtime, result_fn, ir))
-            .reduce(|a, b| match (a, b) {
-                (Value::Int(a), Value::Int(b)) => Value::Int(a + b),
-                (Value::Float(a), Value::Float(b)) => Value::Float(a + b),
-                (Value::List(a), Value::List(b)) => Value::List(a.into_iter().chain(b).collect()),
-                (Value::List(a), b) => add_list_scalar(a, b),
-                _ => Value::Null,
-            })
-            .ok_or_else(|| "Add operator requires at least one argument".to_string()),
+        IR::In(op) => {
+            let value = run(vars, g, runtime, result_fn, &op.0)?;
+            let list = run(vars, g, runtime, result_fn, &op.1)?;
+            list_contains(&list, &value)
+        }
+        IR::Add(irs) => add_all(
+            irs.iter()
+                .flat_map(|ir| run(vars, g, runtime, result_fn, ir))
+                .collect::<Vec<Value>>(),
+        ),
         IR::Sub(irs) => irs
             .iter()
             .flat_map(|ir| run(vars, g, runtime, result_fn, ir))
@@ -771,9 +1321,9 @@ pub fn run(
                 .map(|ir| run(vars, g, runtime, result_fn, ir))
                 .collect::<Result<Vec<_>, _>>()?;
             if let Some(func) = runtime.write_functions.get(name) {
-                Ok(func(g, runtime, Value::List(args)))
+                func(g, runtime, Value::List(args))
             } else if let Some(func) = runtime.read_functions.get(name) {
-                Ok(func(g, runtime, Value::List(args)))
+                func(g, runtime, Value::List(args))
             } else {
                 Err(format!("Function {name} not found"))
             }
@@ -880,50 +1430,6 @@ fn get_elements(
     }
 }
 
-#[inline]
-fn is_equal(
-    a: &Value,
-    b: &Value,
-) -> Value {
-    match (a, b) {
-        (Value::List(l1), Value::List(l2)) => is_equal_lists(l1, l2),
-        _ => Value::Bool(a == b),
-    }
-}
-#[inline]
-fn is_equal_lists(
-    l1: &Vec<Value>,
-    l2: &Vec<Value>,
-) -> Value {
-    if l1.len() != l2.len() {
-        return Value::Bool(false);
-    }
-    let mut has_null = false;
-    for (v1, v2) in l1.iter().zip(l2.iter()) {
-        let is_equal = is_equal(v1, v2);
-        if is_equal == Value::Bool(true) {
-            continue;
-        }
-        match (v1, v2) {
-            (Value::Null, _) | (_, Value::Null) => {
-                has_null = true;
-                continue;
-            }
-            _ => {
-                if is_equal == Value::Null {
-                    return Value::Null;
-                }
-                return Value::Bool(false);
-            }
-        }
-    }
-    if has_null {
-        Value::Null
-    } else {
-        Value::Bool(true)
-    }
-}
-
 fn add_list_scalar(
     mut l: Vec<Value>,
     scalar: Value,
@@ -934,4 +1440,82 @@ fn add_list_scalar(
 
     l.push(scalar);
     Value::List(l)
+}
+
+fn list_contains(
+    list: &Value,
+    value: &Value,
+) -> Result<Value, String> {
+    match list {
+        Value::List(l) => Ok(Contains::contains(l, value)),
+        Value::Null => Ok(Value::Null),
+        _ => Err(format!(
+            "Type mismatch: expected List or Null but was {}",
+            list.name()
+        )),
+    }
+}
+
+// the semantic of Eq [1, 2, 3] is: 1 EQ 2 AND 2 EQ 3
+fn all_equals<I>(mut iter: I) -> Result<Value, String>
+where
+    I: Iterator<Item = Result<Value, String>>,
+{
+    if let Some(first) = iter.next() {
+        let prev = first?;
+        for next in iter {
+            let next = next?;
+            match prev.partial_cmp(&next) {
+                None => return Ok(Value::Null),
+                Some(Ordering::Less | Ordering::Greater) => return Ok(Value::Bool(false)),
+                Some(Ordering::Equal) => {}
+            }
+        }
+        Ok(Value::Bool(true))
+    } else {
+        Err("Eq operator requires at least two arguments".to_string())
+    }
+}
+
+#[inline]
+const fn logical_xor(
+    a: bool,
+    b: bool,
+) -> bool {
+    (a && !b) || (!a && b)
+}
+
+fn add_all(values: Vec<Value>) -> Result<Value, String> {
+    let mut iter = values.into_iter();
+    let mut result = iter
+        .next()
+        .ok_or_else(|| "Add operator requires at least one argument".to_string())?;
+
+    for value in iter {
+        result = match (result, value) {
+            (Value::Null, _) | (_, Value::Null) => Value::Null,
+            (Value::Int(a), Value::Int(b)) => Value::Int(a + b),
+            (Value::Float(a), Value::Float(b)) => Value::Float(a + b),
+            (Value::List(a), Value::List(b)) => Value::List(a.into_iter().chain(b).collect()),
+            (Value::List(a), b) => add_list_scalar(a, b),
+            (s, Value::List(l)) => {
+                let mut new_list = vec![s];
+                new_list.extend(l);
+                Value::List(new_list)
+            }
+            (Value::String(a), Value::String(b)) => Value::String(a + &b),
+            (Value::String(s), Value::Int(i)) => Value::String(s + &i.to_string()),
+            (Value::String(s), Value::Float(f)) => Value::String(s + &f.to_string()),
+            (Value::String(s), Value::Bool(f)) => Value::String(s + &f.to_string().to_lowercase()),
+            (a, b) => {
+                return Err(format!(
+                    "Unexpected types for add operator ({}, {})",
+                    a.name(),
+                    b.name()
+                ));
+            }
+        };
+    }
+
+    Ok(result)
 }

@@ -28,6 +28,7 @@ pub enum IR {
     Gt(Box<(IR, IR)>),
     Le(Box<(IR, IR)>),
     Ge(Box<(IR, IR)>),
+    In(Box<(IR, IR)>),
     Add(Vec<IR>),
     Sub(Vec<IR>),
     Mul(Vec<IR>),
@@ -93,6 +94,7 @@ impl Planner {
             QueryExprIR::Gt(_) => todo!(),
             QueryExprIR::Le(_) => todo!(),
             QueryExprIR::Ge(_) => todo!(),
+            QueryExprIR::In(op) => IR::In(Box::new((self.plan_expr(op.0), self.plan_expr(op.1)))),
             QueryExprIR::Add(exprs) => {
                 IR::Add(exprs.into_iter().map(|ir| self.plan_expr(ir)).collect())
             }
@@ -120,6 +122,22 @@ impl Planner {
                 op.1.map(|ir| self.plan_expr(ir)),
                 op.2.map(|ir| self.plan_expr(ir)),
             ))),
+            QueryExprIR::StartsWith(op) => IR::FuncInvocation(
+                "@starts_with".to_string(),
+                vec![self.plan_expr(op.0), self.plan_expr(op.1)],
+            ),
+            QueryExprIR::EndsWith(op) => IR::FuncInvocation(
+                "@ends_with".to_string(),
+                vec![self.plan_expr(op.0), self.plan_expr(op.1)],
+            ),
+            QueryExprIR::Contains(op) => IR::FuncInvocation(
+                "@contains".to_string(),
+                vec![self.plan_expr(op.0), self.plan_expr(op.1)],
+            ),
+            QueryExprIR::RegexMatches(op) => IR::FuncInvocation(
+                "@regex_matches".to_string(),
+                vec![self.plan_expr(op.0), self.plan_expr(op.1)],
+            ),
             QueryExprIR::Property(expr, name) => IR::FuncInvocation(
                 "property".to_string(),
                 vec![self.plan_expr(*expr), IR::String(name)],
