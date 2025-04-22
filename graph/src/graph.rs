@@ -9,7 +9,7 @@ use roaring::RoaringTreemap;
 use crate::{
     cypher::Parser,
     matrix::{self, Matrix, Remove, Set, Size},
-    planner::{IR, Planner},
+    planner::{Planner, IR},
     runtime::{Runtime, Value, evaluate_param, ro_run, run},
     tensor::{self, Tensor},
 };
