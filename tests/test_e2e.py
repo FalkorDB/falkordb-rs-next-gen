@@ -1076,22 +1076,22 @@ def test_graph_list():
 
 def test_aggregation():
     res = query("UNWIND range(1, 10) AS x RETURN collect(x)")
-    assert res.result_set == [[[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]]]
+    assert_result_set_equal_no_order(res, [[[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]]])
 
     res = query("UNWIND [true, 1, 1.0, 'Avi', [], {}] AS x RETURN collect(x)")
-    assert res.result_set == [[[True, 1, 1.0, 'Avi', [], {}]]]
+    assert_result_set_equal_no_order(res, [[[True, 1, 1.0, 'Avi', [], {}]]])
 
     res = query("UNWIND range(1, 10) AS x RETURN count(x)")
-    assert res.result_set == [[10]]
+    assert_result_set_equal_no_order(res, [[10]])
 
     res = query("UNWIND range(1, 10) AS x RETURN sum(x)")
-    assert res.result_set == [[55]]
+    assert_result_set_equal_no_order(res, [[55]])
 
     res = query("UNWIND range(1, 10) AS x RETURN min(x)")
-    assert res.result_set == [[1]]
+    assert_result_set_equal_no_order(res, [[1]])
 
     res = query("UNWIND range(1, 10) AS x RETURN max(x)")
-    assert res.result_set == [[10]]
+    assert_result_set_equal_no_order(res, [[10]])
 
     res = query("UNWIND range(1, 11) AS x RETURN x % 2, count(x)")
     assert_result_set_equal_no_order(res, [[1, 6], [0, 5]])
