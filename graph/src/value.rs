@@ -24,7 +24,7 @@ impl Add for Value {
     ) -> Self::Output {
         match (self, rhs) {
             (Value::Null, _) | (_, Value::Null) => Ok(Value::Null),
-            (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a + b)),
+            (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a.wrapping_add(b))),
             (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a + b)),
             (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a + b as f64)),
             (Value::Int(a), Value::Float(b)) => Ok(Value::Float(a as f64 + b)),

@@ -686,6 +686,9 @@ def test_add():
     res = query("RETURN 1 + null AS name")
     assert res.result_set == [[None]]
 
+    res = query("RETURN 9223372036854775807 + 2 AS name")
+    assert res.result_set == [[-9223372036854775807]]
+
     res = query("RETURN 1 + 1 AS name")
     assert res.result_set == [[2]]
 
