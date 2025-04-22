@@ -17,6 +17,7 @@ use crate::GraphBLAS::{
 };
 
 /// Initializes the GraphBLAS library in non-blocking mode.
+#[allow(clippy::similar_names)]
 pub fn init(
     user_malloc_function: Option<unsafe extern "C" fn(arg1: usize) -> *mut c_void>,
     user_calloc_function: Option<unsafe extern "C" fn(arg1: usize, arg2: usize) -> *mut c_void>,
@@ -101,22 +102,14 @@ pub trait Set<T> {
     );
 }
 
+/// A trait for removing elements from a matrix.
 pub trait Remove<T> {
-    fn remove(
-        &mut self,
-        i: u64,
-        j: u64,
-    );
-}
-
-/// A trait for deleting elements from a matrix.
-pub trait Delete<T> {
-    /// Deletes the element at the specified row and column.
+    /// Removes the element at the specified row and column.
     ///
     /// # Parameters
     /// - `i`: The row index.
     /// - `j`: The column index.
-    fn delete(
+    fn remove(
         &mut self,
         i: u64,
         j: u64,
@@ -134,7 +127,8 @@ pub struct Matrix<T> {
 impl<T> Drop for Matrix<T> {
     fn drop(&mut self) {
         unsafe {
-            GrB_Matrix_free(addr_of_mut!(self.m));
+            let info = GrB_Matrix_free(addr_of_mut!(self.m));
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }
 }
