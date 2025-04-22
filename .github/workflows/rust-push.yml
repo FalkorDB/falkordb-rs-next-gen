@@ -99,14 +99,13 @@ jobs:
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-
   falkordb-e2e-compatibility:
     runs-on: ubuntu-latest
     permissions:
       contents: read
     services:
       falkordb:
-        image: falkordb/falkordb:edge
+        image: falkordb/falkordb:latest
         ports:
           - 6379:6379
         volumes:
@@ -115,8 +114,7 @@ jobs:
           --rm
           -it
     steps:
-      - uses: actions/checkout@v3
-
+      - uses: actions/checkout@v4
       - name: Wait for FalkorDB to be ready
         run: |
           # Wait until port 6379 is open (max 30 seconds)
@@ -128,7 +126,6 @@ jobs:
             echo "Waiting for FalkorDB..."
             sleep 1
           done
-
       - name: Run FalkorDB e2e tests
         run: |
           sudo apt install -y python3-venv
