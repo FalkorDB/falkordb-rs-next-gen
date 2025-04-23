@@ -36,6 +36,7 @@ enum Token {
     Modulo,
     Power,
     Star,
+    Slash,
     Plus,
     Dash,
     Is,
@@ -110,6 +111,7 @@ impl<'a> Lexer<'a> {
                 '%' => return (Token::Modulo, 1),
                 '^' => return (Token::Power, 1),
                 '*' => return (Token::Star, 1),
+                '/' => return (Token::Slash, 1),
                 '+' => return (Token::Plus, 1),
                 '-' => {
                     return match chars.next() {
@@ -451,6 +453,56 @@ macro_rules! optional_match_token {
                 true
             }
             _ => false,
+        }
+    };
+    () => {};
+}
+
+macro_rules! parse_binary_expr {
+    ($parser:expr, $left:expr, $t1:ident, $t2:ident, $op1:ident, $op2:ident) => {
+        let mut vec = Vec::new();
+        loop {
+            loop {
+                vec.push($left);
+                match $parser.lexer.current() {
+                    Token::$t1 => {
+                        $parser.lexer.next();
+                    }
+                    Token::$t2 => {
+                        $parser.lexer.next();
+                        break;
+                    }
+                    _ => {
+                        if vec.len() == 1 {
+                            return Ok(vec.pop().unwrap());
+                        }
+                        return Ok(QueryExprIR::$op1(vec));
+                    }
+                }
+            }
+
+            vec = vec![QueryExprIR::$op1(vec)];
+
+            loop {
+                vec.push($left);
+                match $parser.lexer.current() {
+                    Token::$t2 => {
+                        $parser.lexer.next();
+                    }
+                    Token::$t1 => {
+                        $parser.lexer.next();
+                        break;
+                    }
+                    _ => {
+                        if vec.len() == 1 {
+                            return Ok(vec.pop().unwrap());
+                        }
+                        return Ok(QueryExprIR::$op2(vec));
+                    }
+                }
+            }
+
+            vec = vec![QueryExprIR::$op2(vec)];
         }
     };
     () => {};
@@ -820,73 +872,42 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_mul_expr(&mut self) -> Result<QueryExprIR, String> {
-        let mut vec = Vec::new();
-        loop {
-            vec.push(self.parse_power_expr()?);
-
-            match self.lexer.current() {
-                Token::Star => {
-                    self.lexer.next();
-                }
-                _ => {
-                    if vec.len() == 1 {
-                        return Ok(vec.pop().unwrap());
-                    }
-                    return Ok(QueryExprIR::Mul(vec));
-                }
-            }
-        }
+    fn parse_mul_div_expr(&mut self) -> Result<QueryExprIR, String> {
+        parse_binary_expr!(self, self.parse_power_expr()?, Star, Slash, Mul, Div);
     }
 
-    fn parse_add_expr(&mut self) -> Result<QueryExprIR, String> {
-        let mut vec = Vec::new();
-
-        loop {
-            vec.push(self.parse_mul_expr()?);
-
-            match self.lexer.current() {
-                Token::Plus => {
-                    self.lexer.next();
-                }
-                _ => {
-                    if vec.len() == 1 {
-                        return Ok(vec.pop().unwrap());
-                    }
-                    return Ok(QueryExprIR::Add(vec));
-                }
-            }
-        }
+    fn parse_add_sub_expr(&mut self) -> Result<QueryExprIR, String> {
+        parse_binary_expr!(self, self.parse_mul_div_expr()?, Plus, Dash, Add, Sub);
     }
 
     fn parser_string_list_null_predicate_expr(&mut self) -> Result<QueryExprIR, String> {
-        let lhs = self.parse_add_expr()?;
+        let lhs = self.parse_add_sub_expr()?;
         match self.lexer.current() {
             Token::In => {
                 self.lexer.next();
-                let rhs = self.parse_add_expr()?;
+                let rhs = self.parse_add_sub_expr()?;
                 Ok(QueryExprIR::In(Box::new((lhs, rhs))))
             }
             Token::Starts => {
                 self.lexer.next();
                 match_token!(self.lexer, With);
-                let rhs = self.parse_add_expr()?;
+                let rhs = self.parse_add_sub_expr()?;
                 Ok(QueryExprIR::StartsWith(Box::new((lhs, rhs))))
             }
             Token::Ends => {
                 self.lexer.next();
                 match_token!(self.lexer, With);
-                let rhs = self.parse_add_expr()?;
+                let rhs = self.parse_add_sub_expr()?;
                 Ok(QueryExprIR::EndsWith(Box::new((lhs, rhs))))
             }
             Token::Contains => {
                 self.lexer.next();
-                let rhs = self.parse_add_expr()?;
+                let rhs = self.parse_add_sub_expr()?;
                 Ok(QueryExprIR::Contains(Box::new((lhs, rhs))))
             }
             Token::RegexMatches => {
                 self.lexer.next();
-                let rhs = self.parse_add_expr()?;
+                let rhs = self.parse_add_sub_expr()?;
                 Ok(QueryExprIR::RegexMatches(Box::new((lhs, rhs))))
             }
             _ => Ok(lhs),
