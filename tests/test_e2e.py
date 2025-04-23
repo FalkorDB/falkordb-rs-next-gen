@@ -144,6 +144,17 @@ def test_operators():
             res = query(f"RETURN {a} + {b} * ({a} + {b})")
             assert res.result_set == [[a + b * (a + b)]]
 
+    for op1 in ['+', '-', '*', '/']:
+        for op2 in ['+', '-', '*', '/']:
+            for op3 in ['+', '-', '*', '/']:
+                for op4 in ['+', '-', '*', '/']:
+                    res = query(f"RETURN 1 {op1} 2 {op2} 3 {op3} 4 {op4} 5")
+                    pyop1 = op1.replace("/", "//")
+                    pyop2 = op2.replace("/", "//")
+                    pyop3 = op3.replace("/", "//")
+                    pyop4 = op4.replace("/", "//")
+                    assert res.result_set == [[eval(f"1 {pyop1} 2 {pyop2} 3 {pyop3} 4 {pyop4} 5")]]
+
     for i, a in enumerate([True, 1, 'Avi', [1]]):
         res = query(f"RETURN {{a0: true, a1: 1, a2: 'Avi', a3: [1]}}.a{i}")
         assert res.result_set == [[a]]
