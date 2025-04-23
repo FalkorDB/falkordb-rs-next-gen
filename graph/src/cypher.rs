@@ -502,7 +502,7 @@ macro_rules! parse_binary_expr {
                 }
             }
 
-                vec = vec![QueryExprIR::$op2(vec)];
+            vec = vec![QueryExprIR::$op2(vec)];
         }
     };
     () => {};
