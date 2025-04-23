@@ -1495,6 +1495,8 @@ fn add_all(values: Vec<Value>) -> Result<Value, String> {
         result = match (result, value) {
             (Value::Null, _) | (_, Value::Null) => Value::Null,
             (Value::Int(a), Value::Int(b)) => Value::Int(a + b),
+            (Value::Int(a), Value::Float(b)) => Value::Float(a as f64 + b),
+            (Value::Float(a), Value::Int(b)) => Value::Float(a + b as f64),
             (Value::Float(a), Value::Float(b)) => Value::Float(a + b),
             (Value::List(a), Value::List(b)) => Value::List(a.into_iter().chain(b).collect()),
             (Value::List(a), b) => add_list_scalar(a, b),
