@@ -940,6 +940,14 @@ pub fn ro_run(
             Value::Null => Ok(Value::Null),
             _ => Err("InvalidArgumentType: Not operator requires a boolean or null".to_string()),
         },
+        IR::Negate(ir) => match ro_run(vars, g, runtime, result_fn, ir)? {
+            Value::Int(i) => Ok(Value::Int(-i)),
+            Value::Float(f) => Ok(Value::Float(-f)),
+            Value::Null => Ok(Value::Null),
+            _ => {
+                Err("InvalidArgumentType: Negate operator requires a Integer or Float".to_string())
+            }
+        },
         IR::Eq(irs) => {
             let iter = irs.iter().map(|ir| ro_run(vars, g, runtime, result_fn, ir));
             all_equals(iter)
@@ -1228,6 +1236,14 @@ pub fn run(
             Value::Null => Ok(Value::Null),
             _ => Err("InvalidArgumentType: Not operator requires a boolean or null".to_string()),
         },
+        IR::Negate(ir) => match run(vars, g, runtime, result_fn, ir)? {
+            Value::Int(i) => Ok(Value::Int(-i)),
+            Value::Float(f) => Ok(Value::Float(-f)),
+            Value::Null => Ok(Value::Null),
+            _ => {
+                Err("InvalidArgumentType: Negate operator requires a Integer or Float".to_string())
+            }
+        },
         IR::Eq(irs) => {
             let iter = irs.iter().map(|ir| run(vars, g, runtime, result_fn, ir));
             all_equals(iter)
@@ -1384,6 +1400,14 @@ pub fn evaluate_param(expr: QueryExprIR) -> Value {
                 .map(|(key, ir)| (key, evaluate_param(ir)))
                 .collect(),
         ),
+        QueryExprIR::Negate(exp) => {
+            let v = evaluate_param(*exp);
+            match v {
+                Value::Int(i) => Value::Int(-i),
+                Value::Float(f) => Value::Float(-f),
+                _ => Value::Null,
+            }
+        }
         _ => todo!(),
     }
 }

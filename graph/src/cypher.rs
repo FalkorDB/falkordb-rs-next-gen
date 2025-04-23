@@ -113,12 +113,7 @@ impl<'a> Lexer<'a> {
                 '*' => return (Token::Star, 1),
                 '/' => return (Token::Slash, 1),
                 '+' => return (Token::Plus, 1),
-                '-' => {
-                    return match chars.next() {
-                        Some('.' | '0'..='9') => Self::lex_number(str, pos),
-                        _ => (Token::Dash, 1),
-                    };
-                }
+                '-' => return (Token::Dash, 1),
                 '=' => {
                     return match chars.next() {
                         Some('~') => (Token::RegexMatches, 2),
@@ -240,14 +235,6 @@ impl<'a> Lexer<'a> {
     ) -> (Token, usize) {
         let mut chars = input[start_pos..].chars().peekable();
         let mut len = 0;
-
-        // Optional sign
-        if let Some(&c) = chars.peek() {
-            if c == '+' || c == '-' {
-                chars.next();
-                len += 1;
-            }
-        }
 
         let mut has_digits_before_dot = false;
 
@@ -834,10 +821,24 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn parse_unary_add_or_subtract_expr(&mut self) -> Result<QueryExprIR, String> {
+        match self.lexer.current() {
+            Token::Plus => {
+                self.lexer.next();
+                Ok(self.parse_null_operator_expression()?)
+            }
+            Token::Dash => {
+                self.lexer.next();
+                let expr = self.parse_null_operator_expression()?;
+                Ok(QueryExprIR::Negate(Box::new(expr)))
+            }
+            _ => self.parse_null_operator_expression(),
+        }
+    }
     fn parse_modulo_expr(&mut self) -> Result<QueryExprIR, String> {
         let mut vec = Vec::new();
         loop {
-            vec.push(self.parse_null_operator_expression()?);
+            vec.push(self.parse_unary_add_or_subtract_expr()?);
 
             match self.lexer.current() {
                 Token::Modulo => {
@@ -1164,11 +1165,10 @@ mod tests {
     fn test_scan_float() {
         let inputs = [
             ("0.1", Token::Float(0.1)),
-            ("3.14159", Token::Float(3.14159)),
+            ("5.14159", Token::Float(5.14159)),
             ("1e10", Token::Float(1e10)),
-            ("-1e10", Token::Float(-1e10)),
-            ("-1.2E-3", Token::Float(-1.2E-3)),
-            ("-.1", Token::Float(-0.1)),
+            ("1.2E-3", Token::Float(1.2E-3)),
+            (".1", Token::Float(0.1)),
             ("1e0", Token::Float(1e0)),
         ];
         for (input, expected) in inputs {
@@ -1187,15 +1187,10 @@ mod tests {
     fn test_scan_int() {
         let inputs = [
             ("1", Token::Integer(1)),
-            ("-1", Token::Integer(-1)),
             ("0", Token::Integer(0)),
             (
                 "12345678901234567890",
                 Token::Error("Invalid integer: 12345678901234567890".to_string()),
-            ),
-            (
-                "-12345678901234567890",
-                Token::Error("Invalid integer: -12345678901234567890".to_string()),
             ),
             ("0x1", Token::Integer(1)),
             ("0x10", Token::Integer(16)),
@@ -1206,10 +1201,6 @@ mod tests {
             ("0b1", Token::Integer(1)),
             ("0b10", Token::Integer(2)),
             ("0b1111", Token::Integer(15)),
-            ("-0x1", Token::Integer(-1)),
-            ("-0o1", Token::Integer(-1)),
-            ("-0b1", Token::Integer(-1)),
-            ("-0B1", Token::Integer(-1)),
             ("02613152366", Token::Integer(372036854)),
         ];
 
