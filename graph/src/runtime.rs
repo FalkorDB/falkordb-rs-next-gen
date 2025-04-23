@@ -1241,7 +1241,7 @@ pub fn run(
             Value::Float(f) => Ok(Value::Float(-f)),
             Value::Null => Ok(Value::Null),
             _ => {
-                Err("InvalidArgumentType: Negate operator requires a Integer or Float".to_string())
+                Err("InvalidArgumentType: Negate operator requires an Integer or Float".to_string())
             }
         },
         IR::Eq(irs) => {
