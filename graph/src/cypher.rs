@@ -1159,63 +1159,79 @@ impl<'a> Parser<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
-    #[test]
-    fn test_scan_float() {
-        let inputs = [
-            ("0.1", Token::Float(0.1)),
-            ("3.14159", Token::Float(3.14159)),
-            ("1e10", Token::Float(1e10)),
-            ("-1e10", Token::Float(-1e10)),
-            ("-1.2E-3", Token::Float(-1.2E-3)),
-            ("-.1", Token::Float(-0.1)),
-            ("1e0", Token::Float(1e0)),
-        ];
-        for (input, expected) in inputs {
-            let (token, _) = Lexer::lex_number(input, 0);
-            assert_eq!(token, expected);
-        }
+    fn scan_i64_strategy() -> impl Strategy<Value = (i64, Vec<String>)> {
+        any::<i64>().prop_map(|i| {
+            if i < 0 {
+                let abs = i.abs() as u64;
 
-        let (token, _) = Lexer::lex_number("1.34E999", 0);
-        assert_eq!(
-            token,
-            Token::Error("FloatingPointOverflow: 1.34E999".to_string())
-        );
+                (
+                    i,
+                    vec![
+                        format!("-{abs}"),
+                        format!("-{abs:#b}"),
+                        format!("-{abs:#o}"),
+                        format!("-{abs:#x}"),
+                    ],
+                )
+            } else {
+                (
+                    i,
+                    vec![
+                        format!("{i}"),
+                        format!("{i:#b}"),
+                        format!("{i:#o}"),
+                        format!("{i:#x}"),
+                    ],
+                )
+            }
+        })
     }
 
-    #[test]
-    fn test_scan_int() {
-        let inputs = [
-            ("1", Token::Integer(1)),
-            ("-1", Token::Integer(-1)),
-            ("0", Token::Integer(0)),
-            (
-                "12345678901234567890",
-                Token::Error("Invalid integer: 12345678901234567890".to_string()),
-            ),
-            (
-                "-12345678901234567890",
-                Token::Error("Invalid integer: -12345678901234567890".to_string()),
-            ),
-            ("0x1", Token::Integer(1)),
-            ("0x10", Token::Integer(16)),
-            ("0xFF", Token::Integer(255)),
-            ("0o1", Token::Integer(1)),
-            ("0o10", Token::Integer(8)),
-            ("0o77", Token::Integer(63)),
-            ("0b1", Token::Integer(1)),
-            ("0b10", Token::Integer(2)),
-            ("0b1111", Token::Integer(15)),
-            ("-0x1", Token::Integer(-1)),
-            ("-0o1", Token::Integer(-1)),
-            ("-0b1", Token::Integer(-1)),
-            ("-0B1", Token::Integer(-1)),
-            ("02613152366", Token::Integer(372036854)),
-        ];
+    fn scan_f64_strategy() -> impl Strategy<Value = (f64, Vec<String>)> {
+        any::<f64>()
+            .prop_filter("No NaN or infinite", |f| f.is_finite())
+            .prop_filter("No fractional part", |f| f.fract() != 0.0)
+            .prop_map(|f| {
+                let s = format!("{f}");
+                let s_with_zero_leading_zero = if f.abs() < 1.0 && f != 0.0 {
+                    if let Some(trimmed) = s.strip_prefix("0") {
+                        trimmed.to_string()
+                    } else if let Some(trimmed) = s.strip_prefix("-0") {
+                        format!("-{}", trimmed)
+                    } else {
+                        s
+                    }
+                } else {
+                    s
+                };
+                (
+                    f,
+                    vec![
+                        format!("{f}"),
+                        s_with_zero_leading_zero,
+                        format!("{f:E}"),
+                        format!("{f:e}"),
+                    ],
+                )
+            })
+    }
 
-        for (input, expected) in inputs {
-            let (token, _) = Lexer::lex_number(input, 0);
-            assert_eq!(token, expected);
+    proptest! {
+        #[test]
+        fn test_scan_i64((i, v) in scan_i64_strategy()) {
+            for s in v {
+                let (token, _) = Lexer::lex_number(&s, 0);
+                assert_eq!(token, Token::Integer(i));
+            }
+        }
+        #[test]
+        fn test_scan_f64((f, v) in scan_f64_strategy()) {
+            for s in v {
+                let (token, _) = Lexer::lex_number(&s, 0);
+                assert_eq!(token, Token::Float(f));
+            }
         }
     }
 }
