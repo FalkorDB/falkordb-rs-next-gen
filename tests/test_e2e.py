@@ -290,28 +290,6 @@ def test_list_range():
     assert res.result_set == [[[1, 2, 3]]]
 
 
-def test_list_equal():
-    res = query("RETURN [1, 2] = 'foo' AS res")
-    assert res.result_set == [[False]]
-
-    res = query("RETURN [1] = [1, null] AS res")
-    assert res.result_set == [[False]]
-
-    res = query("RETURN [1, 2] = [null, 'foo'] AS res")
-    assert res.result_set == [[False]]
-
-    res = query("RETURN [1, 2] = [null, 2] AS res")
-    assert res.result_set == [[None]]
-
-    res = query("RETURN [[1]] = [[1], [null]] AS res")
-    assert res.result_set == [[False]]
-
-    res = query("RETURN [[1, 2], [1, 3]] = [[1, 2], [null, 'foo']] AS res")
-    assert res.result_set == [[False]]
-
-    res = query("RETURN [[1, 2], ['foo', 'bar']] = [[1, 2], [null, 'bar']] AS res")
-    assert res.result_set == [[None]]
-
 
 def test_list_concat():
     res = query("RETURN [1, 10, 100] + [4, 5] AS foo")
@@ -493,6 +471,27 @@ def test_is_equal():
     res = query("RETURN $a = $a AS res", params={"a": None})
     assert res.result_set == [[None]]
     res = query("RETURN [null] = [null] AS res")
+    assert res.result_set == [[None]]
+
+    res = query("RETURN [1, 2] = 'foo' AS res")
+    assert res.result_set == [[False]]
+
+    res = query("RETURN [1] = [1, null] AS res")
+    assert res.result_set == [[False]]
+
+    res = query("RETURN [1, 2] = [null, 'foo'] AS res")
+    assert res.result_set == [[False]]
+
+    res = query("RETURN [1, 2] = [null, 2] AS res")
+    assert res.result_set == [[None]]
+
+    res = query("RETURN [[1]] = [[1], [null]] AS res")
+    assert res.result_set == [[False]]
+
+    res = query("RETURN [[1, 2], [1, 3]] = [[1, 2], [null, 'foo']] AS res")
+    assert res.result_set == [[False]]
+
+    res = query("RETURN [[1, 2], ['foo', 'bar']] = [[1, 2], [null, 'bar']] AS res")
     assert res.result_set == [[None]]
 
 
