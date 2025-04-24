@@ -50,6 +50,7 @@ impl Runtime {
         read_functions.insert("left".to_string(), Self::string_left);
         read_functions.insert("ltrim".to_string(), Self::string_ltrim);
         read_functions.insert("right".to_string(), Self::string_right);
+        read_functions.insert("string.join".to_string(), Self::string_join);
 
         // internal functions are not accessible from Cypher
         read_functions.insert("@starts_with".to_string(), Self::internal_starts_with);
@@ -659,6 +660,50 @@ impl Runtime {
                 )),
                 args => Err(format!(
                     "Expected two arguments for function 'right', instead {}",
+                    args.len()
+                )),
+            },
+            _ => unreachable!(),
+        }
+    }
+    fn string_join(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
+        fn to_string_vec(vec: &[Value]) -> Result<Vec<String>, String> {
+            vec.iter()
+                .map(|item| {
+                    if let Value::String(s) = item {
+                        Ok(s.clone())
+                    } else {
+                        Err(format!(
+                            "Type mismatch: expected String but was {}",
+                            item.name()
+                        ))
+                    }
+                })
+                .collect()
+        }
+
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [Value::List(vec), Value::String(s)] => {
+                    let result = to_string_vec(vec);
+                    result.map(|strings| Value::String(strings.join(s)))
+                }
+                [Value::List(vec)] => {
+                    let result = to_string_vec(vec);
+                    result.map(|strings| Value::String(strings.join("")))
+                }
+                [Value::Null, _] => Ok(Value::Null),
+                [arg1, arg2] => Err(format!(
+                    "Type mismatch: expected String but was ({}, {})",
+                    arg1.name(),
+                    arg2.name()
+                )),
+                args => Err(format!(
+                    "Received {} arguments to function 'string.join', expected at most 2",
                     args.len()
                 )),
             },

@@ -1,8 +1,8 @@
 import os
 import platform
-import itertools
 import subprocess
 
+import itertools
 import pytest
 from falkordb import FalkorDB, Node, Edge
 from redis import Redis, ResponseError
@@ -12,9 +12,11 @@ client = None
 g = None
 shutdown = False
 
+
 def setup_module(module):
     global redis_server, client, g, shutdown
-    target = os.environ.get("TARGET", "target/debug/libfalkordb.dylib" if platform.system() == "Darwin" else "target/debug/libfalkordb.so")
+    target = os.environ.get("TARGET",
+                            "target/debug/libfalkordb.dylib" if platform.system() == "Darwin" else "target/debug/libfalkordb.so")
     r = Redis()
     try:
         r.ping()
@@ -25,7 +27,9 @@ def setup_module(module):
         shutdown = True
         if os.path.exists("redis-test.log"):
             os.remove("redis-test.log")
-        redis_server = subprocess.Popen(executable="/usr/local/bin/redis-server", args=["--save", "", "--logfile", "redis-test.log", "--loadmodule", target], stdout=subprocess.PIPE)
+        redis_server = subprocess.Popen(executable="/usr/local/bin/redis-server",
+                                        args=["--save", "", "--logfile", "redis-test.log", "--loadmodule", target],
+                                        stdout=subprocess.PIPE)
     while True:
         try:
             r.ping()
@@ -41,7 +45,8 @@ def teardown_module(module):
         client.connection.shutdown(nosave=True)
         redis_server.wait()
 
-def query(query: str, params = None, write: bool = False):
+
+def query(query: str, params=None, write: bool = False):
     if write:
         return g.query(query, params)
     else:
@@ -49,6 +54,7 @@ def query(query: str, params = None, write: bool = False):
         read_res = g.ro_query(query, params)
         assert write_res.result_set == read_res.result_set
         return write_res
+
 
 def test_return_values():
     res = query("RETURN null")
@@ -62,7 +68,7 @@ def test_return_values():
         res = query(f"RETURN {i}")
         assert res.result_set == [[i]]
 
-    for f in map(lambda x: x/10.0, range(-100, 100, 1)):
+    for f in map(lambda x: x / 10.0, range(-100, 100, 1)):
         res = query(f"RETURN {f}")
         assert res.result_set == [[f]]
 
@@ -87,10 +93,12 @@ def test_return_values():
     res = query("WITH 1 AS a RETURN a")
     assert res.result_set == [[1]]
 
+
 def test_parameters():
     for value in [None, True, False, 1, -1, 0.1, 'Avi', [1], {"a": 2}, {}]:
         res = query("RETURN $p", params={"p": value})
         assert res.result_set == [[value]]
+
 
 def test_operators():
     for a in [True, False]:
@@ -178,6 +186,7 @@ def test_operators():
     res = query(f"UNWIND [NULL, true, false, 1, 'Avi'] AS x RETURN x IS NULL")
     assert res.result_set == [[True], [False], [False], [False], [False]]
 
+
 def test_unwind():
     res = query("UNWIND [1, 2, 3] AS x RETURN x")
     assert res.result_set == [[1], [2], [3]]
@@ -193,7 +202,8 @@ def test_unwind():
 
     res = query("UNWIND range(1, 3) AS x UNWIND range(1, 3) AS y WITH x, y WHERE x = 2 RETURN x, y")
     assert res.result_set == [[2, 1], [2, 2], [2, 3]]
-    
+
+
 def test_create_delete_match():
     res = query("CREATE ()", write=True)
     assert res.result_set == []
@@ -214,21 +224,32 @@ def test_create_delete_match():
 
     res = query("MATCH (n:N), (m:N) RETURN n, m")
     assert len(res.result_set) == 9
-    for record in [[Node(0, labels="N"), Node(0, labels="N")], [Node(0, labels="N"), Node(1, labels="N")], [Node(0, labels="N"), Node(2, labels="N")], [Node(1, labels="N"), Node(0, labels="N")], [Node(1, labels="N"), Node(1, labels="N")], [Node(1, labels="N"), Node(2, labels="N")], [Node(2, labels="N"), Node(0, labels="N")], [Node(2, labels="N"), Node(1, labels="N")], [Node(2, labels="N"), Node(2, labels="N")]]:
+    for record in [[Node(0, labels="N"), Node(0, labels="N")], [Node(0, labels="N"), Node(1, labels="N")],
+                   [Node(0, labels="N"), Node(2, labels="N")], [Node(1, labels="N"), Node(0, labels="N")],
+                   [Node(1, labels="N"), Node(1, labels="N")], [Node(1, labels="N"), Node(2, labels="N")],
+                   [Node(2, labels="N"), Node(0, labels="N")], [Node(2, labels="N"), Node(1, labels="N")],
+                   [Node(2, labels="N"), Node(2, labels="N")]]:
         assert record in res.result_set
 
     g.delete()
 
     res = query("UNWIND range(0, 2) AS x CREATE (n:N {v: x})-[r:R {v: x}]->(m:M {v: x}) RETURN n, r, m", write=True)
     assert len(res.result_set) == 3
-    for record in [[Node(0, labels="N", properties={"v": 0}), Edge(0, "R", 1, 0, properties={"v": 0}), Node(1, labels="M", properties={"v": 0})], [Node(2, labels="N", properties={"v": 1}), Edge(2, "R", 3, 1, properties={"v": 1}), Node(3, labels="M", properties={"v": 1})], [Node(4, labels="N", properties={"v": 2}), Edge(4, "R", 5, 2, properties={"v": 2}), Node(5, labels="M", properties={"v": 2})]]:
+    for record in [[Node(0, labels="N", properties={"v": 0}), Edge(0, "R", 1, 0, properties={"v": 0}),
+                    Node(1, labels="M", properties={"v": 0})],
+                   [Node(2, labels="N", properties={"v": 1}), Edge(2, "R", 3, 1, properties={"v": 1}),
+                    Node(3, labels="M", properties={"v": 1})],
+                   [Node(4, labels="N", properties={"v": 2}), Edge(4, "R", 5, 2, properties={"v": 2}),
+                    Node(5, labels="M", properties={"v": 2})]]:
         assert record in res.result_set
 
     res = query("MATCH (n:N) RETURN n.v")
     assert res.result_set == [[0], [1], [2]]
 
+
 def test_large_graph():
     query("UNWIND range(0, 100000) AS x CREATE (n:N {v: x})-[r:R {v: x}]->(m:M {v: x})", write=True)
+
 
 def test_toInteger():
     for v in [None, '']:
@@ -244,7 +265,8 @@ def test_toInteger():
             query("RETURN toInteger($p)", params={"p": v})
             assert False, "Expected an error"
         except ResponseError as e:
-             assert f"Type mismatch: expected String, Boolean, Integer, Float, or Null but was " in str(e)
+            assert f"Type mismatch: expected String, Boolean, Integer, Float, or Null but was " in str(e)
+
 
 def test_list_range():
     for a in range(-10, 10):
@@ -266,6 +288,7 @@ def test_list_range():
     assert res.result_set == [[None]]
     res = query("RETURN [1, 2, 3][..] AS r")
     assert res.result_set == [[[1, 2, 3]]]
+
 
 def test_list_equal():
     res = query("RETURN [1, 2] = 'foo' AS res")
@@ -289,6 +312,7 @@ def test_list_equal():
     res = query("RETURN [[1, 2], ['foo', 'bar']] = [[1, 2], [null, 'bar']] AS res")
     assert res.result_set == [[None]]
 
+
 def test_list_concat():
     res = query("RETURN [1, 10, 100] + [4, 5] AS foo")
     assert res.result_set == [[[1, 10, 100, 4, 5]]]
@@ -296,9 +320,10 @@ def test_list_concat():
     res = query("RETURN [false, true] + false AS foo")
     assert res.result_set == [[[False, True, False]]]
 
+
 def test_in_list():
     # test that the error is correct on all cases
-    for value , name in  [(False, 'Boolean'), (1, 'Integer'), (1.0, 'Float'), ('"Avi"', 'String'), ({}, 'Map')]:
+    for value, name in [(False, 'Boolean'), (1, 'Integer'), (1.0, 'Float'), ('"Avi"', 'String'), ({}, 'Map')]:
         try:
             query(f"RETURN 0 IN {value} AS r")
             assert False, "Expected an error"
@@ -434,8 +459,8 @@ def test_in_list():
     res = query("RETURN [[], []] IN [1, [[], []]] AS res")
     assert res.result_set == [[True]]
 
-def test_is_equal():
 
+def test_is_equal():
     for v in [1, 1.0, 1.1, '1', '1.0', '1.1', True, False, None, "Avi", [], {}, [1], {"a": 2}]:
         res = query("RETURN $a = null AS res", params={"a": v})
         assert res.result_set == [[None]]
@@ -447,7 +472,6 @@ def test_is_equal():
         assert res.result_set == [[None]]
 
     for v in [1, 1.0, 1.1, '1', '1.0', '1.1', True, False, "Avi", [], {}, [1], {"a": 2}]:
-
         res = query("RETURN $a = $a AS res", params={"a": v})
         assert res.result_set == [[True]]
 
@@ -497,6 +521,7 @@ def test_list_size():
     res = query("WITH null AS l RETURN size(l), size(null)")
     assert res.result_set == [[None, None]]
 
+
 def test_list_head():
     res = query("RETURN head([1, 2, 3]) AS res")
     assert res.result_set == [[1]]
@@ -516,6 +541,7 @@ def test_list_head():
 
         res = query(f"RETURN head([{value}, 1]) AS res")
         assert res.result_set == [[value]]
+
 
 def test_list_last():
     res = query("RETURN last([1, 2, 3]) AS res")
@@ -537,6 +563,7 @@ def test_list_last():
         res = query(f"RETURN last([1, {value}]) AS res")
         assert res.result_set == [[value]]
 
+
 def test_list_tail():
     res = query("RETURN tail([1, 2, 3]) AS res")
     assert res.result_set == [[[2, 3]]]
@@ -553,6 +580,7 @@ def test_list_tail():
             assert False, "Expected an error"
         except ResponseError as e:
             assert f"Type mismatch: expected List or Null but was {name}" in str(e)
+
 
 def test_list_reverse():
     res = query("RETURN reverse([1, 2, 3]) AS res")
@@ -580,6 +608,7 @@ def test_list_reverse():
         except ResponseError as e:
             assert f"Type mismatch" in str(e)
 
+
 def cypher_xor(a, b, c):
     """
     This function simulates the XOR operation for three boolean values.
@@ -589,6 +618,7 @@ def cypher_xor(a, b, c):
         return None
     else:
         return a ^ b ^ c
+
 
 def test_xor():
     # Define the possible values
@@ -601,6 +631,7 @@ def test_xor():
         res = query(f"RETURN {a} XOR {b} XOR {c} AS r")
         expected = cypher_xor(a, b, c)
         assert res.result_set == [[expected]]
+
 
 def test_literals():
     for i in range(-100, 101):
@@ -617,6 +648,7 @@ def test_literals():
 
         res = query("RETURN -.2 AS literal")
         assert res.result_set == [[-0.2]]
+
 
 def test_split():
     res = query("RETURN split('Learning Cypher!', ' ')")
@@ -641,7 +673,9 @@ def test_split():
     assert res.result_set == [[None]]
 
     res = query("RETURN split('we are learning cypher', '')")
-    assert res.result_set == [[["w", "e", " ", "a", "r", "e", " ", "l", "e", "a", "r", "n", "i", "n", "g", " ", "c", "y", "p", "h", "e", "r"]]]
+    assert res.result_set == [
+        [["w", "e", " ", "a", "r", "e", " ", "l", "e", "a", "r", "n", "i", "n", "g", " ", "c", "y", "p", "h", "e",
+          "r"]]]
 
     for value in [False, True, 1, 1.0, {}, [], ["foo"]]:
         try:
@@ -724,6 +758,7 @@ def test_add():
     res = query("RETURN 'a' + True AS name")
     assert res.result_set == [["atrue"]]
 
+
 def test_starts_with():
     res = query("RETURN null STARTS WITH 'a' AS name")
     assert res.result_set == [[None]]
@@ -746,6 +781,7 @@ def test_starts_with():
     except ResponseError as e:
         assert "Type mismatch: expected String or Null but was" in str(e)
 
+
 def test_ends_with():
     res = query("RETURN null ENDS WITH 'a' AS name")
     assert res.result_set == [[None]]
@@ -767,6 +803,7 @@ def test_ends_with():
         assert False, "Expected an error"
     except ResponseError as e:
         assert "Type mismatch: expected String or Null but was" in str(e)
+
 
 def test_contains():
     res = query("RETURN null CONTAINS 'a' AS name")
@@ -792,6 +829,7 @@ def test_contains():
         assert False, "Expected an error"
     except ResponseError as e:
         assert "Type mismatch: expected String or Null but was" in str(e)
+
 
 def test_replace():
     # Null handling
@@ -844,6 +882,7 @@ def test_replace():
         except ResponseError as e:
             assert "Type mismatch" in str(e)
 
+
 @pytest.mark.extra
 def test_regex_matches():
     res = query("RETURN 'abc' =~ 'a.*' AS result")
@@ -885,47 +924,49 @@ def test_regex_matches():
         except ResponseError as e:
             assert "Type mismatch" in str(e)
 
+
 def test_left():
-        # Null handling
-        res = query("RETURN left(null, 3) AS result")
-        assert res.result_set == [[None]]
+    # Null handling
+    res = query("RETURN left(null, 3) AS result")
+    assert res.result_set == [[None]]
 
-        # Basic functionality
-        res = query("RETURN left('abc', 2) AS result")
-        assert res.result_set == [["ab"]]
+    # Basic functionality
+    res = query("RETURN left('abc', 2) AS result")
+    assert res.result_set == [["ab"]]
 
-        res = query("RETURN left('abc', 0) AS result")
-        assert res.result_set == [[""]]
+    res = query("RETURN left('abc', 0) AS result")
+    assert res.result_set == [[""]]
 
-        res = query("RETURN left('abc', 5) AS result")
-        assert res.result_set == [["abc"]]  # n > length of string
+    res = query("RETURN left('abc', 5) AS result")
+    assert res.result_set == [["abc"]]  # n > length of string
 
-        # Negative values for n
+    # Negative values for n
+    try:
+        query("RETURN left('abc', -1) AS result")
+        assert False, "Expected an error"
+    except ResponseError as e:
+        assert "length must be a non-negative integer" in str(e)
+
+    try:
+        query("RETURN left('abc', null) AS result")
+        assert False, "Expected an error"
+    except ResponseError as e:
+        assert "length must be a non-negative integer" in str(e)
+
+    # Type mismatch
+    for value, name in [(1.0, 'Float'), (True, 'Boolean'), ({}, 'Map'), ([], 'List')]:
         try:
-            query("RETURN left('abc', -1) AS result")
+            query(f"RETURN left({value}, 2) AS result")
             assert False, "Expected an error"
         except ResponseError as e:
-            assert "length must be a non-negative integer" in str(e)
+            assert "Type mismatch" in str(e)
 
         try:
-            query("RETURN left('abc', null) AS result")
+            query(f"RETURN left('abc', {value}) AS result")
             assert False, "Expected an error"
         except ResponseError as e:
-            assert "length must be a non-negative integer" in str(e)
+            assert "Type mismatch" in str(e)
 
-        # Type mismatch
-        for value, name in [(1.0, 'Float'), (True, 'Boolean'), ({}, 'Map'), ([], 'List')]:
-            try:
-                query(f"RETURN left({value}, 2) AS result")
-                assert False, "Expected an error"
-            except ResponseError as e:
-                assert "Type mismatch" in str(e)
-
-            try:
-                query(f"RETURN left('abc', {value}) AS result")
-                assert False, "Expected an error"
-            except ResponseError as e:
-                assert "Type mismatch" in str(e)
 
 def test_ltrim():
     # Null handling
@@ -952,6 +993,7 @@ def test_ltrim():
             assert False, "Expected an error"
         except ResponseError as e:
             assert "Type mismatch" in str(e)
+
 
 def test_right():
     # Null handling
@@ -993,6 +1035,7 @@ def test_right():
             assert False, "Expected an error"
         except ResponseError as e:
             assert "Type mismatch" in str(e)
+
 
 def test_substring():
     # Null handling
@@ -1042,7 +1085,6 @@ def test_substring():
         except ResponseError as e:
             assert "Type mismatch" in str(e)
 
-
     try:
         query(f"RETURN substring('abc', null, 2) AS result")
         assert False, "Expected an error"
@@ -1055,8 +1097,8 @@ def test_substring():
     except ResponseError as e:
         assert "Type mismatch" in str(e)
 
-def test_graph_list():
 
+def test_graph_list():
     assert client is not None
     for i in range(1000):
         client.select_graph(f"g{i}").query("return 1")
@@ -1068,3 +1110,29 @@ def test_graph_list():
         assert f'g{i}' in graphs
     assert 'test' in graphs
 
+
+def test_function_with_namespace():
+    res = query("RETURN string.join(null, ',') AS result")
+    assert res.result_set == [[None]]
+
+    res = query("RETURN string.join([], 'foo') AS result")
+    assert res.result_set == [[""]]
+
+    res = query("RETURN string.join(['a', 'b'], ', ') AS result")
+    assert res.result_set == [['a, b']]
+
+    res = query("RETURN string.join(['a', 'b']) AS result")
+    assert res.result_set == [['ab']]
+
+    try:
+        query(f"RETURN string.join(['a', 'b'], ', ', ', ') AS result")
+        assert False, "Expected an error"
+    except ResponseError as e:
+        assert "Received 3 arguments to function 'string.join', expected at most 2" in str(e)
+
+    for value, name in [(1.0, 'Float'), (True, 'Boolean'), ({}, 'Map'), ([], 'List'), ("null", 'Null')]:
+        try:
+            query(f"RETURN string.join(['a', {value}], ',') AS result")
+            assert False, "Expected an error"
+        except ResponseError as e:
+            assert f"Type mismatch: expected String but was {name}" in str(e)
