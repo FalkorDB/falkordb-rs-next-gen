@@ -50,6 +50,7 @@ impl Runtime {
         read_functions.insert("left".to_string(), Self::string_left);
         read_functions.insert("ltrim".to_string(), Self::string_ltrim);
         read_functions.insert("right".to_string(), Self::string_right);
+        read_functions.insert("string.join".to_string(), Self::string_join);
 
         // internal functions are not accessible from Cypher
         read_functions.insert("@starts_with".to_string(), Self::internal_starts_with);
@@ -236,7 +237,7 @@ impl Runtime {
                     .get_node_property_id(property)
                     .map_or(Ok(Value::Null), |property_id| {
                         g.get_node_property(*node_id, property_id)
-                            .map_or(Ok(Value::Null), |n| Ok(n))
+                            .map_or(Ok(Value::Null), Ok)
                     }),
                 [Value::Map(map), Value::String(property)] => {
                     Ok(map.get(property).unwrap_or(&Value::Null).clone())
@@ -280,7 +281,7 @@ impl Runtime {
                 [Value::Int(i)] => Ok(Value::Int(*i)),
                 [Value::Float(f)] => Ok(Value::Int(*f as i64)),
                 [Value::Null] => Ok(Value::Null),
-                [Value::Bool(b)] => Ok(Value::Int(if *b { 1 } else { 0 })),
+                [Value::Bool(b)] => Ok(Value::Int(i64::from(*b))),
                 [arg] => Err(format!(
                     "Type mismatch: expected String, Boolean, Integer, Float, or Null but was {}",
                     arg.name()
@@ -659,6 +660,49 @@ impl Runtime {
                 )),
                 args => Err(format!(
                     "Expected two arguments for function 'right', instead {}",
+                    args.len()
+                )),
+            },
+            _ => unreachable!(),
+        }
+    }
+    fn string_join(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
+        fn to_string_vec(vec: &[Value]) -> Result<Vec<String>, String> {
+            vec.iter()
+                .map(|item| {
+                    if let Value::String(s) = item {
+                        Ok(s.clone())
+                    } else {
+                        Err(format!(
+                            "Type mismatch: expected String but was {}",
+                            item.name()
+                        ))
+                    }
+                })
+                .collect()
+        }
+
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [Value::List(vec), Value::String(s)] => {
+                    let result = to_string_vec(vec);
+                    result.map(|strings| Value::String(strings.join(s)))
+                }
+                [Value::List(vec)] => {
+                    let result = to_string_vec(vec);
+                    result.map(|strings| Value::String(strings.join("")))
+                }
+                [Value::Null, _] => Ok(Value::Null),
+                [arg1, _arg2] => Err(format!(
+                    "Type mismatch: expected List or Null but was {}",
+                    arg1.name()
+                )),
+                args => Err(format!(
+                    "Received {} arguments to function 'string.join', expected at most 2",
                     args.len()
                 )),
             },
