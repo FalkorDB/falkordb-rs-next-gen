@@ -431,8 +431,11 @@ impl<'a> Lexer<'a> {
     ) -> String {
         format!("{}\n{}^{}", self.str, " ".repeat(self.pos), err)
     }
-    
-    fn set_pos(&mut self, pos: usize) {
+
+    fn set_pos(
+        &mut self,
+        pos: usize,
+    ) {
         self.pos = pos;
         self.cached_current = Self::get_token(self.str, pos);
     }
