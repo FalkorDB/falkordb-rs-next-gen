@@ -236,7 +236,7 @@ impl Runtime {
                     .get_node_property_id(property)
                     .map_or(Ok(Value::Null), |property_id| {
                         g.get_node_property(*node_id, property_id)
-                            .map_or(Ok(Value::Null), |n| Ok(n))
+                            .map_or(Ok(Value::Null), Ok)
                     }),
                 [Value::Map(map), Value::String(property)] => {
                     Ok(map.get(property).unwrap_or(&Value::Null).clone())
@@ -280,7 +280,7 @@ impl Runtime {
                 [Value::Int(i)] => Ok(Value::Int(*i)),
                 [Value::Float(f)] => Ok(Value::Int(*f as i64)),
                 [Value::Null] => Ok(Value::Null),
-                [Value::Bool(b)] => Ok(Value::Int(if *b { 1 } else { 0 })),
+                [Value::Bool(b)] => Ok(Value::Int(i64::from(*b))),
                 [arg] => Err(format!(
                     "Type mismatch: expected String, Boolean, Integer, Float, or Null but was {}",
                     arg.name()
