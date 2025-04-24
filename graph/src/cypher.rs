@@ -418,6 +418,14 @@ impl<'a> Lexer<'a> {
     ) -> String {
         format!("{}\n{}^{}", self.str, " ".repeat(self.pos), err)
     }
+
+    fn set_pos(
+        &mut self,
+        pos: usize,
+    ) {
+        self.pos = pos;
+        self.cached_current = Self::get_token(self.str, pos);
+    }
 }
 
 macro_rules! match_token {
@@ -709,15 +717,28 @@ impl<'a> Parser<'a> {
     fn parse_primary_expr(&mut self) -> Result<QueryExprIR, String> {
         match self.lexer.current() {
             Token::Ident(ident) => {
+                let mut namespace_and_function = ident.clone();
                 self.lexer.next();
+                let pos = self.lexer.pos;
+                while self.lexer.current() == Token::Dot {
+                    self.lexer.next();
+                    match self.lexer.current() {
+                        Token::Ident(id) => {
+                            self.lexer.next();
+                            namespace_and_function.push('.');
+                            namespace_and_function.push_str(&id);
+                        }
+                        _ => break,
+                    }
+                }
                 if self.lexer.current() == Token::LParen {
                     self.lexer.next();
 
                     let exprs = self.parse_exprs()?;
                     match_token!(self.lexer, RParen);
-                    return Ok(QueryExprIR::FuncInvocation(ident, exprs));
+                    return Ok(QueryExprIR::FuncInvocation(namespace_and_function, exprs));
                 }
-
+                self.lexer.set_pos(pos);
                 Ok(QueryExprIR::Ident(ident))
             }
             Token::Parameter(param) => {
@@ -859,16 +880,13 @@ impl<'a> Parser<'a> {
         loop {
             vec.push(self.parse_modulo_expr()?);
 
-            match self.lexer.current() {
-                Token::Power => {
-                    self.lexer.next();
+            if self.lexer.current() == Token::Power {
+                self.lexer.next();
+            } else {
+                if vec.len() == 1 {
+                    return Ok(vec.pop().unwrap());
                 }
-                _ => {
-                    if vec.len() == 1 {
-                        return Ok(vec.pop().unwrap());
-                    }
-                    return Ok(QueryExprIR::Pow(vec));
-                }
+                return Ok(QueryExprIR::Pow(vec));
             }
         }
     }
