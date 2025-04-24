@@ -697,10 +697,9 @@ impl Runtime {
                     result.map(|strings| Value::String(strings.join("")))
                 }
                 [Value::Null, _] => Ok(Value::Null),
-                [arg1, arg2] => Err(format!(
-                    "Type mismatch: expected String but was ({}, {})",
-                    arg1.name(),
-                    arg2.name()
+                [arg1, _arg2] => Err(format!(
+                    "Type mismatch: expected List or Null but was {}",
+                    arg1.name()
                 )),
                 args => Err(format!(
                     "Received {} arguments to function 'string.join', expected at most 2",

@@ -290,7 +290,6 @@ def test_list_range():
     assert res.result_set == [[[1, 2, 3]]]
 
 
-
 def test_list_concat():
     res = query("RETURN [1, 10, 100] + [4, 5] AS foo")
     assert res.result_set == [[[1, 10, 100, 4, 5]]]
@@ -1128,6 +1127,12 @@ def test_function_with_namespace():
         assert False, "Expected an error"
     except ResponseError as e:
         assert "Received 3 arguments to function 'string.join', expected at most 2" in str(e)
+
+    try:
+        query(f"RETURN string.join(1, 2) AS result")
+        assert False, "Expected an error"
+    except ResponseError as e:
+        assert "Type mismatch: expected List or Null but was Integer" in str(e)
 
     for value, name in [(1.0, 'Float'), (True, 'Boolean'), ({}, 'Map'), ([], 'List'), ("null", 'Null')]:
         try:
