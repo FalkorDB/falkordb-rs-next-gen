@@ -738,8 +738,8 @@ impl<'a> Parser<'a> {
                     match self.lexer.current() {
                         Token::Ident(id) => {
                             self.lexer.next();
-                            namespace_adn_function.push('.');
-                            namespace_adn_function.push_str(&id);
+                            namespace_and_function.push('.');
+                            namespace_and_function.push_str(&id);
                         }
                         _ => break,
                     }
@@ -749,7 +749,7 @@ impl<'a> Parser<'a> {
 
                     let exprs = self.parse_exprs()?;
                     match_token!(self.lexer, RParen);
-                    return Ok(QueryExprIR::FuncInvocation(namespace_adn_function, exprs));
+                    return Ok(QueryExprIR::FuncInvocation(namespace_and_function, exprs));
                 }
                 self.lexer.set_pos(pos);
                 Ok(QueryExprIR::Ident(ident))
