@@ -730,7 +730,7 @@ impl<'a> Parser<'a> {
     fn parse_primary_expr(&mut self) -> Result<QueryExprIR, String> {
         match self.lexer.current() {
             Token::Ident(ident) => {
-                let mut namespace_adn_function = ident.clone();
+                let mut namespace_and_function = ident.clone();
                 self.lexer.next();
                 let pos = self.lexer.pos;
                 while self.lexer.current() == Token::Dot {
