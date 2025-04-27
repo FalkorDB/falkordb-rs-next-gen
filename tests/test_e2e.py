@@ -64,13 +64,13 @@ def test_return_values():
         res = query(f"RETURN {b}")
         assert res.result_set == [[1 if b else 0]]
 
-    for i in range(-10, 10):
-        res = query(f"RETURN {i}")
-        assert res.result_set == [[i]]
+    for i in range(0, 100):
+        for sign in ['', '-', '- ', '+', '+ ']:
+            res = query(f"RETURN {sign}{i}")
+            assert res.result_set == [[eval(f"{sign}{i}")]]
 
-    for f in map(lambda x: x / 10.0, range(-100, 100, 1)):
-        res = query(f"RETURN {f}")
-        assert res.result_set == [[f]]
+            res = query(f"RETURN {sign}{i / 10.0}")
+            assert res.result_set == [[eval(f"{sign}{i / 10.0}")]]
 
     res = query("RETURN 'Avi'")
     assert res.result_set == [["Avi"]]
@@ -89,21 +89,6 @@ def test_return_values():
 
     res = query("WITH 1 AS a, 'Avi' AS b RETURN b, a")
     assert res.result_set == [['Avi', 1]]
-
-    res = query("WITH 1 AS a RETURN a")
-    assert res.result_set == [[1]]
-
-    res = query("WITH - 1 AS a RETURN a")
-    assert res.result_set == [[-1]]
-
-    res = query("WITH -1.0 AS a RETURN a")
-    assert res.result_set == [[-1.0]]
-
-    res = query("WITH + 1 AS a RETURN a")
-    assert res.result_set == [[1]]
-
-    res = query("WITH +1.0 AS a RETURN a")
-    assert res.result_set == [[1.0]]
 
 
 def test_parameters():
