@@ -1208,7 +1208,6 @@ mod tests {
         })
     }
 
-
     fn scan_f64_strategy() -> impl Strategy<Value = (f64, Vec<String>)> {
         any::<f64>()
             .prop_filter("No NaN or infinite", |f| f.is_finite())
