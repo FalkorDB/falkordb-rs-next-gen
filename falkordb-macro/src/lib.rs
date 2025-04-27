@@ -58,7 +58,7 @@ impl quote::ToTokens for BinaryOp {
 
 struct BinaryOpAlt {
     token_match: syn::Ident,
-    ast_constractor: syn::Ident,
+    ast_constructor: syn::Ident,
 }
 
 impl Parse for BinaryOpAlt {
@@ -68,7 +68,7 @@ impl Parse for BinaryOpAlt {
         let ast_constractor = input.parse()?;
         Ok(BinaryOpAlt {
             token_match,
-            ast_constractor,
+            ast_constructor: ast_constractor,
         })
     }
 }
@@ -78,7 +78,7 @@ fn generate_token_stream_one_alt(
     one_alt: &BinaryOpAlt,
 ) -> proc_macro2::TokenStream {
     let token_match = &one_alt.token_match;
-    let ast_constractor = &one_alt.ast_constractor;
+    let ast_constractor = &one_alt.ast_constructor;
     quote::quote! {
         let mut vec = Vec::new();
         loop {
@@ -101,9 +101,9 @@ fn generate_token_stream_two_alt(
     second_alt: &BinaryOpAlt,
 ) -> proc_macro2::TokenStream {
     let first_token_match = &first_alt.token_match;
-    let first_ast_constractor = &first_alt.ast_constractor;
+    let first_ast_constractor = &first_alt.ast_constructor;
     let second_token_match = &second_alt.token_match;
-    let second_ast_constractor = &second_alt.ast_constractor;
+    let second_ast_constractor = &second_alt.ast_constructor;
 
     quote::quote! {
         let mut vec = Vec::new();
@@ -162,7 +162,7 @@ fn generate_token_stream_many_alt(
 ) -> proc_macro2::TokenStream {
     let alt_match = alts.iter().enumerate().map(|(i, alt)| {
         let token_match = &alt.token_match;
-        let ast_constractor = &alt.ast_constractor;
+        let ast_constractor = &alt.ast_constructor;
         let match_legs = alts.iter().enumerate().map(|(j, alt_leg)| {
             let token_match = &alt_leg.token_match;
             if i == j {
