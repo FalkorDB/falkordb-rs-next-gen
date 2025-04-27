@@ -807,20 +807,17 @@ impl<'a> Parser<'a> {
             _ => self.parse_null_operator_expression(),
         }
     }
-    fn parse_modulo_expr(&mut self) -> Result<QueryExprIR, String> {
-        parse_binary_expr!(self.parse_unary_add_or_subtract_expr()?, Modulo => Modulo);
-    }
 
     fn parse_power_expr(&mut self) -> Result<QueryExprIR, String> {
-        parse_binary_expr!(self.parse_modulo_expr()?, Power => Pow);
+        parse_binary_expr!(self.parse_unary_add_or_subtract_expr()?, Power => Pow);
     }
 
-    fn parse_mul_div_expr(&mut self) -> Result<QueryExprIR, String> {
-        parse_binary_expr!(self.parse_power_expr()?, Star => Mul, Slash =>  Div);
+    fn parse_mul_div_modulo_expr(&mut self) -> Result<QueryExprIR, String> {
+        parse_binary_expr!(self.parse_power_expr()?, Star => Mul, Slash =>  Div, Modulo => Modulo);
     }
 
     fn parse_add_sub_expr(&mut self) -> Result<QueryExprIR, String> {
-        parse_binary_expr!(self.parse_mul_div_expr()?, Plus => Add, Dash => Sub);
+        parse_binary_expr!(self.parse_mul_div_modulo_expr()?, Plus => Add, Dash => Sub);
     }
 
     fn parser_string_list_null_predicate_expr(&mut self) -> Result<QueryExprIR, String> {
