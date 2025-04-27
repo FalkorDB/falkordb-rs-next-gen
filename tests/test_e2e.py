@@ -1140,3 +1140,102 @@ def test_function_with_namespace():
             assert False, "Expected an error"
         except ResponseError as e:
             assert f"Type mismatch: expected String but was {name}" in str(e)
+
+
+@pytest.mark.extra
+def test_match_reg_ex():
+    res = query("RETURN string.matchRegEx(null, null) AS name")
+    assert res.result_set == [[[]]]
+
+    res = query("RETURN string.matchRegEx('foo bar', null) AS name")
+    assert res.result_set == [[[]]]
+
+    res = query("RETURN string.matchRegEx(null, '.*') AS name")
+    assert res.result_set == [[[]]]
+
+    res = query("RETURN string.matchRegEx('foo bar', '.*') AS name")
+    assert res.result_set == [[["foo bar"]]]
+
+    res = query("RETURN string.matchRegEx('foo bar', '[a-z]+\\s+[a-z]+') AS name")
+    assert res.result_set == [[["foo bar"]]]
+
+    ## multiple groups
+    res = query("RETURN string.matchRegEx('foo bar', '([a-z]+)\\s+([a-z]+)') AS name")
+    assert res.result_set == [[["foo bar", "foo", "bar"]]]
+
+    ## wrong number of args
+    try:
+        query("RETURN string.matchRegEx('foo bar') AS name")
+        assert False, "Expected an error"
+    except ResponseError as e:
+        assert "Received 1 arguments to function 'string.matchRegEx', expected at least 2" in str(e)
+
+    ## type mismatch
+    try:
+        query("RETURN string.matchRegEx(1, '.*') AS name")
+        assert False, "Expected an error"
+    except ResponseError as e:
+        assert "Type mismatch: expected String or Null but was Integer" in str(e)
+
+    ## broken regex
+    try:
+        query("RETURN string.matchRegEx('foo bar', '**') AS name")
+        assert False, "Expected an error"
+    except ResponseError as e:
+        assert "Invalid regex," in str(e)
+
+
+@pytest.mark.extra
+def test_list_re_replace():
+    res = query(
+        "RETURN string.replaceRegEx('foo-bar baz-qux', '(?<first>[a-z]+)-(?<last>[a-z]+)', '$first $last') AS name")
+    assert res.result_set == [["foo bar baz qux"]]
+
+    res = query(
+        "RETURN string.replaceRegEx('foo-bar baz-qux', '([a-z]+)-([a-z]+)', '$1 $2') AS name")
+    assert res.result_set == [["foo bar baz qux"]]
+
+    res = query(
+        "RETURN string.replaceRegEx('foo-bar baz-qux', '([a-z]+)-([a-z]+)', '${1}_${2}') AS name")
+    assert res.result_set == [["foo_bar baz_qux"]]
+
+    res = query(
+        "RETURN string.replaceRegEx('foo-bar baz-qux', '(\\w+)-(\\w+)', '${1}_${2}') AS name")
+    assert res.result_set == [["foo_bar baz_qux"]]
+
+    res = query(
+        "RETURN string.replaceRegEx('123', '(\\w+)-(\\w+)', '${1}_${2}') AS name")
+    assert res.result_set == [["123"]]
+
+    ## wrong number of args
+    try:
+        query("RETURN string.replaceRegEx('foo bar') AS name")
+        assert False, "Expected an error"
+    except ResponseError as e:
+        assert "Received 1 arguments to function 'string.replaceRegEx', expected at least 3" in str(e)
+
+    ## type mismatch
+    try:
+        query("RETURN string.replaceRegEx(1, '.*', 'foo') AS name")
+        assert False, "Expected an error"
+    except ResponseError as e:
+        assert "Type mismatch: expected String or Null but was Integer" in str(e)
+
+    try:
+        query("RETURN string.replaceRegEx('a', 1, 'foo') AS name")
+        assert False, "Expected an error"
+    except ResponseError as e:
+        assert "Type mismatch: expected String or Null but was Integer" in str(e)
+
+    try:
+        query("RETURN string.replaceRegEx('a', '.*', 3) AS name")
+        assert False, "Expected an error"
+    except ResponseError as e:
+        assert "Type mismatch: expected String or Null but was Integer" in str(e)
+
+    ## broken regex
+    try:
+        query("RETURN string.replaceRegEx('foo bar', '**', 'a') AS name")
+        assert False, "Expected an error"
+    except ResponseError as e:
+        assert "Invalid regex," in str(e)
