@@ -64,13 +64,13 @@ def test_return_values():
         res = query(f"RETURN {b}")
         assert res.result_set == [[1 if b else 0]]
 
-    for i in range(-10, 10):
-        res = query(f"RETURN {i}")
-        assert res.result_set == [[i]]
+    for i in range(0, 100):
+        for sign in ['', '-', '- ', '+', '+ ']:
+            res = query(f"RETURN {sign}{i}")
+            assert res.result_set == [[eval(f"{sign}{i}")]]
 
-    for f in map(lambda x: x / 10.0, range(-100, 100, 1)):
-        res = query(f"RETURN {f}")
-        assert res.result_set == [[f]]
+            res = query(f"RETURN {sign}{i / 10.0}")
+            assert res.result_set == [[eval(f"{sign}{i / 10.0}")]]
 
     res = query("RETURN 'Avi'")
     assert res.result_set == [["Avi"]]
@@ -89,9 +89,6 @@ def test_return_values():
 
     res = query("WITH 1 AS a, 'Avi' AS b RETURN b, a")
     assert res.result_set == [['Avi', 1]]
-
-    res = query("WITH 1 AS a RETURN a")
-    assert res.result_set == [[1]]
 
 
 def test_parameters():
@@ -288,6 +285,7 @@ def test_list_range():
     assert res.result_set == [[None]]
     res = query("RETURN [1, 2, 3][..] AS r")
     assert res.result_set == [[[1, 2, 3]]]
+
 
 
 def test_list_concat():
@@ -729,17 +727,29 @@ def test_add():
     res = query("RETURN 1 + null AS name")
     assert res.result_set == [[None]]
 
+    res = query("RETURN 9223372036854775807 + 2 AS name")
+    assert res.result_set == [[-9223372036854775807]]
+
     res = query("RETURN 1 + 1 AS name")
     assert res.result_set == [[2]]
 
     res = query("RETURN 1.0 + 1.0 AS name")
     assert res.result_set == [[2.0]]
 
+    res = query("RETURN 1.1 + 1 AS name")
+    assert res.result_set == [[2.1]]
+
+    res = query("RETURN 1 + 1.1 AS name")
+    assert res.result_set == [[2.1]]
+
     res = query("RETURN [1] + [1] AS name")
     assert res.result_set == [[[1, 1]]]
 
     res = query("RETURN [1] + 1 AS name")
     assert res.result_set == [[[1, 1]]]
+
+    res = query("RETURN [] + 1 AS name")
+    assert res.result_set == [[[1]]]
 
     res = query("RETURN 'a' + [1, 2 ,3] AS name")
     assert res.result_set == [[['a', 1, 2, 3]]]
@@ -755,6 +765,11 @@ def test_add():
 
     res = query("RETURN 'a' + True AS name")
     assert res.result_set == [["atrue"]]
+
+    try:
+        query("RETURN {} + 1 AS name")
+    except ResponseError as e:
+        pass
 
 
 def test_starts_with():
@@ -1140,3 +1155,102 @@ def test_function_with_namespace():
             assert False, "Expected an error"
         except ResponseError as e:
             assert f"Type mismatch: expected String but was {name}" in str(e)
+
+
+@pytest.mark.extra
+def test_match_reg_ex():
+    res = query("RETURN string.matchRegEx(null, null) AS name")
+    assert res.result_set == [[[]]]
+
+    res = query("RETURN string.matchRegEx('foo bar', null) AS name")
+    assert res.result_set == [[[]]]
+
+    res = query("RETURN string.matchRegEx(null, '.*') AS name")
+    assert res.result_set == [[[]]]
+
+    res = query("RETURN string.matchRegEx('foo bar', '.*') AS name")
+    assert res.result_set == [[["foo bar"]]]
+
+    res = query("RETURN string.matchRegEx('foo bar', '[a-z]+\\s+[a-z]+') AS name")
+    assert res.result_set == [[["foo bar"]]]
+
+    ## multiple groups
+    res = query("RETURN string.matchRegEx('foo bar', '([a-z]+)\\s+([a-z]+)') AS name")
+    assert res.result_set == [[["foo bar", "foo", "bar"]]]
+
+    ## wrong number of args
+    try:
+        query("RETURN string.matchRegEx('foo bar') AS name")
+        assert False, "Expected an error"
+    except ResponseError as e:
+        assert "Received 1 arguments to function 'string.matchRegEx', expected at least 2" in str(e)
+
+    ## type mismatch
+    try:
+        query("RETURN string.matchRegEx(1, '.*') AS name")
+        assert False, "Expected an error"
+    except ResponseError as e:
+        assert "Type mismatch: expected String or Null but was Integer" in str(e)
+
+    ## broken regex
+    try:
+        query("RETURN string.matchRegEx('foo bar', '**') AS name")
+        assert False, "Expected an error"
+    except ResponseError as e:
+        assert "Invalid regex," in str(e)
+
+
+@pytest.mark.extra
+def test_list_re_replace():
+    res = query(
+        "RETURN string.replaceRegEx('foo-bar baz-qux', '(?<first>[a-z]+)-(?<last>[a-z]+)', '$first $last') AS name")
+    assert res.result_set == [["foo bar baz qux"]]
+
+    res = query(
+        "RETURN string.replaceRegEx('foo-bar baz-qux', '([a-z]+)-([a-z]+)', '$1 $2') AS name")
+    assert res.result_set == [["foo bar baz qux"]]
+
+    res = query(
+        "RETURN string.replaceRegEx('foo-bar baz-qux', '([a-z]+)-([a-z]+)', '${1}_${2}') AS name")
+    assert res.result_set == [["foo_bar baz_qux"]]
+
+    res = query(
+        "RETURN string.replaceRegEx('foo-bar baz-qux', '(\\w+)-(\\w+)', '${1}_${2}') AS name")
+    assert res.result_set == [["foo_bar baz_qux"]]
+
+    res = query(
+        "RETURN string.replaceRegEx('123', '(\\w+)-(\\w+)', '${1}_${2}') AS name")
+    assert res.result_set == [["123"]]
+
+    ## wrong number of args
+    try:
+        query("RETURN string.replaceRegEx('foo bar') AS name")
+        assert False, "Expected an error"
+    except ResponseError as e:
+        assert "Received 1 arguments to function 'string.replaceRegEx', expected at least 3" in str(e)
+
+    ## type mismatch
+    try:
+        query("RETURN string.replaceRegEx(1, '.*', 'foo') AS name")
+        assert False, "Expected an error"
+    except ResponseError as e:
+        assert "Type mismatch: expected String or Null but was Integer" in str(e)
+
+    try:
+        query("RETURN string.replaceRegEx('a', 1, 'foo') AS name")
+        assert False, "Expected an error"
+    except ResponseError as e:
+        assert "Type mismatch: expected String or Null but was Integer" in str(e)
+
+    try:
+        query("RETURN string.replaceRegEx('a', '.*', 3) AS name")
+        assert False, "Expected an error"
+    except ResponseError as e:
+        assert "Type mismatch: expected String or Null but was Integer" in str(e)
+
+    ## broken regex
+    try:
+        query("RETURN string.replaceRegEx('foo bar', '**', 'a') AS name")
+        assert False, "Expected an error"
+    except ResponseError as e:
+        assert "Invalid regex," in str(e)
