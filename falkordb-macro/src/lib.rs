@@ -3,7 +3,7 @@ use syn::parse::{Parse, ParseStream};
 // Grammar
 // binary_op: parse_exp, binary_op_alts
 // binary_op_alts: binary_op_alt (, binary_op_alt)*
-// binary_op_alt: token_match => ast_constractor
+// binary_op_alt: token_match => ast_constructor
 
 // examples:
 // parse_binary_expr!(self.parse_power_expr()?, Star => Mul);
@@ -65,10 +65,10 @@ impl Parse for BinaryOpAlt {
     fn parse(input: ParseStream) -> Result<Self> {
         let token_match = input.parse()?;
         _ = input.parse::<syn::Token![=>]>()?;
-        let ast_constractor = input.parse()?;
+        let ast_constructor = input.parse()?;
         Ok(BinaryOpAlt {
             token_match,
-            ast_constructor: ast_constractor,
+            ast_constructor,
         })
     }
 }
@@ -78,7 +78,7 @@ fn generate_token_stream_one_alt(
     one_alt: &BinaryOpAlt,
 ) -> proc_macro2::TokenStream {
     let token_match = &one_alt.token_match;
-    let ast_constractor = &one_alt.ast_constructor;
+    let ast_constructor = &one_alt.ast_constructor;
     quote::quote! {
         let mut vec = Vec::new();
         loop {
@@ -89,7 +89,7 @@ fn generate_token_stream_one_alt(
                 if vec.len() == 1 {
                     return Ok(vec.pop().unwrap());
                 }
-                return Ok(QueryExprIR::#ast_constractor(vec));
+                return Ok(QueryExprIR::#ast_constructor(vec));
             }
         }
     }
@@ -101,9 +101,9 @@ fn generate_token_stream_two_alt(
     second_alt: &BinaryOpAlt,
 ) -> proc_macro2::TokenStream {
     let first_token_match = &first_alt.token_match;
-    let first_ast_constractor = &first_alt.ast_constructor;
+    let first_ast_constructor = &first_alt.ast_constructor;
     let second_token_match = &second_alt.token_match;
-    let second_ast_constractor = &second_alt.ast_constructor;
+    let second_ast_constructor = &second_alt.ast_constructor;
 
     quote::quote! {
         let mut vec = Vec::new();
@@ -122,12 +122,12 @@ fn generate_token_stream_two_alt(
                        if vec.len() == 1 {
                             return Ok(vec.pop().unwrap());
                        }
-                       return Ok(QueryExprIR::#first_ast_constractor(vec));
+                       return Ok(QueryExprIR::#first_ast_constructor(vec));
                     }
                 }
             }
             if 1 < vec.len(){
-                vec = vec![QueryExprIR::#first_ast_constractor(vec)];
+                vec = vec![QueryExprIR::#first_ast_constructor(vec)];
             }
 
             loop {
@@ -144,13 +144,13 @@ fn generate_token_stream_two_alt(
                        if vec.len() == 1 {
                             return Ok(vec.pop().unwrap());
                        }
-                       return Ok(QueryExprIR::#second_ast_constractor(vec));
+                       return Ok(QueryExprIR::#second_ast_constructor(vec));
                     }
                 }
             }
 
             if 1 < vec.len(){
-                vec = vec![QueryExprIR::#second_ast_constractor(vec)];
+                vec = vec![QueryExprIR::#second_ast_constructor(vec)];
             }
         }
     }
@@ -162,7 +162,7 @@ fn generate_token_stream_many_alt(
 ) -> proc_macro2::TokenStream {
     let alt_match = alts.iter().enumerate().map(|(i, alt)| {
         let token_match = &alt.token_match;
-        let ast_constractor = &alt.ast_constructor;
+        let ast_constructor = &alt.ast_constructor;
         let match_legs = alts.iter().enumerate().map(|(j, alt_leg)| {
             let token_match = &alt_leg.token_match;
             if i == j {
@@ -191,12 +191,12 @@ fn generate_token_stream_many_alt(
                            if vec.len() == 1 {
                                 return Ok(vec.pop().unwrap());
                            }
-                           return Ok(QueryExprIR::#ast_constractor(vec));
+                           return Ok(QueryExprIR::#ast_constructor(vec));
                         }
                     }
                 }
                 if 1 < vec.len(){
-                    vec = vec![QueryExprIR::#ast_constractor(vec)];
+                    vec = vec![QueryExprIR::#ast_constructor(vec)];
                 }
             }
         }
