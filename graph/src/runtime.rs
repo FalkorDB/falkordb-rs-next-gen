@@ -1026,13 +1026,11 @@ pub fn ro_run(
             let list = ro_run(vars, g, runtime, result_fn, &op.1)?;
             list_contains(&list, &value)
         }
-        IR::Add(irs) => {
-            let values = irs
-                .iter()
-                .map(|ir| ro_run(vars, g, runtime, result_fn, ir))
-                .collect::<Result<Vec<_>, _>>()?;
-            add_values(values.into_iter())
-        }
+        IR::Add(irs) => irs
+            .iter()
+            .map(|ir| ro_run(vars, g, runtime, result_fn, ir))
+            .reduce(|acc, value| acc? + value?)
+            .ok_or_else(|| "Add operator requires at least one operand".to_string())?,
         IR::Sub(irs) => irs
             .iter()
             .flat_map(|ir| ro_run(vars, g, runtime, result_fn, ir))
@@ -1316,13 +1314,11 @@ pub fn run(
             let list = run(vars, g, runtime, result_fn, &op.1)?;
             list_contains(&list, &value)
         }
-        IR::Add(irs) => {
-            let values = irs
-                .iter()
-                .map(|ir| run(vars, g, runtime, result_fn, ir))
-                .collect::<Result<Vec<_>, _>>()?;
-            add_values(values.into_iter())
-        }
+        IR::Add(irs) => irs
+            .iter()
+            .map(|ir| run(vars, g, runtime, result_fn, ir))
+            .reduce(|acc, value| acc? + value?)
+            .ok_or_else(|| "Add operator requires at least one operand".to_string())?,
         IR::Sub(irs) => irs
             .iter()
             .flat_map(|ir| run(vars, g, runtime, result_fn, ir))
@@ -1476,16 +1472,6 @@ fn get_elements(
 
         _ => Err("Invalid array range parameters.".to_string()),
     }
-}
-
-fn add_values<I>(mut values: I) -> Result<Value, String>
-where
-    I: Iterator<Item = Value>,
-{
-    let first = values
-        .next()
-        .ok_or_else(|| "Add operator requires at least one operand".to_string())?;
-    values.try_fold(first, |acc, value| acc + value)
 }
 
 fn list_contains(
