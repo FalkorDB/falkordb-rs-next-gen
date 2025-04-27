@@ -19,7 +19,7 @@ pub fn parse_binary_expr(input: proc_macro::TokenStream) -> proc_macro::TokenStr
 }
 
 struct BinaryOp {
-    parse_exp: syn::Expr,
+    parse_exp: Expr,
     binary_op_alts: Vec<BinaryOpAlt>,
 }
 
