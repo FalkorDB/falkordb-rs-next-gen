@@ -51,6 +51,11 @@ impl Runtime {
         read_functions.insert("ltrim".to_string(), Self::string_ltrim);
         read_functions.insert("right".to_string(), Self::string_right);
         read_functions.insert("string.join".to_string(), Self::string_join);
+        read_functions.insert("string.matchRegEx".to_string(), Self::string_match_reg_ex);
+        read_functions.insert(
+            "string.replaceRegEx".to_string(),
+            Self::string_replace_reg_ex,
+        );
 
         // internal functions are not accessible from Cypher
         read_functions.insert("@starts_with".to_string(), Self::internal_starts_with);
@@ -703,6 +708,85 @@ impl Runtime {
                 )),
                 args => Err(format!(
                     "Received {} arguments to function 'string.join', expected at most 2",
+                    args.len()
+                )),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    fn string_match_reg_ex(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [Value::String(text), Value::String(pattern)] => match regex::Regex::new(pattern) {
+                    Ok(re) => {
+                        let mut all_matches = Vec::new();
+                        for caps in re.captures_iter(text) {
+                            for i in 0..caps.len() {
+                                if let Some(m) = caps.get(i) {
+                                    all_matches.push(Value::String(m.as_str().to_string()));
+                                }
+                            }
+                        }
+                        Ok(Value::List(all_matches))
+                    }
+                    Err(e) => Err(format!("Invalid regex, {e}")),
+                },
+                [Value::Null, _] | [_, Value::Null] => Ok(Value::List(vec![])),
+                [Value::String(_), arg2] => Err(format!(
+                    "Type mismatch: expected String or Null but was {}",
+                    arg2.name(),
+                )),
+                [arg1, _] => Err(format!(
+                    "Type mismatch: expected String or Null but was {}",
+                    arg1.name(),
+                )),
+                args => Err(format!(
+                    "Received {} arguments to function 'string.matchRegEx', expected at least 2",
+                    args.len()
+                )),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    fn string_replace_reg_ex(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [
+                    Value::String(text),
+                    Value::String(pattern),
+                    Value::String(replacement),
+                ] => match regex::Regex::new(pattern) {
+                    Ok(re) => {
+                        let replaced_text = re.replace_all(text, replacement).to_string();
+                        Ok(Value::String(replaced_text))
+                    }
+                    Err(e) => Err(format!("Invalid regex, {e}")),
+                },
+                [Value::Null, _, _] | [_, Value::Null, _] | [_, _, Value::Null] => Ok(Value::Null),
+                [Value::String(_), arg2, Value::String(_)] => Err(format!(
+                    "Type mismatch: expected String or Null but was {}",
+                    arg2.name(),
+                )),
+                [Value::String(_), Value::String(_), arg3] => Err(format!(
+                    "Type mismatch: expected String or Null but was {}",
+                    arg3.name(),
+                )),
+                [arg1, _, _] => Err(format!(
+                    "Type mismatch: expected String or Null but was {}",
+                    arg1.name(),
+                )),
+                args => Err(format!(
+                    "Received {} arguments to function 'string.replaceRegEx', expected at least 3",
                     args.len()
                 )),
             },
