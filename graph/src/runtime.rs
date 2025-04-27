@@ -984,6 +984,14 @@ pub fn ro_run(
             Value::Null => Ok(Value::Null),
             _ => Err("InvalidArgumentType: Not operator requires a boolean or null".to_string()),
         },
+        IR::Negate(ir) => match ro_run(vars, g, runtime, result_fn, ir)? {
+            Value::Int(i) => Ok(Value::Int(-i)),
+            Value::Float(f) => Ok(Value::Float(-f)),
+            Value::Null => Ok(Value::Null),
+            _ => {
+                Err("InvalidArgumentType: Negate operator requires an Integer or Float".to_string())
+            }
+        },
         IR::Eq(irs) => {
             let iter = irs.iter().map(|ir| ro_run(vars, g, runtime, result_fn, ir));
             all_equals(iter)
@@ -1026,11 +1034,11 @@ pub fn ro_run(
             let list = ro_run(vars, g, runtime, result_fn, &op.1)?;
             list_contains(&list, &value)
         }
-        IR::Add(irs) => add_all(
-            irs.iter()
-                .flat_map(|ir| ro_run(vars, g, runtime, result_fn, ir))
-                .collect::<Vec<Value>>(),
-        ),
+        IR::Add(irs) => irs
+            .iter()
+            .map(|ir| ro_run(vars, g, runtime, result_fn, ir))
+            .reduce(|acc, value| acc? + value?)
+            .ok_or_else(|| "Add operator requires at least one operand".to_string())?,
         IR::Sub(irs) => irs
             .iter()
             .flat_map(|ir| ro_run(vars, g, runtime, result_fn, ir))
@@ -1272,6 +1280,14 @@ pub fn run(
             Value::Null => Ok(Value::Null),
             _ => Err("InvalidArgumentType: Not operator requires a boolean or null".to_string()),
         },
+        IR::Negate(ir) => match run(vars, g, runtime, result_fn, ir)? {
+            Value::Int(i) => Ok(Value::Int(-i)),
+            Value::Float(f) => Ok(Value::Float(-f)),
+            Value::Null => Ok(Value::Null),
+            _ => {
+                Err("InvalidArgumentType: Negate operator requires an Integer or Float".to_string())
+            }
+        },
         IR::Eq(irs) => {
             let iter = irs.iter().map(|ir| run(vars, g, runtime, result_fn, ir));
             all_equals(iter)
@@ -1314,11 +1330,11 @@ pub fn run(
             let list = run(vars, g, runtime, result_fn, &op.1)?;
             list_contains(&list, &value)
         }
-        IR::Add(irs) => add_all(
-            irs.iter()
-                .flat_map(|ir| run(vars, g, runtime, result_fn, ir))
-                .collect::<Vec<Value>>(),
-        ),
+        IR::Add(irs) => irs
+            .iter()
+            .map(|ir| run(vars, g, runtime, result_fn, ir))
+            .reduce(|acc, value| acc? + value?)
+            .ok_or_else(|| "Add operator requires at least one operand".to_string())?,
         IR::Sub(irs) => irs
             .iter()
             .flat_map(|ir| run(vars, g, runtime, result_fn, ir))
@@ -1428,6 +1444,14 @@ pub fn evaluate_param(expr: QueryExprIR) -> Value {
                 .map(|(key, ir)| (key, evaluate_param(ir)))
                 .collect(),
         ),
+        QueryExprIR::Negate(exp) => {
+            let v = evaluate_param(*exp);
+            match v {
+                Value::Int(i) => Value::Int(-i),
+                Value::Float(f) => Value::Float(-f),
+                _ => Value::Null,
+            }
+        }
         _ => todo!(),
     }
 }
@@ -1474,18 +1498,6 @@ fn get_elements(
     }
 }
 
-fn add_list_scalar(
-    mut l: Vec<Value>,
-    scalar: Value,
-) -> Value {
-    if l.is_empty() {
-        return Value::List(vec![scalar]);
-    }
-
-    l.push(scalar);
-    Value::List(l)
-}
-
 fn list_contains(
     list: &Value,
     value: &Value,
@@ -1527,41 +1539,4 @@ const fn logical_xor(
     b: bool,
 ) -> bool {
     (a && !b) || (!a && b)
-}
-
-fn add_all(values: Vec<Value>) -> Result<Value, String> {
-    let mut iter = values.into_iter();
-    let mut result = iter
-        .next()
-        .ok_or_else(|| "Add operator requires at least one argument".to_string())?;
-
-    for value in iter {
-        result = match (result, value) {
-            (Value::Null, _) | (_, Value::Null) => Value::Null,
-            (Value::Int(a), Value::Int(b)) => Value::Int(a + b),
-            (Value::Int(a), Value::Float(b)) => Value::Float(a as f64 + b),
-            (Value::Float(a), Value::Int(b)) => Value::Float(a + b as f64),
-            (Value::Float(a), Value::Float(b)) => Value::Float(a + b),
-            (Value::List(a), Value::List(b)) => Value::List(a.into_iter().chain(b).collect()),
-            (Value::List(a), b) => add_list_scalar(a, b),
-            (s, Value::List(l)) => {
-                let mut new_list = vec![s];
-                new_list.extend(l);
-                Value::List(new_list)
-            }
-            (Value::String(a), Value::String(b)) => Value::String(a + &b),
-            (Value::String(s), Value::Int(i)) => Value::String(s + &i.to_string()),
-            (Value::String(s), Value::Float(f)) => Value::String(s + &f.to_string()),
-            (Value::String(s), Value::Bool(f)) => Value::String(s + &f.to_string().to_lowercase()),
-            (a, b) => {
-                return Err(format!(
-                    "Unexpected types for add operator ({}, {})",
-                    a.name(),
-                    b.name()
-                ));
-            }
-        };
-    }
-
-    Ok(result)
 }

@@ -1,5 +1,6 @@
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
+use std::ops::Add;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
@@ -12,6 +13,51 @@ pub enum Value {
     Map(BTreeMap<String, Value>),
     Node(u64),
     Relationship(u64, u64, u64),
+}
+
+impl Add for Value {
+    type Output = Result<Value, String>;
+
+    fn add(
+        self,
+        rhs: Self,
+    ) -> Self::Output {
+        match (self, rhs) {
+            (Value::Null, _) | (_, Value::Null) => Ok(Value::Null),
+            (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a.wrapping_add(b))),
+            (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a + b)),
+            (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a + b as f64)),
+            (Value::Int(a), Value::Float(b)) => Ok(Value::Float(a as f64 + b)),
+
+            (Value::List(a), Value::List(b)) => Ok(Value::List(a.into_iter().chain(b).collect())),
+            (Value::List(mut l), scalar) => {
+                if l.is_empty() {
+                    Ok(Value::List(vec![scalar]))
+                } else {
+                    l.push(scalar);
+                    Ok(Value::List(l))
+                }
+            }
+            (s, Value::List(l)) => {
+                let mut new_list = vec![s];
+                new_list.extend(l);
+                Ok(Value::List(new_list))
+            }
+            (Value::String(a), Value::String(b)) => Ok(Value::String(a + &b)),
+            (Value::String(s), Value::Int(i)) => Ok(Value::String(s + &i.to_string())),
+            (Value::String(s), Value::Float(f)) => Ok(Value::String(s + &f.to_string())),
+            (Value::String(s), Value::Bool(f)) => {
+                Ok(Value::String(s + &f.to_string().to_lowercase()))
+            }
+            (a, b) => {
+                return Err(format!(
+                    "Unexpected types for add operator ({}, {})",
+                    a.name(),
+                    b.name()
+                ));
+            }
+        }
+    }
 }
 
 trait OrderedEnum {

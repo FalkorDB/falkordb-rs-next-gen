@@ -113,12 +113,7 @@ impl<'a> Lexer<'a> {
                 '*' => return (Token::Star, 1),
                 '/' => return (Token::Slash, 1),
                 '+' => return (Token::Plus, 1),
-                '-' => {
-                    return match chars.next() {
-                        Some('.' | '0'..='9') => Self::lex_number(str, pos),
-                        _ => (Token::Dash, 1),
-                    };
-                }
+                '-' => return (Token::Dash, 1),
                 '=' => {
                     return match chars.next() {
                         Some('~') => (Token::RegexMatches, 2),
@@ -240,14 +235,6 @@ impl<'a> Lexer<'a> {
     ) -> (Token, usize) {
         let mut chars = input[start_pos..].chars().peekable();
         let mut len = 0;
-
-        // Optional sign
-        if let Some(&c) = chars.peek() {
-            if c == '+' || c == '-' {
-                chars.next();
-                len += 1;
-            }
-        }
 
         let mut has_digits_before_dot = false;
 
@@ -855,10 +842,24 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn parse_unary_add_or_subtract_expr(&mut self) -> Result<QueryExprIR, String> {
+        match self.lexer.current() {
+            Token::Plus => {
+                self.lexer.next();
+                Ok(self.parse_null_operator_expression()?)
+            }
+            Token::Dash => {
+                self.lexer.next();
+                let expr = self.parse_null_operator_expression()?;
+                Ok(QueryExprIR::Negate(Box::new(expr)))
+            }
+            _ => self.parse_null_operator_expression(),
+        }
+    }
     fn parse_modulo_expr(&mut self) -> Result<QueryExprIR, String> {
         let mut vec = Vec::new();
         loop {
-            vec.push(self.parse_null_operator_expression()?);
+            vec.push(self.parse_unary_add_or_subtract_expr()?);
 
             match self.lexer.current() {
                 Token::Modulo => {
@@ -1206,6 +1207,7 @@ mod tests {
             }
         })
     }
+
 
     fn scan_f64_strategy() -> impl Strategy<Value = (f64, Vec<String>)> {
         any::<f64>()
