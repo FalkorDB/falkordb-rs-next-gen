@@ -45,13 +45,7 @@ impl quote::ToTokens for BinaryOp {
     ) {
         let binary_op_alts = &self.binary_op_alts;
         let parse_exp = &self.parse_exp;
-        let stream = match binary_op_alts.as_slice() {
-            [one_alt] => generate_token_stream_one_alt(parse_exp, one_alt),
-            [first_alt, second_alt] => {
-                generate_token_stream_two_alt(parse_exp, first_alt, second_alt)
-            }
-            alts => generate_token_stream_many_alt(parse_exp, alts),
-        };
+        let stream = generate_token_stream(parse_exp, binary_op_alts);
         tokens.extend(stream);
     }
 }
@@ -72,141 +66,38 @@ impl Parse for BinaryOpAlt {
         })
     }
 }
-
-fn generate_token_stream_one_alt(
-    parse_exp: &Expr,
-    one_alt: &BinaryOpAlt,
-) -> proc_macro2::TokenStream {
-    let token_match = &one_alt.token_match;
-    let ast_constructor = &one_alt.ast_constructor;
-    quote::quote! {
-        let mut vec = Vec::new();
-        loop {
-            vec.push(#parse_exp);
-            if self.lexer.current() == Token::#token_match {
-                self.lexer.next();
-            } else {
-                if vec.len() == 1 {
-                    return Ok(vec.pop().unwrap());
-                }
-                return Ok(QueryExprIR::#ast_constructor(vec));
-            }
-        }
-    }
-}
-
-fn generate_token_stream_two_alt(
-    parse_exp: &Expr,
-    first_alt: &BinaryOpAlt,
-    second_alt: &BinaryOpAlt,
-) -> proc_macro2::TokenStream {
-    let first_token_match = &first_alt.token_match;
-    let first_ast_constructor = &first_alt.ast_constructor;
-    let second_token_match = &second_alt.token_match;
-    let second_ast_constructor = &second_alt.ast_constructor;
-
-    quote::quote! {
-        let mut vec = Vec::new();
-        loop {
-            loop {
-                vec.push(#parse_exp);
-                match self.lexer.current() {
-                    Token::#first_token_match => {
-                        self.lexer.next();
-                    }
-                    Token::#second_token_match => {
-                        self.lexer.next();
-                        break;
-                    }
-                    _ => {
-                       if vec.len() == 1 {
-                            return Ok(vec.pop().unwrap());
-                       }
-                       return Ok(QueryExprIR::#first_ast_constructor(vec));
-                    }
-                }
-            }
-            if 1 < vec.len(){
-                vec = vec![QueryExprIR::#first_ast_constructor(vec)];
-            }
-
-            loop {
-                vec.push(#parse_exp);
-                match self.lexer.current() {
-                    Token::#second_token_match => {
-                        self.lexer.next();
-                    }
-                    Token::#first_token_match => {
-                        self.lexer.next();
-                        break;
-                    }
-                    _ => {
-                       if vec.len() == 1 {
-                            return Ok(vec.pop().unwrap());
-                       }
-                       return Ok(QueryExprIR::#second_ast_constructor(vec));
-                    }
-                }
-            }
-
-            if 1 < vec.len(){
-                vec = vec![QueryExprIR::#second_ast_constructor(vec)];
-            }
-        }
-    }
-}
-
-fn generate_token_stream_many_alt(
+fn generate_token_stream(
     parse_exp: &Expr,
     alts: &[BinaryOpAlt],
 ) -> proc_macro2::TokenStream {
-    let alt_match = alts.iter().enumerate().map(|(i, alt)| {
+    let whiles = alts.iter().map(|alt| {
         let token_match = &alt.token_match;
         let ast_constructor = &alt.ast_constructor;
-        let match_legs = alts.iter().enumerate().map(|(j, alt_leg)| {
-            let token_match = &alt_leg.token_match;
-            if i == j {
-                quote::quote! {
-                    Token::#token_match => {
-                       self.lexer.next();
-                    }
-                }
-            } else {
-                quote::quote! {
-                     Token::#token_match => {
-                        self.lexer.next();
-                        current_op = Some(Token::#token_match);
-                        break;
-                    }
-                }
+        quote::quote! {
+            while Token::#token_match == self.lexer.current() {
+               self.lexer.next();
+               vec.push(#parse_exp);
             }
-        });
-        quote! {
-            if current_op.is_none() || current_op == Some(Token::#token_match){
-                loop {
-                    vec.push(#parse_exp);
-                    match self.lexer.current() {
-                        #(#match_legs)*
-                        _ => {
-                           if vec.len() == 1 {
-                                return Ok(vec.pop().unwrap());
-                           }
-                           return Ok(QueryExprIR::#ast_constructor(vec));
-                        }
-                    }
-                }
-                if 1 < vec.len(){
-                    vec = vec![QueryExprIR::#ast_constructor(vec)];
-                }
+            if vec.len() > 1 {
+                vec = vec![QueryExprIR::#ast_constructor(vec)];
             }
+        }
+    });
+    let tokens = alts.iter().map(|alt| {
+        let token_match = &alt.token_match;
+        quote::quote! {
+            Token::#token_match
         }
     });
 
     quote::quote! {
         let mut vec = Vec::new();
-        let mut current_op: Option<Token> = None;
+        vec.push(#parse_exp);
         loop {
-            #(#alt_match)*
+            #(#whiles)*
+            if ![#(#tokens,)*].contains(&self.lexer.current()) {
+                return Ok(vec.pop().unwrap());
+            }
         }
     }
 }
