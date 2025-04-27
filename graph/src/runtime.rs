@@ -63,6 +63,12 @@ impl Runtime {
         read_functions.insert("left".to_string(), Self::string_left);
         read_functions.insert("ltrim".to_string(), Self::string_ltrim);
         read_functions.insert("right".to_string(), Self::string_right);
+        read_functions.insert("string.join".to_string(), Self::string_join);
+        read_functions.insert("string.matchRegEx".to_string(), Self::string_match_reg_ex);
+        read_functions.insert(
+            "string.replaceRegEx".to_string(),
+            Self::string_replace_reg_ex,
+        );
 
         // aggregation functions
         read_functions.insert("collect".to_string(), Self::collect);
@@ -318,7 +324,7 @@ impl Runtime {
                     .get_node_property_id(property)
                     .map_or(Ok(Value::Null), |property_id| {
                         g.get_node_property(*node_id, property_id)
-                            .map_or(Ok(Value::Null), |n| Ok(n))
+                            .map_or(Ok(Value::Null), Ok)
                     }),
                 [Value::Map(map), Value::String(property)] => {
                     Ok(map.get(property).unwrap_or(&Value::Null).clone())
@@ -496,7 +502,7 @@ impl Runtime {
                 [Value::Int(i)] => Ok(Value::Int(*i)),
                 [Value::Float(f)] => Ok(Value::Int(*f as i64)),
                 [Value::Null] => Ok(Value::Null),
-                [Value::Bool(b)] => Ok(Value::Int(if *b { 1 } else { 0 })),
+                [Value::Bool(b)] => Ok(Value::Int(i64::from(*b))),
                 [arg] => Err(format!(
                     "Type mismatch: expected String, Boolean, Integer, Float, or Null but was {}",
                     arg.name()
@@ -881,6 +887,128 @@ impl Runtime {
             _ => unreachable!(),
         }
     }
+    fn string_join(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
+        fn to_string_vec(vec: &[Value]) -> Result<Vec<String>, String> {
+            vec.iter()
+                .map(|item| {
+                    if let Value::String(s) = item {
+                        Ok(s.clone())
+                    } else {
+                        Err(format!(
+                            "Type mismatch: expected String but was {}",
+                            item.name()
+                        ))
+                    }
+                })
+                .collect()
+        }
+
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [Value::List(vec), Value::String(s)] => {
+                    let result = to_string_vec(vec);
+                    result.map(|strings| Value::String(strings.join(s)))
+                }
+                [Value::List(vec)] => {
+                    let result = to_string_vec(vec);
+                    result.map(|strings| Value::String(strings.join("")))
+                }
+                [Value::Null, _] => Ok(Value::Null),
+                [arg1, _arg2] => Err(format!(
+                    "Type mismatch: expected List or Null but was {}",
+                    arg1.name()
+                )),
+                args => Err(format!(
+                    "Received {} arguments to function 'string.join', expected at most 2",
+                    args.len()
+                )),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    fn string_match_reg_ex(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [Value::String(text), Value::String(pattern)] => match regex::Regex::new(pattern) {
+                    Ok(re) => {
+                        let mut all_matches = Vec::new();
+                        for caps in re.captures_iter(text) {
+                            for i in 0..caps.len() {
+                                if let Some(m) = caps.get(i) {
+                                    all_matches.push(Value::String(m.as_str().to_string()));
+                                }
+                            }
+                        }
+                        Ok(Value::List(all_matches))
+                    }
+                    Err(e) => Err(format!("Invalid regex, {e}")),
+                },
+                [Value::Null, _] | [_, Value::Null] => Ok(Value::List(vec![])),
+                [Value::String(_), arg2] => Err(format!(
+                    "Type mismatch: expected String or Null but was {}",
+                    arg2.name(),
+                )),
+                [arg1, _] => Err(format!(
+                    "Type mismatch: expected String or Null but was {}",
+                    arg1.name(),
+                )),
+                args => Err(format!(
+                    "Received {} arguments to function 'string.matchRegEx', expected at least 2",
+                    args.len()
+                )),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    fn string_replace_reg_ex(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [
+                    Value::String(text),
+                    Value::String(pattern),
+                    Value::String(replacement),
+                ] => match regex::Regex::new(pattern) {
+                    Ok(re) => {
+                        let replaced_text = re.replace_all(text, replacement).to_string();
+                        Ok(Value::String(replaced_text))
+                    }
+                    Err(e) => Err(format!("Invalid regex, {e}")),
+                },
+                [Value::Null, _, _] | [_, Value::Null, _] | [_, _, Value::Null] => Ok(Value::Null),
+                [Value::String(_), arg2, Value::String(_)] => Err(format!(
+                    "Type mismatch: expected String or Null but was {}",
+                    arg2.name(),
+                )),
+                [Value::String(_), Value::String(_), arg3] => Err(format!(
+                    "Type mismatch: expected String or Null but was {}",
+                    arg3.name(),
+                )),
+                [arg1, _, _] => Err(format!(
+                    "Type mismatch: expected String or Null but was {}",
+                    arg1.name(),
+                )),
+                args => Err(format!(
+                    "Received {} arguments to function 'string.replaceRegEx', expected at least 3",
+                    args.len()
+                )),
+            },
+            _ => unreachable!(),
+        }
+    }
 
     //
     // Internal functions
@@ -1160,6 +1288,14 @@ pub fn ro_run(
             Value::Null => Ok(Value::Null),
             _ => Err("InvalidArgumentType: Not operator requires a boolean or null".to_string()),
         },
+        IR::Negate(ir) => match ro_run(vars, g, runtime, result_fn, ir)? {
+            Value::Int(i) => Ok(Value::Int(-i)),
+            Value::Float(f) => Ok(Value::Float(-f)),
+            Value::Null => Ok(Value::Null),
+            _ => {
+                Err("InvalidArgumentType: Negate operator requires an Integer or Float".to_string())
+            }
+        },
         IR::Eq(irs) => {
             let iter = irs.iter().map(|ir| ro_run(vars, g, runtime, result_fn, ir));
             all_equals(iter)
@@ -1202,11 +1338,11 @@ pub fn ro_run(
             let list = ro_run(vars, g, runtime, result_fn, &op.1)?;
             list_contains(&list, &value)
         }
-        IR::Add(irs) => add_all(
-            irs.iter()
-                .flat_map(|ir| ro_run(vars, g, runtime, result_fn, ir))
-                .collect::<Vec<Value>>(),
-        ),
+        IR::Add(irs) => irs
+            .iter()
+            .map(|ir| ro_run(vars, g, runtime, result_fn, ir))
+            .reduce(|acc, value| acc? + value?)
+            .ok_or_else(|| "Add operator requires at least one operand".to_string())?,
         IR::Sub(irs) => irs
             .iter()
             .flat_map(|ir| ro_run(vars, g, runtime, result_fn, ir))
@@ -1465,6 +1601,14 @@ pub fn run(
             Value::Null => Ok(Value::Null),
             _ => Err("InvalidArgumentType: Not operator requires a boolean or null".to_string()),
         },
+        IR::Negate(ir) => match run(vars, g, runtime, result_fn, ir)? {
+            Value::Int(i) => Ok(Value::Int(-i)),
+            Value::Float(f) => Ok(Value::Float(-f)),
+            Value::Null => Ok(Value::Null),
+            _ => {
+                Err("InvalidArgumentType: Negate operator requires an Integer or Float".to_string())
+            }
+        },
         IR::Eq(irs) => {
             let iter = irs.iter().map(|ir| run(vars, g, runtime, result_fn, ir));
             all_equals(iter)
@@ -1507,11 +1651,11 @@ pub fn run(
             let list = run(vars, g, runtime, result_fn, &op.1)?;
             list_contains(&list, &value)
         }
-        IR::Add(irs) => add_all(
-            irs.iter()
-                .flat_map(|ir| run(vars, g, runtime, result_fn, ir))
-                .collect::<Vec<Value>>(),
-        ),
+        IR::Add(irs) => irs
+            .iter()
+            .map(|ir| run(vars, g, runtime, result_fn, ir))
+            .reduce(|acc, value| acc? + value?)
+            .ok_or_else(|| "Add operator requires at least one operand".to_string())?,
         IR::Sub(irs) => irs
             .iter()
             .flat_map(|ir| run(vars, g, runtime, result_fn, ir))
@@ -1634,6 +1778,14 @@ pub fn evaluate_param(expr: QueryExprIR) -> Value {
                 .map(|(key, ir)| (key, evaluate_param(ir)))
                 .collect(),
         ),
+        QueryExprIR::Negate(exp) => {
+            let v = evaluate_param(*exp);
+            match v {
+                Value::Int(i) => Value::Int(-i),
+                Value::Float(f) => Value::Float(-f),
+                _ => Value::Null,
+            }
+        }
         _ => todo!(),
     }
 }
@@ -1680,18 +1832,6 @@ fn get_elements(
     }
 }
 
-fn add_list_scalar(
-    mut l: Vec<Value>,
-    scalar: Value,
-) -> Value {
-    if l.is_empty() {
-        return Value::List(vec![scalar]);
-    }
-
-    l.push(scalar);
-    Value::List(l)
-}
-
 fn list_contains(
     list: &Value,
     value: &Value,
@@ -1733,39 +1873,4 @@ const fn logical_xor(
     b: bool,
 ) -> bool {
     (a && !b) || (!a && b)
-}
-
-fn add_all(values: Vec<Value>) -> Result<Value, String> {
-    let mut iter = values.into_iter();
-    let mut result = iter
-        .next()
-        .ok_or_else(|| "Add operator requires at least one argument".to_string())?;
-
-    for value in iter {
-        result = match (result, value) {
-            (Value::Null, _) | (_, Value::Null) => Value::Null,
-            (Value::Int(a), Value::Int(b)) => Value::Int(a + b),
-            (Value::Float(a), Value::Float(b)) => Value::Float(a + b),
-            (Value::List(a), Value::List(b)) => Value::List(a.into_iter().chain(b).collect()),
-            (Value::List(a), b) => add_list_scalar(a, b),
-            (s, Value::List(l)) => {
-                let mut new_list = vec![s];
-                new_list.extend(l);
-                Value::List(new_list)
-            }
-            (Value::String(a), Value::String(b)) => Value::String(a + &b),
-            (Value::String(s), Value::Int(i)) => Value::String(s + &i.to_string()),
-            (Value::String(s), Value::Float(f)) => Value::String(s + &f.to_string()),
-            (Value::String(s), Value::Bool(f)) => Value::String(s + &f.to_string().to_lowercase()),
-            (a, b) => {
-                return Err(format!(
-                    "Unexpected types for add operator ({}, {})",
-                    a.name(),
-                    b.name()
-                ));
-            }
-        };
-    }
-
-    Ok(result)
 }

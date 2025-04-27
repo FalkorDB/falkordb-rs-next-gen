@@ -157,6 +157,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "falkordb-macro"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote 1.0.40",
+ "syn 2.0.100",
+]
+
+[[package]]
 name = "falkordb-rs"
 version = "0.1.0"
 dependencies = [
@@ -181,7 +190,7 @@ checksum = "a8d1add55171497b4705a648c6b583acafb01d58050a51727785f0b2c8e0a2b2"
 name = "graph"
 version = "0.1.0"
 dependencies = [
- "libc",
+ "falkordb-macro",
  "regex",
  "roaring",
 ]

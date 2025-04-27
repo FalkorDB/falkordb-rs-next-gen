@@ -23,6 +23,7 @@ pub enum IR {
     Xor(Vec<IR>),
     And(Vec<IR>),
     Not(Box<IR>),
+    Negate(Box<IR>),
     Eq(Vec<IR>),
     Neq(Vec<IR>),
     Lt(Box<(IR, IR)>),
@@ -52,7 +53,7 @@ pub struct Planner {
 
 impl Planner {
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { var_id: 0 }
     }
 
@@ -106,6 +107,8 @@ impl Planner {
                 IR::And(exprs.into_iter().map(|ir| self.plan_expr(ir)).collect())
             }
             QueryExprIR::Not(expr) => IR::Not(Box::new(self.plan_expr(*expr))),
+            QueryExprIR::Negate(expr) => IR::Negate(Box::new(self.plan_expr(*expr))),
+
             QueryExprIR::Eq(exprs) => {
                 IR::Eq(exprs.into_iter().map(|ir| self.plan_expr(ir)).collect())
             }

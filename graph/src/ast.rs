@@ -18,6 +18,7 @@ pub enum QueryExprIR {
     Xor(Vec<QueryExprIR>),
     And(Vec<QueryExprIR>),
     Not(Box<QueryExprIR>),
+    Negate(Box<QueryExprIR>),
     Eq(Vec<QueryExprIR>),
     Neq(Vec<QueryExprIR>),
     Lt(Vec<QueryExprIR>),
@@ -124,7 +125,7 @@ impl QueryExprIR {
                 env.insert(name.to_string());
                 Ok(())
             }
-            Self::Not(expr) | Self::IsNull(expr) | Self::Property(expr, _) => {
+            Self::Not(expr) | Self::IsNull(expr) | Self::Property(expr, _) | Self::Negate(expr) => {
                 expr.inner_validate(env)
             }
             Self::GetElement(op) => {
