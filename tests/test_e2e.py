@@ -742,17 +742,29 @@ def test_add():
     res = query("RETURN 1 + null AS name")
     assert res.result_set == [[None]]
 
+    res = query("RETURN 9223372036854775807 + 2 AS name")
+    assert res.result_set == [[-9223372036854775807]]
+
     res = query("RETURN 1 + 1 AS name")
     assert res.result_set == [[2]]
 
     res = query("RETURN 1.0 + 1.0 AS name")
     assert res.result_set == [[2.0]]
 
+    res = query("RETURN 1.1 + 1 AS name")
+    assert res.result_set == [[2.1]]
+
+    res = query("RETURN 1 + 1.1 AS name")
+    assert res.result_set == [[2.1]]
+
     res = query("RETURN [1] + [1] AS name")
     assert res.result_set == [[[1, 1]]]
 
     res = query("RETURN [1] + 1 AS name")
     assert res.result_set == [[[1, 1]]]
+
+    res = query("RETURN [] + 1 AS name")
+    assert res.result_set == [[[1]]]
 
     res = query("RETURN 'a' + [1, 2 ,3] AS name")
     assert res.result_set == [[['a', 1, 2, 3]]]
@@ -768,6 +780,11 @@ def test_add():
 
     res = query("RETURN 'a' + True AS name")
     assert res.result_set == [["atrue"]]
+
+    try:
+        query("RETURN {} + 1 AS name")
+    except ResponseError as e:
+        pass
 
 
 def test_starts_with():
