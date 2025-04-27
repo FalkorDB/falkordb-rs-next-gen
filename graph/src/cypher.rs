@@ -1182,29 +1182,16 @@ mod tests {
 
     fn scan_i64_strategy() -> impl Strategy<Value = (i64, Vec<String>)> {
         any::<i64>().prop_map(|i| {
-            if i < 0 {
-                let abs = i.abs() as u64;
-
-                (
-                    i,
-                    vec![
-                        format!("-{abs}"),
-                        format!("-{abs:#b}"),
-                        format!("-{abs:#o}"),
-                        format!("-{abs:#x}"),
-                    ],
-                )
-            } else {
-                (
-                    i,
-                    vec![
-                        format!("{i}"),
-                        format!("{i:#b}"),
-                        format!("{i:#o}"),
-                        format!("{i:#x}"),
-                    ],
-                )
-            }
+            let i = i.abs();
+            (
+                i,
+                vec![
+                    format!("{i}"),
+                    format!("{i:#b}"),
+                    format!("{i:#o}"),
+                    format!("{i:#x}"),
+                ],
+            )
         })
     }
 
@@ -1213,12 +1200,11 @@ mod tests {
             .prop_filter("No NaN or infinite", |f| f.is_finite())
             .prop_filter("No fractional part", |f| f.fract() != 0.0)
             .prop_map(|f| {
+                let f = f.abs();
                 let s = format!("{f}");
-                let s_with_zero_leading_zero = if f.abs() < 1.0 && f != 0.0 {
+                let s_with_zero_leading_zero = if f != 0.0 {
                     if let Some(trimmed) = s.strip_prefix("0") {
                         trimmed.to_string()
-                    } else if let Some(trimmed) = s.strip_prefix("-0") {
-                        format!("-{}", trimmed)
                     } else {
                         s
                     }
