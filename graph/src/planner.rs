@@ -49,6 +49,12 @@ pub struct Planner {
     var_id: u64,
 }
 
+impl Default for Planner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Planner {
     #[must_use]
     pub const fn new() -> Self {
@@ -61,8 +67,9 @@ impl Planner {
         format!("var_{id}")
     }
 
+    #[allow(clippy::only_used_in_recursion)]
     fn plan_expr(
-        &mut self,
+        &self,
         expr: QueryExprIR,
     ) -> IR {
         match expr {

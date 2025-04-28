@@ -335,7 +335,7 @@ impl<'a> Lexer<'a> {
         }
 
         // Validate that we have digits somewhere
-        if !has_digits_before_dot && !(has_dot && has_digits_after_dot) {
+        if !(has_digits_before_dot || has_dot && has_digits_after_dot) {
             return (
                 Token::Error(format!(
                     "Invalid number (no digits): {}",
