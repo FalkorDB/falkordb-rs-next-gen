@@ -1,4 +1,7 @@
 [workspace]
+members = [
+    "graph",
+    "falkordb-macro", ]
 
 [package]
 name = "falkordb-rs"
