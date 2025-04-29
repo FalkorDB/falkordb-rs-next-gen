@@ -1504,3 +1504,34 @@ def test_rand():
         assert False, "Expected an error"
     except ResponseError as e:
         assert "Received 1 arguments to function 'rand', expected at most 0" in str(e)
+
+
+def test_round():
+    res = query("RETURN round(1.1) AS name")
+    assert res.result_set == [[1]]
+
+    res = query("RETURN round(1.0) AS name")
+    assert res.result_set == [[1]]
+
+    res = query("RETURN round(-1.1) AS name")
+    assert res.result_set == [[-1]]
+
+    res = query("RETURN round(-1.0) AS name")
+    assert res.result_set == [[-1]]
+
+    res = query("RETURN round(null) AS name")
+    assert res.result_set == [[None]]
+
+    for value, name in [(True, 'Boolean'), (False, 'Boolean'), ({}, 'Map'), ([], 'List')]:
+        try:
+            query(f"RETURN round({value}) AS r")
+            assert False, "Expected an error"
+        except ResponseError as e:
+            assert f"Type mismatch: expected Integer, Float, or Null but was {name}" in str(e)
+
+    # wrong number of args
+    try:
+        query("RETURN round(1, 2) AS name")
+        assert False, "Expected an error"
+    except ResponseError as e:
+        assert "Received 2 arguments to function 'round', expected at most 1" in str(e)

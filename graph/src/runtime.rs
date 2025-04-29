@@ -66,6 +66,7 @@ impl Runtime {
         read_functions.insert("log10".to_string(), Self::log10);
         read_functions.insert("pow".to_string(), Self::pow);
         read_functions.insert("rand".to_string(), Self::rand);
+        read_functions.insert("round".to_string(), Self::round);
 
         // internal functions are not accessible from Cypher
         read_functions.insert("@starts_with".to_string(), Self::internal_starts_with);
@@ -1000,6 +1001,29 @@ impl Runtime {
                 }
                 args => Err(format!(
                     "Received {} arguments to function 'rand', expected at most 0",
+                    args.len()
+                )),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    fn round(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [Value::Int(n)] => Ok(Value::Int(*n)),
+                [Value::Float(f)] => Ok(Value::Float(f.round())),
+                [Value::Null] => Ok(Value::Null),
+                [v] => Err(format!(
+                    "Type mismatch: expected Integer, Float, or Null but was {}",
+                    v.name()
+                )),
+                args => Err(format!(
+                    "Received {} arguments to function 'round', expected at most 1",
                     args.len()
                 )),
             },
