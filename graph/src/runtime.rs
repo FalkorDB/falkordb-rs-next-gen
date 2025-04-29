@@ -60,6 +60,7 @@ impl Runtime {
         read_functions.insert("ceil".to_string(), Self::ceil);
         read_functions.insert("e".to_string(), Self::e);
         read_functions.insert("exp".to_string(), Self::exp);
+        read_functions.insert("floor".to_string(), Self::floor);
 
         // internal functions are not accessible from Cypher
         read_functions.insert("@starts_with".to_string(), Self::internal_starts_with);
@@ -877,6 +878,29 @@ impl Runtime {
                 )),
                 args => Err(format!(
                     "Received {} arguments to function 'exp', expected at most 1",
+                    args.len()
+                )),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    fn floor(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [Value::Int(n)] => Ok(Value::Int(*n)),
+                [Value::Float(f)] => Ok(Value::Float(f.floor())),
+                [Value::Null] => Ok(Value::Null),
+                [v] => Err(format!(
+                    "Type mismatch: expected Integer, Float, or Null but was {}",
+                    v.name()
+                )),
+                args => Err(format!(
+                    "Received {} arguments to function 'floor', expected at most 1",
                     args.len()
                 )),
             },

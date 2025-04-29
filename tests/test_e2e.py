@@ -1355,3 +1355,34 @@ def test_exp():
         assert False, "Expected an error"
     except ResponseError as e:
         assert "Received 2 arguments to function 'exp', expected at most 1" in str(e)
+
+
+def test_floor():
+    res = query("RETURN floor(1.1) AS name")
+    assert res.result_set == [[1]]
+
+    res = query("RETURN floor(1.0) AS name")
+    assert res.result_set == [[1]]
+
+    res = query("RETURN floor(-1.1) AS name")
+    assert res.result_set == [[-2]]
+
+    res = query("RETURN floor(-1.0) AS name")
+    assert res.result_set == [[-1]]
+
+    res = query("RETURN floor(null) AS name")
+    assert res.result_set == [[None]]
+
+    for value, name in [(True, 'Boolean'), (False, 'Boolean'), ({}, 'Map'), ([], 'List')]:
+        try:
+            query(f"RETURN floor({value}) AS r")
+            assert False, "Expected an error"
+        except ResponseError as e:
+            assert f"Type mismatch: expected Integer, Float, or Null but was {name}" in str(e)
+
+    # wrong number of args
+    try:
+        query("RETURN floor(1, 2) AS name")
+        assert False, "Expected an error"
+    except ResponseError as e:
+        assert "Received 2 arguments to function 'floor', expected at most 1" in str(e)
