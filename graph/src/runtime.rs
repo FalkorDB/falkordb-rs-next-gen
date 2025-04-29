@@ -5,8 +5,8 @@ use rand::Rng;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
-type ReadFn = fn(&Graph, &mut Runtime, Value) -> Result<Value, String>;
-type WriteFn = fn(&mut Graph, &mut Runtime, Value) -> Result<Value, String>;
+type ReadFn = fn(&Graph, &mut Runtime, Vec<Value>) -> Result<Value, String>;
+type WriteFn = fn(&mut Graph, &mut Runtime, Vec<Value>) -> Result<Value, String>;
 
 pub struct Runtime {
     read_functions: BTreeMap<String, ReadFn>,
@@ -99,35 +99,30 @@ impl Runtime {
     fn create_node(
         g: &mut Graph,
         runtime: &mut Self,
-        args: Value,
+        args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args {
-            Value::List(args) => {
-                let mut iter = args.into_iter();
-                match (iter.next(), iter.next(), iter.next()) {
-                    (Some(Value::List(raw_labels)), Some(Value::Map(attrs)), None) => {
-                        let labels = raw_labels
-                            .into_iter()
-                            .filter_map(|label| {
-                                if let Value::String(label) = label {
-                                    Some(label)
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect::<Vec<_>>();
-                        runtime.nodes_created += 1;
-                        runtime.properties_set += attrs
-                            .values()
-                            .map(|v| match v {
-                                Value::Null => 0,
-                                _ => 1,
-                            })
-                            .sum::<i32>();
-                        Ok(g.create_node(&labels, attrs))
-                    }
-                    _ => Ok(Value::Null),
-                }
+        let mut iter = args.into_iter();
+        match (iter.next(), iter.next(), iter.next()) {
+            (Some(Value::List(raw_labels)), Some(Value::Map(attrs)), None) => {
+                let labels = raw_labels
+                    .into_iter()
+                    .filter_map(|label| {
+                        if let Value::String(label) = label {
+                            Some(label)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                runtime.nodes_created += 1;
+                runtime.properties_set += attrs
+                    .values()
+                    .map(|v| match v {
+                        Value::Null => 0,
+                        _ => 1,
+                    })
+                    .sum::<i32>();
+                Ok(g.create_node(&labels, attrs))
             }
             _ => Ok(Value::Null),
         }
@@ -137,18 +132,13 @@ impl Runtime {
     fn delete_entity(
         g: &mut Graph,
         runtime: &mut Self,
-        args: Value,
+        args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args {
-            Value::List(nodes) => {
-                for n in nodes {
-                    if let Value::Node(id) = n {
-                        runtime.nodes_deleted += 1;
-                        g.delete_node(id);
-                    }
-                }
+        for n in args {
+            if let Value::Node(id) = n {
+                runtime.nodes_deleted += 1;
+                g.delete_node(id);
             }
-            _ => todo!(),
         }
 
         Ok(Value::Null)
@@ -157,537 +147,476 @@ impl Runtime {
     fn create_relationship(
         g: &mut Graph,
         runtime: &mut Self,
-        args: Value,
+        args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args {
-            Value::List(args) => {
-                let mut iter = args.into_iter();
-                match (
-                    iter.next(),
-                    iter.next(),
-                    iter.next(),
-                    iter.next(),
-                    iter.next(),
-                ) {
-                    (
-                        Some(Value::String(relationship_type)),
-                        Some(Value::Node(from)),
-                        Some(Value::Node(to)),
-                        Some(Value::Map(attrs)),
-                        None,
-                    ) => {
-                        runtime.relationships_created += 1;
-                        runtime.properties_set += attrs
-                            .values()
-                            .map(|v| match v {
-                                Value::Null => 0,
-                                _ => 1,
-                            })
-                            .sum::<i32>();
-                        Ok(g.create_relationship(&relationship_type, from, to, attrs))
-                    }
-                    _ => todo!(),
-                }
+        let mut iter = args.into_iter();
+        match (
+            iter.next(),
+            iter.next(),
+            iter.next(),
+            iter.next(),
+            iter.next(),
+        ) {
+            (
+                Some(Value::String(relationship_type)),
+                Some(Value::Node(from)),
+                Some(Value::Node(to)),
+                Some(Value::Map(attrs)),
+                None,
+            ) => {
+                runtime.relationships_created += 1;
+                runtime.properties_set += attrs
+                    .values()
+                    .map(|v| match v {
+                        Value::Null => 0,
+                        _ => 1,
+                    })
+                    .sum::<i32>();
+                Ok(g.create_relationship(&relationship_type, from, to, attrs))
             }
-            _ => unreachable!(),
+            _ => todo!(),
         }
     }
 
     fn create_node_iter(
         g: &Graph,
         runtime: &mut Self,
-        args: Value,
+        args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args {
-            Value::List(args) => {
-                let mut iter = args.into_iter();
-                match (iter.next(), iter.next()) {
-                    (Some(Value::List(raw_labels)), None) => {
-                        runtime.iters.push(
-                            g.get_nodes(
-                                raw_labels
-                                    .into_iter()
-                                    .filter_map(|label| {
-                                        if let Value::String(label) = label {
-                                            Some(label)
-                                        } else {
-                                            None
-                                        }
-                                    })
-                                    .collect::<Vec<_>>()
-                                    .as_slice(),
-                            )
-                            .unwrap(),
-                        );
-                        Ok(Value::Int(runtime.iters.len() as i64 - 1))
-                    }
-                    _ => todo!(),
-                }
+        let mut iter = args.into_iter();
+        match (iter.next(), iter.next()) {
+            (Some(Value::List(raw_labels)), None) => {
+                runtime.iters.push(
+                    g.get_nodes(
+                        raw_labels
+                            .into_iter()
+                            .filter_map(|label| {
+                                if let Value::String(label) = label {
+                                    Some(label)
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                            .as_slice(),
+                    )
+                    .unwrap(),
+                );
+                Ok(Value::Int(runtime.iters.len() as i64 - 1))
             }
-            _ => unreachable!(),
+            _ => todo!(),
         }
     }
 
     fn next_node(
         _g: &Graph,
         runtime: &mut Self,
-        args: Value,
+        args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args {
-            Value::List(args) => match args.as_slice() {
-                [Value::Int(iter)] => runtime.iters[*iter as usize]
-                    .next()
-                    .map_or_else(|| Ok(Value::Null), |(n, _)| Ok(Value::Node(n))),
-                _ => todo!(),
-            },
-            _ => unreachable!(),
+        match args.as_slice() {
+            [Value::Int(iter)] => runtime.iters[*iter as usize]
+                .next()
+                .map_or_else(|| Ok(Value::Null), |(n, _)| Ok(Value::Node(n))),
+            _ => todo!(),
         }
     }
 
     fn property(
         g: &Graph,
         _runtime: &mut Self,
-        args: Value,
+        args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args {
-            Value::List(arr) => match arr.as_slice() {
-                [Value::Node(node_id), Value::String(property)] => g
-                    .get_node_property_id(property)
-                    .map_or(Ok(Value::Null), |property_id| {
-                        g.get_node_property(*node_id, property_id)
-                            .map_or(Ok(Value::Null), Ok)
-                    }),
-                [Value::Map(map), Value::String(property)] => {
-                    Ok(map.get(property).unwrap_or(&Value::Null).clone())
-                }
-                _ => Ok(Value::Null),
-            },
-            _ => unreachable!(),
+        match args.as_slice() {
+            [Value::Node(node_id), Value::String(property)] => g
+                .get_node_property_id(property)
+                .map_or(Ok(Value::Null), |property_id| {
+                    g.get_node_property(*node_id, property_id)
+                        .map_or(Ok(Value::Null), Ok)
+                }),
+            [Value::Map(map), Value::String(property)] => {
+                Ok(map.get(property).unwrap_or(&Value::Null).clone())
+            }
+            _ => Ok(Value::Null),
         }
     }
 
     fn labels(
         g: &Graph,
         _runtime: &mut Self,
-        args: Value,
+        args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args {
-            Value::List(arr) => match arr.as_slice() {
-                [Value::Node(node_id)] => Ok(Value::List(
-                    g.get_node_label_ids(*node_id)
-                        .map(|label_id| Value::String(g.get_label_by_id(label_id).to_string()))
-                        .collect(),
-                )),
-                _ => Ok(Value::Null),
-            },
-            _ => unreachable!(),
+        match args.as_slice() {
+            [Value::Node(node_id)] => Ok(Value::List(
+                g.get_node_label_ids(*node_id)
+                    .map(|label_id| Value::String(g.get_label_by_id(label_id).to_string()))
+                    .collect(),
+            )),
+            _ => Ok(Value::Null),
         }
     }
 
     fn value_to_integer(
         _g: &Graph,
         _runtime: &mut Self,
-        args: Value,
+        args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args {
-            Value::List(params) => match params.as_slice() {
-                [Value::String(s)] => s.parse::<i64>().map(Value::Int).or_else(|_| {
-                    s.parse::<f64>()
-                        .map(|f| Value::Int(f as i64))
-                        .or(Ok(Value::Null))
-                }),
-                [Value::Int(i)] => Ok(Value::Int(*i)),
-                [Value::Float(f)] => Ok(Value::Int(*f as i64)),
-                [Value::Null] => Ok(Value::Null),
-                [Value::Bool(b)] => Ok(Value::Int(i64::from(*b))),
-                [arg] => Err(format!(
-                    "Type mismatch: expected String, Boolean, Integer, Float, or Null but was {}",
-                    arg.name()
-                )),
-                args => Err(format!(
-                    "Expected one argument for value_to_integer, instead {}",
-                    args.len()
-                )),
-            },
-            _ => unreachable!(),
+        match args.as_slice() {
+            [Value::String(s)] => s.parse::<i64>().map(Value::Int).or_else(|_| {
+                s.parse::<f64>()
+                    .map(|f| Value::Int(f as i64))
+                    .or(Ok(Value::Null))
+            }),
+            [Value::Int(i)] => Ok(Value::Int(*i)),
+            [Value::Float(f)] => Ok(Value::Int(*f as i64)),
+            [Value::Null] => Ok(Value::Null),
+            [Value::Bool(b)] => Ok(Value::Int(i64::from(*b))),
+            [arg] => Err(format!(
+                "Type mismatch: expected String, Boolean, Integer, Float, or Null but was {}",
+                arg.name()
+            )),
+            args => Err(format!(
+                "Expected one argument for value_to_integer, instead {}",
+                args.len()
+            )),
         }
     }
 
     fn size(
         _: &Graph,
         _: &mut Self,
-        args: Value,
+        args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args {
-            Value::List(arr) => match arr.as_slice() {
-                [Value::String(s)] => Ok(Value::Int(s.len() as i64)),
-                [Value::List(v)] => Ok(Value::Int(v.len() as i64)),
-                [Value::Null] => Ok(Value::Null),
-                [arg] => Err(format!(
-                    "Type mismatch: expected List, String, or Null but was {}",
-                    arg.name()
-                )),
-                args => Err(format!(
-                    "Expected one argument for size, instead {}",
-                    args.len()
-                )),
-            },
-            _ => unreachable!(),
+        match args.as_slice() {
+            [Value::String(s)] => Ok(Value::Int(s.len() as i64)),
+            [Value::List(v)] => Ok(Value::Int(v.len() as i64)),
+            [Value::Null] => Ok(Value::Null),
+            [arg] => Err(format!(
+                "Type mismatch: expected List, String, or Null but was {}",
+                arg.name()
+            )),
+            args => Err(format!(
+                "Expected one argument for size, instead {}",
+                args.len()
+            )),
         }
     }
 
     fn head(
         _: &Graph,
         _: &mut Self,
-        args: Value,
+        args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args {
-            Value::List(arr) => match arr.as_slice() {
-                [Value::List(v)] => {
-                    if v.is_empty() {
-                        Ok(Value::Null)
-                    } else {
-                        Ok(v[0].clone())
-                    }
+        match args.as_slice() {
+            [Value::List(v)] => {
+                if v.is_empty() {
+                    Ok(Value::Null)
+                } else {
+                    Ok(v[0].clone())
                 }
-                [Value::Null] => Ok(Value::Null),
-                [arg] => Err(format!(
-                    "Type mismatch: expected List or Null but was {}",
-                    arg.name()
-                )),
-                args => Err(format!(
-                    "Expected one argument for head, instead {}",
-                    args.len()
-                )),
-            },
-            _ => unreachable!(),
+            }
+            [Value::Null] => Ok(Value::Null),
+            [arg] => Err(format!(
+                "Type mismatch: expected List or Null but was {}",
+                arg.name()
+            )),
+            args => Err(format!(
+                "Expected one argument for head, instead {}",
+                args.len()
+            )),
         }
     }
 
     fn last(
         _: &Graph,
         _: &mut Self,
-        args: Value,
+        args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args {
-            Value::List(arr) => match arr.as_slice() {
-                [Value::List(v)] => Ok(v.last().unwrap_or(&Value::Null).clone()),
-                [Value::Null] => Ok(Value::Null),
-                [arg] => Err(format!(
-                    "Type mismatch: expected List or Null but was {}",
-                    arg.name()
-                )),
-                args => Err(format!(
-                    "Expected one argument for last, instead {}",
-                    args.len()
-                )),
-            },
-            _ => unreachable!(),
+        match args.as_slice() {
+            [Value::List(v)] => Ok(v.last().unwrap_or(&Value::Null).clone()),
+            [Value::Null] => Ok(Value::Null),
+            [arg] => Err(format!(
+                "Type mismatch: expected List or Null but was {}",
+                arg.name()
+            )),
+            args => Err(format!(
+                "Expected one argument for last, instead {}",
+                args.len()
+            )),
         }
     }
 
     fn tail(
         _: &Graph,
         _: &mut Self,
-        args: Value,
+        args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args {
-            Value::List(arr) => match arr.as_slice() {
-                [Value::List(v)] => {
-                    if v.is_empty() {
-                        Ok(Value::List(vec![]))
-                    } else {
-                        Ok(Value::List(v[1..].to_vec()))
-                    }
+        match args.as_slice() {
+            [Value::List(v)] => {
+                if v.is_empty() {
+                    Ok(Value::List(vec![]))
+                } else {
+                    Ok(Value::List(v[1..].to_vec()))
                 }
-                [Value::Null] => Ok(Value::Null),
-                [arg] => Err(format!(
-                    "Type mismatch: expected List or Null but was {}",
-                    arg.name()
-                )),
-                args => Err(format!(
-                    "Expected one argument for tail, instead {}",
-                    args.len()
-                )),
-            },
-            _ => unreachable!(),
+            }
+            [Value::Null] => Ok(Value::Null),
+            [arg] => Err(format!(
+                "Type mismatch: expected List or Null but was {}",
+                arg.name()
+            )),
+            args => Err(format!(
+                "Expected one argument for tail, instead {}",
+                args.len()
+            )),
         }
     }
 
     fn reverse(
         _: &Graph,
         _: &mut Self,
-        args: Value,
+        args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args {
-            Value::List(arr) => match arr.as_slice() {
-                [Value::List(v)] => {
-                    let mut v = v.clone();
-                    v.reverse();
-                    Ok(Value::List(v))
-                }
-                [Value::Null] => Ok(Value::Null),
-                [Value::String(s)] => Ok(Value::String(s.chars().rev().collect())),
-                [arg] => Err(format!(
-                    "Type mismatch: expected List, String or null, but was {}",
-                    arg.name()
-                )),
-                args => Err(format!(
-                    "Expected one argument for reverse, instead {}",
-                    args.len()
-                )),
-            },
-            _ => unreachable!(),
+        match args.as_slice() {
+            [Value::List(v)] => {
+                let mut v = v.clone();
+                v.reverse();
+                Ok(Value::List(v))
+            }
+            [Value::Null] => Ok(Value::Null),
+            [Value::String(s)] => Ok(Value::String(s.chars().rev().collect())),
+            [arg] => Err(format!(
+                "Type mismatch: expected List, String or null, but was {}",
+                arg.name()
+            )),
+            args => Err(format!(
+                "Expected one argument for reverse, instead {}",
+                args.len()
+            )),
         }
     }
 
     fn substring(
         _: &Graph,
         _: &mut Self,
-        args: Value,
+        args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args {
-            Value::List(arr) => match arr.as_slice() {
-                // Handle NULL input case
-                [Value::Null, _] | [Value::Null, _, _] => Ok(Value::Null),
-                // Two-argument version: (string, start)
-                [Value::String(s), Value::Int(start)] => {
-                    let start = *start;
-                    if start < 0 {
-                        return Err("start must be a non-negative integer".into());
-                    }
-                    let start = start as usize;
-
-                    Ok(Value::String(s[start..].to_string()))
+        match args.as_slice() {
+            // Handle NULL input case
+            [Value::Null, _] | [Value::Null, _, _] => Ok(Value::Null),
+            // Two-argument version: (string, start)
+            [Value::String(s), Value::Int(start)] => {
+                let start = *start;
+                if start < 0 {
+                    return Err("start must be a non-negative integer".into());
                 }
+                let start = start as usize;
 
-                // Three-argument version: (string, start, length)
-                [Value::String(s), Value::Int(start), Value::Int(length)] => {
-                    let start = *start;
-                    let length = *length;
-                    if length < 0 {
-                        return Err("length must be a non-negative integer".into());
-                    }
-                    if start < 0 {
-                        return Err("start must be a non-negative integer".into());
-                    }
-                    let start = start as usize;
-                    let length = length as usize;
+                Ok(Value::String(s[start..].to_string()))
+            }
 
-                    let end = start.saturating_add(length).min(s.len());
-                    Ok(Value::String(s[start..end].to_string()))
+            // Three-argument version: (string, start, length)
+            [Value::String(s), Value::Int(start), Value::Int(length)] => {
+                let start = *start;
+                let length = *length;
+                if length < 0 {
+                    return Err("length must be a non-negative integer".into());
                 }
+                if start < 0 {
+                    return Err("start must be a non-negative integer".into());
+                }
+                let start = start as usize;
+                let length = length as usize;
 
-                // Type mismatch handling
-                args => Err(format!(
-                    "Type mismatch: expected substring(String, Integer) [+ Integer] but got {:?}",
-                    args.iter().map(Value::name).collect::<Vec<_>>()
-                )),
-            },
-            _ => unreachable!(),
+                let end = start.saturating_add(length).min(s.len());
+                Ok(Value::String(s[start..end].to_string()))
+            }
+
+            // Type mismatch handling
+            args => Err(format!(
+                "Type mismatch: expected substring(String, Integer) [+ Integer] but got {:?}",
+                args.iter().map(Value::name).collect::<Vec<_>>()
+            )),
         }
     }
 
     fn split(
         _: &Graph,
         _: &mut Self,
-        args: Value,
+        args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args {
-            Value::List(arr) => match arr.as_slice() {
-                [Value::String(string), Value::String(delimiter)] => {
-                    if delimiter.is_empty() {
-                        // split string to characters
-                        let parts: Vec<Value> = string
-                            .chars()
-                            .map(|c| Value::String(c.to_string()))
-                            .collect();
-                        Ok(Value::List(parts))
-                    } else {
-                        let parts: Vec<Value> = string
-                            .split(delimiter.as_str())
-                            .map(|s| Value::String(s.to_string()))
-                            .collect();
-                        Ok(Value::List(parts))
-                    }
+        match args.as_slice() {
+            [Value::String(string), Value::String(delimiter)] => {
+                if delimiter.is_empty() {
+                    // split string to characters
+                    let parts: Vec<Value> = string
+                        .chars()
+                        .map(|c| Value::String(c.to_string()))
+                        .collect();
+                    Ok(Value::List(parts))
+                } else {
+                    let parts: Vec<Value> = string
+                        .split(delimiter.as_str())
+                        .map(|s| Value::String(s.to_string()))
+                        .collect();
+                    Ok(Value::List(parts))
                 }
-                [Value::Null, _] | [_, Value::Null] => Ok(Value::Null),
-                [arg1, arg2] => Err(format!(
-                    "Type mismatch: expected 2 String or null arguments, but was {} {}",
-                    arg1.name(),
-                    arg2.name()
-                )),
-                [arg] => Err(format!(
-                    "Type mismatch: expected 2 String or null arguments, but was {}",
-                    arg.name()
-                )),
-                args => Err(format!(
-                    "Expected two arguments for split, instead {}",
-                    args.len()
-                )),
-            },
-            _ => unreachable!(),
+            }
+            [Value::Null, _] | [_, Value::Null] => Ok(Value::Null),
+            [arg1, arg2] => Err(format!(
+                "Type mismatch: expected 2 String or null arguments, but was {} {}",
+                arg1.name(),
+                arg2.name()
+            )),
+            [arg] => Err(format!(
+                "Type mismatch: expected 2 String or null arguments, but was {}",
+                arg.name()
+            )),
+            args => Err(format!(
+                "Expected two arguments for split, instead {}",
+                args.len()
+            )),
         }
     }
 
     fn string_to_lower(
         _: &Graph,
         _: &mut Self,
-        args: Value,
+        args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args {
-            Value::List(arr) => match arr.as_slice() {
-                [Value::String(s)] => Ok(Value::String(s.to_lowercase())),
-                [Value::Null] => Ok(Value::Null),
-                [arg] => Err(format!(
-                    "Type mismatch: expected List, String or null, but was {}",
-                    arg.name()
-                )),
-                args => Err(format!(
-                    "Expected one argument for toLower, instead {}",
-                    args.len()
-                )),
-            },
-            _ => unreachable!(),
+        match args.as_slice() {
+            [Value::String(s)] => Ok(Value::String(s.to_lowercase())),
+            [Value::Null] => Ok(Value::Null),
+            [arg] => Err(format!(
+                "Type mismatch: expected List, String or null, but was {}",
+                arg.name()
+            )),
+            args => Err(format!(
+                "Expected one argument for toLower, instead {}",
+                args.len()
+            )),
         }
     }
 
     fn string_to_upper(
         _: &Graph,
         _: &mut Self,
-        args: Value,
+        args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args {
-            Value::List(arr) => match arr.as_slice() {
-                [Value::String(s)] => Ok(Value::String(s.to_uppercase())),
-                [Value::Null] => Ok(Value::Null),
-                [arg] => Err(format!(
-                    "Type mismatch: expected List, String or null, but was {}",
-                    arg.name()
-                )),
-                args => Err(format!(
-                    "Expected one argument for toUpper, instead {}",
-                    args.len()
-                )),
-            },
-            _ => unreachable!(),
+        match args.as_slice() {
+            [Value::String(s)] => Ok(Value::String(s.to_uppercase())),
+            [Value::Null] => Ok(Value::Null),
+            [arg] => Err(format!(
+                "Type mismatch: expected List, String or null, but was {}",
+                arg.name()
+            )),
+            args => Err(format!(
+                "Expected one argument for toUpper, instead {}",
+                args.len()
+            )),
         }
     }
 
     fn string_replace(
         _: &Graph,
         _: &mut Self,
-        args: Value,
+        args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args {
-            Value::List(arr) => match arr.as_slice() {
-                [
-                    Value::String(s),
-                    Value::String(search),
-                    Value::String(replacement),
-                ] => Ok(Value::String(s.replace(search, replacement))),
-                [Value::Null, _, _] | [_, Value::Null, _] | [_, _, Value::Null] => Ok(Value::Null),
-                [arg1, arg2, arg3] => Err(format!(
-                    "Type mismatch: expected (String, String, String) or null, but was: ({}, {}, {})",
-                    arg1.name(),
-                    arg2.name(),
-                    arg3.name()
-                )),
-                args => Err(format!(
-                    "Expected three arguments for replace, instead {}",
-                    args.len()
-                )),
-            },
-            _ => unreachable!(),
+        match args.as_slice() {
+            [
+                Value::String(s),
+                Value::String(search),
+                Value::String(replacement),
+            ] => Ok(Value::String(s.replace(search, replacement))),
+            [Value::Null, _, _] | [_, Value::Null, _] | [_, _, Value::Null] => Ok(Value::Null),
+            [arg1, arg2, arg3] => Err(format!(
+                "Type mismatch: expected (String, String, String) or null, but was: ({}, {}, {})",
+                arg1.name(),
+                arg2.name(),
+                arg3.name()
+            )),
+            args => Err(format!(
+                "Expected three arguments for replace, instead {}",
+                args.len()
+            )),
         }
     }
 
     fn string_left(
         _: &Graph,
         _: &mut Self,
-        args: Value,
+        args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args {
-            Value::List(arr) => match arr.as_slice() {
-                [Value::String(s), Value::Int(n)] => {
-                    if *n < 0 {
-                        Err("length must be a non-negative integer".to_string())
-                    } else {
-                        Ok(Value::String(s.chars().take(*n as usize).collect()))
-                    }
+        match args.as_slice() {
+            [Value::String(s), Value::Int(n)] => {
+                if *n < 0 {
+                    Err("length must be a non-negative integer".to_string())
+                } else {
+                    Ok(Value::String(s.chars().take(*n as usize).collect()))
                 }
-                [Value::Null, _] => Ok(Value::Null),
-                [_, Value::Null] => Err("length must be a non-negative integer".to_string()),
-                [arg1, arg2] => Err(format!(
-                    "Type mismatch: expected (String, Integer) or null, but was: ({}, {})",
-                    arg1.name(),
-                    arg2.name()
-                )),
-                args => Err(format!(
-                    "Expected two arguments for function 'left', instead {}",
-                    args.len()
-                )),
-            },
-            _ => unreachable!(),
+            }
+            [Value::Null, _] => Ok(Value::Null),
+            [_, Value::Null] => Err("length must be a non-negative integer".to_string()),
+            [arg1, arg2] => Err(format!(
+                "Type mismatch: expected (String, Integer) or null, but was: ({}, {})",
+                arg1.name(),
+                arg2.name()
+            )),
+            args => Err(format!(
+                "Expected two arguments for function 'left', instead {}",
+                args.len()
+            )),
         }
     }
 
     fn string_ltrim(
         _: &Graph,
         _: &mut Self,
-        args: Value,
+        args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args {
-            Value::List(arr) => match arr.as_slice() {
-                [Value::String(s)] => Ok(Value::String(s.trim_start().to_string())),
-                [Value::Null] => Ok(Value::Null),
-                [arg] => Err(format!(
-                    "Type mismatch: expected String or null, but was {}",
-                    arg.name()
-                )),
-                args => Err(format!(
-                    "Expected one argument for ltrim, instead {}",
-                    args.len()
-                )),
-            },
-            _ => unreachable!(),
+        match args.as_slice() {
+            [Value::String(s)] => Ok(Value::String(s.trim_start().to_string())),
+            [Value::Null] => Ok(Value::Null),
+            [arg] => Err(format!(
+                "Type mismatch: expected String or null, but was {}",
+                arg.name()
+            )),
+            args => Err(format!(
+                "Expected one argument for ltrim, instead {}",
+                args.len()
+            )),
         }
     }
 
     fn string_right(
         _: &Graph,
         _: &mut Self,
-        args: Value,
+        args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args {
-            Value::List(arr) => match arr.as_slice() {
-                [Value::String(s), Value::Int(n)] => {
-                    if *n < 0 {
-                        Err("length must be a non-negative integer".to_string())
-                    } else {
-                        let start = s.len().saturating_sub(*n as usize);
-                        Ok(Value::String(s.chars().skip(start).collect()))
-                    }
+        match args.as_slice() {
+            [Value::String(s), Value::Int(n)] => {
+                if *n < 0 {
+                    Err("length must be a non-negative integer".to_string())
+                } else {
+                    let start = s.len().saturating_sub(*n as usize);
+                    Ok(Value::String(s.chars().skip(start).collect()))
                 }
-                [Value::Null, _] => Ok(Value::Null),
-                [_, Value::Null] => Err("length must be a non-negative integer".to_string()),
-                [arg1, arg2] => Err(format!(
-                    "Type mismatch: expected (String, Integer) or null, but was: ({}, {})",
-                    arg1.name(),
-                    arg2.name()
-                )),
-                args => Err(format!(
-                    "Expected two arguments for function 'right', instead {}",
-                    args.len()
-                )),
-            },
-            _ => unreachable!(),
+            }
+            [Value::Null, _] => Ok(Value::Null),
+            [_, Value::Null] => Err("length must be a non-negative integer".to_string()),
+            [arg1, arg2] => Err(format!(
+                "Type mismatch: expected (String, Integer) or null, but was: ({}, {})",
+                arg1.name(),
+                arg2.name()
+            )),
+            args => Err(format!(
+                "Expected two arguments for function 'right', instead {}",
+                args.len()
+            )),
         }
     }
     fn string_join(
         _: &Graph,
         _: &mut Self,
-        args: Value,
+        args: Vec<Value>,
     ) -> Result<Value, String> {
         fn to_string_vec(vec: &[Value]) -> Result<Vec<String>, String> {
             vec.iter()
@@ -704,394 +633,349 @@ impl Runtime {
                 .collect()
         }
 
-        match args {
-            Value::List(arr) => match arr.as_slice() {
-                [Value::List(vec), Value::String(s)] => {
-                    let result = to_string_vec(vec);
-                    result.map(|strings| Value::String(strings.join(s)))
-                }
-                [Value::List(vec)] => {
-                    let result = to_string_vec(vec);
-                    result.map(|strings| Value::String(strings.join("")))
-                }
-                [Value::Null, _] => Ok(Value::Null),
-                [arg1, _arg2] => Err(format!(
-                    "Type mismatch: expected List or Null but was {}",
-                    arg1.name()
-                )),
-                args => Err(format!(
-                    "Received {} arguments to function 'string.join', expected at most 2",
-                    args.len()
-                )),
-            },
-            _ => unreachable!(),
+        match args.as_slice() {
+            [Value::List(vec), Value::String(s)] => {
+                let result = to_string_vec(vec);
+                result.map(|strings| Value::String(strings.join(s)))
+            }
+            [Value::List(vec)] => {
+                let result = to_string_vec(vec);
+                result.map(|strings| Value::String(strings.join("")))
+            }
+            [Value::Null, _] => Ok(Value::Null),
+            [arg1, _arg2] => Err(format!(
+                "Type mismatch: expected List or Null but was {}",
+                arg1.name()
+            )),
+            args => Err(format!(
+                "Received {} arguments to function 'string.join', expected at most 2",
+                args.len()
+            )),
         }
     }
 
     fn string_match_reg_ex(
         _: &Graph,
         _: &mut Self,
-        args: Value,
+        args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args {
-            Value::List(arr) => match arr.as_slice() {
-                [Value::String(text), Value::String(pattern)] => match regex::Regex::new(pattern) {
-                    Ok(re) => {
-                        let mut all_matches = Vec::new();
-                        for caps in re.captures_iter(text) {
-                            for i in 0..caps.len() {
-                                if let Some(m) = caps.get(i) {
-                                    all_matches.push(Value::String(m.as_str().to_string()));
-                                }
+        match args.as_slice() {
+            [Value::String(text), Value::String(pattern)] => match regex::Regex::new(pattern) {
+                Ok(re) => {
+                    let mut all_matches = Vec::new();
+                    for caps in re.captures_iter(text) {
+                        for i in 0..caps.len() {
+                            if let Some(m) = caps.get(i) {
+                                all_matches.push(Value::String(m.as_str().to_string()));
                             }
                         }
-                        Ok(Value::List(all_matches))
                     }
-                    Err(e) => Err(format!("Invalid regex, {e}")),
-                },
-                [Value::Null, _] | [_, Value::Null] => Ok(Value::List(vec![])),
-                [Value::String(_), arg2] => Err(format!(
-                    "Type mismatch: expected String or Null but was {}",
-                    arg2.name(),
-                )),
-                [arg1, _] => Err(format!(
-                    "Type mismatch: expected String or Null but was {}",
-                    arg1.name(),
-                )),
-                args => Err(format!(
-                    "Received {} arguments to function 'string.matchRegEx', expected at least 2",
-                    args.len()
-                )),
+                    Ok(Value::List(all_matches))
+                }
+                Err(e) => Err(format!("Invalid regex, {e}")),
             },
-            _ => unreachable!(),
+            [Value::Null, _] | [_, Value::Null] => Ok(Value::List(vec![])),
+            [Value::String(_), arg2] => Err(format!(
+                "Type mismatch: expected String or Null but was {}",
+                arg2.name(),
+            )),
+            [arg1, _] => Err(format!(
+                "Type mismatch: expected String or Null but was {}",
+                arg1.name(),
+            )),
+            args => Err(format!(
+                "Received {} arguments to function 'string.matchRegEx', expected at least 2",
+                args.len()
+            )),
         }
     }
 
     fn string_replace_reg_ex(
         _: &Graph,
         _: &mut Self,
-        args: Value,
+        args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args {
-            Value::List(arr) => match arr.as_slice() {
-                [
-                    Value::String(text),
-                    Value::String(pattern),
-                    Value::String(replacement),
-                ] => match regex::Regex::new(pattern) {
-                    Ok(re) => {
-                        let replaced_text = re.replace_all(text, replacement).to_string();
-                        Ok(Value::String(replaced_text))
-                    }
-                    Err(e) => Err(format!("Invalid regex, {e}")),
-                },
-                [Value::Null, _, _] | [_, Value::Null, _] | [_, _, Value::Null] => Ok(Value::Null),
-                [Value::String(_), arg2, Value::String(_)] => Err(format!(
-                    "Type mismatch: expected String or Null but was {}",
-                    arg2.name(),
-                )),
-                [Value::String(_), Value::String(_), arg3] => Err(format!(
-                    "Type mismatch: expected String or Null but was {}",
-                    arg3.name(),
-                )),
-                [arg1, _, _] => Err(format!(
-                    "Type mismatch: expected String or Null but was {}",
-                    arg1.name(),
-                )),
-                args => Err(format!(
-                    "Received {} arguments to function 'string.replaceRegEx', expected at least 3",
-                    args.len()
-                )),
+        match args.as_slice() {
+            [
+                Value::String(text),
+                Value::String(pattern),
+                Value::String(replacement),
+            ] => match regex::Regex::new(pattern) {
+                Ok(re) => {
+                    let replaced_text = re.replace_all(text, replacement).to_string();
+                    Ok(Value::String(replaced_text))
+                }
+                Err(e) => Err(format!("Invalid regex, {e}")),
             },
-            _ => unreachable!(),
+            [Value::Null, _, _] | [_, Value::Null, _] | [_, _, Value::Null] => Ok(Value::Null),
+            [Value::String(_), arg2, Value::String(_)] => Err(format!(
+                "Type mismatch: expected String or Null but was {}",
+                arg2.name(),
+            )),
+            [Value::String(_), Value::String(_), arg3] => Err(format!(
+                "Type mismatch: expected String or Null but was {}",
+                arg3.name(),
+            )),
+            [arg1, _, _] => Err(format!(
+                "Type mismatch: expected String or Null but was {}",
+                arg1.name(),
+            )),
+            args => Err(format!(
+                "Received {} arguments to function 'string.replaceRegEx', expected at least 3",
+                args.len()
+            )),
         }
     }
 
     fn abs(
         _: &Graph,
         _: &mut Self,
-        args: Value,
+        args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args {
-            Value::List(arr) => match arr.as_slice() {
-                [Value::Int(n)] => Ok(Value::Int(n.abs())),
-                [Value::Float(f)] => Ok(Value::Float(f.abs())),
-                [Value::Null] => Ok(Value::Null),
-                [v] => Err(format!(
-                    "Type mismatch: expected Integer, Float, or Null but was {}",
-                    v.name()
-                )),
-                args => Err(format!(
-                    "Received {} arguments to function 'abs', expected at most 1",
-                    args.len()
-                )),
-            },
-            _ => unreachable!(),
+        match args.as_slice() {
+            [Value::Int(n)] => Ok(Value::Int(n.abs())),
+            [Value::Float(f)] => Ok(Value::Float(f.abs())),
+            [Value::Null] => Ok(Value::Null),
+            [v] => Err(format!(
+                "Type mismatch: expected Integer, Float, or Null but was {}",
+                v.name()
+            )),
+            args => Err(format!(
+                "Received {} arguments to function 'abs', expected at most 1",
+                args.len()
+            )),
         }
     }
 
     fn ceil(
         _: &Graph,
         _: &mut Self,
-        args: Value,
+        args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args {
-            Value::List(arr) => match arr.as_slice() {
-                [Value::Int(n)] => Ok(Value::Int(*n)),
-                [Value::Float(f)] => Ok(Value::Float(f.ceil())),
-                [Value::Null] => Ok(Value::Null),
-                [v] => Err(format!(
-                    "Type mismatch: expected Integer, Float, or Null but was {}",
-                    v.name()
-                )),
-                args => Err(format!(
-                    "Received {} arguments to function 'ceil', expected at most 1",
-                    args.len()
-                )),
-            },
-            _ => unreachable!(),
+        match args.as_slice() {
+            [Value::Int(n)] => Ok(Value::Int(*n)),
+            [Value::Float(f)] => Ok(Value::Float(f.ceil())),
+            [Value::Null] => Ok(Value::Null),
+            [v] => Err(format!(
+                "Type mismatch: expected Integer, Float, or Null but was {}",
+                v.name()
+            )),
+            args => Err(format!(
+                "Received {} arguments to function 'ceil', expected at most 1",
+                args.len()
+            )),
         }
     }
 
     fn e(
         _: &Graph,
         _: &mut Self,
-        args: Value,
+        args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args {
-            Value::List(arr) => match arr.as_slice() {
-                [] => Ok(Value::Float(std::f64::consts::E)),
-                args => Err(format!(
-                    "Received {} arguments to function 'e', expected at most 0",
-                    args.len()
-                )),
-            },
-            _ => unreachable!(),
+        match args.as_slice() {
+            [] => Ok(Value::Float(std::f64::consts::E)),
+            args => Err(format!(
+                "Received {} arguments to function 'e', expected at most 0",
+                args.len()
+            )),
         }
     }
 
     fn exp(
         _: &Graph,
         _: &mut Self,
-        args: Value,
+        args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args {
-            Value::List(arr) => match arr.as_slice() {
-                [Value::Int(n)] => Ok(Value::Float((*n as f64).exp())),
-                [Value::Float(f)] => Ok(Value::Float(f.exp())),
-                [Value::Null] => Ok(Value::Null),
-                [v] => Err(format!(
-                    "Type mismatch: expected Integer, Float, or Null but was {}",
-                    v.name()
-                )),
-                args => Err(format!(
-                    "Received {} arguments to function 'exp', expected at most 1",
-                    args.len()
-                )),
-            },
-            _ => unreachable!(),
+        match args.as_slice() {
+            [Value::Int(n)] => Ok(Value::Float((*n as f64).exp())),
+            [Value::Float(f)] => Ok(Value::Float(f.exp())),
+            [Value::Null] => Ok(Value::Null),
+            [v] => Err(format!(
+                "Type mismatch: expected Integer, Float, or Null but was {}",
+                v.name()
+            )),
+            args => Err(format!(
+                "Received {} arguments to function 'exp', expected at most 1",
+                args.len()
+            )),
         }
     }
 
     fn floor(
         _: &Graph,
         _: &mut Self,
-        args: Value,
+        args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args {
-            Value::List(arr) => match arr.as_slice() {
-                [Value::Int(n)] => Ok(Value::Int(*n)),
-                [Value::Float(f)] => Ok(Value::Float(f.floor())),
-                [Value::Null] => Ok(Value::Null),
-                [v] => Err(format!(
-                    "Type mismatch: expected Integer, Float, or Null but was {}",
-                    v.name()
-                )),
-                args => Err(format!(
-                    "Received {} arguments to function 'floor', expected at most 1",
-                    args.len()
-                )),
-            },
-            _ => unreachable!(),
+        match args.as_slice() {
+            [Value::Int(n)] => Ok(Value::Int(*n)),
+            [Value::Float(f)] => Ok(Value::Float(f.floor())),
+            [Value::Null] => Ok(Value::Null),
+            [v] => Err(format!(
+                "Type mismatch: expected Integer, Float, or Null but was {}",
+                v.name()
+            )),
+            args => Err(format!(
+                "Received {} arguments to function 'floor', expected at most 1",
+                args.len()
+            )),
         }
     }
 
     fn log(
         _: &Graph,
         _: &mut Self,
-        args: Value,
+        args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args {
-            Value::List(arr) => match arr.as_slice() {
-                [Value::Int(n)] => Ok(Value::Float((*n as f64).ln())),
-                [Value::Float(f)] => Ok(Value::Float(f.ln())),
-                [Value::Null] => Ok(Value::Null),
-                [v] => Err(format!(
-                    "Type mismatch: expected Integer, Float, or Null but was {}",
-                    v.name()
-                )),
-                args => Err(format!(
-                    "Received {} arguments to function 'log', expected at most 1",
-                    args.len()
-                )),
-            },
-            _ => unreachable!(),
+        match args.as_slice() {
+            [Value::Int(n)] => Ok(Value::Float((*n as f64).ln())),
+            [Value::Float(f)] => Ok(Value::Float(f.ln())),
+            [Value::Null] => Ok(Value::Null),
+            [v] => Err(format!(
+                "Type mismatch: expected Integer, Float, or Null but was {}",
+                v.name()
+            )),
+            args => Err(format!(
+                "Received {} arguments to function 'log', expected at most 1",
+                args.len()
+            )),
         }
     }
 
     fn log10(
         _: &Graph,
         _: &mut Self,
-        args: Value,
+        args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args {
-            Value::List(arr) => match arr.as_slice() {
-                [Value::Int(n)] => Ok(Value::Float((*n as f64).log10())),
-                [Value::Float(f)] => Ok(Value::Float(f.log10())),
-                [Value::Null] => Ok(Value::Null),
-                [v] => Err(format!(
-                    "Type mismatch: expected Integer, Float, or Null but was {}",
-                    v.name()
-                )),
-                args => Err(format!(
-                    "Received {} arguments to function 'log10', expected at most 1",
-                    args.len()
-                )),
-            },
-            _ => unreachable!(),
+        match args.as_slice() {
+            [Value::Int(n)] => Ok(Value::Float((*n as f64).log10())),
+            [Value::Float(f)] => Ok(Value::Float(f.log10())),
+            [Value::Null] => Ok(Value::Null),
+            [v] => Err(format!(
+                "Type mismatch: expected Integer, Float, or Null but was {}",
+                v.name()
+            )),
+            args => Err(format!(
+                "Received {} arguments to function 'log10', expected at most 1",
+                args.len()
+            )),
         }
     }
     fn pow(
         _: &Graph,
         _: &mut Self,
-        args: Value,
+        args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args {
-            Value::List(arr) => match arr.as_slice() {
-                [Value::Int(i1), Value::Int(i2)] => Ok(Value::Float((*i1 as f64).powi(*i2 as i32))),
-                [Value::Float(f1), Value::Float(f2)] => Ok(Value::Float(f1.powf(*f2))),
-                [Value::Int(i1), Value::Float(f1)] => Ok(Value::Float((*i1 as f64).powf(*f1))),
-                [Value::Float(f1), Value::Int(i1)] => Ok(Value::Float(f1.powi(*i1 as i32))),
-                [Value::Null, _] | [_, Value::Null] => Ok(Value::Null),
-                [v, Value::Int(_)] | [v, Value::Float(_)] => Err(format!(
-                    "Type mismatch: expected Integer, Float, or Null but was {}",
-                    v.name()
-                )),
-                [Value::Int(_), v] | [Value::Float(_), v] => Err(format!(
-                    "Type mismatch: expected Integer, Float, or Null but was {}",
-                    v.name()
-                )),
-                args => Err(format!(
-                    "Received {} arguments to function 'pow', expected at least 2",
-                    args.len()
-                )),
-            },
-            _ => unreachable!(),
+        match args.as_slice() {
+            [Value::Int(i1), Value::Int(i2)] => Ok(Value::Float((*i1 as f64).powi(*i2 as i32))),
+            [Value::Float(f1), Value::Float(f2)] => Ok(Value::Float(f1.powf(*f2))),
+            [Value::Int(i1), Value::Float(f1)] => Ok(Value::Float((*i1 as f64).powf(*f1))),
+            [Value::Float(f1), Value::Int(i1)] => Ok(Value::Float(f1.powi(*i1 as i32))),
+            [Value::Null, _] | [_, Value::Null] => Ok(Value::Null),
+            [v, Value::Int(_)] | [v, Value::Float(_)] => Err(format!(
+                "Type mismatch: expected Integer, Float, or Null but was {}",
+                v.name()
+            )),
+            [Value::Int(_), v] | [Value::Float(_), v] => Err(format!(
+                "Type mismatch: expected Integer, Float, or Null but was {}",
+                v.name()
+            )),
+            args => Err(format!(
+                "Received {} arguments to function 'pow', expected at least 2",
+                args.len()
+            )),
         }
     }
 
     fn rand(
         _: &Graph,
         _: &mut Self,
-        args: Value,
+        args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args {
-            Value::List(arr) => match arr.as_slice() {
-                [] => {
-                    let mut rng = rand::rng();
-                    Ok(Value::Float(rng.random_range(0.0..1.0)))
-                }
-                args => Err(format!(
-                    "Received {} arguments to function 'rand', expected at most 0",
-                    args.len()
-                )),
-            },
-            _ => unreachable!(),
+        match args.as_slice() {
+            [] => {
+                let mut rng = rand::rng();
+                Ok(Value::Float(rng.random_range(0.0..1.0)))
+            }
+            args => Err(format!(
+                "Received {} arguments to function 'rand', expected at most 0",
+                args.len()
+            )),
         }
     }
 
     fn round(
         _: &Graph,
         _: &mut Self,
-        args: Value,
+        args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args {
-            Value::List(arr) => match arr.as_slice() {
-                [Value::Int(n)] => Ok(Value::Int(*n)),
-                [Value::Float(f)] => Ok(Value::Float(f.round())),
-                [Value::Null] => Ok(Value::Null),
-                [v] => Err(format!(
-                    "Type mismatch: expected Integer, Float, or Null but was {}",
-                    v.name()
-                )),
-                args => Err(format!(
-                    "Received {} arguments to function 'round', expected at most 1",
-                    args.len()
-                )),
-            },
-            _ => unreachable!(),
+        match args.as_slice() {
+            [Value::Int(n)] => Ok(Value::Int(*n)),
+            [Value::Float(f)] => Ok(Value::Float(f.round())),
+            [Value::Null] => Ok(Value::Null),
+            [v] => Err(format!(
+                "Type mismatch: expected Integer, Float, or Null but was {}",
+                v.name()
+            )),
+            args => Err(format!(
+                "Received {} arguments to function 'round', expected at most 1",
+                args.len()
+            )),
         }
     }
 
     fn sign(
         _: &Graph,
         _: &mut Self,
-        args: Value,
+        args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args {
-            Value::List(arr) => match arr.as_slice() {
-                [Value::Int(n)] => Ok(Value::Int(n.signum())),
-                [Value::Float(f)] => Ok(if *f == 0.0 {
-                    Value::Int(0)
-                } else {
-                    Value::Float(f.signum().round())
-                }),
-                [Value::Null] => Ok(Value::Null),
-                [v] => Err(format!(
-                    "Type mismatch: expected Integer, Float, or Null but was {}",
-                    v.name()
-                )),
-                args => Err(format!(
-                    "Received {} arguments to function 'sign', expected at most 1",
-                    args.len()
-                )),
-            },
-            _ => unreachable!(),
+        match args.as_slice() {
+            [Value::Int(n)] => Ok(Value::Int(n.signum())),
+            [Value::Float(f)] => Ok(if *f == 0.0 {
+                Value::Int(0)
+            } else {
+                Value::Float(f.signum().round())
+            }),
+            [Value::Null] => Ok(Value::Null),
+            [v] => Err(format!(
+                "Type mismatch: expected Integer, Float, or Null but was {}",
+                v.name()
+            )),
+            args => Err(format!(
+                "Received {} arguments to function 'sign', expected at most 1",
+                args.len()
+            )),
         }
     }
 
     fn sqrt(
         _: &Graph,
         _: &mut Self,
-        args: Value,
+        args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args {
-            Value::List(arr) => match arr.as_slice() {
-                [Value::Int(n)] => {
-                    if *n < 0 {
-                        Ok(Value::Float(f64::NAN))
-                    } else {
-                        Ok(Value::Float((*n as f64).sqrt()))
-                    }
+        match args.as_slice() {
+            [Value::Int(n)] => {
+                if *n < 0 {
+                    Ok(Value::Float(f64::NAN))
+                } else {
+                    Ok(Value::Float((*n as f64).sqrt()))
                 }
-                [Value::Float(f)] => {
-                    if *f > 0f64 {
-                        Ok(Value::Float(f.sqrt()))
-                    } else {
-                        Ok(Value::Float(f64::NAN))
-                    }
+            }
+            [Value::Float(f)] => {
+                if *f > 0f64 {
+                    Ok(Value::Float(f.sqrt()))
+                } else {
+                    Ok(Value::Float(f64::NAN))
                 }
-                [Value::Null] => Ok(Value::Null),
-                [v] => Err(format!(
-                    "Type mismatch: expected Integer, Float, or Null but was {}",
-                    v.name()
-                )),
-                args => Err(format!(
-                    "Received {} arguments to function 'sqrt', expected at most 1",
-                    args.len()
-                )),
-            },
-            _ => unreachable!(),
+            }
+            [Value::Null] => Ok(Value::Null),
+            [v] => Err(format!(
+                "Type mismatch: expected Integer, Float, or Null but was {}",
+                v.name()
+            )),
+            args => Err(format!(
+                "Received {} arguments to function 'sqrt', expected at most 1",
+                args.len()
+            )),
         }
     }
 
@@ -1102,20 +986,17 @@ impl Runtime {
     fn internal_starts_with(
         _: &Graph,
         _: &mut Self,
-        args: Value,
+        args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args {
-            Value::List(arr) => match arr.as_slice() {
-                [Value::String(s), Value::String(prefix)] => Ok(Value::Bool(s.starts_with(prefix))),
+        match args.as_slice() {
+            [Value::String(s), Value::String(prefix)] => Ok(Value::Bool(s.starts_with(prefix))),
 
-                [_, Value::Null] | [Value::Null, _] => Ok(Value::Null),
-                [arg1, arg2] => Err(format!(
-                    "Type mismatch: expected String or Null but was ({}, {})",
-                    arg1.name(),
-                    arg2.name()
-                )),
-                _ => unreachable!(),
-            },
+            [_, Value::Null] | [Value::Null, _] => Ok(Value::Null),
+            [arg1, arg2] => Err(format!(
+                "Type mismatch: expected String or Null but was ({}, {})",
+                arg1.name(),
+                arg2.name()
+            )),
             _ => unreachable!(),
         }
     }
@@ -1123,19 +1004,16 @@ impl Runtime {
     fn internal_ends_with(
         _: &Graph,
         _: &mut Self,
-        args: Value,
+        args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args {
-            Value::List(arr) => match arr.as_slice() {
-                [Value::String(s), Value::String(suffix)] => Ok(Value::Bool(s.ends_with(suffix))),
-                [_, Value::Null] | [Value::Null, _] => Ok(Value::Null),
-                [arg1, arg2] => Err(format!(
-                    "Type mismatch: Type mismatch: expected String or Null but was ({}, {})",
-                    arg1.name(),
-                    arg2.name()
-                )),
-                _ => unreachable!(),
-            },
+        match args.as_slice() {
+            [Value::String(s), Value::String(suffix)] => Ok(Value::Bool(s.ends_with(suffix))),
+            [_, Value::Null] | [Value::Null, _] => Ok(Value::Null),
+            [arg1, arg2] => Err(format!(
+                "Type mismatch: Type mismatch: expected String or Null but was ({}, {})",
+                arg1.name(),
+                arg2.name()
+            )),
             _ => unreachable!(),
         }
     }
@@ -1143,21 +1021,16 @@ impl Runtime {
     fn internal_contains(
         _: &Graph,
         _: &mut Self,
-        args: Value,
+        args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args {
-            Value::List(arr) => match arr.as_slice() {
-                [Value::String(s), Value::String(substring)] => {
-                    Ok(Value::Bool(s.contains(substring)))
-                }
-                [_, Value::Null] | [Value::Null, _] => Ok(Value::Null),
-                [arg1, arg2] => Err(format!(
-                    "Type mismatch: expected String or Null but was ({}, {})",
-                    arg1.name(),
-                    arg2.name()
-                )),
-                _ => unreachable!(),
-            },
+        match args.as_slice() {
+            [Value::String(s), Value::String(substring)] => Ok(Value::Bool(s.contains(substring))),
+            [_, Value::Null] | [Value::Null, _] => Ok(Value::Null),
+            [arg1, arg2] => Err(format!(
+                "Type mismatch: expected String or Null but was ({}, {})",
+                arg1.name(),
+                arg2.name()
+            )),
             _ => unreachable!(),
         }
     }
@@ -1165,26 +1038,23 @@ impl Runtime {
     fn internal_regex_matches(
         _: &Graph,
         _: &mut Self,
-        args: Value,
+        args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args {
-            Value::List(arr) => match arr.as_slice() {
-                [Value::String(s), Value::String(pattern)] => {
-                    // Compile the regex pattern
-                    match regex::Regex::new(pattern) {
-                        Ok(re) => Ok(Value::Bool(re.is_match(s))),
-                        Err(e) => Err(format!("Invalid regex pattern: {e}")),
-                    }
+        match args.as_slice() {
+            [Value::String(s), Value::String(pattern)] => {
+                // Compile the regex pattern
+                match regex::Regex::new(pattern) {
+                    Ok(re) => Ok(Value::Bool(re.is_match(s))),
+                    Err(e) => Err(format!("Invalid regex pattern: {e}")),
                 }
-                [Value::Null, _] | [_, Value::Null] => Ok(Value::Null),
-                [arg1, arg2] => Err(format!(
-                    "Type mismatch: expected (String, String) or null, but was: ({}, {})",
-                    arg1.name(),
-                    arg2.name()
-                )),
-                _ => Err("Expected two arguments for regex matching".to_string()),
-            },
-            _ => unreachable!(),
+            }
+            [Value::Null, _] | [_, Value::Null] => Ok(Value::Null),
+            [arg1, arg2] => Err(format!(
+                "Type mismatch: expected (String, String) or null, but was: ({}, {})",
+                arg1.name(),
+                arg2.name()
+            )),
+            _ => Err("Expected two arguments for regex matching".to_string()),
         }
     }
 
@@ -1192,7 +1062,7 @@ impl Runtime {
     fn db_labels(
         g: &Graph,
         _runtime: &mut Self,
-        _args: Value,
+        _args: Vec<Value>,
     ) -> Result<Value, String> {
         Ok(Value::List(
             g.get_labels()
@@ -1205,7 +1075,7 @@ impl Runtime {
     fn db_types(
         g: &Graph,
         _runtime: &mut Self,
-        _args: Value,
+        _args: Vec<Value>,
     ) -> Result<Value, String> {
         Ok(Value::List(
             g.get_types()
@@ -1218,7 +1088,7 @@ impl Runtime {
     fn db_properties(
         g: &Graph,
         _runtime: &mut Self,
-        _args: Value,
+        _args: Vec<Value>,
     ) -> Result<Value, String> {
         Ok(Value::List(
             g.get_properties()
@@ -1471,7 +1341,7 @@ pub fn ro_run(
                 .collect::<Result<Vec<_>, _>>()?;
             #[allow(clippy::option_if_let_else)]
             if let Some(func) = runtime.read_functions.get(name) {
-                func(g, runtime, Value::List(args))
+                func(g, runtime, args)
             } else {
                 Err(format!("Function {name} not found"))
             }
@@ -1766,9 +1636,9 @@ pub fn run(
                 .map(|ir| run(vars, g, runtime, result_fn, ir))
                 .collect::<Result<Vec<_>, _>>()?;
             if let Some(func) = runtime.write_functions.get(name) {
-                func(g, runtime, Value::List(args))
+                func(g, runtime, args)
             } else if let Some(func) = runtime.read_functions.get(name) {
-                func(g, runtime, Value::List(args))
+                func(g, runtime, args)
             } else {
                 Err(format!("Function {name} not found"))
             }
