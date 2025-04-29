@@ -546,13 +546,7 @@ impl<'a> Parser<'a> {
     fn parse_call_clause(&mut self) -> Result<QueryIR, String> {
         let ident = self.parse_dotted_ident()?;
         match_token!(self.lexer, LParen);
-        if self.lexer.current() == Token::RParen {
-            self.lexer.next();
-            return Ok(QueryIR::Call(ident, vec![]));
-        }
-        let exprs = self.parse_exprs()?;
-        match_token!(self.lexer, RParen);
-        Ok(QueryIR::Call(ident, exprs))
+        Ok(QueryIR::Call(ident, self.parse_exprs(Some(Token::RParen))?))
     }
 
     fn parse_dotted_ident(&mut self) -> Result<String, String> {
@@ -582,7 +576,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_delete_clause(&mut self) -> Result<QueryIR, String> {
-        Ok(QueryIR::Delete(self.parse_exprs()?))
+        Ok(QueryIR::Delete(self.parse_exprs(None)?))
     }
 
     fn parse_where_clause(&mut self) -> Result<QueryIR, String> {
@@ -685,9 +679,10 @@ impl<'a> Parser<'a> {
                 if self.lexer.current() == Token::LParen {
                     self.lexer.next();
 
-                    let exprs = self.parse_exprs()?;
-                    match_token!(self.lexer, RParen);
-                    return Ok(QueryExprIR::FuncInvocation(namespace_and_function, exprs));
+                    return Ok(QueryExprIR::FuncInvocation(
+                        namespace_and_function,
+                        self.parse_exprs(Some(Token::RParen))?,
+                    ));
                 }
                 self.lexer.set_pos(pos);
                 Ok(QueryExprIR::Ident(ident))
@@ -718,13 +713,7 @@ impl<'a> Parser<'a> {
             }
             Token::LBrace => {
                 self.lexer.next();
-                if self.lexer.current() == Token::RBrace {
-                    self.lexer.next();
-                    return Ok(QueryExprIR::List(vec![]));
-                }
-                let exprs = self.parse_exprs()?;
-                match_token!(self.lexer, RBrace);
-                Ok(QueryExprIR::List(exprs))
+                Ok(QueryExprIR::List(self.parse_exprs(Some(Token::RBrace))?))
             }
             Token::LBracket => {
                 let attrs = self.parse_map()?;
@@ -748,7 +737,10 @@ impl<'a> Parser<'a> {
         while self.lexer.current() == Token::Dot {
             self.lexer.next();
             let ident = self.parse_ident()?;
-            expr = QueryExprIR::Property(Box::new(expr), ident);
+            expr = QueryExprIR::FuncInvocation(
+                "property".to_string(),
+                vec![expr, QueryExprIR::String(ident)],
+            );
         }
 
         Ok(expr)
@@ -832,23 +824,35 @@ impl<'a> Parser<'a> {
                 self.lexer.next();
                 match_token!(self.lexer, With);
                 let rhs = self.parse_add_sub_expr()?;
-                Ok(QueryExprIR::StartsWith(Box::new((lhs, rhs))))
+                Ok(QueryExprIR::FuncInvocation(
+                    "@starts_with".to_string(),
+                    vec![lhs, rhs],
+                ))
             }
             Token::Ends => {
                 self.lexer.next();
                 match_token!(self.lexer, With);
                 let rhs = self.parse_add_sub_expr()?;
-                Ok(QueryExprIR::EndsWith(Box::new((lhs, rhs))))
+                Ok(QueryExprIR::FuncInvocation(
+                    "@ends_with".to_string(),
+                    vec![lhs, rhs],
+                ))
             }
             Token::Contains => {
                 self.lexer.next();
                 let rhs = self.parse_add_sub_expr()?;
-                Ok(QueryExprIR::Contains(Box::new((lhs, rhs))))
+                Ok(QueryExprIR::FuncInvocation(
+                    "@contains".to_string(),
+                    vec![lhs, rhs],
+                ))
             }
             Token::RegexMatches => {
                 self.lexer.next();
                 let rhs = self.parse_add_sub_expr()?;
-                Ok(QueryExprIR::RegexMatches(Box::new((lhs, rhs))))
+                Ok(QueryExprIR::FuncInvocation(
+                    "@regex_matches".to_string(),
+                    vec![lhs, rhs],
+                ))
             }
             _ => Ok(lhs),
         }
@@ -921,15 +925,31 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_exprs(&mut self) -> Result<Vec<QueryExprIR>, String> {
+    fn parse_exprs(
+        &mut self,
+        end_token: Option<Token>,
+    ) -> Result<Vec<QueryExprIR>, String> {
         let mut exprs = Vec::new();
-        loop {
+        while end_token
+            .as_ref()
+            .is_none_or(|v| self.lexer.current() != *v)
+        {
             exprs.push(self.parse_expr()?);
             match self.lexer.current() {
                 Token::Comma => self.lexer.next(),
-                _ => return Ok(exprs),
+                _ => break,
             }
         }
+        if let Some(token) = end_token {
+            if self.lexer.current() == token {
+                self.lexer.next();
+            } else {
+                return Err(self
+                    .lexer
+                    .format_error(&format!("Unexpected token {token:?}")));
+            }
+        }
+        Ok(exprs)
     }
 
     fn parse_node_pattern(&mut self) -> Result<NodePattern, String> {
