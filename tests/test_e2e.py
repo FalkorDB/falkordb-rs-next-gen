@@ -3,6 +3,7 @@ import platform
 import subprocess
 
 import itertools
+import math
 import pytest
 from falkordb import FalkorDB, Node, Edge
 from redis import Redis, ResponseError
@@ -52,7 +53,9 @@ def query(query: str, params=None, write: bool = False):
     else:
         write_res = g.query(query, params)
         read_res = g.ro_query(query, params)
-        assert write_res.result_set == read_res.result_set
+        assert (write_res.result_set == read_res.result_set
+                or math.isnan(write_res.result_set[0][0])
+                or math.isnan(read_res.result_set[0][0]))
         return write_res
 
 
@@ -1386,3 +1389,35 @@ def test_floor():
         assert False, "Expected an error"
     except ResponseError as e:
         assert "Received 2 arguments to function 'floor', expected at most 1" in str(e)
+
+
+## Returns the natural logarithm of a numeric value
+## Returns nan when expr evaluates to a negative numeric value, -inf when expr evaluates to 0, and null when expr evaluates to null
+def test_log():
+    res = query("RETURN log(1) AS name")
+    assert res.result_set == [[0]]
+
+    res = query("RETURN log(0) AS name")
+    assert res.result_set == [[float('-inf')]]
+
+    res = query("RETURN log(-1) AS name")
+    v = res.result_set[0][0]
+    print(f"v: {v}")
+    assert math.isnan(res.result_set[0][0])
+
+    res = query("RETURN log(null) AS name")
+    assert res.result_set == [[None]]
+
+    for value, name in [(True, 'Boolean'), (False, 'Boolean'), ({}, 'Map'), ([], 'List')]:
+        try:
+            query(f"RETURN log({value}) AS r")
+            assert False, "Expected an error"
+        except ResponseError as e:
+            assert f"Type mismatch: expected Integer, Float, or Null but was {name}" in str(e)
+
+    # wrong number of args
+    try:
+        query("RETURN log(1, 2) AS name")
+        assert False, "Expected an error"
+    except ResponseError as e:
+        assert "Received 2 arguments to function 'log', expected at most 1" in str(e)
