@@ -62,6 +62,7 @@ impl Runtime {
         read_functions.insert("exp".to_string(), Self::exp);
         read_functions.insert("floor".to_string(), Self::floor);
         read_functions.insert("log".to_string(), Self::log);
+        read_functions.insert("log10".to_string(), Self::log10);
 
         // internal functions are not accessible from Cypher
         read_functions.insert("@starts_with".to_string(), Self::internal_starts_with);
@@ -925,6 +926,29 @@ impl Runtime {
                 )),
                 args => Err(format!(
                     "Received {} arguments to function 'log', expected at most 1",
+                    args.len()
+                )),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    fn log10(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [Value::Int(n)] => Ok(Value::Float((*n as f64).log10())),
+                [Value::Float(f)] => Ok(Value::Float(f.log10())),
+                [Value::Null] => Ok(Value::Null),
+                [v] => Err(format!(
+                    "Type mismatch: expected Integer, Float, or Null but was {}",
+                    v.name()
+                )),
+                args => Err(format!(
+                    "Received {} arguments to function 'log10', expected at most 1",
                     args.len()
                 )),
             },

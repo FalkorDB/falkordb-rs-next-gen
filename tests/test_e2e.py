@@ -1391,8 +1391,6 @@ def test_floor():
         assert "Received 2 arguments to function 'floor', expected at most 1" in str(e)
 
 
-## Returns the natural logarithm of a numeric value
-## Returns nan when expr evaluates to a negative numeric value, -inf when expr evaluates to 0, and null when expr evaluates to null
 def test_log():
     res = query("RETURN log(1) AS name")
     assert res.result_set == [[0]]
@@ -1402,7 +1400,6 @@ def test_log():
 
     res = query("RETURN log(-1) AS name")
     v = res.result_set[0][0]
-    print(f"v: {v}")
     assert math.isnan(res.result_set[0][0])
 
     res = query("RETURN log(null) AS name")
@@ -1421,3 +1418,32 @@ def test_log():
         assert False, "Expected an error"
     except ResponseError as e:
         assert "Received 2 arguments to function 'log', expected at most 1" in str(e)
+
+
+def test_log10():
+    res = query("RETURN log10(1) AS name")
+    assert res.result_set == [[0]]
+
+    res = query("RETURN log10(0) AS name")
+    assert res.result_set == [[float('-inf')]]
+
+    res = query("RETURN log10(-1) AS name")
+    v = res.result_set[0][0]
+    assert math.isnan(res.result_set[0][0])
+
+    res = query("RETURN log10(null) AS name")
+    assert res.result_set == [[None]]
+
+    for value, name in [(True, 'Boolean'), (False, 'Boolean'), ({}, 'Map'), ([], 'List')]:
+        try:
+            query(f"RETURN log10({value}) AS r")
+            assert False, "Expected an error"
+        except ResponseError as e:
+            assert f"Type mismatch: expected Integer, Float, or Null but was {name}" in str(e)
+
+    # wrong number of args
+    try:
+        query("RETURN log10(1, 2) AS name")
+        assert False, "Expected an error"
+    except ResponseError as e:
+        assert "Received 2 arguments to function 'log10', expected at most 1" in str(e)
