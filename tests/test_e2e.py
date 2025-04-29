@@ -1570,3 +1570,31 @@ def test_sign():
             assert False, "Expected an error"
         except ResponseError as e:
             assert f"Type mismatch: expected Integer, Float, or Null but was {name}" in str(e)
+
+
+def test_sqrt():
+    res = query("RETURN sqrt(4) AS result")
+    assert res.result_set == [[2]]
+
+    res = query("RETURN sqrt(0) AS result")
+    assert res.result_set == [[0]]
+
+    res = query("RETURN sqrt(-1) AS result")
+    assert math.isnan(res.result_set[0][0])
+
+    res = query("RETURN sqrt(null) AS result")
+    assert res.result_set == [[None]]
+
+    for value, name in [(True, 'Boolean'), (False, 'Boolean'), ({}, 'Map'), ([], 'List')]:
+        try:
+            query(f"RETURN sqrt({value}) AS result")
+            assert False, "Expected an error"
+        except ResponseError as e:
+            assert f"Type mismatch: expected Integer, Float, or Null but was {name}" in str(e)
+
+    # wrong number of args
+    try:
+        query("RETURN sqrt(1, 2) AS result")
+        assert False, "Expected an error"
+    except ResponseError as e:
+        assert "Received 2 arguments to function 'sqrt', expected at most 1" in str(e)

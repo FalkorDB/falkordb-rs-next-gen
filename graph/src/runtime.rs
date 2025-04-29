@@ -68,6 +68,7 @@ impl Runtime {
         read_functions.insert("rand".to_string(), Self::rand);
         read_functions.insert("round".to_string(), Self::round);
         read_functions.insert("sign".to_string(), Self::sign);
+        read_functions.insert("sqrt".to_string(), Self::sqrt);
 
         // internal functions are not accessible from Cypher
         read_functions.insert("@starts_with".to_string(), Self::internal_starts_with);
@@ -1052,6 +1053,41 @@ impl Runtime {
                 )),
                 args => Err(format!(
                     "Received {} arguments to function 'sign', expected at most 1",
+                    args.len()
+                )),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    fn sqrt(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [Value::Int(n)] => {
+                    if *n < 0 {
+                        Ok(Value::Float(f64::NAN))
+                    } else {
+                        Ok(Value::Float((*n as f64).sqrt()))
+                    }
+                }
+                [Value::Float(f)] => {
+                    if *f > 0f64 {
+                        Ok(Value::Float(f.sqrt()))
+                    } else {
+                        Ok(Value::Float(f64::NAN))
+                    }
+                }
+                [Value::Null] => Ok(Value::Null),
+                [v] => Err(format!(
+                    "Type mismatch: expected Integer, Float, or Null but was {}",
+                    v.name()
+                )),
+                args => Err(format!(
+                    "Received {} arguments to function 'sqrt', expected at most 1",
                     args.len()
                 )),
             },
