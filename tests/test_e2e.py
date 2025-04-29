@@ -1262,6 +1262,9 @@ def test_abs():
     res = query("RETURN abs(1) AS name")
     assert res.result_set == [[1]]
 
+    res = query("RETURN abs(1.0) AS name")
+    assert res.result_set == [[1.0]]
+
     res = query("RETURN abs(-1) AS name")
     assert res.result_set == [[1]]
 
@@ -1289,6 +1292,9 @@ def test_abs():
 def test_ceil():
     res = query("RETURN ceil(1.1) AS name")
     assert res.result_set == [[2]]
+
+    res = query("RETURN ceil(1) AS name")
+    assert res.result_set == [[1]]
 
     res = query("RETURN ceil(1.0) AS name")
     assert res.result_set == [[1]]
@@ -1364,6 +1370,9 @@ def test_floor():
     res = query("RETURN floor(1.1) AS name")
     assert res.result_set == [[1]]
 
+    res = query("RETURN floor(1) AS name")
+    assert res.result_set == [[1]]
+
     res = query("RETURN floor(1.0) AS name")
     assert res.result_set == [[1]]
 
@@ -1395,6 +1404,9 @@ def test_log():
     res = query("RETURN log(1) AS name")
     assert res.result_set == [[0]]
 
+    res = query("RETURN log(1.0) AS name")
+    assert res.result_set == [[0]]
+
     res = query("RETURN log(0) AS name")
     assert res.result_set == [[float('-inf')]]
 
@@ -1421,6 +1433,9 @@ def test_log():
 
 def test_log10():
     res = query("RETURN log10(1) AS name")
+    assert res.result_set == [[0]]
+
+    res = query("RETURN log10(1.0) AS name")
     assert res.result_set == [[0]]
 
     res = query("RETURN log10(0) AS name")
@@ -1450,6 +1465,15 @@ def test_log10():
 def test_pow():
     res = query("RETURN pow(2, 3) AS name")
     assert res.result_set == [[8]]
+
+    res = query("RETURN pow(2.0, 3) AS name")
+    assert res.result_set == [[8.0]]
+
+    res = query("RETURN pow(2.0, 3.0) AS name")
+    assert res.result_set == [[8.0]]
+
+    res = query("RETURN pow(2, 3.0) AS name")
+    assert res.result_set == [[8.0]]
 
     res = query("RETURN pow(2, -3) AS name")
     assert res.result_set == [[0.125]]
@@ -1507,6 +1531,9 @@ def test_rand():
 
 
 def test_round():
+    res = query("RETURN round(1) AS name")
+    assert res.result_set == [[1]]
+
     res = query("RETURN round(1.1) AS name")
     assert res.result_set == [[1]]
 
@@ -1570,16 +1597,28 @@ def test_sign():
             assert False, "Expected an error"
         except ResponseError as e:
             assert f"Type mismatch: expected Integer, Float, or Null but was {name}" in str(e)
+    # wrong number of args
+    try:
+        query("RETURN sign(1, 2) AS result")
+        assert False, "Expected an error"
+    except ResponseError as e:
+        assert "Received 2 arguments to function 'sign', expected at most 1" in str(e)
 
 
 def test_sqrt():
     res = query("RETURN sqrt(4) AS result")
     assert res.result_set == [[2]]
 
+    res = query("RETURN sqrt(4.0) AS result")
+    assert res.result_set == [[2.0]]
+
     res = query("RETURN sqrt(0) AS result")
     assert res.result_set == [[0]]
 
     res = query("RETURN sqrt(-1) AS result")
+    assert math.isnan(res.result_set[0][0])
+
+    res = query("RETURN sqrt(-1.0) AS result")
     assert math.isnan(res.result_set[0][0])
 
     res = query("RETURN sqrt(null) AS result")
