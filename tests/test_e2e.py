@@ -1491,3 +1491,16 @@ def test_pow():
         assert False, "Expected an error"
     except ResponseError as e:
         assert "Received 1 arguments to function 'pow', expected at least 2" in str(e)
+
+
+def test_rand():
+    res = query("RETURN rand() AS name", write=True)
+    assert res.result_set[0][0] >= 0.0
+    assert res.result_set[0][0] < 1.0
+
+    # wrong number of args
+    try:
+        query("RETURN rand(1) AS name")
+        assert False, "Expected an error"
+    except ResponseError as e:
+        assert "Received 1 arguments to function 'rand', expected at most 0" in str(e)

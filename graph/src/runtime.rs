@@ -1,6 +1,7 @@
 use crate::{
     ast::QueryExprIR, graph::Graph, matrix::Iter, planner::IR, value::Contains, value::Value,
 };
+use rand::Rng;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
@@ -64,6 +65,7 @@ impl Runtime {
         read_functions.insert("log".to_string(), Self::log);
         read_functions.insert("log10".to_string(), Self::log10);
         read_functions.insert("pow".to_string(), Self::pow);
+        read_functions.insert("rand".to_string(), Self::rand);
 
         // internal functions are not accessible from Cypher
         read_functions.insert("@starts_with".to_string(), Self::internal_starts_with);
@@ -978,6 +980,26 @@ impl Runtime {
                 )),
                 args => Err(format!(
                     "Received {} arguments to function 'pow', expected at least 2",
+                    args.len()
+                )),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    fn rand(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [] => {
+                    let mut rng = rand::rng();
+                    Ok(Value::Float(rng.random_range(0.0..1.0)))
+                }
+                args => Err(format!(
+                    "Received {} arguments to function 'rand', expected at most 0",
                     args.len()
                 )),
             },
