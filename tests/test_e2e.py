@@ -1399,7 +1399,6 @@ def test_log():
     assert res.result_set == [[float('-inf')]]
 
     res = query("RETURN log(-1) AS name")
-    v = res.result_set[0][0]
     assert math.isnan(res.result_set[0][0])
 
     res = query("RETURN log(null) AS name")
@@ -1428,7 +1427,6 @@ def test_log10():
     assert res.result_set == [[float('-inf')]]
 
     res = query("RETURN log10(-1) AS name")
-    v = res.result_set[0][0]
     assert math.isnan(res.result_set[0][0])
 
     res = query("RETURN log10(null) AS name")
