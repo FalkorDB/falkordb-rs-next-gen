@@ -1447,3 +1447,49 @@ def test_log10():
         assert False, "Expected an error"
     except ResponseError as e:
         assert "Received 2 arguments to function 'log10', expected at most 1" in str(e)
+
+
+def test_pow():
+    res = query("RETURN pow(2, 3) AS name")
+    assert res.result_set == [[8]]
+
+    res = query("RETURN pow(2, -3) AS name")
+    assert res.result_set == [[0.125]]
+
+    res = query("RETURN pow(2, 0) AS name")
+    assert res.result_set == [[1]]
+
+    res = query("RETURN pow(-2, 3) AS name")
+    assert res.result_set == [[-8]]
+
+    res = query("RETURN pow(-2, -3) AS name")
+    assert res.result_set == [[-0.125]]
+
+    res = query("RETURN pow(-2, 0) AS name")
+    assert res.result_set == [[1]]
+
+    res = query("RETURN pow(null, 3) AS name")
+    assert res.result_set == [[None]]
+
+    res = query("RETURN pow(3, null) AS name")
+    assert res.result_set == [[None]]
+
+    for value, name in [(True, 'Boolean'), (False, 'Boolean'), ({}, 'Map'), ([], 'List')]:
+        try:
+            query(f"RETURN pow({value}, 3) AS r")
+            assert False, "Expected an error"
+        except ResponseError as e:
+            assert f"Type mismatch: expected Integer, Float, or Null but was {name}" in str(e)
+
+        try:
+            query(f"RETURN pow(2, {value}) AS r")
+            assert False, "Expected an error"
+        except ResponseError as e:
+            assert f"Type mismatch: expected Integer, Float, or Null but was {name}" in str(e)
+
+    # wrong number of args
+    try:
+        query("RETURN pow(1) AS name")
+        assert False, "Expected an error"
+    except ResponseError as e:
+        assert "Received 1 arguments to function 'pow', expected at least 2" in str(e)

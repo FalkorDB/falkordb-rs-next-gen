@@ -63,6 +63,7 @@ impl Runtime {
         read_functions.insert("floor".to_string(), Self::floor);
         read_functions.insert("log".to_string(), Self::log);
         read_functions.insert("log10".to_string(), Self::log10);
+        read_functions.insert("pow".to_string(), Self::pow);
 
         // internal functions are not accessible from Cypher
         read_functions.insert("@starts_with".to_string(), Self::internal_starts_with);
@@ -949,6 +950,34 @@ impl Runtime {
                 )),
                 args => Err(format!(
                     "Received {} arguments to function 'log10', expected at most 1",
+                    args.len()
+                )),
+            },
+            _ => unreachable!(),
+        }
+    }
+    fn pow(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [Value::Int(i1), Value::Int(i2)] => Ok(Value::Float((*i1 as f64).powi(*i2 as i32))),
+                [Value::Float(f1), Value::Float(f2)] => Ok(Value::Float(f1.powf(*f2))),
+                [Value::Int(i1), Value::Float(f1)] => Ok(Value::Float((*i1 as f64).powf(*f1))),
+                [Value::Float(f1), Value::Int(i1)] => Ok(Value::Float(f1.powi(*i1 as i32))),
+                [Value::Null, _] | [_, Value::Null] => Ok(Value::Null),
+                [v, Value::Int(_)] | [v, Value::Float(_)] => Err(format!(
+                    "Type mismatch: expected Integer, Float, or Null but was {}",
+                    v.name()
+                )),
+                [Value::Int(_), v] | [Value::Float(_), v] => Err(format!(
+                    "Type mismatch: expected Integer, Float, or Null but was {}",
+                    v.name()
+                )),
+                args => Err(format!(
+                    "Received {} arguments to function 'pow', expected at least 2",
                     args.len()
                 )),
             },
