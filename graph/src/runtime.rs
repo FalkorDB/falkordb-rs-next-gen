@@ -56,6 +56,10 @@ impl Runtime {
             "string.replaceRegEx".to_string(),
             Self::string_replace_reg_ex,
         );
+        read_functions.insert("abs".to_string(), Self::abs);
+        read_functions.insert("ceil".to_string(), Self::ceil);
+        read_functions.insert("e".to_string(), Self::e);
+        read_functions.insert("exp".to_string(), Self::exp);
 
         // internal functions are not accessible from Cypher
         read_functions.insert("@starts_with".to_string(), Self::internal_starts_with);
@@ -787,6 +791,92 @@ impl Runtime {
                 )),
                 args => Err(format!(
                     "Received {} arguments to function 'string.replaceRegEx', expected at least 3",
+                    args.len()
+                )),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    fn abs(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [Value::Int(n)] => Ok(Value::Int(n.abs())),
+                [Value::Float(f)] => Ok(Value::Float(f.abs())),
+                [Value::Null] => Ok(Value::Null),
+                [v] => Err(format!(
+                    "Type mismatch: expected Integer, Float, or Null but was {}",
+                    v.name()
+                )),
+                args => Err(format!(
+                    "Received {} arguments to function 'abs', expected at most 1",
+                    args.len()
+                )),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    fn ceil(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [Value::Int(n)] => Ok(Value::Int(*n)),
+                [Value::Float(f)] => Ok(Value::Float(f.ceil())),
+                [Value::Null] => Ok(Value::Null),
+                [v] => Err(format!(
+                    "Type mismatch: expected Integer, Float, or Null but was {}",
+                    v.name()
+                )),
+                args => Err(format!(
+                    "Received {} arguments to function 'ceil', expected at most 1",
+                    args.len()
+                )),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    fn e(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [] => Ok(Value::Float(std::f64::consts::E)),
+                args => Err(format!(
+                    "Received {} arguments to function 'e', expected at most 0",
+                    args.len()
+                )),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    fn exp(
+        _: &Graph,
+        _: &mut Self,
+        args: Value,
+    ) -> Result<Value, String> {
+        match args {
+            Value::List(arr) => match arr.as_slice() {
+                [Value::Int(n)] => Ok(Value::Float((*n as f64).exp())),
+                [Value::Float(f)] => Ok(Value::Float(f.exp())),
+                [Value::Null] => Ok(Value::Null),
+                [v] => Err(format!(
+                    "Type mismatch: expected Integer, Float, or Null but was {}",
+                    v.name()
+                )),
+                args => Err(format!(
+                    "Received {} arguments to function 'exp', expected at most 1",
                     args.len()
                 )),
             },

@@ -264,15 +264,7 @@ impl<'a> Lexer<'a> {
         }
 
         // Integer part digits
-        while let Some(&c) = chars.peek() {
-            if c.is_ascii_digit() {
-                chars.next();
-                len += 1;
-                has_digits_before_dot = true;
-            } else {
-                break;
-            }
-        }
+        Lexer::consume_digits(&mut chars, &mut len, &mut has_digits_before_dot);
 
         let mut has_dot = false;
         let mut has_digits_after_dot = false;
@@ -282,16 +274,7 @@ impl<'a> Lexer<'a> {
             has_dot = true;
             chars.next();
             len += 1;
-
-            while let Some(&c) = chars.peek() {
-                if c.is_ascii_digit() {
-                    chars.next();
-                    len += 1;
-                    has_digits_after_dot = true;
-                } else {
-                    break;
-                }
-            }
+            Lexer::consume_digits(&mut chars, &mut len, &mut has_digits_after_dot);
         }
 
         // Exponent part
@@ -370,6 +353,22 @@ impl<'a> Lexer<'a> {
                 |_| (Token::Error(format!("Invalid integer: {number_str}")), len),
                 |i| (Token::Integer(i), len),
             )
+        }
+    }
+
+    fn consume_digits(
+        chars: &mut Peekable<Chars>,
+        len: &mut usize,
+        consume_chars: &mut bool,
+    ) {
+        while let Some(&c) = chars.peek() {
+            if c.is_ascii_digit() {
+                chars.next();
+                *len += 1;
+                *consume_chars = true;
+            } else {
+                break;
+            }
         }
     }
 
@@ -685,6 +684,9 @@ impl<'a> Parser<'a> {
                 if self.lexer.current() == Token::LParen {
                     self.lexer.next();
 
+                    if optional_match_token!(self.lexer, RParen) {
+                        return Ok(QueryExprIR::FuncInvocation(namespace_and_function, vec![]));
+                    }
                     let exprs = self.parse_exprs()?;
                     match_token!(self.lexer, RParen);
                     return Ok(QueryExprIR::FuncInvocation(namespace_and_function, exprs));

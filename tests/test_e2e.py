@@ -287,7 +287,6 @@ def test_list_range():
     assert res.result_set == [[[1, 2, 3]]]
 
 
-
 def test_list_concat():
     res = query("RETURN [1, 10, 100] + [4, 5] AS foo")
     assert res.result_set == [[[1, 10, 100, 4, 5]]]
@@ -1254,3 +1253,105 @@ def test_list_re_replace():
         assert False, "Expected an error"
     except ResponseError as e:
         assert "Invalid regex," in str(e)
+
+
+def test_abs():
+    res = query("RETURN abs(1) AS name")
+    assert res.result_set == [[1]]
+
+    res = query("RETURN abs(-1) AS name")
+    assert res.result_set == [[1]]
+
+    res = query("RETURN abs(0) AS name")
+    assert res.result_set == [[0]]
+
+    res = query("RETURN abs(null) AS name")
+    assert res.result_set == [[None]]
+
+    for value, name in [(True, 'Boolean'), (False, 'Boolean'), ({}, 'Map'), ([], 'List')]:
+        try:
+            query(f"RETURN abs({value}) AS r")
+            assert False, "Expected an error"
+        except ResponseError as e:
+            assert f"Type mismatch: expected Integer, Float, or Null but was {name}" in str(e)
+
+    # wrong number of args
+    try:
+        query("RETURN abs(1, 2) AS name")
+        assert False, "Expected an error"
+    except ResponseError as e:
+        assert "Received 2 arguments to function 'abs', expected at most 1" in str(e)
+
+
+def test_ceil():
+    res = query("RETURN ceil(1.1) AS name")
+    assert res.result_set == [[2]]
+
+    res = query("RETURN ceil(1.0) AS name")
+    assert res.result_set == [[1]]
+
+    res = query("RETURN ceil(-1.1) AS name")
+    assert res.result_set == [[-1]]
+
+    res = query("RETURN ceil(-1.0) AS name")
+    assert res.result_set == [[-1]]
+
+    res = query("RETURN ceil(null) AS name")
+    assert res.result_set == [[None]]
+
+    for value, name in [(True, 'Boolean'), (False, 'Boolean'), ({}, 'Map'), ([], 'List')]:
+        try:
+            query(f"RETURN ceil({value}) AS r")
+            assert False, "Expected an error"
+        except ResponseError as e:
+            assert f"Type mismatch: expected Integer, Float, or Null but was {name}" in str(e)
+
+    # wrong number of args
+    try:
+        query("RETURN ceil(1, 2) AS name")
+        assert False, "Expected an error"
+    except ResponseError as e:
+        assert "Received 2 arguments to function 'ceil', expected at most 1" in str(e)
+
+
+def test_e():
+    res = query("RETURN e() AS name")
+    assert res.result_set == [[2.71828182845905e0]]
+
+    # wrong number of args
+    try:
+        query("RETURN e(1) AS name")
+        assert False, "Expected an error"
+    except ResponseError as e:
+        assert "Received 1 arguments to function 'e', expected at most 0" in str(e)
+
+
+def test_exp():
+    res = query("RETURN exp(1) AS name")
+    assert res.result_set == [[2.71828182845905]]
+
+    res = query("RETURN exp(0) AS name")
+    assert res.result_set == [[1]]
+
+    res = query("RETURN exp(-1) AS name")
+    assert res.result_set == [[0.367879441171442]]
+
+    res = query("RETURN exp(-1.0) AS name")
+    assert res.result_set == [[0.367879441171442]]
+
+    res = query("RETURN exp(null) AS name")
+    assert res.result_set == [[None]]
+
+    for value, name in [(True, 'Boolean'), (False, 'Boolean'), ({}, 'Map'), ([], 'List')]:
+        try:
+            query(f"RETURN exp({value}) AS r")
+            assert False, "Expected an error"
+        except ResponseError as e:
+            assert f"Type mismatch: expected Integer, Float, or Null but was {name}" in str(e)
+
+    # wrong number of args
+    try:
+        query("RETURN exp(1, 2) AS name")
+        assert False, "Expected an error"
+    except ResponseError as e:
+        assert "Received 2 arguments to function 'exp', expected at most 1" in str(e)
