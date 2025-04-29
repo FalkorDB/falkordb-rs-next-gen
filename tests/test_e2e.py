@@ -1535,3 +1535,38 @@ def test_round():
         assert False, "Expected an error"
     except ResponseError as e:
         assert "Received 2 arguments to function 'round', expected at most 1" in str(e)
+
+
+def test_sign():
+    # Test positive numbers
+    res = query("RETURN sign(5) AS result")
+    assert res.result_set == [[1]]
+
+    res = query("RETURN sign(0.1) AS result")
+    assert res.result_set == [[1]]
+
+    # Test zero
+    res = query("RETURN sign(0) AS result")
+    assert res.result_set == [[0]]
+
+    res = query("RETURN sign(0.0) AS result")
+    assert res.result_set == [[0]]
+
+    # Test negative numbers
+    res = query("RETURN sign(-5) AS result")
+    assert res.result_set == [[-1]]
+
+    res = query("RETURN sign(-0.1) AS result")
+    assert res.result_set == [[-1]]
+
+    # Test null
+    res = query("RETURN sign(null) AS result")
+    assert res.result_set == [[None]]
+
+    # Type mismatch
+    for value, name in [(True, 'Boolean'), (False, 'Boolean'), ({}, 'Map'), ([], 'List')]:
+        try:
+            query(f"RETURN sign({value}) AS result")
+            assert False, "Expected an error"
+        except ResponseError as e:
+            assert f"Type mismatch: expected Integer, Float, or Null but was {name}" in str(e)
