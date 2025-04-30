@@ -1,6 +1,7 @@
 use crate::ast::{
     Alias, NodePattern, PathPattern, Pattern, QueryExprIR, QueryIR, RelationshipPattern,
 };
+use crate::cypher::Token::{RBrace, RParen};
 use falkordb_macro::parse_binary_expr;
 use std::collections::{BTreeMap, HashSet};
 use std::iter::Peekable;
@@ -63,6 +64,24 @@ struct Lexer<'a> {
     cached_current: (Token, usize),
 }
 
+#[derive(Debug)]
+enum ExpressionListType {
+    OneOrMore,
+    ZeroOrMoreClosedBy(Token),
+}
+
+impl ExpressionListType {
+    fn is_end_token(
+        &self,
+        current_token: Token,
+    ) -> bool {
+        match self {
+            ExpressionListType::OneOrMore => false,
+            ExpressionListType::ZeroOrMoreClosedBy(token) => token == &current_token,
+        }
+    }
+}
+
 impl<'a> Lexer<'a> {
     fn new(str: &'a str) -> Self {
         Self {
@@ -102,36 +121,32 @@ impl<'a> Lexer<'a> {
     ) -> (Token, usize) {
         let mut chars = str[pos..].chars();
         if let Some(char) = chars.next() {
-            match char {
-                '[' => return (Token::LBrace, 1),
-                ']' => return (Token::RBrace, 1),
-                '{' => return (Token::LBracket, 1),
-                '}' => return (Token::RBracket, 1),
-                '(' => return (Token::LParen, 1),
-                ')' => return (Token::RParen, 1),
-                '%' => return (Token::Modulo, 1),
-                '^' => return (Token::Power, 1),
-                '*' => return (Token::Star, 1),
-                '/' => return (Token::Slash, 1),
-                '+' => return (Token::Plus, 1),
-                '-' => return (Token::Dash, 1),
-                '=' => {
-                    return match chars.next() {
-                        Some('~') => (Token::RegexMatches, 2),
-                        _ => (Token::Equal, 1),
-                    };
-                }
-                '<' => return (Token::LessThan, 1),
-                '>' => return (Token::GreaterThan, 1),
-                ',' => return (Token::Comma, 1),
-                ':' => return (Token::Colon, 1),
-                '.' => {
-                    return match chars.next() {
-                        Some('.') => (Token::DotDot, 2),
-                        Some('0'..='9') => Self::lex_number(str, pos),
-                        _ => (Token::Dot, 1),
-                    };
-                }
+            return match char {
+                '[' => (Token::LBrace, 1),
+                ']' => (Token::RBrace, 1),
+                '{' => (Token::LBracket, 1),
+                '}' => (Token::RBracket, 1),
+                '(' => (Token::LParen, 1),
+                ')' => (Token::RParen, 1),
+                '%' => (Token::Modulo, 1),
+                '^' => (Token::Power, 1),
+                '*' => (Token::Star, 1),
+                '/' => (Token::Slash, 1),
+                '+' => (Token::Plus, 1),
+                '-' => (Token::Dash, 1),
+                '=' => match chars.next() {
+                    Some('~') => (Token::RegexMatches, 2),
+                    _ => (Token::Equal, 1),
+                },
+                '<' => (Token::LessThan, 1),
+                '>' => (Token::GreaterThan, 1),
+                ',' => (Token::Comma, 1),
+                ':' => (Token::Colon, 1),
+                '.' => match chars.next() {
+                    Some('.') => (Token::DotDot, 2),
+                    Some('0'..='9') => Self::lex_number(str, pos),
+                    _ => (Token::Dot, 1),
+                },
                 '\'' => {
                     let mut len = 1;
                     let mut end = false;
@@ -145,7 +160,7 @@ impl<'a> Lexer<'a> {
                     if !end {
                         return (Token::Error(str[pos + 1..pos + len].to_string()), len + 1);
                     }
-                    return (Token::String(str[pos + 1..pos + len].to_string()), len + 1);
+                    (Token::String(str[pos + 1..pos + len].to_string()), len + 1)
                 }
                 '\"' => {
                     let mut len = 1;
@@ -160,16 +175,16 @@ impl<'a> Lexer<'a> {
                     if !end {
                         return (Token::Error(str[pos + 1..pos + len].to_string()), len + 1);
                     }
-                    return (Token::String(str[pos + 1..pos + len].to_string()), len + 1);
+                    (Token::String(str[pos + 1..pos + len].to_string()), len + 1)
                 }
-                '0'..='9' => return Self::lex_number(str, pos),
+                '0'..='9' => Self::lex_number(str, pos),
                 '$' => {
                     let mut len = 1;
                     while let Some('a'..='z' | 'A'..='Z' | '0'..='9') = chars.next() {
                         len += 1;
                     }
                     let token = Token::Parameter(str[pos + 1..pos + len].to_string());
-                    return (token, len);
+                    (token, len)
                 }
                 'a'..='z' | 'A'..='Z' => {
                     let mut len = 1;
@@ -201,7 +216,7 @@ impl<'a> Lexer<'a> {
                         "nan" => Token::Float(f64::NAN),
                         _ => Token::Ident(str[pos..pos + len].to_string()),
                     };
-                    return (token, len);
+                    (token, len)
                 }
                 '`' => {
                     let mut len = 1;
@@ -216,15 +231,13 @@ impl<'a> Lexer<'a> {
                     if !end {
                         return (Token::Error(str[pos + 1..pos + len].to_string()), len + 1);
                     }
-                    return (Token::Ident(str[pos + 1..pos + len].to_string()), len + 1);
+                    (Token::Ident(str[pos + 1..pos + len].to_string()), len + 1)
                 }
-                _ => {
-                    return (
-                        Token::Error(format!("Unexpected token at pos: {pos} at char {char}")),
-                        0,
-                    );
-                }
-            }
+                _ => (
+                    Token::Error(format!("Unexpected token at pos: {pos} at char {char}")),
+                    0,
+                ),
+            };
         }
         (Token::EndOfFile, 0)
     }
@@ -264,15 +277,7 @@ impl<'a> Lexer<'a> {
         }
 
         // Integer part digits
-        while let Some(&c) = chars.peek() {
-            if c.is_ascii_digit() {
-                chars.next();
-                len += 1;
-                has_digits_before_dot = true;
-            } else {
-                break;
-            }
-        }
+        Lexer::consume_digits(&mut chars, &mut len, &mut has_digits_before_dot);
 
         let mut has_dot = false;
         let mut has_digits_after_dot = false;
@@ -282,16 +287,7 @@ impl<'a> Lexer<'a> {
             has_dot = true;
             chars.next();
             len += 1;
-
-            while let Some(&c) = chars.peek() {
-                if c.is_ascii_digit() {
-                    chars.next();
-                    len += 1;
-                    has_digits_after_dot = true;
-                } else {
-                    break;
-                }
-            }
+            Lexer::consume_digits(&mut chars, &mut len, &mut has_digits_after_dot);
         }
 
         // Exponent part
@@ -335,7 +331,7 @@ impl<'a> Lexer<'a> {
         }
 
         // Validate that we have digits somewhere
-        if !has_digits_before_dot && !(has_dot && has_digits_after_dot) {
+        if !(has_digits_before_dot || has_dot && has_digits_after_dot) {
             return (
                 Token::Error(format!(
                     "Invalid number (no digits): {}",
@@ -345,7 +341,7 @@ impl<'a> Lexer<'a> {
             );
         }
 
-        // if the last character is a dot, it is an integer and we should not eat the last dot
+        // if the last character is a dot, it is an integer, and we should not eat the last dot
         if has_dot && !has_digits_after_dot {
             len -= 1;
             has_dot = false;
@@ -370,6 +366,22 @@ impl<'a> Lexer<'a> {
                 |_| (Token::Error(format!("Invalid integer: {number_str}")), len),
                 |i| (Token::Integer(i), len),
             )
+        }
+    }
+
+    fn consume_digits(
+        chars: &mut Peekable<Chars>,
+        len: &mut usize,
+        consume_chars: &mut bool,
+    ) {
+        while let Some(&c) = chars.peek() {
+            if c.is_ascii_digit() {
+                chars.next();
+                *len += 1;
+                *consume_chars = true;
+            } else {
+                break;
+            }
         }
     }
 
@@ -546,13 +558,10 @@ impl<'a> Parser<'a> {
     fn parse_call_clause(&mut self) -> Result<QueryIR, String> {
         let ident = self.parse_dotted_ident()?;
         match_token!(self.lexer, LParen);
-        if self.lexer.current() == Token::RParen {
-            self.lexer.next();
-            return Ok(QueryIR::Call(ident, vec![]));
-        }
-        let exprs = self.parse_exprs()?;
-        match_token!(self.lexer, RParen);
-        Ok(QueryIR::Call(ident, exprs))
+        Ok(QueryIR::Call(
+            ident,
+            self.parse_expression_list(ExpressionListType::ZeroOrMoreClosedBy(RParen))?,
+        ))
     }
 
     fn parse_dotted_ident(&mut self) -> Result<String, String> {
@@ -582,7 +591,9 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_delete_clause(&mut self) -> Result<QueryIR, String> {
-        Ok(QueryIR::Delete(self.parse_exprs()?))
+        Ok(QueryIR::Delete(
+            self.parse_expression_list(ExpressionListType::OneOrMore)?,
+        ))
     }
 
     fn parse_where_clause(&mut self) -> Result<QueryIR, String> {
@@ -685,9 +696,10 @@ impl<'a> Parser<'a> {
                 if self.lexer.current() == Token::LParen {
                     self.lexer.next();
 
-                    let exprs = self.parse_exprs()?;
-                    match_token!(self.lexer, RParen);
-                    return Ok(QueryExprIR::FuncInvocation(namespace_and_function, exprs));
+                    return Ok(QueryExprIR::FuncInvocation(
+                        namespace_and_function,
+                        self.parse_expression_list(ExpressionListType::ZeroOrMoreClosedBy(RParen))?,
+                    ));
                 }
                 self.lexer.set_pos(pos);
                 Ok(QueryExprIR::Ident(ident))
@@ -718,13 +730,9 @@ impl<'a> Parser<'a> {
             }
             Token::LBrace => {
                 self.lexer.next();
-                if self.lexer.current() == Token::RBrace {
-                    self.lexer.next();
-                    return Ok(QueryExprIR::List(vec![]));
-                }
-                let exprs = self.parse_exprs()?;
-                match_token!(self.lexer, RBrace);
-                Ok(QueryExprIR::List(exprs))
+                Ok(QueryExprIR::List(self.parse_expression_list(
+                    ExpressionListType::ZeroOrMoreClosedBy(RBrace),
+                )?))
             }
             Token::LBracket => {
                 let attrs = self.parse_map()?;
@@ -936,15 +944,29 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_exprs(&mut self) -> Result<Vec<QueryExprIR>, String> {
+    fn parse_expression_list(
+        &mut self,
+        expression_list_type: ExpressionListType,
+    ) -> Result<Vec<QueryExprIR>, String> {
         let mut exprs = Vec::new();
-        loop {
+        while !expression_list_type.is_end_token(self.lexer.current()) {
             exprs.push(self.parse_expr()?);
             match self.lexer.current() {
                 Token::Comma => self.lexer.next(),
-                _ => return Ok(exprs),
+                _ => break,
             }
         }
+
+        if let ExpressionListType::ZeroOrMoreClosedBy(token) = expression_list_type {
+            if self.lexer.current() == token {
+                self.lexer.next();
+            } else {
+                return Err(self
+                    .lexer
+                    .format_error(&format!("Unexpected token {token:?}")));
+            }
+        }
+        Ok(exprs)
     }
 
     fn parse_node_pattern(&mut self) -> Result<NodePattern, String> {
@@ -966,7 +988,7 @@ impl<'a> Parser<'a> {
         &mut self,
         src: Alias,
     ) -> Result<(RelationshipPattern, NodePattern), String> {
-        let is_incomming = optional_match_token!(self.lexer, LessThan);
+        let is_incoming = optional_match_token!(self.lexer, LessThan);
         match_token!(self.lexer, Dash);
         match_token!(self.lexer, LBrace);
         let alias = if let Token::Ident(id) = self.lexer.current() {
@@ -983,7 +1005,7 @@ impl<'a> Parser<'a> {
         match_token!(self.lexer, Dash);
         let is_outgoing = optional_match_token!(self.lexer, GreaterThan);
         let dst = self.parse_node_pattern()?;
-        let relationship = match (is_incomming, is_outgoing) {
+        let relationship = match (is_incoming, is_outgoing) {
             (true, true) | (false, false) => RelationshipPattern::new(
                 alias,
                 relationship_type,

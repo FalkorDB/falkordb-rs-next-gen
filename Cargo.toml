@@ -1,3 +1,8 @@
+[workspace]
+members = [
+    "graph",
+    "falkordb-macro", ]
+
 [package]
 name = "falkordb-rs"
 version = "0.1.0"
@@ -7,7 +12,7 @@ license = "MIT"
 repository = "https://github.com/FalkorDB/falkordb-rs-next-gen"
 readme = "README.md"
 keywords = ["graph", "database"]
-categories = ["graph", "database"]
+categories = ["database"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -16,6 +21,6 @@ name = "falkordb"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-redis-module = { git="https://github.com/RedisLabsModules/redismodule-rs", tag="v2.1.2" }
-redis-module-macros = { git="https://github.com/RedisLabsModules/redismodule-rs", tag="v2.1.2" }
+redis-module = { git = "https://github.com/RedisLabsModules/redismodule-rs", tag = "v2.1.2" }
+redis-module-macros = { git = "https://github.com/RedisLabsModules/redismodule-rs", tag = "v2.1.2" }
 graph = { path = "graph", version = "0.1.0" }
