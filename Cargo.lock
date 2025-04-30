@@ -84,9 +84,9 @@ checksum = "5c8214115b7bf84099f1309324e63141d4c5d7cc26862f97a0a857dbefe165bd"
 
 [[package]]
 name = "bytemuck"
-version = "1.22.0"
+version = "1.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6b1fc10dbac614ebc03540c9dbd60e83887fda27794998c6528f1782047d540"
+checksum = "9134a6ef01ce4b366b50689c94f82c14bc72bc5d0386829828a2e2752ef7958c"
 
 [[package]]
 name = "byteorder"
@@ -203,6 +203,7 @@ name = "graph"
 version = "0.1.0"
 dependencies = [
  "falkordb-macro",
+ "orx-tree",
  "rand",
  "regex",
  "roaring",
@@ -368,6 +369,85 @@ name = "once_cell"
 version = "1.21.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42f5e15c9953c5e4ccceeb2e7382a716482c34515315f7b03532b8b4e8393d2d"
+
+[[package]]
+name = "orx-fixed-vec"
+version = "3.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb192f4a087fac612f646c8f2b9ef15267498a3cfa723773be7ce21109057f07"
+dependencies = [
+ "orx-iterable",
+ "orx-pinned-vec",
+ "orx-pseudo-default",
+]
+
+[[package]]
+name = "orx-iterable"
+version = "1.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dfa2cb3f82a187c68835faac9cf03faaee70b93f4da3b85515ac1b4c6f8a432d"
+dependencies = [
+ "orx-self-or",
+]
+
+[[package]]
+name = "orx-pinned-vec"
+version = "3.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2707ef8045673419bec5b92a3073b0066fed6d42b1f1be07aa50201fd3cb4e92"
+dependencies = [
+ "orx-iterable",
+ "orx-pseudo-default",
+]
+
+[[package]]
+name = "orx-pseudo-default"
+version = "2.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "34eaace9ae01f7025804fbca40ec45b87c19ba0328d97195e01c6135897762a8"
+
+[[package]]
+name = "orx-self-or"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "67a8e35dfe18921e475b9861266fd58a5ecfd681161f242d24a9e2d1e07fbc28"
+
+[[package]]
+name = "orx-selfref-col"
+version = "2.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "13f2cfe8f865954d889b6da4679410bb0a33146631a74d08bdffeb492ba2fd8b"
+dependencies = [
+ "orx-fixed-vec",
+ "orx-pinned-vec",
+ "orx-pseudo-default",
+ "orx-split-vec",
+]
+
+[[package]]
+name = "orx-split-vec"
+version = "3.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3122275d0f6f203a27b1e218c2f9db4214ccab15aa7faf99f486e97cc91e0444"
+dependencies = [
+ "orx-iterable",
+ "orx-pinned-vec",
+ "orx-pseudo-default",
+]
+
+[[package]]
+name = "orx-tree"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d99f0ba3d57b3dd8780b44f50bfce18aefbef4cefe3518c5af610547e50366ad"
+dependencies = [
+ "orx-iterable",
+ "orx-pinned-vec",
+ "orx-pseudo-default",
+ "orx-self-or",
+ "orx-selfref-col",
+ "orx-split-vec",
+]
 
 [[package]]
 name = "peeking_take_while"

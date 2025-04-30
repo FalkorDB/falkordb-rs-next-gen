@@ -756,7 +756,10 @@ impl<'a> Parser<'a> {
         while self.lexer.current() == Token::Dot {
             self.lexer.next();
             let ident = self.parse_ident()?;
-            expr = QueryExprIR::Property(Box::new(expr), ident);
+            expr = QueryExprIR::FuncInvocation(
+                "property".to_string(),
+                vec![expr, QueryExprIR::String(ident)],
+            );
         }
 
         Ok(expr)
@@ -840,23 +843,35 @@ impl<'a> Parser<'a> {
                 self.lexer.next();
                 match_token!(self.lexer, With);
                 let rhs = self.parse_add_sub_expr()?;
-                Ok(QueryExprIR::StartsWith(Box::new((lhs, rhs))))
+                Ok(QueryExprIR::FuncInvocation(
+                    "@starts_with".to_string(),
+                    vec![lhs, rhs],
+                ))
             }
             Token::Ends => {
                 self.lexer.next();
                 match_token!(self.lexer, With);
                 let rhs = self.parse_add_sub_expr()?;
-                Ok(QueryExprIR::EndsWith(Box::new((lhs, rhs))))
+                Ok(QueryExprIR::FuncInvocation(
+                    "@ends_with".to_string(),
+                    vec![lhs, rhs],
+                ))
             }
             Token::Contains => {
                 self.lexer.next();
                 let rhs = self.parse_add_sub_expr()?;
-                Ok(QueryExprIR::Contains(Box::new((lhs, rhs))))
+                Ok(QueryExprIR::FuncInvocation(
+                    "@contains".to_string(),
+                    vec![lhs, rhs],
+                ))
             }
             Token::RegexMatches => {
                 self.lexer.next();
                 let rhs = self.parse_add_sub_expr()?;
-                Ok(QueryExprIR::RegexMatches(Box::new((lhs, rhs))))
+                Ok(QueryExprIR::FuncInvocation(
+                    "@regex_matches".to_string(),
+                    vec![lhs, rhs],
+                ))
             }
             _ => Ok(lhs),
         }

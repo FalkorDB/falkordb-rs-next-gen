@@ -1,3 +1,5 @@
+use orx_tree::{DynNode, NodeRef};
+
 use crate::{
     ast::QueryExprIR, graph::Graph, matrix::Iter, planner::IR, value::Contains, value::Value,
 };
@@ -1062,9 +1064,9 @@ pub fn ro_run(
     g: &Graph,
     runtime: &mut Runtime,
     result_fn: &mut dyn FnMut(&Graph, Value),
-    ir: &IR,
+    ir: &DynNode<IR>,
 ) -> Result<Value, String> {
-    match ir {
+    match ir.data() {
         IR::Null => Ok(Value::Null),
         IR::Bool(x) => Ok(Value::Bool(*x)),
         IR::Integer(x) => Ok(Value::Int(*x)),
@@ -1078,18 +1080,18 @@ pub fn ro_run(
             || Err(format!("Parameter {x} not found")),
             |v| Ok(v.to_owned()),
         ),
-        IR::List(irs) => Ok(Value::List(
-            irs.iter()
-                .map(|ir| ro_run(vars, g, runtime, result_fn, ir))
+        IR::List => Ok(Value::List(
+            ir.children()
+                .map(|ir| ro_run(vars, g, runtime, result_fn, &ir))
                 .collect::<Result<Vec<_>, _>>()?,
         )),
-        IR::Length(ir) => match ro_run(vars, g, runtime, result_fn, ir)? {
+        IR::Length => match ro_run(vars, g, runtime, result_fn, &&ir.child(0))? {
             Value::List(arr) => Ok(Value::Int(arr.len() as _)),
             _ => Err("Length operator requires a list".to_string()),
         },
-        IR::GetElement(op) => {
-            let arr = ro_run(vars, g, runtime, result_fn, &op.0)?;
-            let i = ro_run(vars, g, runtime, result_fn, &op.1)?;
+        IR::GetElement => {
+            let arr = ro_run(vars, g, runtime, result_fn, &&ir.child(0))?;
+            let i = ro_run(vars, g, runtime, result_fn, &&ir.child(1))?;
             match (arr, i) {
                 (Value::List(values), Value::Int(i)) => {
                     if i >= 0 && i < values.len() as _ {
@@ -1102,27 +1104,16 @@ pub fn ro_run(
                 v => Err(format!("Type mismatch: expected List but was {v:?}")),
             }
         }
-        IR::GetElements(op) => {
-            let arr = ro_run(vars, g, runtime, result_fn, &op.0)?;
-            match (&op.1, &op.2) {
-                (None, None) => get_elements(arr, None, None),
-                (None, Some(b)) => {
-                    get_elements(arr, None, Some(ro_run(vars, g, runtime, result_fn, b)?))
-                }
-                (Some(a), None) => {
-                    get_elements(arr, Some(ro_run(vars, g, runtime, result_fn, a)?), None)
-                }
-                (Some(a), Some(b)) => get_elements(
-                    arr,
-                    Some(ro_run(vars, g, runtime, result_fn, a)?),
-                    Some(ro_run(vars, g, runtime, result_fn, b)?),
-                ),
-            }
+        IR::GetElements => {
+            let arr = ro_run(vars, g, runtime, result_fn, &ir.child(0))?;
+            let a = ro_run(vars, g, runtime, result_fn, &ir.child(1))?;
+            let b = ro_run(vars, g, runtime, result_fn, &ir.child(2))?;
+            get_elements(arr, a, b)
         }
-        IR::Range(op) => {
-            let start = ro_run(vars, g, runtime, result_fn, &op.0)?;
-            let end = ro_run(vars, g, runtime, result_fn, &op.1)?;
-            let step = ro_run(vars, g, runtime, result_fn, &op.2)?;
+        IR::Range => {
+            let start = ro_run(vars, g, runtime, result_fn, &ir.child(0))?;
+            let end = ro_run(vars, g, runtime, result_fn, &ir.child(1))?;
+            let step = ro_run(vars, g, runtime, result_fn, &ir.child(2))?;
             match (start, end, step) {
                 (Value::Int(start), Value::Int(end), Value::Int(step)) => {
                     Ok(Value::List(if step < 0 {
@@ -1140,18 +1131,18 @@ pub fn ro_run(
                 _ => Err("Range operator requires two integers".to_string()),
             }
         }
-        IR::IsNull(ir) => match ro_run(vars, g, runtime, result_fn, ir)? {
+        IR::IsNull => match ro_run(vars, g, runtime, result_fn, &ir.child(0))? {
             Value::Null => Ok(Value::Bool(true)),
             _ => Ok(Value::Bool(false)),
         },
-        IR::IsNode(ir) => match ro_run(vars, g, runtime, result_fn, ir)? {
+        IR::IsNode => match ro_run(vars, g, runtime, result_fn, &ir.child(0))? {
             Value::Node(_) => Ok(Value::Bool(true)),
             _ => Ok(Value::Bool(false)),
         },
-        IR::Or(irs) => {
+        IR::Or => {
             let mut is_null = false;
-            for ir in irs {
-                match ro_run(vars, g, runtime, result_fn, ir)? {
+            for ir in ir.children() {
+                match ro_run(vars, g, runtime, result_fn, &ir)? {
                     Value::Bool(true) => return Ok(Value::Bool(true)),
                     Value::Bool(false) => {}
                     Value::Null => is_null = true,
@@ -1164,10 +1155,10 @@ pub fn ro_run(
 
             Ok(Value::Bool(false))
         }
-        IR::Xor(irs) => {
+        IR::Xor => {
             let mut last = None;
-            for ir in irs {
-                match ro_run(vars, g, runtime, result_fn, ir)? {
+            for ir in ir.children() {
+                match ro_run(vars, g, runtime, result_fn, &ir)? {
                     Value::Bool(b) => last = Some(last.map_or(b, |l| logical_xor(l, b))),
                     Value::Null => return Ok(Value::Null),
                     _ => return Err(format!("Type mismatch: expected Bool but was {ir:?}")),
@@ -1176,10 +1167,10 @@ pub fn ro_run(
             Ok(Value::Bool(last.unwrap_or(false)))
         }
 
-        IR::And(irs) => {
+        IR::And => {
             let mut is_null = false;
-            for ir in irs {
-                match ro_run(vars, g, runtime, result_fn, ir)? {
+            for ir in ir.children() {
+                match ro_run(vars, g, runtime, result_fn, &ir)? {
                     Value::Bool(false) => return Ok(Value::Bool(false)),
                     Value::Bool(true) => {}
                     Value::Null => is_null = true,
@@ -1192,12 +1183,12 @@ pub fn ro_run(
 
             Ok(Value::Bool(true))
         }
-        IR::Not(ir) => match ro_run(vars, g, runtime, result_fn, ir)? {
+        IR::Not => match ro_run(vars, g, runtime, result_fn, &ir.child(0))? {
             Value::Bool(b) => Ok(Value::Bool(!b)),
             Value::Null => Ok(Value::Null),
             _ => Err("InvalidArgumentType: Not operator requires a boolean or null".to_string()),
         },
-        IR::Negate(ir) => match ro_run(vars, g, runtime, result_fn, ir)? {
+        IR::Negate => match ro_run(vars, g, runtime, result_fn, &ir.child(0))? {
             Value::Int(i) => Ok(Value::Int(-i)),
             Value::Float(f) => Ok(Value::Float(-f)),
             Value::Null => Ok(Value::Null),
@@ -1205,97 +1196,97 @@ pub fn ro_run(
                 Err("InvalidArgumentType: Negate operator requires an Integer or Float".to_string())
             }
         },
-        IR::Eq(irs) => {
-            let iter = irs.iter().map(|ir| ro_run(vars, g, runtime, result_fn, ir));
-            all_equals(iter)
-        }
-        IR::Neq(irs) => irs
-            .iter()
-            .flat_map(|ir| ro_run(vars, g, runtime, result_fn, ir))
+        IR::Eq => all_equals(
+            ir.children()
+                .map(|ir| ro_run(vars, g, runtime, result_fn, &ir)),
+        ),
+        IR::Neq => ir
+            .children()
+            .flat_map(|ir| ro_run(vars, g, runtime, result_fn, &ir))
             .reduce(|a, b| Value::Bool(a != b))
             .ok_or_else(|| "Neq operator requires at least one argument".to_string()),
-        IR::Lt(op) => match (
-            ro_run(vars, g, runtime, result_fn, &op.0)?,
-            ro_run(vars, g, runtime, result_fn, &op.1)?,
+        IR::Lt => match (
+            ro_run(vars, g, runtime, result_fn, &ir.child(0))?,
+            ro_run(vars, g, runtime, result_fn, &ir.child(1))?,
         ) {
             (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a < b)),
             _ => Err("Lt operator requires two integers".to_string()),
         },
-        IR::Gt(op) => match (
-            ro_run(vars, g, runtime, result_fn, &op.0)?,
-            ro_run(vars, g, runtime, result_fn, &op.1)?,
+        IR::Gt => match (
+            ro_run(vars, g, runtime, result_fn, &ir.child(0))?,
+            ro_run(vars, g, runtime, result_fn, &ir.child(1))?,
         ) {
             (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a > b)),
             _ => Err("Gt operator requires two integers".to_string()),
         },
-        IR::Le(op) => match (
-            ro_run(vars, g, runtime, result_fn, &op.0)?,
-            ro_run(vars, g, runtime, result_fn, &op.1)?,
+        IR::Le => match (
+            ro_run(vars, g, runtime, result_fn, &ir.child(0))?,
+            ro_run(vars, g, runtime, result_fn, &ir.child(1))?,
         ) {
             (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a <= b)),
             _ => Err("Le operator requires two integers".to_string()),
         },
-        IR::Ge(op) => match (
-            ro_run(vars, g, runtime, result_fn, &op.0)?,
-            ro_run(vars, g, runtime, result_fn, &op.1)?,
+        IR::Ge => match (
+            ro_run(vars, g, runtime, result_fn, &ir.child(0))?,
+            ro_run(vars, g, runtime, result_fn, &ir.child(1))?,
         ) {
             (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a >= b)),
             _ => Err("Ge operator requires two integers".to_string()),
         },
-        IR::In(op) => {
-            let value = ro_run(vars, g, runtime, result_fn, &op.0)?;
-            let list = ro_run(vars, g, runtime, result_fn, &op.1)?;
+        IR::In => {
+            let value = ro_run(vars, g, runtime, result_fn, &ir.child(0))?;
+            let list = ro_run(vars, g, runtime, result_fn, &ir.child(1))?;
             list_contains(&list, &value)
         }
-        IR::Add(irs) => irs
-            .iter()
-            .map(|ir| ro_run(vars, g, runtime, result_fn, ir))
+        IR::Add => ir
+            .children()
+            .map(|ir| ro_run(vars, g, runtime, result_fn, &ir))
             .reduce(|acc, value| acc? + value?)
             .ok_or_else(|| "Add operator requires at least one operand".to_string())?,
-        IR::Sub(irs) => irs
-            .iter()
-            .flat_map(|ir| ro_run(vars, g, runtime, result_fn, ir))
+        IR::Sub => ir
+            .children()
+            .flat_map(|ir| ro_run(vars, g, runtime, result_fn, &ir))
             .reduce(|a, b| match (a, b) {
                 (Value::Int(a), Value::Int(b)) => Value::Int(a - b),
                 _ => Value::Null,
             })
             .ok_or_else(|| "Sub operator requires at least one argument".to_string()),
-        IR::Mul(irs) => irs
-            .iter()
-            .flat_map(|ir| ro_run(vars, g, runtime, result_fn, ir))
+        IR::Mul => ir
+            .children()
+            .flat_map(|ir| ro_run(vars, g, runtime, result_fn, &ir))
             .reduce(|a, b| match (a, b) {
                 (Value::Int(a), Value::Int(b)) => Value::Int(a * b),
                 _ => Value::Null,
             })
             .ok_or_else(|| "Mul operator requires at least one argument".to_string()),
-        IR::Div(irs) => irs
-            .iter()
-            .flat_map(|ir| ro_run(vars, g, runtime, result_fn, ir))
+        IR::Div => ir
+            .children()
+            .flat_map(|ir| ro_run(vars, g, runtime, result_fn, &ir))
             .reduce(|a, b| match (a, b) {
                 (Value::Int(a), Value::Int(b)) => Value::Int(a / b),
                 _ => Value::Null,
             })
             .ok_or_else(|| "Div operator requires at least one argument".to_string()),
-        IR::Pow(irs) => irs
-            .iter()
-            .flat_map(|ir| ro_run(vars, g, runtime, result_fn, ir))
+        IR::Pow => ir
+            .children()
+            .flat_map(|ir| ro_run(vars, g, runtime, result_fn, &ir))
             .reduce(|a, b| match (a, b) {
                 (Value::Int(a), Value::Int(b)) => Value::Float((a as f64).powf(b as _)),
                 _ => Value::Null,
             })
             .ok_or_else(|| "Pow operator requires at least one argument".to_string()),
-        IR::Modulo(irs) => irs
-            .iter()
-            .flat_map(|ir| ro_run(vars, g, runtime, result_fn, ir))
+        IR::Modulo => ir
+            .children()
+            .flat_map(|ir| ro_run(vars, g, runtime, result_fn, &ir))
             .reduce(|a, b| match (a, b) {
                 (Value::Int(a), Value::Int(b)) => Value::Int(a % b),
                 _ => Value::Null,
             })
             .ok_or_else(|| "Modulo operator requires at least one argument".to_string()),
-        IR::FuncInvocation(name, irs) => {
-            let args = irs
-                .iter()
-                .map(|ir| ro_run(vars, g, runtime, result_fn, ir))
+        IR::FuncInvocation(name) => {
+            let args = ir
+                .children()
+                .map(|ir| ro_run(vars, g, runtime, result_fn, &ir))
                 .collect::<Result<Vec<_>, _>>()?;
             #[allow(clippy::option_if_let_else)]
             if let Some(func) = runtime.read_functions.get(name) {
@@ -1304,44 +1295,44 @@ pub fn ro_run(
                 Err(format!("Function {name} not found"))
             }
         }
-        IR::Map(items) => Ok(Value::Map(
-            items
-                .iter()
-                .map(|(key, ir)| {
+        IR::Map => Ok(Value::Map(
+            ir.children()
+                .map(|child| {
                     (
-                        key.to_string(),
-                        ro_run(vars, g, runtime, result_fn, ir).unwrap_or(Value::Null),
+                        child.data().to_string(),
+                        ro_run(vars, g, runtime, result_fn, &child.child(0)).unwrap_or(Value::Null),
                     )
                 })
                 .collect(),
         )),
-        IR::Set(x, ir) => {
-            let v = ro_run(vars, g, runtime, result_fn, ir)?;
+        IR::Set(x) => {
+            let v = ro_run(vars, g, runtime, result_fn, &ir.child(0))?;
             vars.insert(x.to_string(), v.clone());
             Ok(v)
         }
-        IR::If(op) => match ro_run(vars, g, runtime, result_fn, &op.0)? {
-            Value::Bool(true) => ro_run(vars, g, runtime, result_fn, &op.1),
+        IR::If => match ro_run(vars, g, runtime, result_fn, &ir.child(0))? {
+            Value::Bool(true) => ro_run(vars, g, runtime, result_fn, &ir.child(1)),
             _ => Ok(Value::Null),
         },
-        IR::For(op) => {
-            ro_run(vars, g, runtime, result_fn, &op.0)?;
-            while ro_run(vars, g, runtime, result_fn, &op.1)? == Value::Bool(true) {
-                ro_run(vars, g, runtime, result_fn, &op.3)?;
-                ro_run(vars, g, runtime, result_fn, &op.2)?;
+        IR::For => {
+            ro_run(vars, g, runtime, result_fn, &ir.child(0))?;
+            while ro_run(vars, g, runtime, result_fn, &ir.child(1))? == Value::Bool(true) {
+                ro_run(vars, g, runtime, result_fn, &ir.child(3))?;
+                ro_run(vars, g, runtime, result_fn, &ir.child(2))?;
             }
             Ok(Value::Null)
         }
-        IR::Return(ir) => {
-            let v = ro_run(vars, g, runtime, result_fn, ir)?;
+        IR::Return => {
+            let v = ro_run(vars, g, runtime, result_fn, &ir.child(0))?;
             result_fn(g, v);
             Ok(Value::Null)
         }
-        IR::Block(irs) => {
-            for ir in irs {
-                ro_run(vars, g, runtime, result_fn, ir)?;
+        IR::Block => {
+            let mut v = Value::Null;
+            for ir in ir.children() {
+                v = ro_run(vars, g, runtime, result_fn, &ir)?;
             }
-            Ok(Value::Null)
+            Ok(v)
         }
     }
 }
@@ -1352,9 +1343,9 @@ pub fn run(
     g: &mut Graph,
     runtime: &mut Runtime,
     result_fn: &mut dyn FnMut(&Graph, Value),
-    ir: &IR,
+    ir: &DynNode<IR>,
 ) -> Result<Value, String> {
-    match ir {
+    match ir.data() {
         IR::Null => Ok(Value::Null),
         IR::Bool(x) => Ok(Value::Bool(*x)),
         IR::Integer(x) => Ok(Value::Int(*x)),
@@ -1368,18 +1359,18 @@ pub fn run(
             || Err(format!("Parameter {x} not found")),
             |v| Ok(v.to_owned()),
         ),
-        IR::List(irs) => Ok(Value::List(
-            irs.iter()
-                .map(|ir| run(vars, g, runtime, result_fn, ir))
+        IR::List => Ok(Value::List(
+            ir.children()
+                .map(|ir| run(vars, g, runtime, result_fn, &ir))
                 .collect::<Result<Vec<_>, _>>()?,
         )),
-        IR::Length(ir) => match run(vars, g, runtime, result_fn, ir)? {
+        IR::Length => match run(vars, g, runtime, result_fn, &ir.child(0))? {
             Value::List(arr) => Ok(Value::Int(arr.len() as _)),
             _ => Err("Length operator requires a list".to_string()),
         },
-        IR::GetElement(op) => {
-            let arr = run(vars, g, runtime, result_fn, &op.0)?;
-            let i = run(vars, g, runtime, result_fn, &op.1)?;
+        IR::GetElement => {
+            let arr = run(vars, g, runtime, result_fn, &ir.child(0))?;
+            let i = run(vars, g, runtime, result_fn, &ir.child(1))?;
             match (arr, i) {
                 (Value::List(values), Value::Int(i)) => {
                     if i >= 0 && i < values.len() as _ {
@@ -1392,27 +1383,16 @@ pub fn run(
                 v => Err(format!("Type mismatch: expected List but was {v:?}")),
             }
         }
-        IR::GetElements(op) => {
-            let arr = run(vars, g, runtime, result_fn, &op.0)?;
-            match (&op.1, &op.2) {
-                (None, None) => get_elements(arr, None, None),
-                (None, Some(b)) => {
-                    get_elements(arr, None, Some(run(vars, g, runtime, result_fn, b)?))
-                }
-                (Some(a), None) => {
-                    get_elements(arr, Some(run(vars, g, runtime, result_fn, a)?), None)
-                }
-                (Some(a), Some(b)) => get_elements(
-                    arr,
-                    Some(run(vars, g, runtime, result_fn, a)?),
-                    Some(run(vars, g, runtime, result_fn, b)?),
-                ),
-            }
+        IR::GetElements => {
+            let arr = run(vars, g, runtime, result_fn, &ir.child(0))?;
+            let a = run(vars, g, runtime, result_fn, &ir.child(1))?;
+            let b = run(vars, g, runtime, result_fn, &ir.child(2))?;
+            get_elements(arr, a, b)
         }
-        IR::Range(op) => {
-            let start = run(vars, g, runtime, result_fn, &op.0)?;
-            let end = run(vars, g, runtime, result_fn, &op.1)?;
-            let step = run(vars, g, runtime, result_fn, &op.2)?;
+        IR::Range => {
+            let start = run(vars, g, runtime, result_fn, &ir.child(0))?;
+            let end = run(vars, g, runtime, result_fn, &ir.child(1))?;
+            let step = run(vars, g, runtime, result_fn, &ir.child(2))?;
             match (start, end, step) {
                 (Value::Int(start), Value::Int(end), Value::Int(step)) => {
                     if start >= end && step < 0 {
@@ -1437,22 +1417,22 @@ pub fn run(
                 _ => Err("Range operator requires two integers".to_string()),
             }
         }
-        IR::IsNull(ir) => match run(vars, g, runtime, result_fn, ir)? {
+        IR::IsNull => match run(vars, g, runtime, result_fn, &ir.child(0))? {
             Value::Null => Ok(Value::Bool(true)),
             _ => Ok(Value::Bool(false)),
         },
-        IR::IsNode(ir) => match run(vars, g, runtime, result_fn, ir)? {
+        IR::IsNode => match run(vars, g, runtime, result_fn, &ir.child(0))? {
             Value::Node(_) => Ok(Value::Bool(true)),
             _ => Ok(Value::Bool(false)),
         },
-        IR::Or(irs) => {
+        IR::Or => {
             let mut is_null = false;
-            for ir in irs {
-                match ro_run(vars, g, runtime, result_fn, ir)? {
+            for ir in ir.children() {
+                match run(vars, g, runtime, result_fn, &ir)? {
                     Value::Bool(true) => return Ok(Value::Bool(true)),
                     Value::Bool(false) => {}
                     Value::Null => is_null = true,
-                    _ => return Err(format!("Type mismatch: expected Bool but was {ir:?}")),
+                    _ => return Err(format!("Type mismatch: expected Bool but was {:?}", &ir)),
                 }
             }
             if is_null {
@@ -1461,10 +1441,10 @@ pub fn run(
 
             Ok(Value::Bool(false))
         }
-        IR::Xor(irs) => {
+        IR::Xor => {
             let mut last = None;
-            for ir in irs {
-                match run(vars, g, runtime, result_fn, ir)? {
+            for ir in ir.children() {
+                match run(vars, g, runtime, result_fn, &ir)? {
                     Value::Bool(b) => last = Some(last.map_or(b, |l| logical_xor(l, b))),
                     Value::Null => return Ok(Value::Null),
                     _ => return Err(format!("Type mismatch: expected Bool but was {ir:?}")),
@@ -1472,10 +1452,10 @@ pub fn run(
             }
             Ok(Value::Bool(last.unwrap_or(false)))
         }
-        IR::And(irs) => {
+        IR::And => {
             let mut is_null = false;
-            for ir in irs {
-                match run(vars, g, runtime, result_fn, ir)? {
+            for ir in ir.children() {
+                match run(vars, g, runtime, result_fn, &ir)? {
                     Value::Bool(false) => return Ok(Value::Bool(false)),
                     Value::Bool(true) => {}
                     Value::Null => is_null = true,
@@ -1488,12 +1468,12 @@ pub fn run(
 
             Ok(Value::Bool(true))
         }
-        IR::Not(ir) => match run(vars, g, runtime, result_fn, ir)? {
+        IR::Not => match run(vars, g, runtime, result_fn, &ir.child(0))? {
             Value::Bool(b) => Ok(Value::Bool(!b)),
             Value::Null => Ok(Value::Null),
             _ => Err("InvalidArgumentType: Not operator requires a boolean or null".to_string()),
         },
-        IR::Negate(ir) => match run(vars, g, runtime, result_fn, ir)? {
+        IR::Negate => match run(vars, g, runtime, result_fn, &ir.child(0))? {
             Value::Int(i) => Ok(Value::Int(-i)),
             Value::Float(f) => Ok(Value::Float(-f)),
             Value::Null => Ok(Value::Null),
@@ -1501,97 +1481,97 @@ pub fn run(
                 Err("InvalidArgumentType: Negate operator requires an Integer or Float".to_string())
             }
         },
-        IR::Eq(irs) => {
-            let iter = irs.iter().map(|ir| run(vars, g, runtime, result_fn, ir));
-            all_equals(iter)
-        }
-        IR::Neq(irs) => irs
-            .iter()
-            .flat_map(|ir| run(vars, g, runtime, result_fn, ir))
+        IR::Eq => all_equals(
+            ir.children()
+                .map(|ir| run(vars, g, runtime, result_fn, &ir)),
+        ),
+        IR::Neq => ir
+            .children()
+            .flat_map(|ir| run(vars, g, runtime, result_fn, &ir))
             .reduce(|a, b| Value::Bool(a != b))
             .ok_or_else(|| "Neq operator requires at least one argument".to_string()),
-        IR::Lt(op) => match (
-            run(vars, g, runtime, result_fn, &op.0)?,
-            run(vars, g, runtime, result_fn, &op.1)?,
+        IR::Lt => match (
+            run(vars, g, runtime, result_fn, &ir.child(0))?,
+            run(vars, g, runtime, result_fn, &ir.child(1))?,
         ) {
             (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a < b)),
             _ => Err("Lt operator requires two integers".to_string()),
         },
-        IR::Gt(op) => match (
-            run(vars, g, runtime, result_fn, &op.0)?,
-            run(vars, g, runtime, result_fn, &op.1)?,
+        IR::Gt => match (
+            run(vars, g, runtime, result_fn, &ir.child(0))?,
+            run(vars, g, runtime, result_fn, &ir.child(1))?,
         ) {
             (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a > b)),
             _ => Err("Gt operator requires two integers".to_string()),
         },
-        IR::Le(op) => match (
-            run(vars, g, runtime, result_fn, &op.0)?,
-            run(vars, g, runtime, result_fn, &op.1)?,
+        IR::Le => match (
+            run(vars, g, runtime, result_fn, &ir.child(0))?,
+            run(vars, g, runtime, result_fn, &ir.child(1))?,
         ) {
             (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a <= b)),
             _ => Err("Le operator requires two integers".to_string()),
         },
-        IR::Ge(op) => match (
-            run(vars, g, runtime, result_fn, &op.0)?,
-            run(vars, g, runtime, result_fn, &op.1)?,
+        IR::Ge => match (
+            run(vars, g, runtime, result_fn, &ir.child(0))?,
+            run(vars, g, runtime, result_fn, &ir.child(1))?,
         ) {
             (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a >= b)),
             _ => Err("Ge operator requires two integers".to_string()),
         },
-        IR::In(op) => {
-            let value = run(vars, g, runtime, result_fn, &op.0)?;
-            let list = run(vars, g, runtime, result_fn, &op.1)?;
+        IR::In => {
+            let value = run(vars, g, runtime, result_fn, &ir.child(0))?;
+            let list = run(vars, g, runtime, result_fn, &ir.child(1))?;
             list_contains(&list, &value)
         }
-        IR::Add(irs) => irs
-            .iter()
-            .map(|ir| run(vars, g, runtime, result_fn, ir))
+        IR::Add => ir
+            .children()
+            .map(|ir| run(vars, g, runtime, result_fn, &ir))
             .reduce(|acc, value| acc? + value?)
             .ok_or_else(|| "Add operator requires at least one operand".to_string())?,
-        IR::Sub(irs) => irs
-            .iter()
-            .flat_map(|ir| run(vars, g, runtime, result_fn, ir))
+        IR::Sub => ir
+            .children()
+            .flat_map(|ir| run(vars, g, runtime, result_fn, &ir))
             .reduce(|a, b| match (a, b) {
                 (Value::Int(a), Value::Int(b)) => Value::Int(a - b),
                 _ => Value::Null,
             })
             .ok_or_else(|| "Sub operator requires at least one argument".to_string()),
-        IR::Mul(irs) => irs
-            .iter()
-            .flat_map(|ir| run(vars, g, runtime, result_fn, ir))
+        IR::Mul => ir
+            .children()
+            .flat_map(|ir| run(vars, g, runtime, result_fn, &ir))
             .reduce(|a, b| match (a, b) {
                 (Value::Int(a), Value::Int(b)) => Value::Int(a * b),
                 _ => Value::Null,
             })
             .ok_or_else(|| "Mul operator requires at least one argument".to_string()),
-        IR::Div(irs) => irs
-            .iter()
-            .flat_map(|ir| run(vars, g, runtime, result_fn, ir))
+        IR::Div => ir
+            .children()
+            .flat_map(|ir| run(vars, g, runtime, result_fn, &ir))
             .reduce(|a, b| match (a, b) {
                 (Value::Int(a), Value::Int(b)) => Value::Int(a / b),
                 _ => Value::Null,
             })
             .ok_or_else(|| "Div operator requires at least one argument".to_string()),
-        IR::Pow(irs) => irs
-            .iter()
-            .flat_map(|ir| run(vars, g, runtime, result_fn, ir))
+        IR::Pow => ir
+            .children()
+            .flat_map(|ir| run(vars, g, runtime, result_fn, &ir))
             .reduce(|a, b| match (a, b) {
                 (Value::Int(a), Value::Int(b)) => Value::Float((a as f64).powf(b as _)),
                 _ => Value::Null,
             })
             .ok_or_else(|| "Pow operator requires at least one argument".to_string()),
-        IR::Modulo(irs) => irs
-            .iter()
-            .flat_map(|ir| ro_run(vars, g, runtime, result_fn, ir))
+        IR::Modulo => ir
+            .children()
+            .flat_map(|ir| run(vars, g, runtime, result_fn, &ir))
             .reduce(|a, b| match (a, b) {
                 (Value::Int(a), Value::Int(b)) => Value::Int(a % b),
                 _ => Value::Null,
             })
             .ok_or_else(|| "Modulo operator requires at least one argument".to_string()),
-        IR::FuncInvocation(name, irs) => {
-            let args = irs
-                .iter()
-                .map(|ir| run(vars, g, runtime, result_fn, ir))
+        IR::FuncInvocation(name) => {
+            let args = ir
+                .children()
+                .map(|ir| run(vars, g, runtime, result_fn, &ir))
                 .collect::<Result<Vec<_>, _>>()?;
             if let Some(func) = runtime.write_functions.get(name) {
                 func(g, runtime, args)
@@ -1601,44 +1581,44 @@ pub fn run(
                 Err(format!("Function {name} not found"))
             }
         }
-        IR::Map(items) => Ok(Value::Map(
-            items
-                .iter()
-                .map(|(key, ir)| {
+        IR::Map => Ok(Value::Map(
+            ir.children()
+                .map(|child| {
                     (
-                        key.to_string(),
-                        run(vars, g, runtime, result_fn, ir).unwrap_or(Value::Null),
+                        child.data().to_string(),
+                        run(vars, g, runtime, result_fn, &child.child(0)).unwrap_or(Value::Null),
                     )
                 })
                 .collect(),
         )),
-        IR::Set(x, ir) => {
-            let v = run(vars, g, runtime, result_fn, ir)?;
+        IR::Set(x) => {
+            let v = run(vars, g, runtime, result_fn, &ir.child(0))?;
             vars.insert(x.to_string(), v.clone());
             Ok(v)
         }
-        IR::If(op) => match run(vars, g, runtime, result_fn, &op.0)? {
-            Value::Bool(true) => run(vars, g, runtime, result_fn, &op.1),
+        IR::If => match run(vars, g, runtime, result_fn, &ir.child(0))? {
+            Value::Bool(true) => run(vars, g, runtime, result_fn, &ir.child(1)),
             _ => Ok(Value::Null),
         },
-        IR::For(op) => {
-            run(vars, g, runtime, result_fn, &op.0)?;
-            while run(vars, g, runtime, result_fn, &op.1)? == Value::Bool(true) {
-                run(vars, g, runtime, result_fn, &op.3)?;
-                run(vars, g, runtime, result_fn, &op.2)?;
+        IR::For => {
+            run(vars, g, runtime, result_fn, &ir.child(0))?;
+            while run(vars, g, runtime, result_fn, &ir.child(1))? == Value::Bool(true) {
+                run(vars, g, runtime, result_fn, &ir.child(3))?;
+                run(vars, g, runtime, result_fn, &ir.child(2))?;
             }
             Ok(Value::Null)
         }
-        IR::Return(ir) => {
-            let v = run(vars, g, runtime, result_fn, ir)?;
+        IR::Return => {
+            let v = run(vars, g, runtime, result_fn, &ir.child(0))?;
             result_fn(g, v);
             Ok(Value::Null)
         }
-        IR::Block(irs) => {
-            for ir in irs {
-                run(vars, g, runtime, result_fn, ir)?;
+        IR::Block => {
+            let mut v = Value::Null;
+            for ir in ir.children() {
+                v = run(vars, g, runtime, result_fn, &ir)?;
             }
-            Ok(Value::Null)
+            Ok(v)
         }
     }
 }
@@ -1671,11 +1651,11 @@ pub fn evaluate_param(expr: QueryExprIR) -> Value {
 
 fn get_elements(
     arr: Value,
-    start: Option<Value>,
-    end: Option<Value>,
+    start: Value,
+    end: Value,
 ) -> Result<Value, String> {
     match (arr, start, end) {
-        (Value::List(values), Some(Value::Int(mut start)), Some(Value::Int(mut end))) => {
+        (Value::List(values), Value::Int(mut start), Value::Int(mut end)) => {
             if start < 0 {
                 start = (values.len() as i64 + start).max(0);
             }
@@ -1689,24 +1669,7 @@ fn get_elements(
             }
             Ok(Value::List(values[start as usize..end as usize].to_vec()))
         }
-        (Value::List(values), None, Some(Value::Int(mut end))) => {
-            if end < 0 {
-                end = (values.len() as i64 + end).max(0);
-            } else {
-                end = end.min(values.len() as i64);
-            }
-            Ok(Value::List(values[..end as usize].to_vec()))
-        }
-        (Value::List(values), Some(Value::Int(mut start)), None) => {
-            if start < 0 {
-                start = (values.len() as i64 + start).max(0);
-            }
-            start = start.min(values.len() as i64);
-            Ok(Value::List(values[start as usize..].to_vec()))
-        }
-        (_, Some(Value::Null), _) | (_, _, Some(Value::Null)) => Ok(Value::Null),
-        (Value::List(values), None, None) => Ok(Value::List(values)),
-
+        (_, Value::Null, _) | (_, _, Value::Null) => Ok(Value::Null),
         _ => Err("Invalid array range parameters.".to_string()),
     }
 }

@@ -353,7 +353,7 @@ fn graph_parse(
 
     let mut parser = Parser::new(query);
     match parser.parse() {
-        Ok(ir) => Ok(RedisValue::SimpleString(format!("{ir:?}"))),
+        Ok(ir) => Ok(RedisValue::BulkString(format!("{ir:?}"))),
         Err(err) => Err(RedisError::String(err)),
     }
 }
@@ -370,7 +370,7 @@ fn graph_plan(
         Ok(ir) => {
             let mut planner = Planner::new();
             let ir = planner.plan(ir, false);
-            Ok(RedisValue::SimpleString(format!("{ir:?}")))
+            Ok(RedisValue::BulkString(format!("{ir}")))
         }
         Err(err) => Err(RedisError::String(err)),
     }
