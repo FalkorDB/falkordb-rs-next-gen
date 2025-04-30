@@ -9,7 +9,7 @@ RUN apt update -y && \
     ./llvm.sh 20 && \
     apt update -y
 
-RUN apt install -y git libomp-20-dev python3-venv lcov
+RUN apt install -y git make cmake curl zlib1g zlib1g-dev libpolly-20-dev libomp-20-dev libzstd-dev python3-venv lcov
 
 RUN python3 -m venv venv
 
