@@ -24,6 +24,7 @@ jobs:
         id: check
         run: |
           git fetch origin
+          git log --oneline
           if git diff --name-only HEAD~1 HEAD | grep -q "build/Dockerfile"; then
             echo "changed=true"
             echo "changed=true" >> $GITHUB_OUTPUT
