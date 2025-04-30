@@ -96,14 +96,6 @@ def test_return_values():
             res = query(f"RETURN {sign}{n}")
             assert res.result_set == [[eval(f"{sign}{n}")]]
 
-            n = oct(i)
-            res = query(f"RETURN {sign}{n}")
-            assert res.result_set == [[eval(f"{sign}{n}")]]
-
-            n = bin(i)
-            res = query(f"RETURN {sign}{n}")
-            assert res.result_set == [[eval(f"{sign}{n}")]]
-
             # Test engineering notation
             eng_notation = f"{sign}{i / 10.0:e}"
             res = query(f"RETURN {eng_notation} AS literal")
@@ -139,6 +131,19 @@ def test_return_values():
 
     res = query("WITH 1 AS a, 'Avi' AS b RETURN b, a")
     assert res.result_set == [['Avi', 1]]
+
+
+@pytest.mark.extra
+def test_numerical_bases():
+    for i in range(0, 100):
+        for sign in ['', '-', '- ', '+', '+ ']:
+            n = oct(i)
+            res = query(f"RETURN {sign}{n}")
+            assert res.result_set == [[eval(f"{sign}{n}")]]
+
+            n = bin(i)
+            res = query(f"RETURN {sign}{n}")
+            assert res.result_set == [[eval(f"{sign}{n}")]]
 
 
 def test_parameters():
