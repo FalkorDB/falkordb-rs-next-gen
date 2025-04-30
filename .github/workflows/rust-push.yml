@@ -34,7 +34,7 @@ jobs:
           fi
   docker:
     needs: check-files
-    if: needs.check-files.outputs.file_changed == 'true'
+    # if: needs.check-files.outputs.file_changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
