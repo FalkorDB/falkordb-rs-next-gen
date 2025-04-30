@@ -1419,7 +1419,7 @@ pub fn run(
                         Ok(Value::List(
                             (end..=start)
                                 .rev()
-                                .step_by(step.abs() as usize)
+                                .step_by(step.unsigned_abs() as usize)
                                 .map(Value::Int)
                                 .collect(),
                         ))
