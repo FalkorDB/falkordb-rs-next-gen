@@ -255,6 +255,29 @@ impl Runtime {
         }
     }
 
+    fn args_size_error(
+        args: &[Value],
+        function_name: &str,
+        min: usize,
+        max: usize,
+    ) -> Result<Value, String> {
+        if max < args.len() {
+            Err(format!(
+                "Received {} arguments to function '{}', expected at most {}",
+                args.len(),
+                function_name,
+                max
+            ))
+        } else {
+            Err(format!(
+                "Received {} arguments to function '{}', expected at least {}",
+                args.len(),
+                function_name,
+                min
+            ))
+        }
+    }
+
     fn value_to_integer(
         _g: &Graph,
         _runtime: &mut Self,
@@ -294,10 +317,7 @@ impl Runtime {
                 "Type mismatch: expected List, String, or Null but was {}",
                 arg.name()
             )),
-            args => Err(format!(
-                "Expected one argument for size, instead {}",
-                args.len()
-            )),
+            args => Self::args_size_error(args, "size", 1, 1),
         }
     }
 
@@ -319,10 +339,7 @@ impl Runtime {
                 "Type mismatch: expected List or Null but was {}",
                 arg.name()
             )),
-            args => Err(format!(
-                "Expected one argument for head, instead {}",
-                args.len()
-            )),
+            args => Self::args_size_error(args, "head", 1, 1),
         }
     }
 
@@ -338,10 +355,7 @@ impl Runtime {
                 "Type mismatch: expected List or Null but was {}",
                 arg.name()
             )),
-            args => Err(format!(
-                "Expected one argument for last, instead {}",
-                args.len()
-            )),
+            args => Self::args_size_error(args, "last", 1, 1),
         }
     }
 
@@ -363,10 +377,7 @@ impl Runtime {
                 "Type mismatch: expected List or Null but was {}",
                 arg.name()
             )),
-            args => Err(format!(
-                "Expected one argument for tail, instead {}",
-                args.len()
-            )),
+            args => Self::args_size_error(args, "tail", 1, 1),
         }
     }
 
@@ -387,10 +398,7 @@ impl Runtime {
                 "Type mismatch: expected List, String or null, but was {}",
                 arg.name()
             )),
-            args => Err(format!(
-                "Expected one argument for reverse, instead {}",
-                args.len()
-            )),
+            args => Self::args_size_error(args, "reverse", 1, 1),
         }
     }
 
@@ -430,11 +438,27 @@ impl Runtime {
                 Ok(Value::String(s[start..end].to_string()))
             }
 
-            // Type mismatch handling
-            args => Err(format!(
-                "Type mismatch: expected substring(String, Integer) [+ Integer] but got {:?}",
-                args.iter().map(Value::name).collect::<Vec<_>>()
+            [Value::String(_), t] => Err(format!(
+                "Type mismatch: expected Integer Or Null but got {}",
+                t.name()
             )),
+            [t, Value::Int(_)] => Err(format!(
+                "Type mismatch: expected String Or Null but got {}",
+                t.name()
+            )),
+            [t, Value::Int(_), Value::Int(_)] => Err(format!(
+                "Type mismatch: expected String Or Null but got {}",
+                t.name()
+            )),
+            [Value::String(_), t, Value::Int(_)] | [Value::String(_), Value::Int(_), t] => {
+                Err(format!(
+                    "Type mismatch: expected Integer Or Null but got {}",
+                    t.name()
+                ))
+            }
+
+            // Type mismatch handling
+            args => Self::args_size_error(args, "substring", 2, 3),
         }
     }
 
@@ -470,10 +494,7 @@ impl Runtime {
                 "Type mismatch: expected 2 String or null arguments, but was {}",
                 arg.name()
             )),
-            args => Err(format!(
-                "Expected two arguments for split, instead {}",
-                args.len()
-            )),
+            args => Self::args_size_error(args, "split", 2, 2),
         }
     }
 
@@ -489,10 +510,7 @@ impl Runtime {
                 "Type mismatch: expected List, String or null, but was {}",
                 arg.name()
             )),
-            args => Err(format!(
-                "Expected one argument for toLower, instead {}",
-                args.len()
-            )),
+            args => Self::args_size_error(args, "toLower", 1, 1),
         }
     }
 
@@ -508,10 +526,7 @@ impl Runtime {
                 "Type mismatch: expected List, String or null, but was {}",
                 arg.name()
             )),
-            args => Err(format!(
-                "Expected one argument for toUpper, instead {}",
-                args.len()
-            )),
+            args => Self::args_size_error(args, "toUpper", 1, 1),
         }
     }
 
@@ -533,10 +548,7 @@ impl Runtime {
                 arg2.name(),
                 arg3.name()
             )),
-            args => Err(format!(
-                "Expected three arguments for replace, instead {}",
-                args.len()
-            )),
+            args => Self::args_size_error(args, "replace", 3, 3),
         }
     }
 
@@ -560,10 +572,7 @@ impl Runtime {
                 arg1.name(),
                 arg2.name()
             )),
-            args => Err(format!(
-                "Expected two arguments for function 'left', instead {}",
-                args.len()
-            )),
+            args => Self::args_size_error(args, "left", 2, 2),
         }
     }
 
@@ -579,10 +588,7 @@ impl Runtime {
                 "Type mismatch: expected String or null, but was {}",
                 arg.name()
             )),
-            args => Err(format!(
-                "Expected one argument for ltrim, instead {}",
-                args.len()
-            )),
+            args => Self::args_size_error(args, "ltrim", 1, 1),
         }
     }
 
@@ -607,10 +613,7 @@ impl Runtime {
                 arg1.name(),
                 arg2.name()
             )),
-            args => Err(format!(
-                "Expected two arguments for function 'right', instead {}",
-                args.len()
-            )),
+            args => Self::args_size_error(args, "right", 2, 2),
         }
     }
     fn string_join(
@@ -647,10 +650,7 @@ impl Runtime {
                 "Type mismatch: expected List or Null but was {}",
                 arg1.name()
             )),
-            args => Err(format!(
-                "Received {} arguments to function 'string.join', expected at most 2",
-                args.len()
-            )),
+            args => Self::args_size_error(args, "string.join", 1, 2),
         }
     }
 
@@ -683,10 +683,7 @@ impl Runtime {
                 "Type mismatch: expected String or Null but was {}",
                 arg1.name(),
             )),
-            args => Err(format!(
-                "Received {} arguments to function 'string.matchRegEx', expected at least 2",
-                args.len()
-            )),
+            args => Self::args_size_error(args, "string.matchRegEx", 2, 2),
         }
     }
 
@@ -720,10 +717,7 @@ impl Runtime {
                 "Type mismatch: expected String or Null but was {}",
                 arg1.name(),
             )),
-            args => Err(format!(
-                "Received {} arguments to function 'string.replaceRegEx', expected at least 3",
-                args.len()
-            )),
+            args => Self::args_size_error(args, "string.replaceRegEx", 3, 3),
         }
     }
 
@@ -740,10 +734,7 @@ impl Runtime {
                 "Type mismatch: expected Integer, Float, or Null but was {}",
                 v.name()
             )),
-            args => Err(format!(
-                "Received {} arguments to function 'abs', expected at most 1",
-                args.len()
-            )),
+            args => Self::args_size_error(args, "abs", 1, 1),
         }
     }
 
@@ -760,10 +751,7 @@ impl Runtime {
                 "Type mismatch: expected Integer, Float, or Null but was {}",
                 v.name()
             )),
-            args => Err(format!(
-                "Received {} arguments to function 'ceil', expected at most 1",
-                args.len()
-            )),
+            args => Self::args_size_error(args, "ceil", 1, 1),
         }
     }
 
@@ -774,10 +762,7 @@ impl Runtime {
     ) -> Result<Value, String> {
         match args.as_slice() {
             [] => Ok(Value::Float(std::f64::consts::E)),
-            args => Err(format!(
-                "Received {} arguments to function 'e', expected at most 0",
-                args.len()
-            )),
+            args => Self::args_size_error(args, "e", 0, 0),
         }
     }
 
@@ -794,10 +779,7 @@ impl Runtime {
                 "Type mismatch: expected Integer, Float, or Null but was {}",
                 v.name()
             )),
-            args => Err(format!(
-                "Received {} arguments to function 'exp', expected at most 1",
-                args.len()
-            )),
+            args => Self::args_size_error(args, "exp", 1, 1),
         }
     }
 
@@ -814,10 +796,7 @@ impl Runtime {
                 "Type mismatch: expected Integer, Float, or Null but was {}",
                 v.name()
             )),
-            args => Err(format!(
-                "Received {} arguments to function 'floor', expected at most 1",
-                args.len()
-            )),
+            args => Self::args_size_error(args, "floor", 1, 1),
         }
     }
 
@@ -834,10 +813,7 @@ impl Runtime {
                 "Type mismatch: expected Integer, Float, or Null but was {}",
                 v.name()
             )),
-            args => Err(format!(
-                "Received {} arguments to function 'log', expected at most 1",
-                args.len()
-            )),
+            args => Self::args_size_error(args, "log", 1, 1),
         }
     }
 
@@ -854,10 +830,7 @@ impl Runtime {
                 "Type mismatch: expected Integer, Float, or Null but was {}",
                 v.name()
             )),
-            args => Err(format!(
-                "Received {} arguments to function 'log10', expected at most 1",
-                args.len()
-            )),
+            args => Self::args_size_error(args, "log10", 1, 1),
         }
     }
     fn pow(
@@ -879,10 +852,7 @@ impl Runtime {
                 "Type mismatch: expected Integer, Float, or Null but was {}",
                 v.name()
             )),
-            args => Err(format!(
-                "Received {} arguments to function 'pow', expected at least 2",
-                args.len()
-            )),
+            args => Self::args_size_error(args, "pow", 2, 2),
         }
     }
 
@@ -896,10 +866,7 @@ impl Runtime {
                 let mut rng = rand::rng();
                 Ok(Value::Float(rng.random_range(0.0..1.0)))
             }
-            args => Err(format!(
-                "Received {} arguments to function 'rand', expected at most 0",
-                args.len()
-            )),
+            args => Self::args_size_error(args, "rand", 0, 0),
         }
     }
 
@@ -916,10 +883,7 @@ impl Runtime {
                 "Type mismatch: expected Integer, Float, or Null but was {}",
                 v.name()
             )),
-            args => Err(format!(
-                "Received {} arguments to function 'round', expected at most 1",
-                args.len()
-            )),
+            args => Self::args_size_error(args, "round", 1, 1),
         }
     }
 
@@ -940,10 +904,7 @@ impl Runtime {
                 "Type mismatch: expected Integer, Float, or Null but was {}",
                 v.name()
             )),
-            args => Err(format!(
-                "Received {} arguments to function 'sign', expected at most 1",
-                args.len()
-            )),
+            args => Self::args_size_error(args, "sign", 1, 1),
         }
     }
 
@@ -972,10 +933,7 @@ impl Runtime {
                 "Type mismatch: expected Integer, Float, or Null but was {}",
                 v.name()
             )),
-            args => Err(format!(
-                "Received {} arguments to function 'sqrt', expected at most 1",
-                args.len()
-            )),
+            args => Self::args_size_error(args, "sqrt", 1, 1),
         }
     }
 
