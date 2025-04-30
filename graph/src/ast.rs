@@ -12,8 +12,9 @@ pub enum QueryExprIR {
     String(String),
     Ident(String),
     Parameter(String),
-    Named(String, Box<QueryExprIR>),
     List(Vec<QueryExprIR>),
+    Map(BTreeMap<String, QueryExprIR>),
+    Named(String, Box<QueryExprIR>),
     Or(Vec<QueryExprIR>),
     Xor(Vec<QueryExprIR>),
     And(Vec<QueryExprIR>),
@@ -35,13 +36,7 @@ pub enum QueryExprIR {
     IsNull(Box<QueryExprIR>),
     GetElement(Box<(QueryExprIR, QueryExprIR)>),
     GetElements(Box<(QueryExprIR, Option<QueryExprIR>, Option<QueryExprIR>)>),
-    Property(Box<QueryExprIR>, String),
     FuncInvocation(String, Vec<QueryExprIR>),
-    Map(BTreeMap<String, QueryExprIR>),
-    StartsWith(Box<(QueryExprIR, QueryExprIR)>),
-    EndsWith(Box<(QueryExprIR, QueryExprIR)>),
-    Contains(Box<(QueryExprIR, QueryExprIR)>),
-    RegexMatches(Box<(QueryExprIR, QueryExprIR)>),
 }
 
 impl QueryExprIR {
@@ -98,22 +93,6 @@ impl QueryExprIR {
                 op.0.inner_validate(env)?;
                 op.1.inner_validate(env)
             }
-            Self::StartsWith(op) => {
-                op.0.inner_validate(env)?;
-                op.1.inner_validate(env)
-            }
-            Self::EndsWith(op) => {
-                op.0.inner_validate(env)?;
-                op.1.inner_validate(env)
-            }
-            Self::Contains(op) => {
-                op.0.inner_validate(env)?;
-                op.1.inner_validate(env)
-            }
-            Self::RegexMatches(op) => {
-                op.0.inner_validate(env)?;
-                op.1.inner_validate(env)
-            }
             Self::Map(exprs) => {
                 for expr in exprs.values() {
                     expr.inner_validate(env)?;
@@ -125,9 +104,7 @@ impl QueryExprIR {
                 env.insert(name.to_string());
                 Ok(())
             }
-            Self::Not(expr) | Self::IsNull(expr) | Self::Property(expr, _) | Self::Negate(expr) => {
-                expr.inner_validate(env)
-            }
+            Self::Not(expr) | Self::IsNull(expr) | Self::Negate(expr) => expr.inner_validate(env),
             Self::GetElement(op) => {
                 op.0.inner_validate(env)?;
                 op.1.inner_validate(env)

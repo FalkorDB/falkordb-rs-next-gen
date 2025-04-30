@@ -4,6 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use orx_tree::DynTree;
 use roaring::RoaringTreemap;
 
 use crate::{
@@ -34,7 +35,7 @@ pub struct Graph {
     relationship_types: Vec<String>,
     node_properties: Vec<String>,
     relationship_properties: Vec<String>,
-    cache: Mutex<BTreeMap<String, IR>>,
+    cache: Mutex<BTreeMap<String, DynTree<IR>>>,
 }
 
 impl Graph {
@@ -157,7 +158,7 @@ impl Graph {
             self,
             &mut runtime,
             result_fn,
-            &evaluate,
+            &evaluate.root(),
         )?;
         let run_duration = start.elapsed();
 
@@ -225,7 +226,7 @@ impl Graph {
             self,
             &mut runtime,
             result_fn,
-            &evaluate,
+            &evaluate.root(),
         )?;
         let run_duration = start.elapsed();
 

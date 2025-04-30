@@ -1,4 +1,6 @@
-use std::{collections::BTreeMap, vec::IntoIter};
+use std::{fmt::Display, vec::IntoIter};
+
+use orx_tree::{DynTree, NodeRef};
 
 use crate::ast::{Alias, NodePattern, Pattern, QueryExprIR, QueryIR, RelationshipPattern};
 
@@ -11,44 +13,136 @@ pub enum IR {
     String(String),
     Var(String),
     Parameter(String),
-    List(Vec<IR>),
-    Length(Box<IR>),
-    GetElement(Box<(IR, IR)>),
-    GetElements(Box<(IR, Option<IR>, Option<IR>)>),
-    Range(Box<(IR, IR, IR)>),
-    IsNull(Box<IR>),
-    IsNode(Box<IR>),
-    IsRelationship(Box<IR>),
-    Or(Vec<IR>),
-    Xor(Vec<IR>),
-    And(Vec<IR>),
-    Not(Box<IR>),
-    Negate(Box<IR>),
-    Eq(Vec<IR>),
-    Neq(Vec<IR>),
-    Lt(Box<(IR, IR)>),
-    Gt(Box<(IR, IR)>),
-    Le(Box<(IR, IR)>),
-    Ge(Box<(IR, IR)>),
-    In(Box<(IR, IR)>),
-    Add(Vec<IR>),
-    Sub(Vec<IR>),
-    Mul(Vec<IR>),
-    Div(Vec<IR>),
-    Pow(Vec<IR>),
-    Modulo(Vec<IR>),
-    FuncInvocation(String, Vec<IR>),
-    Map(BTreeMap<String, IR>),
-    Set(String, Box<IR>),
-    If(Box<(IR, IR)>),
-    For(Box<(IR, IR, IR, IR)>),
-    Return(Box<IR>),
-    ReturnAggregation(Box<IR>),
-    Block(Vec<IR>),
+    List,
+    Length,
+    GetElement,
+    GetElements,
+    Range,
+    IsNull,
+    IsNode,
+    IsRelationship,
+    Or,
+    Xor,
+    And,
+    Not,
+    Negate,
+    Eq,
+    Neq,
+    Lt,
+    Gt,
+    Le,
+    Ge,
+    In,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Pow,
+    Modulo,
+    FuncInvocation(String),
+    Map,
+    Set(String),
+    If,
+    For,
+    Return,
+    ReturnAggregation,
+    Block,
+}
+
+impl Display for IR {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        match self {
+            Self::Null => write!(f, "null"),
+            Self::Bool(x) => write!(f, "{x}"),
+            Self::Integer(x) => write!(f, "{x}"),
+            Self::Float(x) => write!(f, "{x}"),
+            Self::String(x) => write!(f, "\"{x}\""),
+            Self::Var(x) => write!(f, "{x}"),
+            Self::Parameter(x) => write!(f, "${x}"),
+            Self::List => write!(f, "list"),
+            Self::Length => write!(f, "length"),
+            Self::GetElement => write!(f, "get_element"),
+            Self::GetElements => write!(f, "get_elements"),
+            Self::Range => write!(f, "range"),
+            Self::IsNull => write!(f, "is_null"),
+            Self::IsNode => write!(f, "is_node"),
+            Self::IsRelationship => write!(f, "is_relationship"),
+            Self::Or => write!(f, "or"),
+            Self::Xor => write!(f, "xor"),
+            Self::And => write!(f, "and"),
+            Self::Not => write!(f, "not"),
+            Self::Negate => write!(f, "negate"),
+            Self::Eq => write!(f, "eq"),
+            Self::Neq => write!(f, "neq"),
+            Self::Lt => write!(f, "lt"),
+            Self::Gt => write!(f, "gt"),
+            Self::Le => write!(f, "le"),
+            Self::Ge => write!(f, "ge"),
+            Self::In => write!(f, "in"),
+            Self::Add => write!(f, "+"),
+            Self::Sub => write!(f, "-"),
+            Self::Mul => write!(f, "*"),
+            Self::Div => write!(f, "/"),
+            Self::Pow => write!(f, "^"),
+            Self::Modulo => write!(f, "%"),
+            Self::FuncInvocation(x) => write!(f, "{x}()"),
+            Self::Map => write!(f, "{{}}"),
+            Self::Set(x) => write!(f, "{x} ="),
+            Self::If => write!(f, "if"),
+            Self::For => write!(f, "for"),
+            Self::Return => write!(f, "return"),
+            Self::ReturnAggregation => write!(f, "return_aggregation"),
+            Self::Block => write!(f, "block"),
+        }
+    }
 }
 
 pub struct Planner {
     var_id: u64,
+}
+
+macro_rules! tree {
+    ($value:expr) => {
+        DynTree::new($value)
+    };
+    ($value:expr, $($child:expr),*) => {
+        {
+            let mut n = DynTree::new($value);
+            let mut root = n.root_mut();
+            $(root.push_child_tree($child);)*
+            n
+        }
+    };
+    ($value:expr ; $iter:expr) => {
+        {
+            let mut n = DynTree::new($value);
+            let mut root = n.root_mut();
+            for child in $iter {
+                root.push_child_tree(child);
+            }
+            n
+        }
+    };
+    ($value:expr => $self:expr => $child:expr) => {
+        {
+            let mut n = DynTree::new($value);
+            let mut root = n.root_mut();
+            for child in $child.into_iter().map(|ir| $self.plan_expr(ir)) {
+                root.push_child_tree(child);
+            }
+            n
+        }
+    };
+    () => {};
+}
+
+impl Default for Planner {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Planner {
@@ -67,136 +161,108 @@ impl Planner {
         &mut self,
         agg_ctx_var: String,
         expr: QueryExprIR,
-    ) -> IR {
+    ) -> DynTree<IR> {
         match expr {
             QueryExprIR::FuncInvocation(name, params) => {
                 let mut params = params
                     .into_iter()
                     .map(|ir| self.plan_expr(ir))
                     .collect::<Vec<_>>();
-                params.push(IR::Var(agg_ctx_var));
-                IR::FuncInvocation(name, params)
+                params.push(tree!(IR::Var(agg_ctx_var)));
+                tree!(IR::FuncInvocation(name) ; params.into_iter())
             }
             _ => unreachable!(),
         }
     }
 
+    #[allow(clippy::only_used_in_recursion)]
     fn plan_expr(
         &mut self,
         expr: QueryExprIR,
-    ) -> IR {
+    ) -> DynTree<IR> {
         match expr {
-            QueryExprIR::Null => IR::Null,
-            QueryExprIR::Bool(x) => IR::Bool(x),
-            QueryExprIR::Integer(x) => IR::Integer(x),
-            QueryExprIR::Float(x) => IR::Float(x),
-            QueryExprIR::String(x) => IR::String(x),
-            QueryExprIR::Ident(x) => IR::Var(x),
-            QueryExprIR::Parameter(x) => IR::Parameter(x),
-            QueryExprIR::Named(name, expr) => IR::Set(name, Box::new(self.plan_expr(*expr))),
-            QueryExprIR::List(exprs) => {
-                IR::List(exprs.into_iter().map(|ir| self.plan_expr(ir)).collect())
-            }
-            QueryExprIR::Or(exprs) => {
-                IR::Or(exprs.into_iter().map(|ir| self.plan_expr(ir)).collect())
-            }
-            QueryExprIR::Xor(exprs) => {
-                IR::Xor(exprs.into_iter().map(|ir| self.plan_expr(ir)).collect())
-            }
-            QueryExprIR::And(exprs) => {
-                IR::And(exprs.into_iter().map(|ir| self.plan_expr(ir)).collect())
-            }
-            QueryExprIR::Not(expr) => IR::Not(Box::new(self.plan_expr(*expr))),
-            QueryExprIR::Negate(expr) => IR::Negate(Box::new(self.plan_expr(*expr))),
-
-            QueryExprIR::Eq(exprs) => {
-                IR::Eq(exprs.into_iter().map(|ir| self.plan_expr(ir)).collect())
-            }
+            QueryExprIR::Null => tree!(IR::Null),
+            QueryExprIR::Bool(x) => tree!(IR::Bool(x)),
+            QueryExprIR::Integer(x) => tree!(IR::Integer(x)),
+            QueryExprIR::Float(x) => tree!(IR::Float(x)),
+            QueryExprIR::String(x) => tree!(IR::String(x)),
+            QueryExprIR::Ident(x) => tree!(IR::Var(x)),
+            QueryExprIR::Parameter(x) => tree!(IR::Parameter(x)),
+            QueryExprIR::Named(name, expr) => tree!(IR::Set(name), self.plan_expr(*expr)),
+            QueryExprIR::List(exprs) => tree!(IR::List => self => exprs),
+            QueryExprIR::Or(exprs) => tree!(IR::Or => self => exprs),
+            QueryExprIR::Xor(exprs) => tree!(IR::Xor => self => exprs),
+            QueryExprIR::And(exprs) => tree!(IR::And => self => exprs),
+            QueryExprIR::Not(expr) => tree!(IR::Not, self.plan_expr(*expr)),
+            QueryExprIR::Negate(expr) => tree!(IR::Negate, self.plan_expr(*expr)),
+            QueryExprIR::Eq(exprs) => tree!(IR::Eq => self => exprs),
             QueryExprIR::Neq(_) => todo!(),
             QueryExprIR::Lt(_) => todo!(),
             QueryExprIR::Gt(_) => todo!(),
             QueryExprIR::Le(_) => todo!(),
             QueryExprIR::Ge(_) => todo!(),
-            QueryExprIR::In(op) => IR::In(Box::new((self.plan_expr(op.0), self.plan_expr(op.1)))),
-            QueryExprIR::Add(exprs) => {
-                IR::Add(exprs.into_iter().map(|ir| self.plan_expr(ir)).collect())
-            }
-            QueryExprIR::Sub(exprs) => {
-                IR::Sub(exprs.into_iter().map(|ir| self.plan_expr(ir)).collect())
-            }
-            QueryExprIR::Mul(exprs) => {
-                IR::Mul(exprs.into_iter().map(|ir| self.plan_expr(ir)).collect())
-            }
-            QueryExprIR::Div(exprs) => {
-                IR::Div(exprs.into_iter().map(|ir| self.plan_expr(ir)).collect())
-            }
-            QueryExprIR::Pow(exprs) => {
-                IR::Pow(exprs.into_iter().map(|ir| self.plan_expr(ir)).collect())
-            }
-            QueryExprIR::Modulo(exprs) => {
-                IR::Modulo(exprs.into_iter().map(|ir| self.plan_expr(ir)).collect())
-            }
-            QueryExprIR::IsNull(expr) => IR::IsNull(Box::new(self.plan_expr(*expr))),
+            QueryExprIR::In(op) => tree!(IR::In, self.plan_expr(op.0), self.plan_expr(op.1)),
+            QueryExprIR::Add(exprs) => tree!(IR::Add => self => exprs),
+            QueryExprIR::Sub(exprs) => tree!(IR::Sub => self => exprs),
+            QueryExprIR::Mul(exprs) => tree!(IR::Mul => self => exprs),
+            QueryExprIR::Div(exprs) => tree!(IR::Div => self => exprs),
+            QueryExprIR::Pow(exprs) => tree!(IR::Pow => self => exprs),
+            QueryExprIR::Modulo(exprs) => tree!(IR::Modulo => self => exprs),
+            QueryExprIR::IsNull(expr) => tree!(IR::IsNull, self.plan_expr(*expr)),
             QueryExprIR::GetElement(op) => {
-                IR::GetElement(Box::new((self.plan_expr(op.0), self.plan_expr(op.1))))
+                tree!(IR::GetElement, self.plan_expr(op.0), self.plan_expr(op.1))
             }
-            QueryExprIR::GetElements(op) => IR::GetElements(Box::new((
-                self.plan_expr(op.0),
-                op.1.map(|ir| self.plan_expr(ir)),
-                op.2.map(|ir| self.plan_expr(ir)),
-            ))),
-            QueryExprIR::StartsWith(op) => IR::FuncInvocation(
-                "@starts_with".to_string(),
-                vec![self.plan_expr(op.0), self.plan_expr(op.1)],
-            ),
-            QueryExprIR::EndsWith(op) => IR::FuncInvocation(
-                "@ends_with".to_string(),
-                vec![self.plan_expr(op.0), self.plan_expr(op.1)],
-            ),
-            QueryExprIR::Contains(op) => IR::FuncInvocation(
-                "@contains".to_string(),
-                vec![self.plan_expr(op.0), self.plan_expr(op.1)],
-            ),
-            QueryExprIR::RegexMatches(op) => IR::FuncInvocation(
-                "@regex_matches".to_string(),
-                vec![self.plan_expr(op.0), self.plan_expr(op.1)],
-            ),
-            QueryExprIR::Property(expr, name) => IR::FuncInvocation(
-                "property".to_string(),
-                vec![self.plan_expr(*expr), IR::String(name)],
-            ),
-            QueryExprIR::FuncInvocation(name, params) => match name.as_str() {
+            QueryExprIR::GetElements(op) => {
+                let list_var = self.next_var();
+                let list = tree!(IR::Set(list_var.to_string()), self.plan_expr(op.0));
+
+                tree!(
+                    IR::Block,
+                    list,
+                    tree!(
+                        IR::GetElements,
+                        tree!(IR::Var(list_var.to_string())),
+                        op.1.map_or_else(|| tree!(IR::Integer(0)), |ir| self.plan_expr(ir)),
+                        op.2.map_or_else(
+                            || tree!(IR::Length, tree!(IR::Var(list_var))),
+                            |ir| self.plan_expr(ir)
+                        )
+                    )
+                )
+            }
+            QueryExprIR::FuncInvocation(name, exprs) => match name.as_str() {
                 "range" => {
-                    let mut iter = params.into_iter();
+                    let mut iter = exprs.into_iter();
                     match (iter.next(), iter.next(), iter.next(), iter.next()) {
-                        (Some(length), None, None, None) => IR::Range(Box::new((
-                            IR::Integer(0),
-                            IR::Sub(vec![self.plan_expr(length), IR::Integer(1)]),
-                            IR::Integer(1),
-                        ))),
-                        (Some(from), Some(to), None, None) => IR::Range(Box::new((
+                        (Some(length), None, None, None) => tree!(
+                            IR::Range,
+                            self.plan_expr(QueryExprIR::Integer(0)),
+                            self.plan_expr(QueryExprIR::Sub(
+                                vec![length, QueryExprIR::Integer(1),]
+                            )),
+                            self.plan_expr(QueryExprIR::Integer(1))
+                        ),
+                        (Some(from), Some(to), None, None) => tree!(
+                            IR::Range,
                             self.plan_expr(from),
                             self.plan_expr(to),
-                            IR::Integer(1),
-                        ))),
-                        (Some(from), Some(to), Some(step), None) => IR::Range(Box::new((
+                            self.plan_expr(QueryExprIR::Integer(1))
+                        ),
+                        (Some(from), Some(to), Some(step), None) => tree!(
+                            IR::Range,
                             self.plan_expr(from),
                             self.plan_expr(to),
-                            self.plan_expr(step),
-                        ))),
+                            self.plan_expr(step)
+                        ),
                         _ => todo!(),
                     }
                 }
-                name => IR::FuncInvocation(
-                    name.to_string(),
-                    params.into_iter().map(|ir| self.plan_expr(ir)).collect(),
-                ),
+                name => tree!(IR::FuncInvocation(name.to_string()) => self => exprs),
             },
-            QueryExprIR::Map(attrs) => IR::Map(
+            QueryExprIR::Map(attrs) => tree!(IR::Map ;
                 attrs
                     .into_iter()
-                    .map(|(k, ir)| (k, self.plan_expr(ir)))
-                    .collect(),
+                    .map(|(k, ir)| tree!(IR::Var(k), self.plan_expr(ir)))
             ),
         }
     }
@@ -205,64 +271,79 @@ impl Planner {
         &mut self,
         pattern: Pattern,
         iter: &mut IntoIter<QueryIR>,
-    ) -> IR {
-        let create_nodes = pattern
-            .nodes
-            .into_iter()
-            .map(|n| {
-                let labels = IR::List(
-                    n.labels
-                        .iter()
-                        .map(|l| IR::String((*l).to_string()))
-                        .collect(),
-                );
-                let attrs = IR::Map(
-                    n.attrs
-                        .into_iter()
-                        .map(|(k, ir)| (k, self.plan_expr(ir)))
-                        .collect(),
-                );
-                IR::Set(
-                    n.alias.to_string(),
-                    Box::new(IR::FuncInvocation(
-                        String::from("create_node"),
-                        vec![labels, attrs],
-                    )),
-                )
-            })
-            .collect();
-        let create_relationships = pattern
-            .relationships
-            .into_iter()
-            .map(|l| {
-                let relationship_type = IR::String(l.relationship_type.to_string());
-                let attrs = IR::Map(
-                    l.attrs
-                        .into_iter()
-                        .map(|(k, ir)| (k, self.plan_expr(ir)))
-                        .collect(),
-                );
-                let from = IR::Var(l.from.to_string());
-                let to = IR::Var(l.to.to_string());
-                IR::Set(
-                    l.alias.to_string(),
-                    Box::new(IR::FuncInvocation(
-                        String::from("create_relationship"),
-                        vec![relationship_type, from, to, attrs],
-                    )),
-                )
-            })
-            .collect();
-        match iter.next() {
-            Some(body_ir) => IR::Block(vec![
-                IR::Block(create_nodes),
-                IR::Block(create_relationships),
-                self.plan_query(body_ir, iter),
-            ]),
-            None => IR::Block(vec![
-                IR::Block(create_nodes),
-                IR::Block(create_relationships),
-            ]),
+    ) -> DynTree<IR> {
+        if let Some(body_ir) = iter.next() {
+            tree!(
+                IR::Block,
+                tree!(IR::Block ; pattern.nodes.into_iter().map(|n| {
+                    tree!(
+                        IR::Set(n.alias.to_string()),
+                        tree!(
+                            IR::FuncInvocation(String::from("create_node")),
+                            tree!(IR::List ; n
+                                .labels
+                                .iter()
+                                .map(|l| tree!(IR::String((*l).to_string())))),
+                            tree!(IR::Map ;
+                                n.attrs
+                                    .into_iter()
+                                    .map(|(k, ir)| tree!(IR::Var(k), self.plan_expr(ir)))
+                            )
+                        )
+                    )
+                })),
+                tree!(IR::Block ; pattern.relationships.into_iter().map(|l| {
+                    tree!(
+                        IR::Set(l.alias.to_string()),
+                        tree!(
+                            IR::FuncInvocation(String::from("create_relationship")),
+                            tree!(IR::String(l.relationship_type.to_string())),
+                            tree!(IR::Var(l.from.to_string())),
+                            tree!(IR::Var(l.to.to_string())),
+                            tree!(IR::Map ;
+                                l.attrs
+                                    .into_iter()
+                                    .map(|(k, ir)| tree!(IR::Var(k), self.plan_expr(ir))))
+                        )
+                    )
+                })),
+                self.plan_query(body_ir, iter)
+            )
+        } else {
+            tree!(
+                IR::Block,
+                tree!(IR::Block ; pattern.nodes.into_iter().map(|n| {
+                    tree!(
+                        IR::Set(n.alias.to_string()),
+                        tree!(
+                            IR::FuncInvocation(String::from("create_node")),
+                            tree!(IR::List ; n
+                                .labels
+                                .iter()
+                                .map(|l| tree!(IR::String((*l).to_string())))),
+                            tree!(IR::Map ;
+                                n.attrs
+                                    .into_iter()
+                                    .map(|(k, ir)| tree!(IR::Var(k), self.plan_expr(ir))))
+                        )
+                    )
+                })),
+                tree!(IR::Block ; pattern.relationships.into_iter().map(|l| {
+                    tree!(
+                        IR::Set(l.alias.to_string()),
+                        tree!(
+                            IR::FuncInvocation(String::from("create_relationship")),
+                            tree!(IR::String(l.relationship_type.to_string())),
+                            tree!(IR::Var(l.from.to_string())),
+                            tree!(IR::Var(l.to.to_string())),
+                            tree!(IR::Map ;
+                                l.attrs
+                                    .into_iter()
+                                    .map(|(k, ir)| tree!(IR::Var(k), self.plan_expr(ir))))
+                        )
+                    )
+                }))
+            )
         }
     }
 
@@ -270,14 +351,15 @@ impl Planner {
         &mut self,
         exprs: Vec<QueryExprIR>,
         iter: &mut IntoIter<QueryIR>,
-    ) -> IR {
-        let deleted_entities = exprs.into_iter().map(|ir| self.plan_expr(ir)).collect();
-        match iter.next() {
-            Some(body_ir) => IR::Block(vec![
-                IR::FuncInvocation(String::from("delete_entity"), deleted_entities),
-                self.plan_query(body_ir, iter),
-            ]),
-            None => IR::FuncInvocation(String::from("delete_entity"), deleted_entities),
+    ) -> DynTree<IR> {
+        if let Some(body_ir) = iter.next() {
+            tree!(
+                IR::Block,
+                tree!(IR::FuncInvocation(String::from("delete_entity")) => self => exprs),
+                self.plan_query(body_ir, iter)
+            )
+        } else {
+            tree!(IR::FuncInvocation(String::from("delete_entity")) => self => exprs)
         }
     }
 
@@ -286,166 +368,189 @@ impl Planner {
         expr: QueryExprIR,
         iter: &mut IntoIter<QueryIR>,
         alias: String,
-    ) -> IR {
+    ) -> DynTree<IR> {
         let list = self.plan_expr(expr);
-        match list {
-            IR::Range(op) => {
-                let init = IR::Set(alias.to_string(), Box::new(op.0));
-                let condition = IR::Le(Box::new((IR::Var(alias.to_string()), op.1)));
-                let next = IR::Set(
-                    alias.to_string(),
-                    Box::new(IR::Add(vec![IR::Var(alias), op.2])),
-                );
-                let body_ir = iter.next().unwrap();
-                let body = self.plan_query(body_ir, iter);
-                IR::For(Box::new((init, condition, next, body)))
-            }
-            x => {
-                let list_var = self.next_var();
-                let index_var = self.next_var();
-                let list = IR::Set(list_var.to_string(), Box::new(x));
-                let init = IR::Set(index_var.to_string(), Box::new(IR::Integer(0)));
-                let condition = IR::Lt(Box::new((
-                    IR::Var(index_var.to_string()),
-                    IR::Length(Box::new(IR::Var(list_var.to_string()))),
-                )));
-                let next = IR::Set(
-                    index_var.to_string(),
-                    Box::new(IR::Add(vec![
-                        IR::Var(index_var.to_string()),
-                        IR::Integer(1),
-                    ])),
-                );
-                let body_ir = iter.next().unwrap();
-                let body = self.plan_query(body_ir, iter);
-                IR::Block(vec![
-                    list,
-                    IR::For(Box::new((
-                        init,
-                        condition,
-                        next,
-                        IR::Block(vec![
-                            IR::Set(
-                                alias,
-                                Box::new(IR::GetElement(Box::new((
-                                    IR::Var(list_var),
-                                    IR::Var(index_var),
-                                )))),
-                            ),
-                            body,
-                        ]),
-                    ))),
-                ])
-            }
+        if matches!(list.root().data(), IR::Range) {
+            let init = tree!(
+                IR::Set(alias.to_string()),
+                list.root().child(0).as_cloned_subtree()
+            );
+            let condition = tree!(
+                IR::Le,
+                tree!(IR::Var(alias.to_string())),
+                list.root().child(1).as_cloned_subtree()
+            );
+            let next = tree!(
+                IR::Set(alias.to_string()),
+                tree!(
+                    IR::Add,
+                    tree!(IR::Var(alias)),
+                    list.root().child(2).as_cloned_subtree()
+                )
+            );
+            let body_ir = iter.next().unwrap();
+            let body = self.plan_query(body_ir, iter);
+            tree!(IR::For, init, condition, next, body)
+        } else {
+            let list_var = self.next_var();
+            let index_var = self.next_var();
+            let list = tree!(IR::Set(list_var.to_string()), list);
+            let init = tree!(IR::Set(index_var.to_string()), tree!(IR::Integer(0)));
+            let condition = tree!(
+                IR::Lt,
+                tree!(IR::Var(index_var.to_string())),
+                tree!(IR::Length, tree!(IR::Var(list_var.to_string())))
+            );
+            let next = tree!(
+                IR::Set(index_var.to_string()),
+                tree!(
+                    IR::Add,
+                    tree!(IR::Var(index_var.to_string())),
+                    tree!(IR::Integer(1))
+                )
+            );
+            let body_ir = iter.next().unwrap();
+            let body = self.plan_query(body_ir, iter);
+            tree!(
+                IR::Block,
+                list,
+                tree!(
+                    IR::For,
+                    init,
+                    condition,
+                    next,
+                    tree!(
+                        IR::Block,
+                        tree!(
+                            IR::Set(alias),
+                            tree!(
+                                IR::GetElement,
+                                tree!(IR::Var(list_var)),
+                                tree!(IR::Var(index_var))
+                            )
+                        ),
+                        body
+                    )
+                )
+            )
         }
     }
 
     fn plan_node_scan(
         &mut self,
         node: NodePattern,
-        body: IR,
-    ) -> IR {
-        let init = IR::Block(vec![
-            IR::Set(
-                format!("iter_{}", node.alias),
-                Box::new(IR::FuncInvocation(
-                    String::from("create_node_iter"),
-                    vec![IR::List(node.labels.into_iter().map(IR::String).collect())],
-                )),
+        body: DynTree<IR>,
+    ) -> DynTree<IR> {
+        let init = tree!(
+            IR::Block,
+            tree!(
+                IR::Set(format!("iter_{}", node.alias)),
+                tree!(
+                    IR::FuncInvocation(String::from("create_node_iter")),
+                    tree!(IR::List ; node
+                            .labels
+                            .into_iter()
+                            .map(|label| tree!(IR::String(label))))
+                )
             ),
-            IR::Set(
-                node.alias.to_string(),
-                Box::new(IR::FuncInvocation(
-                    String::from("next_node"),
-                    vec![IR::Var(format!("iter_{}", node.alias))],
-                )),
-            ),
-        ]);
-        let condition = IR::IsNode(Box::new(IR::Var(node.alias.to_string())));
-        let next = IR::Set(
-            node.alias.to_string(),
-            Box::new(IR::FuncInvocation(
-                String::from("next_node"),
-                vec![IR::Var(format!("iter_{}", node.alias))],
-            )),
+            tree!(
+                IR::Set(node.alias.to_string()),
+                tree!(
+                    IR::FuncInvocation(String::from("next_node")),
+                    tree!(IR::Var(format!("iter_{}", node.alias)))
+                )
+            )
         );
-        IR::For(Box::new((init, condition, next, body)))
+        let condition = tree!(IR::IsNode, tree!(IR::Var(node.alias.to_string())));
+        let next = tree!(
+            IR::Set(node.alias.to_string()),
+            tree!(
+                IR::FuncInvocation(String::from("next_node")),
+                tree!(IR::Var(format!("iter_{}", node.alias)))
+            )
+        );
+        tree!(IR::For, init, condition, next, body)
     }
 
     fn plan_relationship_scan(
         &mut self,
         rel: &RelationshipPattern,
-        body: IR,
-    ) -> IR {
-        let mut init = vec![
-            IR::Set(
-                format!("iter_{}", rel.alias),
-                Box::new(IR::FuncInvocation(
-                    String::from("create_relationship_iter"),
-                    vec![IR::String(rel.relationship_type.to_string())],
-                )),
+        body: DynTree<IR>,
+    ) -> DynTree<IR> {
+        let mut init = tree!(
+            IR::Block,
+            tree!(
+                IR::Set(format!("iter_{}", rel.alias)),
+                tree!(
+                    IR::FuncInvocation(String::from("create_relationship_iter")),
+                    tree!(IR::String(rel.relationship_type.to_string()))
+                )
             ),
-            IR::Set(
-                rel.alias.to_string(),
-                Box::new(IR::FuncInvocation(
-                    String::from("next_relationship"),
-                    vec![IR::Var(format!("iter_{}", rel.alias))],
-                )),
-            ),
-        ];
-        let condition = IR::IsRelationship(Box::new(IR::Var(rel.alias.to_string())));
-        let mut next = vec![IR::Set(
-            rel.alias.to_string(),
-            Box::new(IR::FuncInvocation(
-                "next_relationship".to_string(),
-                vec![IR::Var(format!("iter_{}", rel.alias))],
-            )),
-        )];
+            tree!(
+                IR::Set(rel.alias.to_string()),
+                tree!(
+                    IR::FuncInvocation(String::from("next_relationship")),
+                    tree!(IR::Var(format!("iter_{}", rel.alias)))
+                )
+            )
+        );
+        let condition = tree!(IR::IsRelationship, tree!(IR::Var(rel.alias.to_string())));
+        let mut next = tree!(
+            IR::Block,
+            tree!(
+                IR::Set(rel.alias.to_string()),
+                tree!(
+                    IR::FuncInvocation("next_relationship".to_string()),
+                    tree!(IR::Var(format!("iter_{}", rel.alias)))
+                )
+            )
+        );
         if let Alias::String(from) = &rel.from {
-            init.push(IR::Set(
-                from.to_string(),
-                Box::new(IR::FuncInvocation(
-                    "startnode".to_string(),
-                    vec![IR::Var(rel.alias.to_string())],
-                )),
+            init.root_mut().push_child_tree(tree!(
+                IR::Set(from.to_string()),
+                tree!(
+                    IR::FuncInvocation("startnode".to_string()),
+                    tree!(IR::Var(rel.alias.to_string()))
+                )
             ));
-            next.push(IR::Set(
-                from.to_string(),
-                Box::new(IR::FuncInvocation(
-                    "startnode".to_string(),
-                    vec![IR::Var(rel.alias.to_string())],
-                )),
+            next.root_mut().push_child_tree(tree!(
+                IR::Set(from.to_string()),
+                tree!(
+                    IR::FuncInvocation("startnode".to_string()),
+                    tree!(IR::Var(rel.alias.to_string()))
+                )
             ));
         }
         if let Alias::String(to) = &rel.to {
-            init.push(IR::Set(
-                to.to_string(),
-                Box::new(IR::FuncInvocation(
-                    "endnode".to_string(),
-                    vec![IR::Var(rel.alias.to_string())],
-                )),
+            init.root_mut().push_child_tree(tree!(
+                IR::Set(to.to_string()),
+                tree!(
+                    IR::FuncInvocation("endnode".to_string()),
+                    tree!(IR::Var(rel.alias.to_string()))
+                )
             ));
-            next.push(IR::Set(
-                to.to_string(),
-                Box::new(IR::FuncInvocation(
-                    "endnode".to_string(),
-                    vec![IR::Var(rel.alias.to_string())],
-                )),
+            next.root_mut().push_child_tree(tree!(
+                IR::Set(to.to_string()),
+                tree!(
+                    IR::FuncInvocation("endnode".to_string()),
+                    tree!(IR::Var(rel.alias.to_string()))
+                )
             ));
         }
-        IR::For(Box::new((
-            IR::Block(init),
+        tree!(
+            IR::For,
+            tree!(IR::Block, init),
             condition,
-            IR::Block(next),
-            body,
-        )))
+            tree!(IR::Block, next),
+            body
+        )
     }
 
     fn plan_match(
         &mut self,
         pattern: Pattern,
         iter: &mut IntoIter<QueryIR>,
-    ) -> IR {
+    ) -> DynTree<IR> {
         if pattern.relationships.is_empty() {
             let mut body = self.plan_query(iter.next().unwrap(), iter);
             for node in pattern.nodes.into_iter().rev() {
@@ -458,51 +563,64 @@ impl Planner {
             let body = self.plan_query(iter.next().unwrap(), iter);
             return self.plan_relationship_scan(rel, body);
         }
-        IR::Null
+        tree!(IR::Null)
     }
 
     fn plan_query(
         &mut self,
         ir: QueryIR,
         iter: &mut IntoIter<QueryIR>,
-    ) -> IR {
+    ) -> DynTree<IR> {
         match ir {
-            QueryIR::Call(name, exprs) => IR::For(Box::new((
-                IR::Block(vec![
-                    IR::Set(
-                        "res".to_string(),
-                        Box::new(IR::FuncInvocation(
-                            name.to_lowercase(),
-                            exprs.into_iter().map(|ir| self.plan_expr(ir)).collect(),
-                        )),
+            QueryIR::Call(name, exprs) => tree!(
+                IR::For,
+                tree!(
+                    IR::Block,
+                    tree!(
+                        IR::Set("res".to_string()),
+                        tree!(IR::FuncInvocation(name.to_lowercase()) => self => exprs)
                     ),
-                    IR::Set("i".to_string(), Box::new(IR::Integer(0))),
-                ]),
-                IR::Lt(Box::new((
-                    IR::Var("i".to_string()),
-                    IR::Length(Box::new(IR::Var("res".to_string()))),
-                ))),
-                IR::Set(
-                    "i".to_string(),
-                    Box::new(IR::Add(vec![IR::Var("i".to_string()), IR::Integer(1)])),
+                    tree!(IR::Set("i".to_string()), tree!(IR::Integer(0)))
                 ),
-                IR::Return(Box::new(IR::List(vec![IR::GetElement(Box::new((
-                    IR::Var("res".to_string()),
-                    IR::Var("i".to_string()),
-                )))]))),
-            ))),
+                tree!(
+                    IR::Lt,
+                    tree!(IR::Var("i".to_string())),
+                    tree!(IR::Length, tree!(IR::Var("res".to_string())))
+                ),
+                tree!(
+                    IR::Set("i".to_string()),
+                    tree!(
+                        IR::Add,
+                        tree!(IR::Var("i".to_string())),
+                        tree!(IR::Integer(1))
+                    )
+                ),
+                tree!(
+                    IR::Return,
+                    tree!(
+                        IR::List,
+                        tree!(
+                            IR::GetElement,
+                            tree!(IR::Var("res".to_string())),
+                            tree!(IR::Var("i".to_string()))
+                        )
+                    )
+                )
+            ),
             QueryIR::Match(pattern) => self.plan_match(pattern, iter),
             QueryIR::Unwind(expr, alias) => self.plan_unwind(expr, iter, alias),
-            QueryIR::Where(expr) => IR::If(Box::new((
+            QueryIR::Where(expr) => tree!(
+                IR::If,
                 self.plan_expr(expr),
-                self.plan_query(iter.next().unwrap(), iter),
-            ))),
+                self.plan_query(iter.next().unwrap(), iter)
+            ),
             QueryIR::Create(pattern) => self.plan_create(pattern, iter),
             QueryIR::Delete(exprs) => self.plan_delete(exprs, iter),
-            QueryIR::With(exprs) => IR::Block(vec![
-                IR::Block(exprs.into_iter().map(|ir| self.plan_expr(ir)).collect()),
-                self.plan_query(iter.next().unwrap(), iter),
-            ]),
+            QueryIR::With(exprs) => tree!(
+                IR::Block,
+                tree!(IR::Block => self => exprs),
+                self.plan_query(iter.next().unwrap(), iter)
+            ),
             QueryIR::Return(exprs) => {
                 if exprs.iter().any(super::ast::QueryExprIR::is_aggregation) {
                     let mut group_by_keys = Vec::new();
@@ -515,25 +633,23 @@ impl Planner {
                         }
                     }
                     let agg_ctx_var = self.next_var();
-                    IR::Block(vec![
-                        IR::Set(
-                            agg_ctx_var.to_string(),
-                            Box::new(IR::FuncInvocation(
-                                "create_aggregate_ctx".to_string(),
-                                group_by_keys,
-                            )),
+                    tree!(
+                        IR::Block,
+                        tree!(
+                            IR::Set(agg_ctx_var.to_string()),
+                            tree!(IR::FuncInvocation(
+                                "create_aggregate_ctx".to_string()) ;
+                                group_by_keys
+                            )
                         ),
-                        IR::Block(
+                        tree!(IR::Block ;
                             aggregations
                                 .into_iter()
                                 .map(|ir| self.plan_aggregation(agg_ctx_var.to_string(), ir))
-                                .collect(),
-                        ),
-                    ])
+                        )
+                    )
                 } else {
-                    IR::Return(Box::new(IR::List(
-                        exprs.into_iter().map(|ir| self.plan_expr(ir)).collect(),
-                    )))
+                    tree!(IR::Return, tree!(IR::List => self => exprs))
                 }
             }
             QueryIR::Query(q) => {
@@ -544,7 +660,7 @@ impl Planner {
                 let iter = &mut q.into_iter();
                 let res = self.plan_query(iter.next().unwrap(), iter);
                 if is_agg {
-                    return IR::ReturnAggregation(Box::new(res));
+                    return tree!(IR::ReturnAggregation, res);
                 }
                 res
             }
@@ -556,7 +672,7 @@ impl Planner {
         &mut self,
         ir: QueryIR,
         _debug: bool,
-    ) -> IR {
+    ) -> DynTree<IR> {
         self.plan_query(ir, &mut Vec::new().into_iter())
     }
 }

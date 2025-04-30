@@ -69,13 +69,11 @@ impl Add for Value {
             (Value::String(s), Value::Bool(f)) => {
                 Ok(Value::String(s + &f.to_string().to_lowercase()))
             }
-            (a, b) => {
-                return Err(format!(
-                    "Unexpected types for add operator ({}, {})",
-                    a.name(),
-                    b.name()
-                ));
-            }
+            (a, b) => Err(format!(
+                "Unexpected types for add operator ({}, {})",
+                a.name(),
+                b.name()
+            )),
         }
     }
 }
@@ -140,14 +138,8 @@ impl Value {
             }
             // the inputs have different type - compare them if they
             // are both numerics of differing types
-            (Self::Int(i), Self::Float(f)) => {
-                #[allow(clippy::cast_precision_loss)]
-                return compare_floats(*i as f64, *f);
-            }
-            (Self::Float(f), Self::Int(i)) => {
-                #[allow(clippy::cast_precision_loss)]
-                return compare_floats(*f, *i as f64);
-            }
+            (Self::Int(i), Self::Float(f)) => compare_floats(*i as f64, *f),
+            (Self::Float(f), Self::Int(i)) => compare_floats(*f, *i as f64),
             (Self::Null, _) | (_, Self::Null) => {
                 (self.order().cmp(&b.order()), DisjointOrNull::ComparedNull)
             }
