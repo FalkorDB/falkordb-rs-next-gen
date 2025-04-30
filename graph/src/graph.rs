@@ -73,9 +73,9 @@ impl Graph {
 
     pub fn get_label_by_id(
         &self,
-        id: u64,
+        id: usize,
     ) -> &String {
-        &self.node_labels[id as usize]
+        &self.node_labels[id]
     }
 
     pub fn get_types(&self) -> impl Iterator<Item = &String> {
@@ -166,7 +166,7 @@ impl Graph {
             parse_duration,
             plan_duration,
             run_duration,
-            labels_added: self.node_labels.len() as i32 - labels_count as i32,
+            labels_added: self.node_labels.len() - labels_count,
             labels_removed: 0,
             nodes_created: runtime.nodes_created,
             relationships_created: runtime.relationships_created,
@@ -398,7 +398,7 @@ impl Graph {
         self.node_count -= 1;
         self.all_nodes_matrix.remove(id, id);
 
-        for (label_id, label_matrix) in self.labels_matices.iter_mut() {
+        for (label_id, label_matrix) in &mut self.labels_matices {
             label_matrix.remove(id, id);
             self.node_labels_matrix.remove(id, *label_id as _);
         }
@@ -426,11 +426,14 @@ impl Graph {
             .map(|m| m.iter(0, u64::MAX))
     }
 
+    #[allow(clippy::cast_possible_truncation)]
     pub fn get_node_label_ids(
         &self,
         id: u64,
-    ) -> impl Iterator<Item = u64> {
-        self.node_labels_matrix.iter(id, id).map(|(_, l)| l)
+    ) -> impl Iterator<Item = usize> {
+        self.node_labels_matrix
+            .iter(id, id)
+            .map(|(_, l)| l as usize)
     }
 
     pub fn get_node_property(
@@ -580,7 +583,7 @@ pub struct ResultSummary {
     pub parse_duration: Duration,
     pub plan_duration: Duration,
     pub run_duration: Duration,
-    pub labels_added: i32,
+    pub labels_added: usize,
     pub labels_removed: i32,
     pub nodes_created: i32,
     pub relationships_created: i32,

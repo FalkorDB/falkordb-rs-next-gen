@@ -257,8 +257,9 @@ impl Runtime {
         runtime: &mut Self,
         args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args.as_slice() {
-            [Value::Int(iter)] => runtime.node_iters[*iter as usize]
+        let mut iter = args.into_iter();
+        match (iter.next(), iter.next()) {
+            (Some(Value::Int(iter)), None) => runtime.node_iters[iter as usize]
                 .next()
                 .map_or_else(|| Ok(Value::Null), |(n, _)| Ok(Value::Node(n))),
             _ => todo!(),
@@ -287,8 +288,9 @@ impl Runtime {
         runtime: &mut Self,
         args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args.as_slice() {
-            [Value::Int(iter)] => runtime.relationship_iters[*iter as usize]
+        let mut iter = args.into_iter();
+        match (iter.next(), iter.next()) {
+            (Some(Value::Int(iter)), None) => runtime.relationship_iters[iter as usize]
                 .next()
                 .map_or(Ok(Value::Null), |(src, dest, id)| {
                     Ok(Value::Relationship(id, src, dest))
@@ -302,15 +304,16 @@ impl Runtime {
         _runtime: &mut Self,
         args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args.as_slice() {
-            [Value::Node(node_id), Value::String(property)] => g
-                .get_node_property_id(property)
+        let mut iter = args.into_iter();
+        match (iter.next(), iter.next(), iter.next()) {
+            (Some(Value::Node(node_id)), Some(Value::String(property)), None) => g
+                .get_node_property_id(&property)
                 .map_or(Ok(Value::Null), |property_id| {
-                    g.get_node_property(*node_id, property_id)
+                    g.get_node_property(node_id, property_id)
                         .map_or(Ok(Value::Null), Ok)
                 }),
-            [Value::Map(map), Value::String(property)] => {
-                Ok(map.get(property).unwrap_or(&Value::Null).clone())
+            (Some(Value::Map(map)), Some(Value::String(property)), None) => {
+                Ok(map.get(&property).unwrap_or(&Value::Null).clone())
             }
             _ => Ok(Value::Null),
         }
@@ -322,9 +325,10 @@ impl Runtime {
         _runtime: &mut Self,
         args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args.as_slice() {
-            [Value::Node(node_id)] => Ok(Value::List(
-                g.get_node_label_ids(*node_id)
+        let mut iter = args.into_iter();
+        match (iter.next(), iter.next()) {
+            (Some(Value::Node(node_id)), None) => Ok(Value::List(
+                g.get_node_label_ids(node_id)
                     .map(|label_id| Value::String(g.get_label_by_id(label_id).to_string()))
                     .collect(),
             )),
@@ -361,8 +365,9 @@ impl Runtime {
         _runtime: &mut Self,
         args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args.as_slice() {
-            [Value::Relationship(_, src, _)] => Ok(Value::Node(*src)),
+        let mut iter = args.into_iter();
+        match (iter.next(), iter.next()) {
+            (Some(Value::Relationship(_, src, _)), None) => Ok(Value::Node(src)),
             _ => Ok(Value::Null),
         }
     }
@@ -373,8 +378,9 @@ impl Runtime {
         _runtime: &mut Self,
         args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args.as_slice() {
-            [Value::Relationship(_, _, dest)] => Ok(Value::Node(*dest)),
+        let mut iter = args.into_iter();
+        match (iter.next(), iter.next()) {
+            (Some(Value::Relationship(_, _, dest)), None) => Ok(Value::Node(dest)),
             _ => Ok(Value::Null),
         }
     }
@@ -385,8 +391,9 @@ impl Runtime {
         runtime: &mut Self,
         args: Vec<Value>,
     ) -> Result<Value, String> {
-        if let [x, Value::Int(hash)] = args.as_slice() {
-            runtime.agg_ctxs.entry(*hash as _).and_modify(|v| {
+        let mut iter = args.into_iter();
+        if let (Some(x), Some(Value::Int(hash)), None) = (iter.next(), iter.next(), iter.next()) {
+            runtime.agg_ctxs.entry(hash as _).and_modify(|v| {
                 if let (_, Value::List(values)) = v {
                     values.push(x.clone());
                 } else {
@@ -1276,13 +1283,13 @@ pub fn ro_run(
                 .map(|ir| ro_run(vars, g, runtime, result_fn, &ir))
                 .collect::<Result<Vec<_>, _>>()?,
         )),
-        IR::Length => match ro_run(vars, g, runtime, result_fn, &&ir.child(0))? {
+        IR::Length => match ro_run(vars, g, runtime, result_fn, &ir.child(0))? {
             Value::List(arr) => Ok(Value::Int(arr.len() as _)),
             _ => Err("Length operator requires a list".to_string()),
         },
         IR::GetElement => {
-            let arr = ro_run(vars, g, runtime, result_fn, &&ir.child(0))?;
-            let i = ro_run(vars, g, runtime, result_fn, &&ir.child(1))?;
+            let arr = ro_run(vars, g, runtime, result_fn, &ir.child(0))?;
+            let i = ro_run(vars, g, runtime, result_fn, &ir.child(1))?;
             match (arr, i) {
                 (Value::List(values), Value::Int(i)) => {
                     if i >= 0 && i < values.len() as _ {

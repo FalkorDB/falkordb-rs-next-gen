@@ -1,7 +1,4 @@
-use std::{
-    ffi::c_void,
-    sync::{Once, atomic::AtomicPtr},
-};
+use std::{ffi::c_void, sync::Once};
 
 use crate::{
     GraphBLAS::GrB_Vector,
