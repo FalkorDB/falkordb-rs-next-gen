@@ -34,7 +34,8 @@ def teardown_module(module):
 
 
 def test_tck():
-    cmd = ["./tests/tck/features/", '--tags=-crash', '--tags=-skip', "--no-capture"]
+    tck_features = os.getenv("TCK_FEATURES", "./tests/tck/features/")
+    cmd = [tck_features, '--tags=-crash', '--tags=-skip', "--no-capture"]
     tck_include = os.getenv("TCK_INCLUDE", "")
     if tck_include:
        cmd = ["./tests/tck/features/", '--tags=-crash', '--tags=-skip', "--no-capture", "--stop", "--include", tck_include]

@@ -99,7 +99,7 @@ jobs:
           cd cov
           . /data/venv/bin/activate
           TARGET=../target/debug/libfalkordb.so pytest ../tests/test_e2e.py
-          TARGET=../target/debug/libfalkordb.so TCK_INCLUDE=../tests/tck/features/expressions/string pytest ../tests/tck/test_tck.py
+          TARGET=../target/debug/libfalkordb.so TCK_FEATURES=../tests/tck/features/ TCK_INCLUDE=../tests/tck/features/expressions/string pytest ../tests/tck/test_tck.py
           llvm-profdata-20 merge --sparse `find . -name "*.profraw"` -o cov.profdata
           llvm-cov-20 export --format=lcov --instr-profile cov.profdata ../target/debug/libfalkordb.so > codecov.txt.all
           lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
