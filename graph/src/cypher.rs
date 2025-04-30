@@ -102,36 +102,32 @@ impl<'a> Lexer<'a> {
     ) -> (Token, usize) {
         let mut chars = str[pos..].chars();
         if let Some(char) = chars.next() {
-            match char {
-                '[' => return (Token::LBrace, 1),
-                ']' => return (Token::RBrace, 1),
-                '{' => return (Token::LBracket, 1),
-                '}' => return (Token::RBracket, 1),
-                '(' => return (Token::LParen, 1),
-                ')' => return (Token::RParen, 1),
-                '%' => return (Token::Modulo, 1),
-                '^' => return (Token::Power, 1),
-                '*' => return (Token::Star, 1),
-                '/' => return (Token::Slash, 1),
-                '+' => return (Token::Plus, 1),
-                '-' => return (Token::Dash, 1),
-                '=' => {
-                    return match chars.next() {
-                        Some('~') => (Token::RegexMatches, 2),
-                        _ => (Token::Equal, 1),
-                    };
-                }
-                '<' => return (Token::LessThan, 1),
-                '>' => return (Token::GreaterThan, 1),
-                ',' => return (Token::Comma, 1),
-                ':' => return (Token::Colon, 1),
-                '.' => {
-                    return match chars.next() {
-                        Some('.') => (Token::DotDot, 2),
-                        Some('0'..='9') => Self::lex_number(str, pos),
-                        _ => (Token::Dot, 1),
-                    };
-                }
+            return match char {
+                '[' => (Token::LBrace, 1),
+                ']' => (Token::RBrace, 1),
+                '{' => (Token::LBracket, 1),
+                '}' => (Token::RBracket, 1),
+                '(' => (Token::LParen, 1),
+                ')' => (Token::RParen, 1),
+                '%' => (Token::Modulo, 1),
+                '^' => (Token::Power, 1),
+                '*' => (Token::Star, 1),
+                '/' => (Token::Slash, 1),
+                '+' => (Token::Plus, 1),
+                '-' => (Token::Dash, 1),
+                '=' => match chars.next() {
+                    Some('~') => (Token::RegexMatches, 2),
+                    _ => (Token::Equal, 1),
+                },
+                '<' => (Token::LessThan, 1),
+                '>' => (Token::GreaterThan, 1),
+                ',' => (Token::Comma, 1),
+                ':' => (Token::Colon, 1),
+                '.' => match chars.next() {
+                    Some('.') => (Token::DotDot, 2),
+                    Some('0'..='9') => Self::lex_number(str, pos),
+                    _ => (Token::Dot, 1),
+                },
                 '\'' => {
                     let mut len = 1;
                     let mut end = false;
@@ -145,7 +141,7 @@ impl<'a> Lexer<'a> {
                     if !end {
                         return (Token::Error(str[pos + 1..pos + len].to_string()), len + 1);
                     }
-                    return (Token::String(str[pos + 1..pos + len].to_string()), len + 1);
+                    (Token::String(str[pos + 1..pos + len].to_string()), len + 1)
                 }
                 '\"' => {
                     let mut len = 1;
@@ -160,16 +156,16 @@ impl<'a> Lexer<'a> {
                     if !end {
                         return (Token::Error(str[pos + 1..pos + len].to_string()), len + 1);
                     }
-                    return (Token::String(str[pos + 1..pos + len].to_string()), len + 1);
+                    (Token::String(str[pos + 1..pos + len].to_string()), len + 1)
                 }
-                '0'..='9' => return Self::lex_number(str, pos),
+                '0'..='9' => Self::lex_number(str, pos),
                 '$' => {
                     let mut len = 1;
                     while let Some('a'..='z' | 'A'..='Z' | '0'..='9') = chars.next() {
                         len += 1;
                     }
                     let token = Token::Parameter(str[pos + 1..pos + len].to_string());
-                    return (token, len);
+                    (token, len)
                 }
                 'a'..='z' | 'A'..='Z' => {
                     let mut len = 1;
@@ -201,7 +197,7 @@ impl<'a> Lexer<'a> {
                         "nan" => Token::Float(f64::NAN),
                         _ => Token::Ident(str[pos..pos + len].to_string()),
                     };
-                    return (token, len);
+                    (token, len)
                 }
                 '`' => {
                     let mut len = 1;
@@ -216,15 +212,13 @@ impl<'a> Lexer<'a> {
                     if !end {
                         return (Token::Error(str[pos + 1..pos + len].to_string()), len + 1);
                     }
-                    return (Token::Ident(str[pos + 1..pos + len].to_string()), len + 1);
+                    (Token::Ident(str[pos + 1..pos + len].to_string()), len + 1)
                 }
-                _ => {
-                    return (
-                        Token::Error(format!("Unexpected token at pos: {pos} at char {char}")),
-                        0,
-                    );
-                }
-            }
+                _ => (
+                    Token::Error(format!("Unexpected token at pos: {pos} at char {char}")),
+                    0,
+                ),
+            };
         }
         (Token::EndOfFile, 0)
     }
@@ -335,7 +329,7 @@ impl<'a> Lexer<'a> {
         }
 
         // Validate that we have digits somewhere
-        if !has_digits_before_dot && !(has_dot && has_digits_after_dot) {
+        if !(has_digits_before_dot || has_dot && has_digits_after_dot) {
             return (
                 Token::Error(format!(
                     "Invalid number (no digits): {}",
@@ -345,7 +339,7 @@ impl<'a> Lexer<'a> {
             );
         }
 
-        // if the last character is a dot, it is an integer and we should not eat the last dot
+        // if the last character is a dot, it is an integer, and we should not eat the last dot
         if has_dot && !has_digits_after_dot {
             len -= 1;
             has_dot = false;
@@ -951,7 +945,7 @@ impl<'a> Parser<'a> {
         &mut self,
         src: Alias,
     ) -> Result<(RelationshipPattern, NodePattern), String> {
-        let is_incomming = optional_match_token!(self.lexer, LessThan);
+        let is_incoming = optional_match_token!(self.lexer, LessThan);
         match_token!(self.lexer, Dash);
         match_token!(self.lexer, LBrace);
         let alias = if let Token::Ident(id) = self.lexer.current() {
@@ -968,7 +962,7 @@ impl<'a> Parser<'a> {
         match_token!(self.lexer, Dash);
         let is_outgoing = optional_match_token!(self.lexer, GreaterThan);
         let dst = self.parse_node_pattern()?;
-        let relationship = match (is_incomming, is_outgoing) {
+        let relationship = match (is_incoming, is_outgoing) {
             (true, true) | (false, false) => RelationshipPattern::new(
                 alias,
                 relationship_type,
