@@ -171,6 +171,9 @@ impl Planner {
                 params.push(tree!(IR::Var(agg_ctx_var)));
                 tree!(IR::FuncInvocation(name) ; params.into_iter())
             }
+            QueryExprIR::Named(name, expr) => {
+                tree!(IR::Set(name), self.plan_aggregation(agg_ctx_var, *expr))
+            }
             _ => unreachable!(),
         }
     }

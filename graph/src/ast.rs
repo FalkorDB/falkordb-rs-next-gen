@@ -139,6 +139,7 @@ impl QueryExprIR {
                     "count" | "sum" | "avg" | "min" | "max" | "collect"
                 )
             }
+            Self::Named(_, expr) => expr.is_aggregation(),
             _ => false,
         }
     }
