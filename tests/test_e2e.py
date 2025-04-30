@@ -53,9 +53,13 @@ def query(query: str, params=None, write: bool = False):
     else:
         write_res = g.query(query, params)
         read_res = g.ro_query(query, params)
-        assert (write_res.result_set == read_res.result_set
-                or math.isnan(write_res.result_set[0][0])
-                or math.isnan(read_res.result_set[0][0]))
+        assert len(write_res.result_set) == len(read_res.result_set)
+        for i in range(len(write_res.result_set)):
+            assert len(write_res.result_set[i]) == len(read_res.result_set[i])
+            for j in range(len(write_res.result_set[i])):
+                assert (write_res.result_set[i][j] == read_res.result_set[i][j]
+                    or (math.isnan(write_res.result_set[i][j])
+                        and math.isnan(read_res.result_set[i][j])))
         return write_res
 
 
