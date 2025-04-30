@@ -205,6 +205,7 @@ impl Runtime {
         }
     }
 
+    #[allow(clippy::unnecessary_wraps)]
     fn create_aggregate_ctx(
         _g: &Graph,
         runtime: &mut Self,
@@ -315,6 +316,7 @@ impl Runtime {
         }
     }
 
+    #[allow(clippy::unnecessary_wraps)]
     fn labels(
         g: &Graph,
         _runtime: &mut Self,
@@ -353,6 +355,7 @@ impl Runtime {
         }
     }
 
+    #[allow(clippy::unnecessary_wraps)]
     fn start_node(
         _g: &Graph,
         _runtime: &mut Self,
@@ -364,6 +367,7 @@ impl Runtime {
         }
     }
 
+    #[allow(clippy::unnecessary_wraps)]
     fn end_node(
         _g: &Graph,
         _runtime: &mut Self,
@@ -375,6 +379,7 @@ impl Runtime {
         }
     }
 
+    #[allow(clippy::unnecessary_wraps)]
     fn collect(
         _g: &Graph,
         runtime: &mut Self,
@@ -392,6 +397,7 @@ impl Runtime {
         Ok(Value::Null)
     }
 
+    #[allow(clippy::unnecessary_wraps)]
     fn count(
         _g: &Graph,
         runtime: &mut Self,
@@ -409,30 +415,29 @@ impl Runtime {
                 });
             }
             _ => (),
-        };
+        }
         Ok(Value::Null)
     }
 
+    #[allow(clippy::unnecessary_wraps)]
     fn sum(
         _g: &Graph,
         runtime: &mut Self,
         args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args.as_slice() {
-            [a, Value::Int(hash)] => {
-                runtime.agg_ctxs.entry(*hash as _).and_modify(|v| {
-                    if let (_, Value::Null) = v {
-                        v.1 = a.clone();
-                    } else {
-                        v.1 = (v.1.clone() + a.clone()).unwrap();
-                    }
-                });
-            }
-            _ => (),
-        };
+        if let [a, Value::Int(hash)] = args.as_slice() {
+            runtime.agg_ctxs.entry(*hash as _).and_modify(|v| {
+                if let (_, Value::Null) = v {
+                    v.1 = a.clone();
+                } else {
+                    v.1 = (v.1.clone() + a.clone()).unwrap();
+                }
+            });
+        }
         Ok(Value::Null)
     }
 
+    #[allow(clippy::unnecessary_wraps)]
     fn max(
         _g: &Graph,
         runtime: &mut Self,
@@ -448,10 +453,11 @@ impl Runtime {
                     v.1 = Value::Int(*a);
                 }
             });
-        };
+        }
         Ok(Value::Null)
     }
 
+    #[allow(clippy::unnecessary_wraps)]
     fn min(
         _g: &Graph,
         runtime: &mut Self,
@@ -467,7 +473,7 @@ impl Runtime {
                     v.1 = Value::Int(*a);
                 }
             });
-        };
+        }
         Ok(Value::Null)
     }
 
@@ -635,11 +641,7 @@ impl Runtime {
                 "Type mismatch: expected Integer Or Null but got {}",
                 t.name()
             )),
-            [t, Value::Int(_)] => Err(format!(
-                "Type mismatch: expected String Or Null but got {}",
-                t.name()
-            )),
-            [t, Value::Int(_), Value::Int(_)] => Err(format!(
+            [t, Value::Int(_)] | [t, Value::Int(_), Value::Int(_)] => Err(format!(
                 "Type mismatch: expected String Or Null but got {}",
                 t.name()
             )),
@@ -1037,14 +1039,12 @@ impl Runtime {
             [Value::Int(i1), Value::Float(f1)] => Ok(Value::Float((*i1 as f64).powf(*f1))),
             [Value::Float(f1), Value::Int(i1)] => Ok(Value::Float(f1.powi(*i1 as i32))),
             [Value::Null, _] | [_, Value::Null] => Ok(Value::Null),
-            [v, Value::Int(_)] | [v, Value::Float(_)] => Err(format!(
-                "Type mismatch: expected Integer, Float, or Null but was {}",
-                v.name()
-            )),
-            [Value::Int(_), v] | [Value::Float(_), v] => Err(format!(
-                "Type mismatch: expected Integer, Float, or Null but was {}",
-                v.name()
-            )),
+            [Value::Int(_) | Value::Float(_), v] | [v, Value::Int(_) | Value::Float(_)] => {
+                Err(format!(
+                    "Type mismatch: expected Integer, Float, or Null but was {}",
+                    v.name()
+                ))
+            }
             args => Self::args_size_error(args, "pow", 2, 2),
         }
     }

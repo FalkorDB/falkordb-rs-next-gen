@@ -25,50 +25,47 @@ impl Hash for Value {
             Self::Null => todo!(),
             Self::Bool(x) => x.hash(state),
             Self::Int(x) => x.hash(state),
-            Self::Float(_) => todo!(),
+            Self::Float(x) => x.to_string().hash(state),
             Self::String(x) => x.hash(state),
             Self::List(x) => x.hash(state),
             Self::Map(x) => x.hash(state),
-            Self::Node(x) => x.hash(state),
-            Self::Relationship(_, _, _) => todo!(),
+            Self::Node(x) | Self::Relationship(x, _, _) => x.hash(state),
         }
     }
 }
 
 impl Add for Value {
-    type Output = Result<Value, String>;
+    type Output = Result<Self, String>;
 
     fn add(
         self,
         rhs: Self,
     ) -> Self::Output {
         match (self, rhs) {
-            (Value::Null, _) | (_, Value::Null) => Ok(Value::Null),
-            (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a.wrapping_add(b))),
-            (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a + b)),
-            (Value::Float(a), Value::Int(b)) => Ok(Value::Float(a + b as f64)),
-            (Value::Int(a), Value::Float(b)) => Ok(Value::Float(a as f64 + b)),
+            (Self::Null, _) | (_, Self::Null) => Ok(Self::Null),
+            (Self::Int(a), Self::Int(b)) => Ok(Self::Int(a.wrapping_add(b))),
+            (Self::Float(a), Self::Float(b)) => Ok(Self::Float(a + b)),
+            (Self::Float(a), Self::Int(b)) => Ok(Self::Float(a + b as f64)),
+            (Self::Int(a), Self::Float(b)) => Ok(Self::Float(a as f64 + b)),
 
-            (Value::List(a), Value::List(b)) => Ok(Value::List(a.into_iter().chain(b).collect())),
-            (Value::List(mut l), scalar) => {
+            (Self::List(a), Self::List(b)) => Ok(Self::List(a.into_iter().chain(b).collect())),
+            (Self::List(mut l), scalar) => {
                 if l.is_empty() {
-                    Ok(Value::List(vec![scalar]))
+                    Ok(Self::List(vec![scalar]))
                 } else {
                     l.push(scalar);
-                    Ok(Value::List(l))
+                    Ok(Self::List(l))
                 }
             }
-            (s, Value::List(l)) => {
+            (s, Self::List(l)) => {
                 let mut new_list = vec![s];
                 new_list.extend(l);
-                Ok(Value::List(new_list))
+                Ok(Self::List(new_list))
             }
-            (Value::String(a), Value::String(b)) => Ok(Value::String(a + &b)),
-            (Value::String(s), Value::Int(i)) => Ok(Value::String(s + &i.to_string())),
-            (Value::String(s), Value::Float(f)) => Ok(Value::String(s + &f.to_string())),
-            (Value::String(s), Value::Bool(f)) => {
-                Ok(Value::String(s + &f.to_string().to_lowercase()))
-            }
+            (Self::String(a), Self::String(b)) => Ok(Self::String(a + &b)),
+            (Self::String(s), Self::Int(i)) => Ok(Self::String(s + &i.to_string())),
+            (Self::String(s), Self::Float(f)) => Ok(Self::String(s + &f.to_string())),
+            (Self::String(s), Self::Bool(f)) => Ok(Self::String(s + &f.to_string().to_lowercase())),
             (a, b) => Err(format!(
                 "Unexpected types for add operator ({}, {})",
                 a.name(),
