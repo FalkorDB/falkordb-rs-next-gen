@@ -46,12 +46,14 @@ def teardown_module(module):
         client.connection.shutdown(nosave=True)
         redis_server.wait()
 
+
 def setup_function(function):
     global g
     if g.name in client.list_graphs():
         g.delete()
 
-def query(query: str, params = None, write: bool = False):
+
+def query(query: str, params=None, write: bool = False):
     if write:
         return g.query(query, params)
     else:
@@ -62,10 +64,11 @@ def query(query: str, params = None, write: bool = False):
             assert len(write_res.result_set[i]) == len(read_res.result_set[i])
             for j in range(len(write_res.result_set[i])):
                 assert (write_res.result_set[i][j] == read_res.result_set[i][j]
-                    or (math.isnan(write_res.result_set[i][j])
-                        and math.isnan(read_res.result_set[i][j])))
+                        or (math.isnan(write_res.result_set[i][j])
+                            and math.isnan(read_res.result_set[i][j])))
         return write_res
-    
+
+
 def assert_result_set_equal_no_order(res, expected):
     assert len(res.result_set) == len(expected)
     for record in expected:
@@ -88,6 +91,37 @@ def test_return_values():
             res = query(f"RETURN {sign}{i / 10.0}")
             assert res.result_set == [[eval(f"{sign}{i / 10.0}")]]
 
+            # test number in hex format 0x...
+            n = hex(i)
+            res = query(f"RETURN {sign}{n}")
+            assert res.result_set == [[eval(f"{sign}{n}")]]
+
+            n = oct(i)
+            res = query(f"RETURN {sign}{n}")
+            assert res.result_set == [[eval(f"{sign}{n}")]]
+
+            n = bin(i)
+            res = query(f"RETURN {sign}{n}")
+            assert res.result_set == [[eval(f"{sign}{n}")]]
+
+            # Test engineering notation
+            eng_notation = f"{sign}{i / 10.0:e}"
+            res = query(f"RETURN {eng_notation} AS literal")
+            assert res.result_set == [[eval(f"{eng_notation}")]]
+
+    # Test specific cases
+    res = query("RETURN .5 AS literal")
+    assert res.result_set == [[0.5]]
+
+    res = query("RETURN -.5 AS literal")
+    assert res.result_set == [[-0.5]]
+
+    res = query("RETURN 1e-3 AS literal")
+    assert res.result_set == [[0.001]]
+
+    res = query("RETURN -1e3 AS literal")
+    assert res.result_set == [[-1000.0]]
+
     res = query("RETURN 'Avi'")
     assert res.result_set == [["Avi"]]
 
@@ -105,6 +139,7 @@ def test_return_values():
 
     res = query("WITH 1 AS a, 'Avi' AS b RETURN b, a")
     assert res.result_set == [['Avi', 1]]
+
 
 def test_parameters():
     for value in [None, True, False, 1, -1, 0.1, 'Avi', [1], {"a": 2}, {}]:
@@ -198,6 +233,7 @@ def test_operators():
     res = query(f"UNWIND [NULL, true, false, 1, 'Avi'] AS x RETURN x IS NULL")
     assert res.result_set == [[True], [False], [False], [False], [False]]
 
+
 def test_unwind():
     res = query("UNWIND [1, 2, 3] AS x RETURN x")
     assert res.result_set == [[1], [2], [3]]
@@ -213,7 +249,8 @@ def test_unwind():
 
     res = query("UNWIND range(1, 3) AS x UNWIND range(1, 3) AS y WITH x, y WHERE x = 2 RETURN x, y")
     assert res.result_set == [[2, 1], [2, 2], [2, 3]]
-    
+
+
 def test_graph_crud():
     res = query("CREATE ()", write=True)
     assert res.result_set == []
@@ -233,20 +270,46 @@ def test_graph_crud():
     assert res.nodes_created == 3
 
     res = query("MATCH (n:N), (m:N) RETURN n, m")
-    assert_result_set_equal_no_order(res, [[Node(0, labels="N"), Node(0, labels="N")], [Node(0, labels="N"), Node(1, labels="N")], [Node(0, labels="N"), Node(2, labels="N")], [Node(1, labels="N"), Node(0, labels="N")], [Node(1, labels="N"), Node(1, labels="N")], [Node(1, labels="N"), Node(2, labels="N")], [Node(2, labels="N"), Node(0, labels="N")], [Node(2, labels="N"), Node(1, labels="N")], [Node(2, labels="N"), Node(2, labels="N")]])
+    assert_result_set_equal_no_order(res, [[Node(0, labels="N"), Node(0, labels="N")],
+                                           [Node(0, labels="N"), Node(1, labels="N")],
+                                           [Node(0, labels="N"), Node(2, labels="N")],
+                                           [Node(1, labels="N"), Node(0, labels="N")],
+                                           [Node(1, labels="N"), Node(1, labels="N")],
+                                           [Node(1, labels="N"), Node(2, labels="N")],
+                                           [Node(2, labels="N"), Node(0, labels="N")],
+                                           [Node(2, labels="N"), Node(1, labels="N")],
+                                           [Node(2, labels="N"), Node(2, labels="N")]])
 
     g.delete()
 
     res = query("UNWIND range(0, 2) AS x CREATE (n:N {v: x})-[r:R {v: x}]->(m:M {v: x}) RETURN n, r, m", write=True)
     assert res.nodes_created == 6
     assert res.relationships_created == 3
-    assert_result_set_equal_no_order(res, [[Node(0, labels="N", properties={"v": 0}), Edge(0, "R", 1, 0, properties={"v": 0}), Node(1, labels="M", properties={"v": 0})], [Node(2, labels="N", properties={"v": 1}), Edge(2, "R", 3, 1, properties={"v": 1}), Node(3, labels="M", properties={"v": 1})], [Node(4, labels="N", properties={"v": 2}), Edge(4, "R", 5, 2, properties={"v": 2}), Node(5, labels="M", properties={"v": 2})]])
+    assert_result_set_equal_no_order(res, [[Node(0, labels="N", properties={"v": 0}),
+                                            Edge(0, "R", 1, 0, properties={"v": 0}),
+                                            Node(1, labels="M", properties={"v": 0})],
+                                           [Node(2, labels="N", properties={"v": 1}),
+                                            Edge(2, "R", 3, 1, properties={"v": 1}),
+                                            Node(3, labels="M", properties={"v": 1})],
+                                           [Node(4, labels="N", properties={"v": 2}),
+                                            Edge(4, "R", 5, 2, properties={"v": 2}),
+                                            Node(5, labels="M", properties={"v": 2})]])
 
     res = query("MATCH (n)-[r:R]->(m) RETURN n, r, m")
-    assert res.result_set == [[Node(0, labels="N", properties={"v": 0}), Edge(0, "R", 1, 0, properties={"v": 0}), Node(1, labels="M", properties={"v": 0})], [Node(2, labels="N", properties={"v": 1}), Edge(2, "R", 3, 1, properties={"v": 1}), Node(3, labels="M", properties={"v": 1})], [Node(4, labels="N", properties={"v": 2}), Edge(4, "R", 5, 2, properties={"v": 2}), Node(5, labels="M", properties={"v": 2})]]
+    assert res.result_set == [[Node(0, labels="N", properties={"v": 0}), Edge(0, "R", 1, 0, properties={"v": 0}),
+                               Node(1, labels="M", properties={"v": 0})],
+                              [Node(2, labels="N", properties={"v": 1}), Edge(2, "R", 3, 1, properties={"v": 1}),
+                               Node(3, labels="M", properties={"v": 1})],
+                              [Node(4, labels="N", properties={"v": 2}), Edge(4, "R", 5, 2, properties={"v": 2}),
+                               Node(5, labels="M", properties={"v": 2})]]
 
     res = query("MATCH (m)<-[r:R]-(n) RETURN n, r, m")
-    assert res.result_set == [[Node(0, labels="N", properties={"v": 0}), Edge(0, "R", 1, 0, properties={"v": 0}), Node(1, labels="M", properties={"v": 0})], [Node(2, labels="N", properties={"v": 1}), Edge(2, "R", 3, 1, properties={"v": 1}), Node(3, labels="M", properties={"v": 1})], [Node(4, labels="N", properties={"v": 2}), Edge(4, "R", 5, 2, properties={"v": 2}), Node(5, labels="M", properties={"v": 2})]]
+    assert res.result_set == [[Node(0, labels="N", properties={"v": 0}), Edge(0, "R", 1, 0, properties={"v": 0}),
+                               Node(1, labels="M", properties={"v": 0})],
+                              [Node(2, labels="N", properties={"v": 1}), Edge(2, "R", 3, 1, properties={"v": 1}),
+                               Node(3, labels="M", properties={"v": 1})],
+                              [Node(4, labels="N", properties={"v": 2}), Edge(4, "R", 5, 2, properties={"v": 2}),
+                               Node(5, labels="M", properties={"v": 2})]]
 
     res = query("MATCH (n:N) RETURN n.v")
     assert res.result_set == [[0], [1], [2]]
@@ -254,6 +317,7 @@ def test_graph_crud():
     res = query("MATCH (n:N) DELETE n", write=True)
     assert res.nodes_deleted == 3
     # assert res.relationships_deleted == 3
+
 
 def test_large_graph():
     query("UNWIND range(0, 100000) AS x CREATE (n:N {v: x})-[r:R {v: x}]->(m:M {v: x})", write=True)
@@ -1120,6 +1184,7 @@ def test_substring():
     except ResponseError as e:
         assert "Type mismatch" in str(e)
 
+
 def test_graph_list():
     assert client is not None
     for i in range(1000):
@@ -1130,6 +1195,7 @@ def test_graph_list():
     assert len(graphs) == 1000
     for i in range(1000):
         assert f'g{i}' in graphs
+
 
 def test_function_with_namespace():
     res = query("RETURN string.join(null, ',') AS result")
@@ -1261,6 +1327,7 @@ def test_list_re_replace():
         assert False, "Expected an error"
     except ResponseError as e:
         assert "Invalid regex," in str(e)
+
 
 def test_abs():
     res = query("RETURN abs(1) AS name")
@@ -1641,6 +1708,7 @@ def test_sqrt():
         assert False, "Expected an error"
     except ResponseError as e:
         assert "Received 2 arguments to function 'sqrt', expected at most 1" in str(e)
+
 
 def test_aggregation():
     res = query("UNWIND range(1, 10) AS x RETURN collect(x)")
