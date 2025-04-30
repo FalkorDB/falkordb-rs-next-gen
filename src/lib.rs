@@ -1,7 +1,8 @@
-use graph::{cypher::Parser, graph::Graph, planner::Planner, value::Value};
+use graph::{cypher::Parser, graph::Graph, matrix::init, planner::Planner, value::Value};
 use redis_module::{
-    Context, NextArg, REDISMODULE_TYPE_METHOD_VERSION, RedisError, RedisModuleTypeMethods,
-    RedisResult, RedisString, RedisValue, Status, native_types::RedisType, redis_module,
+    Context, NextArg, REDISMODULE_TYPE_METHOD_VERSION, RedisError, RedisModule_Alloc,
+    RedisModule_Calloc, RedisModule_Free, RedisModule_Realloc, RedisModuleTypeMethods, RedisResult,
+    RedisString, RedisValue, Status, native_types::RedisType, redis_module,
     redisvalue::RedisValueKey,
 };
 use std::os::raw::c_void;
@@ -212,6 +213,10 @@ fn query_mut(
                         "Relationships created: {}",
                         summary.relationships_created
                     )),
+                    RedisValue::SimpleString(format!(
+                        "Relationships deleted: {}",
+                        summary.relationships_deleted
+                    )),
                 ],
             ]
             .into()
@@ -380,7 +385,14 @@ fn graph_init(
     _: &Context,
     _: &Vec<RedisString>,
 ) -> Status {
-    Graph::init();
+    unsafe {
+        init(
+            RedisModule_Alloc,
+            RedisModule_Calloc,
+            RedisModule_Realloc,
+            RedisModule_Free,
+        );
+    }
     Status::Ok
 }
 

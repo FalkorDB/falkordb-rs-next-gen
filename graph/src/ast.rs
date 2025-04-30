@@ -129,6 +129,19 @@ impl QueryExprIR {
             }
         }
     }
+
+    #[must_use]
+    pub fn is_aggregation(&self) -> bool {
+        match self {
+            Self::FuncInvocation(name, _) => {
+                matches!(
+                    name.as_str(),
+                    "count" | "sum" | "avg" | "min" | "max" | "collect"
+                )
+            }
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

@@ -5,6 +5,7 @@ edition = "2024"
 description = "Core of the database"
 license = "MIT"
 repository = "https://github.com/FalkorDB/falkordb-rs"
+readme = "../README.md"
 keywords = ["graph", "database"]
 categories = ["data-structures", "database"]
 

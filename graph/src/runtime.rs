@@ -1,11 +1,10 @@
+use crate::{ast::QueryExprIR, graph::Graph, planner::IR, value::Contains, value::Value};
+use crate::{matrix, tensor};
 use orx_tree::{DynNode, NodeRef};
-
-use crate::{
-    ast::QueryExprIR, graph::Graph, matrix::Iter, planner::IR, value::Contains, value::Value,
-};
 use rand::Rng;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
+use std::hash::{DefaultHasher, Hash, Hasher};
 
 type ReadFn = fn(&Graph, &mut Runtime, Vec<Value>) -> Result<Value, String>;
 type WriteFn = fn(&mut Graph, &mut Runtime, Vec<Value>) -> Result<Value, String>;
@@ -13,7 +12,9 @@ type WriteFn = fn(&mut Graph, &mut Runtime, Vec<Value>) -> Result<Value, String>
 pub struct Runtime {
     read_functions: BTreeMap<String, ReadFn>,
     write_functions: BTreeMap<String, WriteFn>,
-    iters: Vec<Iter<bool>>,
+    agg_ctxs: BTreeMap<u64, (Value, Value)>,
+    node_iters: Vec<matrix::Iter<bool>>,
+    relationship_iters: Vec<tensor::Iter>,
     parameters: BTreeMap<String, Value>,
     pub nodes_created: i32,
     pub relationships_created: i32,
@@ -35,11 +36,22 @@ impl Runtime {
         write_functions.insert("delete_entity".to_string(), Self::delete_entity);
 
         // read functions
+        read_functions.insert(
+            "create_aggregate_ctx".to_string(),
+            Self::create_aggregate_ctx,
+        );
         read_functions.insert("create_node_iter".to_string(), Self::create_node_iter);
         read_functions.insert("next_node".to_string(), Self::next_node);
+        read_functions.insert(
+            "create_relationship_iter".to_string(),
+            Self::create_relationship_iter,
+        );
+        read_functions.insert("next_relationship".to_string(), Self::next_relationship);
         read_functions.insert("property".to_string(), Self::property);
         read_functions.insert("toInteger".to_string(), Self::value_to_integer);
         read_functions.insert("labels".to_string(), Self::labels);
+        read_functions.insert("startnode".to_string(), Self::start_node);
+        read_functions.insert("endnode".to_string(), Self::end_node);
         read_functions.insert("size".to_string(), Self::size);
         read_functions.insert("head".to_string(), Self::head);
         read_functions.insert("last".to_string(), Self::last);
@@ -72,6 +84,13 @@ impl Runtime {
         read_functions.insert("sign".to_string(), Self::sign);
         read_functions.insert("sqrt".to_string(), Self::sqrt);
 
+        // aggregation functions
+        read_functions.insert("collect".to_string(), Self::collect);
+        read_functions.insert("count".to_string(), Self::count);
+        read_functions.insert("sum".to_string(), Self::sum);
+        read_functions.insert("max".to_string(), Self::max);
+        read_functions.insert("min".to_string(), Self::min);
+
         // internal functions are not accessible from Cypher
         read_functions.insert("@starts_with".to_string(), Self::internal_starts_with);
         read_functions.insert("@ends_with".to_string(), Self::internal_ends_with);
@@ -84,9 +103,11 @@ impl Runtime {
         read_functions.insert("db.propertykeys".to_string(), Self::db_properties);
 
         Self {
-            write_functions,
             read_functions,
-            iters: Vec::new(),
+            write_functions,
+            agg_ctxs: BTreeMap::new(),
+            node_iters: Vec::new(),
+            relationship_iters: Vec::new(),
             parameters,
             nodes_created: 0,
             relationships_created: 0,
@@ -139,6 +160,10 @@ impl Runtime {
         for n in args {
             if let Value::Node(id) = n {
                 runtime.nodes_deleted += 1;
+                for (src, dest, id) in g.get_node_relationships(id).collect::<Vec<_>>() {
+                    runtime.relationships_deleted += 1;
+                    g.delete_relationship(id, src, dest);
+                }
                 g.delete_node(id);
             }
         }
@@ -180,6 +205,22 @@ impl Runtime {
         }
     }
 
+    #[allow(clippy::unnecessary_wraps)]
+    fn create_aggregate_ctx(
+        _g: &Graph,
+        runtime: &mut Self,
+        args: Vec<Value>,
+    ) -> Result<Value, String> {
+        let mut hasher = DefaultHasher::new();
+        args.hash(&mut hasher);
+        let key = hasher.finish();
+        runtime
+            .agg_ctxs
+            .entry(key)
+            .or_insert_with(|| (Value::List(args), Value::Null));
+        Ok(Value::Int(key as i64))
+    }
+
     fn create_node_iter(
         g: &Graph,
         runtime: &mut Self,
@@ -188,7 +229,7 @@ impl Runtime {
         let mut iter = args.into_iter();
         match (iter.next(), iter.next()) {
             (Some(Value::List(raw_labels)), None) => {
-                runtime.iters.push(
+                runtime.node_iters.push(
                     g.get_nodes(
                         raw_labels
                             .into_iter()
@@ -204,7 +245,8 @@ impl Runtime {
                     )
                     .unwrap(),
                 );
-                Ok(Value::Int(runtime.iters.len() as i64 - 1))
+
+                Ok(Value::Int(runtime.node_iters.len() as i64 - 1))
             }
             _ => todo!(),
         }
@@ -215,10 +257,44 @@ impl Runtime {
         runtime: &mut Self,
         args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args.as_slice() {
-            [Value::Int(iter)] => runtime.iters[*iter as usize]
+        let mut iter = args.into_iter();
+        match (iter.next(), iter.next()) {
+            (Some(Value::Int(iter)), None) => runtime.node_iters[iter as usize]
                 .next()
                 .map_or_else(|| Ok(Value::Null), |(n, _)| Ok(Value::Node(n))),
+            _ => todo!(),
+        }
+    }
+
+    fn create_relationship_iter(
+        g: &Graph,
+        runtime: &mut Self,
+        args: Vec<Value>,
+    ) -> Result<Value, String> {
+        let mut iter = args.into_iter();
+        match (iter.next(), iter.next()) {
+            (Some(Value::String(raw_type)), None) => {
+                runtime
+                    .relationship_iters
+                    .push(g.get_relationships(&[raw_type]).unwrap());
+                Ok(Value::Int(runtime.relationship_iters.len() as i64 - 1))
+            }
+            _ => todo!(),
+        }
+    }
+
+    fn next_relationship(
+        _g: &Graph,
+        runtime: &mut Self,
+        args: Vec<Value>,
+    ) -> Result<Value, String> {
+        let mut iter = args.into_iter();
+        match (iter.next(), iter.next()) {
+            (Some(Value::Int(iter)), None) => runtime.relationship_iters[iter as usize]
+                .next()
+                .map_or(Ok(Value::Null), |(src, dest, id)| {
+                    Ok(Value::Relationship(id, src, dest))
+                }),
             _ => todo!(),
         }
     }
@@ -228,28 +304,31 @@ impl Runtime {
         _runtime: &mut Self,
         args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args.as_slice() {
-            [Value::Node(node_id), Value::String(property)] => g
-                .get_node_property_id(property)
+        let mut iter = args.into_iter();
+        match (iter.next(), iter.next(), iter.next()) {
+            (Some(Value::Node(node_id)), Some(Value::String(property)), None) => g
+                .get_node_property_id(&property)
                 .map_or(Ok(Value::Null), |property_id| {
-                    g.get_node_property(*node_id, property_id)
+                    g.get_node_property(node_id, property_id)
                         .map_or(Ok(Value::Null), Ok)
                 }),
-            [Value::Map(map), Value::String(property)] => {
-                Ok(map.get(property).unwrap_or(&Value::Null).clone())
+            (Some(Value::Map(map)), Some(Value::String(property)), None) => {
+                Ok(map.get(&property).unwrap_or(&Value::Null).clone())
             }
             _ => Ok(Value::Null),
         }
     }
 
+    #[allow(clippy::unnecessary_wraps)]
     fn labels(
         g: &Graph,
         _runtime: &mut Self,
         args: Vec<Value>,
     ) -> Result<Value, String> {
-        match args.as_slice() {
-            [Value::Node(node_id)] => Ok(Value::List(
-                g.get_node_label_ids(*node_id)
+        let mut iter = args.into_iter();
+        match (iter.next(), iter.next()) {
+            (Some(Value::Node(node_id)), None) => Ok(Value::List(
+                g.get_node_label_ids(node_id)
                     .map(|label_id| Value::String(g.get_label_by_id(label_id).to_string()))
                     .collect(),
             )),
@@ -278,6 +357,131 @@ impl Runtime {
                 min
             ))
         }
+    }
+
+    #[allow(clippy::unnecessary_wraps)]
+    fn start_node(
+        _g: &Graph,
+        _runtime: &mut Self,
+        args: Vec<Value>,
+    ) -> Result<Value, String> {
+        let mut iter = args.into_iter();
+        match (iter.next(), iter.next()) {
+            (Some(Value::Relationship(_, src, _)), None) => Ok(Value::Node(src)),
+            _ => Ok(Value::Null),
+        }
+    }
+
+    #[allow(clippy::unnecessary_wraps)]
+    fn end_node(
+        _g: &Graph,
+        _runtime: &mut Self,
+        args: Vec<Value>,
+    ) -> Result<Value, String> {
+        let mut iter = args.into_iter();
+        match (iter.next(), iter.next()) {
+            (Some(Value::Relationship(_, _, dest)), None) => Ok(Value::Node(dest)),
+            _ => Ok(Value::Null),
+        }
+    }
+
+    #[allow(clippy::unnecessary_wraps)]
+    fn collect(
+        _g: &Graph,
+        runtime: &mut Self,
+        args: Vec<Value>,
+    ) -> Result<Value, String> {
+        let mut iter = args.into_iter();
+        if let (Some(x), Some(Value::Int(hash)), None) = (iter.next(), iter.next(), iter.next()) {
+            runtime.agg_ctxs.entry(hash as _).and_modify(|v| {
+                if let (_, Value::List(values)) = v {
+                    values.push(x.clone());
+                } else {
+                    v.1 = Value::List(vec![x.clone()]);
+                }
+            });
+        }
+        Ok(Value::Null)
+    }
+
+    #[allow(clippy::unnecessary_wraps)]
+    fn count(
+        _g: &Graph,
+        runtime: &mut Self,
+        args: Vec<Value>,
+    ) -> Result<Value, String> {
+        match args.as_slice() {
+            [Value::Null, _] => {}
+            [_, Value::Int(hash)] => {
+                runtime.agg_ctxs.entry(*hash as _).and_modify(|v| {
+                    if let (_, Value::Int(count)) = v {
+                        *count += 1;
+                    } else {
+                        v.1 = Value::Int(1);
+                    }
+                });
+            }
+            _ => (),
+        }
+        Ok(Value::Null)
+    }
+
+    #[allow(clippy::unnecessary_wraps)]
+    fn sum(
+        _g: &Graph,
+        runtime: &mut Self,
+        args: Vec<Value>,
+    ) -> Result<Value, String> {
+        if let [a, Value::Int(hash)] = args.as_slice() {
+            runtime.agg_ctxs.entry(*hash as _).and_modify(|v| {
+                if let (_, Value::Null) = v {
+                    v.1 = a.clone();
+                } else {
+                    v.1 = (v.1.clone() + a.clone()).unwrap();
+                }
+            });
+        }
+        Ok(Value::Null)
+    }
+
+    #[allow(clippy::unnecessary_wraps)]
+    fn max(
+        _g: &Graph,
+        runtime: &mut Self,
+        args: Vec<Value>,
+    ) -> Result<Value, String> {
+        if let [Value::Int(a), Value::Int(hash)] = args.as_slice() {
+            runtime.agg_ctxs.entry(*hash as _).and_modify(|v| {
+                if let (_, Value::Int(b)) = v {
+                    if a > b {
+                        *b = *a;
+                    }
+                } else {
+                    v.1 = Value::Int(*a);
+                }
+            });
+        }
+        Ok(Value::Null)
+    }
+
+    #[allow(clippy::unnecessary_wraps)]
+    fn min(
+        _g: &Graph,
+        runtime: &mut Self,
+        args: Vec<Value>,
+    ) -> Result<Value, String> {
+        if let [Value::Int(a), Value::Int(hash)] = args.as_slice() {
+            runtime.agg_ctxs.entry(*hash as _).and_modify(|v| {
+                if let (_, Value::Int(b)) = v {
+                    if a < b {
+                        *b = *a;
+                    }
+                } else {
+                    v.1 = Value::Int(*a);
+                }
+            });
+        }
+        Ok(Value::Null)
     }
 
     fn value_to_integer(
@@ -444,11 +648,7 @@ impl Runtime {
                 "Type mismatch: expected Integer Or Null but got {}",
                 t.name()
             )),
-            [t, Value::Int(_)] => Err(format!(
-                "Type mismatch: expected String Or Null but got {}",
-                t.name()
-            )),
-            [t, Value::Int(_), Value::Int(_)] => Err(format!(
+            [t, Value::Int(_)] | [t, Value::Int(_), Value::Int(_)] => Err(format!(
                 "Type mismatch: expected String Or Null but got {}",
                 t.name()
             )),
@@ -846,14 +1046,12 @@ impl Runtime {
             [Value::Int(i1), Value::Float(f1)] => Ok(Value::Float((*i1 as f64).powf(*f1))),
             [Value::Float(f1), Value::Int(i1)] => Ok(Value::Float(f1.powi(*i1 as i32))),
             [Value::Null, _] | [_, Value::Null] => Ok(Value::Null),
-            [v, Value::Int(_)] | [v, Value::Float(_)] => Err(format!(
-                "Type mismatch: expected Integer, Float, or Null but was {}",
-                v.name()
-            )),
-            [Value::Int(_), v] | [Value::Float(_), v] => Err(format!(
-                "Type mismatch: expected Integer, Float, or Null but was {}",
-                v.name()
-            )),
+            [Value::Int(_) | Value::Float(_), v] | [v, Value::Int(_) | Value::Float(_)] => {
+                Err(format!(
+                    "Type mismatch: expected Integer, Float, or Null but was {}",
+                    v.name()
+                ))
+            }
             args => Self::args_size_error(args, "pow", 2, 2),
         }
     }
@@ -1085,13 +1283,13 @@ pub fn ro_run(
                 .map(|ir| ro_run(vars, g, runtime, result_fn, &ir))
                 .collect::<Result<Vec<_>, _>>()?,
         )),
-        IR::Length => match ro_run(vars, g, runtime, result_fn, &&ir.child(0))? {
+        IR::Length => match ro_run(vars, g, runtime, result_fn, &ir.child(0))? {
             Value::List(arr) => Ok(Value::Int(arr.len() as _)),
             _ => Err("Length operator requires a list".to_string()),
         },
         IR::GetElement => {
-            let arr = ro_run(vars, g, runtime, result_fn, &&ir.child(0))?;
-            let i = ro_run(vars, g, runtime, result_fn, &&ir.child(1))?;
+            let arr = ro_run(vars, g, runtime, result_fn, &ir.child(0))?;
+            let i = ro_run(vars, g, runtime, result_fn, &ir.child(1))?;
             match (arr, i) {
                 (Value::List(values), Value::Int(i)) => {
                     if i >= 0 && i < values.len() as _ {
@@ -1137,6 +1335,10 @@ pub fn ro_run(
         },
         IR::IsNode => match ro_run(vars, g, runtime, result_fn, &ir.child(0))? {
             Value::Node(_) => Ok(Value::Bool(true)),
+            _ => Ok(Value::Bool(false)),
+        },
+        IR::IsRelationship => match ro_run(vars, g, runtime, result_fn, &ir.child(0))? {
+            Value::Relationship(_, _, _) => Ok(Value::Bool(true)),
             _ => Ok(Value::Bool(false)),
         },
         IR::Or => {
@@ -1264,6 +1466,9 @@ pub fn ro_run(
             .flat_map(|ir| ro_run(vars, g, runtime, result_fn, &ir))
             .reduce(|a, b| match (a, b) {
                 (Value::Int(a), Value::Int(b)) => Value::Int(a / b),
+                (Value::Int(a), Value::Float(b)) => Value::Float(a as f64 / b),
+                (Value::Float(a), Value::Int(b)) => Value::Float(a / b as f64),
+                (Value::Float(a), Value::Float(b)) => Value::Float(a / b),
                 _ => Value::Null,
             })
             .ok_or_else(|| "Div operator requires at least one argument".to_string()),
@@ -1325,6 +1530,19 @@ pub fn ro_run(
         IR::Return => {
             let v = ro_run(vars, g, runtime, result_fn, &ir.child(0))?;
             result_fn(g, v);
+            Ok(Value::Null)
+        }
+        IR::ReturnAggregation => {
+            ro_run(vars, g, runtime, result_fn, &ir.child(0))?;
+            for (keys, r) in runtime.agg_ctxs.values_mut() {
+                if let Value::List(keys) = keys {
+                    keys.push(r.clone());
+                    result_fn(g, Value::List(keys.clone()));
+                } else {
+                    result_fn(g, Value::List(vec![r.clone()]));
+                }
+            }
+            runtime.agg_ctxs.clear();
             Ok(Value::Null)
         }
         IR::Block => {
@@ -1423,6 +1641,10 @@ pub fn run(
         },
         IR::IsNode => match run(vars, g, runtime, result_fn, &ir.child(0))? {
             Value::Node(_) => Ok(Value::Bool(true)),
+            _ => Ok(Value::Bool(false)),
+        },
+        IR::IsRelationship => match run(vars, g, runtime, result_fn, &ir.child(0))? {
+            Value::Relationship(_, _, _) => Ok(Value::Bool(true)),
             _ => Ok(Value::Bool(false)),
         },
         IR::Or => {
@@ -1549,6 +1771,9 @@ pub fn run(
             .flat_map(|ir| run(vars, g, runtime, result_fn, &ir))
             .reduce(|a, b| match (a, b) {
                 (Value::Int(a), Value::Int(b)) => Value::Int(a / b),
+                (Value::Int(a), Value::Float(b)) => Value::Float(a as f64 / b),
+                (Value::Float(a), Value::Int(b)) => Value::Float(a / b as f64),
+                (Value::Float(a), Value::Float(b)) => Value::Float(a / b),
                 _ => Value::Null,
             })
             .ok_or_else(|| "Div operator requires at least one argument".to_string()),
@@ -1611,6 +1836,19 @@ pub fn run(
         IR::Return => {
             let v = run(vars, g, runtime, result_fn, &ir.child(0))?;
             result_fn(g, v);
+            Ok(Value::Null)
+        }
+        IR::ReturnAggregation => {
+            run(vars, g, runtime, result_fn, &ir.child(0))?;
+            for (keys, r) in runtime.agg_ctxs.values_mut() {
+                if let Value::List(keys) = keys {
+                    keys.push(r.clone());
+                    result_fn(g, Value::List(keys.clone()));
+                } else {
+                    result_fn(g, Value::List(vec![r.clone()]));
+                }
+            }
+            runtime.agg_ctxs.clear();
             Ok(Value::Null)
         }
         IR::Block => {

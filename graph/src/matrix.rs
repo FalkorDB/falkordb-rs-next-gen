@@ -1,22 +1,39 @@
 use std::{
     marker::PhantomData,
     mem::MaybeUninit,
+    os::raw::c_void,
     ptr::{addr_of_mut, null_mut},
-    rc::Rc,
 };
 
 use crate::GraphBLAS::{
-    GrB_BOOL, GrB_Info, GrB_Matrix, GrB_Matrix_extractElement_BOOL, GrB_Matrix_free,
-    GrB_Matrix_ncols, GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_removeElement,
-    GrB_Matrix_resize, GrB_Matrix_setElement_BOOL, GrB_Mode, GrB_finalize, GrB_init, GxB_Iterator,
-    GxB_Iterator_free, GxB_Iterator_new, GxB_Matrix_Iterator_attach, GxB_Matrix_Iterator_getIndex,
-    GxB_Matrix_Iterator_next, GxB_Matrix_Iterator_seek,
+    GrB_BOOL, GrB_Info, GrB_Matrix, GrB_Matrix_apply, GrB_Matrix_extractElement_BOOL,
+    GrB_Matrix_extractElement_UINT64, GrB_Matrix_free, GrB_Matrix_ncols, GrB_Matrix_new,
+    GrB_Matrix_nrows, GrB_Matrix_nvals, GrB_Matrix_removeElement, GrB_Matrix_resize,
+    GrB_Matrix_setElement_BOOL, GrB_Matrix_setElement_UINT64, GrB_Matrix_wait, GrB_Mode,
+    GrB_UINT64, GrB_UnaryOp, GrB_UnaryOp_free, GrB_UnaryOp_new, GrB_WaitMode, GrB_finalize,
+    GxB_Iterator, GxB_Iterator_free, GxB_Iterator_get_UINT64, GxB_Iterator_new,
+    GxB_Matrix_Iterator_attach, GxB_Matrix_Iterator_getIndex, GxB_Matrix_Iterator_next,
+    GxB_Matrix_Iterator_seek, GxB_init, GxB_unary_function,
 };
 
 /// Initializes the GraphBLAS library in non-blocking mode.
-pub fn init() {
+#[allow(clippy::similar_names)]
+pub fn init(
+    user_malloc_function: Option<unsafe extern "C" fn(arg1: usize) -> *mut c_void>,
+    user_calloc_function: Option<unsafe extern "C" fn(arg1: usize, arg2: usize) -> *mut c_void>,
+    user_realloc_function: Option<
+        unsafe extern "C" fn(arg1: *mut c_void, arg2: usize) -> *mut c_void,
+    >,
+    user_free_function: Option<unsafe extern "C" fn(arg1: *mut c_void)>,
+) {
     unsafe {
-        GrB_init(GrB_Mode::GrB_NONBLOCKING as _);
+        GxB_init(
+            GrB_Mode::GrB_NONBLOCKING as _,
+            user_malloc_function,
+            user_calloc_function,
+            user_realloc_function,
+            user_free_function,
+        );
     }
 }
 
@@ -45,6 +62,9 @@ pub trait Size<T> {
         nrows: u64,
         ncols: u64,
     );
+
+    /// Returns the number of non-zero values in the matrix.
+    fn nvals(&self) -> u64;
 }
 
 /// A trait for retrieving elements from a matrix.
@@ -82,14 +102,14 @@ pub trait Set<T> {
     );
 }
 
-/// A trait for deleting elements from a matrix.
-pub trait Delete<T> {
-    /// Deletes the element at the specified row and column.
+/// A trait for removing elements from a matrix.
+pub trait Remove<T> {
+    /// Removes the element at the specified row and column.
     ///
     /// # Parameters
     /// - `i`: The row index.
     /// - `j`: The column index.
-    fn delete(
+    fn remove(
         &mut self,
         i: u64,
         j: u64,
@@ -99,233 +119,70 @@ pub trait Delete<T> {
 /// A wrapper around a GraphBLAS matrix with type safety for elements.
 pub struct Matrix<T> {
     /// The underlying GraphBLAS matrix.
-    m: Rc<GrB_Matrix>,
+    m: GrB_Matrix,
     /// Phantom data to associate the matrix with a specific type.
     phantom: PhantomData<T>,
 }
 
-/// Represents a specific row in a matrix.
-pub struct Row<T> {
-    /// The row index.
-    row: u64,
-    /// Phantom data to associate the row with a specific type.
-    phantom: PhantomData<T>,
-}
-
-/// An iterator for traversing elements in a matrix.
-pub struct Iter<T> {
-    /// The underlying GraphBLAS iterator.
-    iter: GxB_Iterator,
-    /// Indicates whether the iterator is depleted.
-    depleted: bool,
-    /// The data associated with the iterator.
-    data: T,
-}
-
-impl<T> Drop for Iter<T> {
-    /// Frees the GraphBLAS iterator when the `Iter` is dropped.
-    fn drop(&mut self) {
-        unsafe {
-            GxB_Iterator_free(addr_of_mut!(self.iter));
-        }
-    }
-}
-
-impl Iter<bool> {
-    /// Creates a new iterator for traversing all elements in a boolean matrix.
-    ///
-    /// # Parameters
-    /// - `m`: The matrix to iterate over.
-    #[must_use]
-    pub fn new(m: &Matrix<bool>) -> Self {
-        unsafe {
-            let mut iter = MaybeUninit::uninit();
-            GxB_Iterator_new(iter.as_mut_ptr());
-            let iter = iter.assume_init();
-            GxB_Matrix_Iterator_attach(iter, *m.m, null_mut());
-            let info = GxB_Matrix_Iterator_seek(iter, 0);
-            Self {
-                iter,
-                depleted: info == GrB_Info::GxB_EXHAUSTED,
-                data: true,
-            }
-        }
-    }
-}
-
-impl<T> Iter<Row<T>> {
-    /// Creates a new iterator for traversing elements in a specific row of a matrix.
-    ///
-    /// # Parameters
-    /// - `m`: The matrix to iterate over.
-    /// - `row`: The row index.
-    #[must_use]
-    pub fn new(
-        m: &Matrix<T>,
-        row: u64,
-    ) -> Self {
-        unsafe {
-            let mut iter = MaybeUninit::uninit();
-            GxB_Iterator_new(iter.as_mut_ptr());
-            let iter = iter.assume_init();
-            GxB_Matrix_Iterator_attach(iter, *m.m, null_mut());
-            let info = GxB_Matrix_Iterator_seek(iter, row);
-            Self {
-                iter,
-                depleted: info == GrB_Info::GxB_EXHAUSTED,
-                data: Row {
-                    row,
-                    phantom: PhantomData,
-                },
-            }
-        }
-    }
-}
-
-impl Iterator for Iter<Row<bool>> {
-    type Item = (u64, u64);
-
-    /// Advances the iterator and returns the next element in the row.
-    ///
-    /// # Returns
-    /// - `Some((u64, u64))`: The next element in the row.
-    /// - `None`: The iterator is depleted.
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.depleted {
-            return None;
-        }
-        unsafe {
-            let mut row = 0u64;
-            let mut col = 0u64;
-            GxB_Matrix_Iterator_getIndex(self.iter, addr_of_mut!(row), addr_of_mut!(col));
-            if row > self.data.row {
-                self.depleted = true;
-                return None;
-            }
-            self.depleted = GxB_Matrix_Iterator_next(self.iter) == GrB_Info::GxB_EXHAUSTED;
-            Some((row, col))
-        }
-    }
-}
-
-impl Iterator for Iter<bool> {
-    type Item = (u64, u64);
-
-    /// Advances the iterator and returns the next element in the matrix.
-    ///
-    /// # Returns
-    /// - `Some((u64, u64))`: The next element in the matrix.
-    /// - `None`: The iterator is depleted.
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.depleted {
-            return None;
-        }
-        unsafe {
-            let mut row = 0u64;
-            let mut col = 0u64;
-            GxB_Matrix_Iterator_getIndex(self.iter, addr_of_mut!(row), addr_of_mut!(col));
-            self.depleted = GxB_Matrix_Iterator_next(self.iter) == GrB_Info::GxB_EXHAUSTED;
-            Some((row, col))
-        }
-    }
-}
-
-impl<T> Clone for Matrix<T> {
-    /// Creates a new `Matrix` instance that shares ownership of the underlying GraphBLAS matrix.
-    ///
-    /// # Returns
-    /// - `Matrix<T>`: A cloned `Matrix` instance.
-    #[must_use]
-    fn clone(&self) -> Self {
-        Self {
-            m: self.m.clone(),
-            phantom: self.phantom,
-        }
-    }
-}
-
 impl<T> Drop for Matrix<T> {
-    /// Frees the GraphBLAS matrix when the `Matrix` is dropped, if it is no longer shared.
     fn drop(&mut self) {
         unsafe {
-            Rc::get_mut(&mut self.m).map(|m| GrB_Matrix_free(addr_of_mut!(*m)));
+            let info = GrB_Matrix_free(addr_of_mut!(self.m));
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }
 }
 
 impl<T> Matrix<T> {
-    /// Creates an iterator for traversing elements in a specific row of the matrix.
-    ///
-    /// # Parameters
-    /// - `row`: The row index.
-    ///
-    /// # Returns
-    /// - `Iter<Row<T>>`: An iterator for the specified row.
-    #[must_use]
-    pub fn iter_row(
-        &self,
-        row: u64,
-    ) -> Iter<Row<T>> {
-        Iter::<Row<T>>::new(self, row)
+    pub fn wait(&self) {
+        unsafe {
+            let info = GrB_Matrix_wait(self.m, GrB_WaitMode::GrB_MATERIALIZE as _);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
     }
 }
 
 impl<T> Size<T> for Matrix<T> {
-    /// Returns the number of rows in the matrix.
-    ///
-    /// # Returns
-    /// - `u64`: The number of rows in the matrix.
-    #[must_use]
     fn nrows(&self) -> u64 {
         unsafe {
             let mut nrows = 0u64;
-            let info = GrB_Matrix_nrows(addr_of_mut!(nrows), *self.m);
-            assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            let info = GrB_Matrix_nrows(addr_of_mut!(nrows), self.m);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             nrows
         }
     }
 
-    /// Returns the number of columns in the matrix.
-    ///
-    /// # Returns
-    /// - `u64`: The number of columns in the matrix.
-    #[must_use]
     fn ncols(&self) -> u64 {
         unsafe {
             let mut ncols = 0u64;
-            let info = GrB_Matrix_ncols(addr_of_mut!(ncols), *self.m);
-            assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            let info = GrB_Matrix_ncols(addr_of_mut!(ncols), self.m);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             ncols
         }
     }
 
-    /// Resizes the matrix to the specified dimensions.
-    ///
-    /// # Parameters
-    /// - `nrows`: The new number of rows.
-    /// - `ncols`: The new number of columns.
     fn resize(
         &mut self,
         nrows: u64,
         ncols: u64,
     ) {
         unsafe {
-            let info = GrB_Matrix_resize(*self.m, nrows, ncols);
-            assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            let info = GrB_Matrix_resize(self.m, nrows, ncols);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+    }
+
+    fn nvals(&self) -> u64 {
+        unsafe {
+            let mut nvals = 0u64;
+            let info = GrB_Matrix_nvals(addr_of_mut!(nvals), self.m);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            nvals
         }
     }
 }
 
 impl Matrix<bool> {
-    /// Creates a new boolean matrix with the specified dimensions.
-    ///
-    /// # Parameters
-    /// - `nrows`: The number of rows.
-    /// - `ncols`: The number of columns.
-    ///
-    /// # Returns
-    /// - `Matrix<bool>`: A new boolean matrix.
-    #[must_use]
     pub fn new(
         nrows: u64,
         ncols: u64,
@@ -334,36 +191,106 @@ impl Matrix<bool> {
             let mut m: MaybeUninit<GrB_Matrix> = MaybeUninit::uninit();
             GrB_Matrix_new(m.as_mut_ptr(), GrB_BOOL, nrows, ncols);
             Self {
-                m: Rc::new(m.assume_init()),
+                m: m.assume_init(),
                 phantom: PhantomData,
             }
         }
     }
 
-    /// Creates an iterator for traversing all elements in the matrix.
-    ///
-    /// # Returns
-    /// - `Iter<bool>`: An iterator for the matrix.
     #[must_use]
-    pub fn iter(&self) -> Iter<bool> {
-        Iter::<bool>::new(self)
+    #[allow(clippy::iter_without_into_iter)]
+    pub fn iter(
+        &self,
+        min_row: u64,
+        max_row: u64,
+    ) -> Iter<bool> {
+        Iter::new(self, min_row, max_row)
     }
 }
 
-impl<T> Delete<T> for Matrix<T> {
-    /// Deletes the element at the specified position in the matrix.
-    ///
-    /// # Parameters
-    /// - `i`: The row index.
-    /// - `j`: The column index.
-    fn delete(
+pub struct UnaryOp<T> {
+    op: GrB_UnaryOp,
+    phantom: PhantomData<T>,
+}
+
+unsafe impl<T> Sync for UnaryOp<T> {}
+
+impl<T> Drop for UnaryOp<T> {
+    fn drop(&mut self) {
+        unsafe {
+            GrB_UnaryOp_free(addr_of_mut!(self.op));
+        }
+    }
+}
+
+impl UnaryOp<u64> {
+    #[must_use]
+    pub const fn default() -> Self {
+        Self {
+            op: null_mut(),
+            phantom: PhantomData,
+        }
+    }
+
+    pub fn set(
+        &mut self,
+        function: GxB_unary_function,
+    ) {
+        debug_assert!(self.op.is_null());
+        unsafe {
+            let mut op: MaybeUninit<GrB_UnaryOp> = MaybeUninit::uninit();
+            let info = GrB_UnaryOp_new(op.as_mut_ptr(), function, GrB_UINT64, GrB_UINT64);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            self.op = op.assume_init();
+        }
+    }
+}
+
+impl Matrix<u64> {
+    pub fn new(
+        nrows: u64,
+        ncols: u64,
+    ) -> Self {
+        unsafe {
+            let mut m: MaybeUninit<GrB_Matrix> = MaybeUninit::uninit();
+            GrB_Matrix_new(m.as_mut_ptr(), GrB_UINT64, nrows, ncols);
+            Self {
+                m: m.assume_init(),
+                phantom: PhantomData,
+            }
+        }
+    }
+
+    pub fn apply(
+        &mut self,
+        op: &UnaryOp<u64>,
+    ) {
+        unsafe {
+            let info = GrB_Matrix_apply(self.m, null_mut(), null_mut(), op.op, self.m, null_mut());
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+    }
+
+    #[must_use]
+    #[allow(clippy::iter_without_into_iter)]
+    pub fn iter(
+        &self,
+        min_row: u64,
+        max_row: u64,
+    ) -> Iter<u64> {
+        Iter::new(self, min_row, max_row)
+    }
+}
+
+impl<T> Remove<T> for Matrix<T> {
+    fn remove(
         &mut self,
         i: u64,
         j: u64,
     ) {
         unsafe {
-            let info = GrB_Matrix_removeElement(*self.m, i, j);
-            assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            let info = GrB_Matrix_removeElement(self.m, i, j);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }
 }
@@ -387,7 +314,25 @@ impl Get<bool> for Matrix<bool> {
     ) -> Option<bool> {
         unsafe {
             let mut m: MaybeUninit<bool> = MaybeUninit::uninit();
-            let info = GrB_Matrix_extractElement_BOOL(m.as_mut_ptr(), *self.m, i, j);
+            let info = GrB_Matrix_extractElement_BOOL(m.as_mut_ptr(), self.m, i, j);
+            if info == GrB_Info::GrB_SUCCESS {
+                Some(m.assume_init())
+            } else {
+                None
+            }
+        }
+    }
+}
+
+impl Get<u64> for Matrix<u64> {
+    fn get(
+        &self,
+        i: u64,
+        j: u64,
+    ) -> Option<u64> {
+        unsafe {
+            let mut m: MaybeUninit<u64> = MaybeUninit::uninit();
+            let info = GrB_Matrix_extractElement_UINT64(m.as_mut_ptr(), self.m, i, j);
             if info == GrB_Info::GrB_SUCCESS {
                 Some(m.assume_init())
             } else {
@@ -398,12 +343,6 @@ impl Get<bool> for Matrix<bool> {
 }
 
 impl Set<bool> for Matrix<bool> {
-    /// Sets the boolean value at the specified position in the matrix.
-    ///
-    /// # Parameters
-    /// - `i`: The row index.
-    /// - `j`: The column index.
-    /// - `value`: The value to set.
     fn set(
         &mut self,
         i: u64,
@@ -411,8 +350,119 @@ impl Set<bool> for Matrix<bool> {
         value: bool,
     ) {
         unsafe {
-            let info = GrB_Matrix_setElement_BOOL(*self.m, value, i, j);
-            assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            let info = GrB_Matrix_setElement_BOOL(self.m, value, i, j);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+    }
+}
+
+impl Set<u64> for Matrix<u64> {
+    fn set(
+        &mut self,
+        i: u64,
+        j: u64,
+        value: u64,
+    ) {
+        unsafe {
+            let info = GrB_Matrix_setElement_UINT64(self.m, value, i, j);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+    }
+}
+
+pub struct Iter<T> {
+    /// The underlying GraphBLAS iterator.
+    iter: GxB_Iterator,
+    /// Indicates whether the iterator is depleted.
+    depleted: bool,
+    /// The maximum row index for the iterator.
+    max_row: u64,
+    /// Phantom data to associate the iterator with a specific type.
+    phantom: PhantomData<T>,
+}
+
+impl<T> Drop for Iter<T> {
+    /// Frees the GraphBLAS iterator when the `Iter` is dropped.
+    fn drop(&mut self) {
+        unsafe {
+            GxB_Iterator_free(addr_of_mut!(self.iter));
+        }
+    }
+}
+
+impl<T> Iter<T> {
+    /// Creates a new iterator for traversing all elements in a matrix.
+    ///
+    /// # Parameters
+    /// - `m`: The matrix to iterate over.
+    /// - `min_row`: The minimum row index to start iterating from.
+    /// - `max_row`: The maximum row index to stop iterating at.
+    #[must_use]
+    pub fn new(
+        m: &Matrix<T>,
+        min_row: u64,
+        max_row: u64,
+    ) -> Self {
+        unsafe {
+            let mut iter = MaybeUninit::uninit();
+            GxB_Iterator_new(iter.as_mut_ptr());
+            let iter = iter.assume_init();
+            GxB_Matrix_Iterator_attach(iter, m.m, null_mut());
+            let info = GxB_Matrix_Iterator_seek(iter, min_row);
+            Self {
+                iter,
+                depleted: info == GrB_Info::GxB_EXHAUSTED,
+                max_row,
+                phantom: PhantomData,
+            }
+        }
+    }
+}
+
+impl Iterator for Iter<bool> {
+    type Item = (u64, u64);
+
+    /// Advances the iterator and returns the next element in the matrix.
+    ///
+    /// # Returns
+    /// - `Some((u64, u64))`: The next element in the matrix.
+    /// - `None`: The iterator is depleted.
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.depleted {
+            return None;
+        }
+        unsafe {
+            let mut row = 0u64;
+            let mut col = 0u64;
+            GxB_Matrix_Iterator_getIndex(self.iter, addr_of_mut!(row), addr_of_mut!(col));
+            if row > self.max_row {
+                self.depleted = true;
+                return None;
+            }
+            self.depleted = GxB_Matrix_Iterator_next(self.iter) == GrB_Info::GxB_EXHAUSTED;
+            Some((row, col))
+        }
+    }
+}
+
+impl Iterator for Iter<u64> {
+    type Item = (u64, u64, u64);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.depleted {
+            return None;
+        }
+        unsafe {
+            let mut row = 0u64;
+            let mut col = 0u64;
+            let value = GxB_Iterator_get_UINT64(self.iter);
+            GxB_Matrix_Iterator_getIndex(self.iter, addr_of_mut!(row), addr_of_mut!(col));
+            if row > self.max_row {
+                self.depleted = true;
+                return None;
+            }
+            self.depleted = GxB_Matrix_Iterator_next(self.iter) == GrB_Info::GxB_EXHAUSTED;
+            Some((row, col, value))
         }
     }
 }

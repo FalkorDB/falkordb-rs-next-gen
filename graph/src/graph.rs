@@ -9,9 +9,10 @@ use roaring::RoaringTreemap;
 
 use crate::{
     cypher::Parser,
-    matrix::{Delete, Iter, Matrix, Set, Size},
+    matrix::{self, Matrix, Remove, Set, Size},
     planner::{IR, Planner},
     runtime::{Runtime, evaluate_param, ro_run, run},
+    tensor::{self, Tensor},
     value::Value,
 };
 
@@ -27,7 +28,7 @@ pub struct Graph {
     relationship_type_matrix: Matrix<bool>,
     all_nodes_matrix: Matrix<bool>,
     labels_matices: BTreeMap<usize, Matrix<bool>>,
-    relationship_matrices: BTreeMap<usize, Matrix<bool>>,
+    relationship_matrices: BTreeMap<usize, Tensor>,
     node_properties_map: BTreeMap<u64, BTreeMap<u64, Value>>,
     relationship_properties_map: BTreeMap<u64, BTreeMap<u64, Value>>,
     node_labels: Vec<String>,
@@ -66,23 +67,15 @@ impl Graph {
         }
     }
 
-    pub fn init() {
-        crate::matrix::init();
-    }
-
-    pub fn shutdown() {
-        crate::matrix::shutdown();
-    }
-
     pub fn get_labels(&self) -> impl Iterator<Item = &String> {
         self.node_labels.iter()
     }
 
     pub fn get_label_by_id(
         &self,
-        id: u64,
+        id: usize,
     ) -> &String {
-        &self.node_labels[id as usize]
+        &self.node_labels[id]
     }
 
     pub fn get_types(&self) -> impl Iterator<Item = &String> {
@@ -173,7 +166,7 @@ impl Graph {
             parse_duration,
             plan_duration,
             run_duration,
-            labels_added: self.node_labels.len() as i32 - labels_count as i32,
+            labels_added: self.node_labels.len() - labels_count,
             labels_removed: 0,
             nodes_created: runtime.nodes_created,
             relationships_created: runtime.relationships_created,
@@ -283,13 +276,13 @@ impl Graph {
     fn get_relationship_matrix_mut(
         &mut self,
         relationship_type: &String,
-    ) -> &mut Matrix<bool> {
+    ) -> &mut Tensor {
         if !self.relationship_types.contains(relationship_type) {
             self.relationship_types.push(relationship_type.to_string());
 
             self.relationship_matrices.insert(
                 self.relationship_types.len() - 1,
-                Matrix::<bool>::new(self.node_cap, self.node_cap),
+                Tensor::new(self.node_cap, self.node_cap),
             );
         }
 
@@ -302,6 +295,23 @@ impl Graph {
                     .unwrap(),
             )
             .unwrap()
+    }
+
+    fn get_relationship_matrix(
+        &self,
+        relationship_type: &String,
+    ) -> Option<&Tensor> {
+        if !self.relationship_types.contains(relationship_type) {
+            return None;
+        }
+
+        self.relationship_matrices.get(
+            &self
+                .relationship_types
+                .iter()
+                .position(|l| l == relationship_type)
+                .unwrap(),
+        )
     }
 
     pub fn get_node_property_id(
@@ -386,32 +396,44 @@ impl Graph {
     ) {
         self.deleted_nodes.insert(id);
         self.node_count -= 1;
-        self.all_nodes_matrix.delete(id, id);
+        self.all_nodes_matrix.remove(id, id);
 
-        for (label_id, label_matrix) in self.labels_matices.iter_mut().map(|(_, m)| m).enumerate() {
-            label_matrix.delete(id, id);
-            self.node_labels_matrix.delete(id, label_id as _);
+        for (label_id, label_matrix) in &mut self.labels_matices {
+            label_matrix.remove(id, id);
+            self.node_labels_matrix.remove(id, *label_id as _);
         }
 
         self.node_properties_map.remove(&id);
     }
 
+    pub fn get_node_relationships(
+        &self,
+        id: u64,
+    ) -> impl Iterator<Item = (u64, u64, u64)> + '_ {
+        self.relationship_matrices
+            .values()
+            .flat_map(move |m| m.iter(id, id))
+    }
+
     pub fn get_nodes(
         &self,
         labels: &[String],
-    ) -> Option<Iter<bool>> {
+    ) -> Option<matrix::Iter<bool>> {
         if labels.is_empty() {
-            return Some(self.all_nodes_matrix.iter());
+            return Some(self.all_nodes_matrix.iter(0, u64::MAX));
         }
         self.get_label_matrix(&labels[0])
-            .map(super::matrix::Matrix::iter)
+            .map(|m| m.iter(0, u64::MAX))
     }
 
+    #[allow(clippy::cast_possible_truncation)]
     pub fn get_node_label_ids(
         &self,
         id: u64,
-    ) -> impl Iterator<Item = u64> {
-        self.node_labels_matrix.iter_row(id).map(|(_, l)| l)
+    ) -> impl Iterator<Item = usize> {
+        self.node_labels_matrix
+            .iter(id, id)
+            .map(|(_, l)| l as usize)
     }
 
     pub fn get_node_property(
@@ -443,7 +465,7 @@ impl Graph {
         self.resize();
 
         let relationship_type_matrix = self.get_relationship_matrix_mut(relationship_type);
-        relationship_type_matrix.set(from, to, true);
+        relationship_type_matrix.set(from, to, id);
 
         self.resize();
 
@@ -469,12 +491,38 @@ impl Graph {
         Value::Relationship(id, from, to)
     }
 
+    pub fn delete_relationship(
+        &mut self,
+        id: u64,
+        src: u64,
+        dest: u64,
+    ) {
+        self.deleted_relationships.insert(id);
+        self.relationship_count -= 1;
+        self.relationship_matrices
+            .values_mut()
+            .for_each(|m| m.remove(src, dest, id));
+    }
+
+    pub fn get_relationships(
+        &self,
+        types: &[String],
+    ) -> Option<tensor::Iter> {
+        if types.is_empty() {
+            return None;
+        }
+        self.get_relationship_matrix(&types[0]).map(|m| {
+            m.wait();
+            m.iter(0, u64::MAX)
+        })
+    }
+
     pub fn get_relationship_type_id(
         &self,
         id: u64,
     ) -> u64 {
         self.relationship_type_matrix
-            .iter_row(id)
+            .iter(id, id)
             .map(|(_, l)| l)
             .next()
             .unwrap()
@@ -535,7 +583,7 @@ pub struct ResultSummary {
     pub parse_duration: Duration,
     pub plan_duration: Duration,
     pub run_duration: Duration,
-    pub labels_added: i32,
+    pub labels_added: usize,
     pub labels_removed: i32,
     pub nodes_created: i32,
     pub relationships_created: i32,

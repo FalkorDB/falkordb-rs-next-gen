@@ -31,7 +31,7 @@ impl Parse for BinaryOp {
             syn::punctuated::Punctuated::<BinaryOpAlt, syn::Token![,]>::parse_separated_nonempty(
                 input,
             )?;
-        Ok(BinaryOp {
+        Ok(Self {
             parse_exp,
             binary_op_alts: binary_op_alts.into_iter().collect(),
         })
@@ -60,7 +60,7 @@ impl Parse for BinaryOpAlt {
         let token_match = input.parse()?;
         _ = input.parse::<syn::Token![=>]>()?;
         let ast_constructor = input.parse()?;
-        Ok(BinaryOpAlt {
+        Ok(Self {
             token_match,
             ast_constructor,
         })

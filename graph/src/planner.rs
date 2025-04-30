@@ -2,7 +2,7 @@ use std::{fmt::Display, vec::IntoIter};
 
 use orx_tree::{DynTree, NodeRef};
 
-use crate::ast::{NodePattern, Pattern, QueryExprIR, QueryIR};
+use crate::ast::{Alias, NodePattern, Pattern, QueryExprIR, QueryIR, RelationshipPattern};
 
 #[derive(Clone, Debug)]
 pub enum IR {
@@ -20,6 +20,7 @@ pub enum IR {
     Range,
     IsNull,
     IsNode,
+    IsRelationship,
     Or,
     Xor,
     And,
@@ -44,6 +45,7 @@ pub enum IR {
     If,
     For,
     Return,
+    ReturnAggregation,
     Block,
 }
 
@@ -67,6 +69,7 @@ impl Display for IR {
             Self::Range => write!(f, "range"),
             Self::IsNull => write!(f, "is_null"),
             Self::IsNode => write!(f, "is_node"),
+            Self::IsRelationship => write!(f, "is_relationship"),
             Self::Or => write!(f, "or"),
             Self::Xor => write!(f, "xor"),
             Self::And => write!(f, "and"),
@@ -91,6 +94,7 @@ impl Display for IR {
             Self::If => write!(f, "if"),
             Self::For => write!(f, "for"),
             Self::Return => write!(f, "return"),
+            Self::ReturnAggregation => write!(f, "return_aggregation"),
             Self::Block => write!(f, "block"),
         }
     }
@@ -151,6 +155,24 @@ impl Planner {
         let id = self.var_id;
         self.var_id += 1;
         format!("var_{id}")
+    }
+
+    fn plan_aggregation(
+        &mut self,
+        agg_ctx_var: String,
+        expr: QueryExprIR,
+    ) -> DynTree<IR> {
+        match expr {
+            QueryExprIR::FuncInvocation(name, params) => {
+                let mut params = params
+                    .into_iter()
+                    .map(|ir| self.plan_expr(ir))
+                    .collect::<Vec<_>>();
+                params.push(tree!(IR::Var(agg_ctx_var)));
+                tree!(IR::FuncInvocation(name) ; params.into_iter())
+            }
+            _ => unreachable!(),
+        }
     }
 
     #[allow(clippy::only_used_in_recursion)]
@@ -450,6 +472,80 @@ impl Planner {
         tree!(IR::For, init, condition, next, body)
     }
 
+    fn plan_relationship_scan(
+        &mut self,
+        rel: &RelationshipPattern,
+        body: DynTree<IR>,
+    ) -> DynTree<IR> {
+        let mut init = tree!(
+            IR::Block,
+            tree!(
+                IR::Set(format!("iter_{}", rel.alias)),
+                tree!(
+                    IR::FuncInvocation(String::from("create_relationship_iter")),
+                    tree!(IR::String(rel.relationship_type.to_string()))
+                )
+            ),
+            tree!(
+                IR::Set(rel.alias.to_string()),
+                tree!(
+                    IR::FuncInvocation(String::from("next_relationship")),
+                    tree!(IR::Var(format!("iter_{}", rel.alias)))
+                )
+            )
+        );
+        let condition = tree!(IR::IsRelationship, tree!(IR::Var(rel.alias.to_string())));
+        let mut next = tree!(
+            IR::Block,
+            tree!(
+                IR::Set(rel.alias.to_string()),
+                tree!(
+                    IR::FuncInvocation("next_relationship".to_string()),
+                    tree!(IR::Var(format!("iter_{}", rel.alias)))
+                )
+            )
+        );
+        if let Alias::String(from) = &rel.from {
+            init.root_mut().push_child_tree(tree!(
+                IR::Set(from.to_string()),
+                tree!(
+                    IR::FuncInvocation("startnode".to_string()),
+                    tree!(IR::Var(rel.alias.to_string()))
+                )
+            ));
+            next.root_mut().push_child_tree(tree!(
+                IR::Set(from.to_string()),
+                tree!(
+                    IR::FuncInvocation("startnode".to_string()),
+                    tree!(IR::Var(rel.alias.to_string()))
+                )
+            ));
+        }
+        if let Alias::String(to) = &rel.to {
+            init.root_mut().push_child_tree(tree!(
+                IR::Set(to.to_string()),
+                tree!(
+                    IR::FuncInvocation("endnode".to_string()),
+                    tree!(IR::Var(rel.alias.to_string()))
+                )
+            ));
+            next.root_mut().push_child_tree(tree!(
+                IR::Set(to.to_string()),
+                tree!(
+                    IR::FuncInvocation("endnode".to_string()),
+                    tree!(IR::Var(rel.alias.to_string()))
+                )
+            ));
+        }
+        tree!(
+            IR::For,
+            tree!(IR::Block, init),
+            condition,
+            tree!(IR::Block, next),
+            body
+        )
+    }
+
     fn plan_match(
         &mut self,
         pattern: Pattern,
@@ -461,6 +557,11 @@ impl Planner {
                 body = self.plan_node_scan(node, body);
             }
             return body;
+        }
+        if pattern.relationships.len() == 1 {
+            let rel = &pattern.relationships[0];
+            let body = self.plan_query(iter.next().unwrap(), iter);
+            return self.plan_relationship_scan(rel, body);
         }
         tree!(IR::Null)
     }
@@ -520,10 +621,48 @@ impl Planner {
                 tree!(IR::Block => self => exprs),
                 self.plan_query(iter.next().unwrap(), iter)
             ),
-            QueryIR::Return(exprs) => tree!(IR::Return, tree!(IR::List => self => exprs)),
+            QueryIR::Return(exprs) => {
+                if exprs.iter().any(super::ast::QueryExprIR::is_aggregation) {
+                    let mut group_by_keys = Vec::new();
+                    let mut aggregations = Vec::new();
+                    for expr in exprs {
+                        if expr.is_aggregation() {
+                            aggregations.push(expr);
+                        } else {
+                            group_by_keys.push(self.plan_expr(expr));
+                        }
+                    }
+                    let agg_ctx_var = self.next_var();
+                    tree!(
+                        IR::Block,
+                        tree!(
+                            IR::Set(agg_ctx_var.to_string()),
+                            tree!(IR::FuncInvocation(
+                                "create_aggregate_ctx".to_string()) ;
+                                group_by_keys
+                            )
+                        ),
+                        tree!(IR::Block ;
+                            aggregations
+                                .into_iter()
+                                .map(|ir| self.plan_aggregation(agg_ctx_var.to_string(), ir))
+                        )
+                    )
+                } else {
+                    tree!(IR::Return, tree!(IR::List => self => exprs))
+                }
+            }
             QueryIR::Query(q) => {
+                let mut is_agg = false;
+                if let Some(QueryIR::Return(exprs)) = q.last() {
+                    is_agg = exprs.iter().any(super::ast::QueryExprIR::is_aggregation);
+                }
                 let iter = &mut q.into_iter();
-                self.plan_query(iter.next().unwrap(), iter)
+                let res = self.plan_query(iter.next().unwrap(), iter);
+                if is_agg {
+                    return tree!(IR::ReturnAggregation, res);
+                }
+                res
             }
         }
     }
