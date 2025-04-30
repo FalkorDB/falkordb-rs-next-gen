@@ -76,8 +76,8 @@ impl ExpressionListType {
         current_token: Token,
     ) -> bool {
         match self {
-            ExpressionListType::OneOrMore => false,
-            ExpressionListType::ZeroOrMoreClosedBy(token) => token == &current_token,
+            Self::OneOrMore => false,
+            Self::ZeroOrMoreClosedBy(token) => token == &current_token,
         }
     }
 }

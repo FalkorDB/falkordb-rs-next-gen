@@ -2,6 +2,12 @@
 name = "falkordb-macro"
 version = "0.1.0"
 edition = "2024"
+description = "core macros"
+license = "MIT"
+repository = "https://github.com/FalkorDB/falkordb-rs-next-gen"
+readme = "../README.md"
+keywords = ["graph", "database"]
+categories = ["database"]
 
 [lib]
 proc-macro = true
