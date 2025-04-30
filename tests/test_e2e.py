@@ -1655,6 +1655,9 @@ def test_aggregation():
     res = query("UNWIND range(1, 10) AS x RETURN sum(x)")
     assert_result_set_equal_no_order(res, [[55]])
 
+    res = query("UNWIND range(1, 10) AS x RETURN sum(x / 10.0)")
+    assert_result_set_equal_no_order(res, [[5.5]])
+
     res = query("UNWIND range(1, 10) AS x RETURN min(x)")
     assert_result_set_equal_no_order(res, [[1]])
 

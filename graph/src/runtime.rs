@@ -419,12 +419,12 @@ impl Runtime {
         args: Vec<Value>,
     ) -> Result<Value, String> {
         match args.as_slice() {
-            [Value::Int(a), Value::Int(hash)] => {
+            [a, Value::Int(hash)] => {
                 runtime.agg_ctxs.entry(*hash as _).and_modify(|v| {
-                    if let (_, Value::Int(sum)) = v {
-                        *sum += a;
+                    if let (_, Value::Null) = v {
+                        v.1 = a.clone();
                     } else {
-                        v.1 = Value::Int(*a);
+                        v.1 = (v.1.clone() + a.clone()).unwrap();
                     }
                 });
             }
@@ -1459,6 +1459,9 @@ pub fn ro_run(
             .flat_map(|ir| ro_run(vars, g, runtime, result_fn, &ir))
             .reduce(|a, b| match (a, b) {
                 (Value::Int(a), Value::Int(b)) => Value::Int(a / b),
+                (Value::Int(a), Value::Float(b)) => Value::Float(a as f64 / b),
+                (Value::Float(a), Value::Int(b)) => Value::Float(a / b as f64),
+                (Value::Float(a), Value::Float(b)) => Value::Float(a / b),
                 _ => Value::Null,
             })
             .ok_or_else(|| "Div operator requires at least one argument".to_string()),
@@ -1761,6 +1764,9 @@ pub fn run(
             .flat_map(|ir| run(vars, g, runtime, result_fn, &ir))
             .reduce(|a, b| match (a, b) {
                 (Value::Int(a), Value::Int(b)) => Value::Int(a / b),
+                (Value::Int(a), Value::Float(b)) => Value::Float(a as f64 / b),
+                (Value::Float(a), Value::Int(b)) => Value::Float(a / b as f64),
+                (Value::Float(a), Value::Float(b)) => Value::Float(a / b),
                 _ => Value::Null,
             })
             .ok_or_else(|| "Div operator requires at least one argument".to_string()),
