@@ -31,8 +31,8 @@ impl Hash for Value {
             Self::Map(x) => x.hash(state),
             Self::Node(x) => x.hash(state),
             Self::Relationship(_, _, _) => todo!(),
-      }
-  }
+        }
+    }
 }
 
 impl Add for Value {
