@@ -1,6 +1,7 @@
 use crate::ast::{
     Alias, NodePattern, PathPattern, Pattern, QueryExprIR, QueryIR, RelationshipPattern,
 };
+use crate::cypher::Token::{RBrace, RParen};
 use falkordb_macro::parse_binary_expr;
 use std::collections::{BTreeMap, HashSet};
 use std::iter::Peekable;
@@ -61,6 +62,24 @@ struct Lexer<'a> {
     str: &'a str,
     pos: usize,
     cached_current: (Token, usize),
+}
+
+#[derive(Debug)]
+enum ExpressionListType {
+    OneOrMore,
+    ZeroOrMoreClosedBy(Token),
+}
+
+impl ExpressionListType {
+    fn is_end_token(
+        &self,
+        current_token: Token,
+    ) -> bool {
+        match self {
+            ExpressionListType::OneOrMore => false,
+            ExpressionListType::ZeroOrMoreClosedBy(token) => token == &current_token,
+        }
+    }
 }
 
 impl<'a> Lexer<'a> {
@@ -258,15 +277,7 @@ impl<'a> Lexer<'a> {
         }
 
         // Integer part digits
-        while let Some(&c) = chars.peek() {
-            if c.is_ascii_digit() {
-                chars.next();
-                len += 1;
-                has_digits_before_dot = true;
-            } else {
-                break;
-            }
-        }
+        Lexer::consume_digits(&mut chars, &mut len, &mut has_digits_before_dot);
 
         let mut has_dot = false;
         let mut has_digits_after_dot = false;
@@ -276,16 +287,7 @@ impl<'a> Lexer<'a> {
             has_dot = true;
             chars.next();
             len += 1;
-
-            while let Some(&c) = chars.peek() {
-                if c.is_ascii_digit() {
-                    chars.next();
-                    len += 1;
-                    has_digits_after_dot = true;
-                } else {
-                    break;
-                }
-            }
+            Lexer::consume_digits(&mut chars, &mut len, &mut has_digits_after_dot);
         }
 
         // Exponent part
@@ -364,6 +366,22 @@ impl<'a> Lexer<'a> {
                 |_| (Token::Error(format!("Invalid integer: {number_str}")), len),
                 |i| (Token::Integer(i), len),
             )
+        }
+    }
+
+    fn consume_digits(
+        chars: &mut Peekable<Chars>,
+        len: &mut usize,
+        consume_chars: &mut bool,
+    ) {
+        while let Some(&c) = chars.peek() {
+            if c.is_ascii_digit() {
+                chars.next();
+                *len += 1;
+                *consume_chars = true;
+            } else {
+                break;
+            }
         }
     }
 
@@ -540,13 +558,10 @@ impl<'a> Parser<'a> {
     fn parse_call_clause(&mut self) -> Result<QueryIR, String> {
         let ident = self.parse_dotted_ident()?;
         match_token!(self.lexer, LParen);
-        if self.lexer.current() == Token::RParen {
-            self.lexer.next();
-            return Ok(QueryIR::Call(ident, vec![]));
-        }
-        let exprs = self.parse_exprs()?;
-        match_token!(self.lexer, RParen);
-        Ok(QueryIR::Call(ident, exprs))
+        Ok(QueryIR::Call(
+            ident,
+            self.parse_expression_list(ExpressionListType::ZeroOrMoreClosedBy(RParen))?,
+        ))
     }
 
     fn parse_dotted_ident(&mut self) -> Result<String, String> {
@@ -576,7 +591,9 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_delete_clause(&mut self) -> Result<QueryIR, String> {
-        Ok(QueryIR::Delete(self.parse_exprs()?))
+        Ok(QueryIR::Delete(
+            self.parse_expression_list(ExpressionListType::OneOrMore)?,
+        ))
     }
 
     fn parse_where_clause(&mut self) -> Result<QueryIR, String> {
@@ -679,9 +696,10 @@ impl<'a> Parser<'a> {
                 if self.lexer.current() == Token::LParen {
                     self.lexer.next();
 
-                    let exprs = self.parse_exprs()?;
-                    match_token!(self.lexer, RParen);
-                    return Ok(QueryExprIR::FuncInvocation(namespace_and_function, exprs));
+                    return Ok(QueryExprIR::FuncInvocation(
+                        namespace_and_function,
+                        self.parse_expression_list(ExpressionListType::ZeroOrMoreClosedBy(RParen))?,
+                    ));
                 }
                 self.lexer.set_pos(pos);
                 Ok(QueryExprIR::Ident(ident))
@@ -712,13 +730,9 @@ impl<'a> Parser<'a> {
             }
             Token::LBrace => {
                 self.lexer.next();
-                if self.lexer.current() == Token::RBrace {
-                    self.lexer.next();
-                    return Ok(QueryExprIR::List(vec![]));
-                }
-                let exprs = self.parse_exprs()?;
-                match_token!(self.lexer, RBrace);
-                Ok(QueryExprIR::List(exprs))
+                Ok(QueryExprIR::List(self.parse_expression_list(
+                    ExpressionListType::ZeroOrMoreClosedBy(RBrace),
+                )?))
             }
             Token::LBracket => {
                 let attrs = self.parse_map()?;
@@ -915,15 +929,29 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_exprs(&mut self) -> Result<Vec<QueryExprIR>, String> {
+    fn parse_expression_list(
+        &mut self,
+        expression_list_type: ExpressionListType,
+    ) -> Result<Vec<QueryExprIR>, String> {
         let mut exprs = Vec::new();
-        loop {
+        while !expression_list_type.is_end_token(self.lexer.current()) {
             exprs.push(self.parse_expr()?);
             match self.lexer.current() {
                 Token::Comma => self.lexer.next(),
-                _ => return Ok(exprs),
+                _ => break,
             }
         }
+
+        if let ExpressionListType::ZeroOrMoreClosedBy(token) = expression_list_type {
+            if self.lexer.current() == token {
+                self.lexer.next();
+            } else {
+                return Err(self
+                    .lexer
+                    .format_error(&format!("Unexpected token {token:?}")));
+            }
+        }
+        Ok(exprs)
     }
 
     fn parse_node_pattern(&mut self) -> Result<NodePattern, String> {
