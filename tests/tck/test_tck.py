@@ -38,7 +38,7 @@ def test_tck():
     cmd = [tck_features, '--tags=-crash', '--tags=-skip', "--no-capture"]
     tck_include = os.getenv("TCK_INCLUDE", "")
     if tck_include:
-       cmd = ["./tests/tck/features/", '--tags=-crash', '--tags=-skip', "--no-capture", "--stop", "--include", tck_include]
+       cmd = [tck_features, '--tags=-crash', '--tags=-skip', "--no-capture", "--stop", "--include", tck_include]
     res = behave_main(cmd)
     res = 'pass' if res == 0 else 'fail'
     assert res == 'pass'
