@@ -1,4 +1,7 @@
-use graph::{cypher::Parser, graph::Graph, matrix::init, planner::Planner, value::Value};
+use graph::{
+    cypher::Parser, functions::init_functions, graph::Graph, matrix::init, planner::Planner,
+    value::Value,
+};
 use redis_module::{
     Context, NextArg, REDISMODULE_TYPE_METHOD_VERSION, RedisError, RedisModule_Alloc,
     RedisModule_Calloc, RedisModule_Free, RedisModule_Realloc, RedisModuleTypeMethods, RedisResult,
@@ -393,7 +396,10 @@ fn graph_init(
             RedisModule_Free,
         );
     }
-    Status::Ok
+    match init_functions() {
+        Ok(_) => Status::Ok,
+        Err(_) => Status::Err,
+    }
 }
 
 //////////////////////////////////////////////////////

@@ -1,3 +1,4 @@
+use crate::functions::get_functions;
 use std::{
     collections::{BTreeMap, HashSet},
     fmt::Display,
@@ -121,7 +122,10 @@ impl QueryExprIR {
                     (None, None) => Ok(()),
                 }
             }
-            Self::FuncInvocation(_name, exprs) => {
+            Self::FuncInvocation(name, exprs) => {
+                if name != "range" {
+                    get_functions().validate(name, exprs.len())?;
+                }
                 for arg in exprs {
                     arg.inner_validate(env)?;
                 }
