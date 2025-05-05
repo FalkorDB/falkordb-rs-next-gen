@@ -3,10 +3,10 @@ use graph::{
     value::Value,
 };
 use redis_module::{
-    native_types::RedisType, redis_module, redisvalue::RedisValueKey, Context, NextArg,
-    RedisError, RedisModuleTypeMethods, RedisModule_Alloc, RedisModule_Calloc, RedisModule_Free,
-    RedisModule_Realloc, RedisResult, RedisString, RedisValue, Status,
-    REDISMODULE_TYPE_METHOD_VERSION,
+    Context, NextArg, REDISMODULE_TYPE_METHOD_VERSION, RedisError, RedisModule_Alloc,
+    RedisModule_Calloc, RedisModule_Free, RedisModule_Realloc, RedisModuleTypeMethods, RedisResult,
+    RedisString, RedisValue, Status, native_types::RedisType, redis_module,
+    redisvalue::RedisValueKey,
 };
 use std::cell::RefCell;
 use std::os::raw::c_void;
