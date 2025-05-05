@@ -149,7 +149,7 @@ impl Graph {
         let mut runtime = Runtime::new(
             parameters
                 .into_iter()
-                .map(|(k, v)| (k, evaluate_param(v)))
+                .map(|(k, v)| (k, evaluate_param(v.root())))
                 .collect(),
         );
         let start = Instant::now();
@@ -217,7 +217,7 @@ impl Graph {
         let mut runtime = Runtime::new(
             parameters
                 .into_iter()
-                .map(|(k, v)| (k, evaluate_param(v)))
+                .map(|(k, v)| (k, evaluate_param(v.root())))
                 .collect(),
         );
         let start = Instant::now();

@@ -79,7 +79,7 @@ fn generate_token_stream(
                vec.push(#parse_exp);
             }
             if vec.len() > 1 {
-                vec = vec![QueryExprIR::#ast_constructor(vec)];
+                vec = vec![tree!(ExprIR::#ast_constructor ; vec)];
             }
         }
     });
