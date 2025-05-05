@@ -1,10 +1,14 @@
-use graph::{cypher::Parser, graph::Graph, matrix::init, planner::Planner, value::Value};
-use redis_module::{
-    Context, NextArg, REDISMODULE_TYPE_METHOD_VERSION, RedisError, RedisModule_Alloc,
-    RedisModule_Calloc, RedisModule_Free, RedisModule_Realloc, RedisModuleTypeMethods, RedisResult,
-    RedisString, RedisValue, Status, native_types::RedisType, redis_module,
-    redisvalue::RedisValueKey,
+use graph::{
+    cypher::Parser, graph::Graph, graph::ValueCallback, matrix::init, planner::Planner,
+    value::Value,
 };
+use redis_module::{
+    native_types::RedisType, redis_module, redisvalue::RedisValueKey, Context, NextArg,
+    RedisError, RedisModuleTypeMethods, RedisModule_Alloc, RedisModule_Calloc, RedisModule_Free,
+    RedisModule_Realloc, RedisResult, RedisString, RedisValue, Status,
+    REDISMODULE_TYPE_METHOD_VERSION,
+};
+use std::cell::RefCell;
 use std::os::raw::c_void;
 
 const EMPTY_KEY_ERR: RedisResult = Err(RedisError::Str("ERR Invalid graph operation on empty key"));
@@ -151,6 +155,33 @@ fn inner_raw_value_to_redis_value(
     }
 }
 
+struct RedisValuesCollector {
+    res: RefCell<Vec<RedisValue>>,
+}
+
+impl RedisValuesCollector {
+    fn new() -> Self {
+        Self {
+            res: RefCell::new(Vec::new()),
+        }
+    }
+    fn take(&self) -> Vec<RedisValue> {
+        std::mem::take(&mut *self.res.borrow_mut())
+    }
+}
+
+impl ValueCallback for RedisValuesCollector {
+    fn return_value(
+        &self,
+        graph: &Graph,
+        value: Value,
+    ) {
+        self.res
+            .borrow_mut()
+            .push(raw_value_to_redis_value(graph, &value));
+    }
+}
+
 /// This function is used to delete a graph
 ///
 /// See: https://docs.falkordb.com/commands/graph.delete.html
@@ -185,16 +216,11 @@ fn query_mut(
     debug: u64,
     query: &str,
 ) -> Result<RedisValue, RedisError> {
-    let mut res = Vec::new();
+    let collector = RedisValuesCollector::new();
     graph
-        .query(
-            query,
-            &mut |g, r| {
-                res.push(raw_value_to_redis_value(g, &r));
-            },
-            debug > 0,
-        )
+        .query(query, &collector, debug > 0)
         .map(|summary| {
+            let res = collector.take();
             vec![
                 vec![
                     vec![

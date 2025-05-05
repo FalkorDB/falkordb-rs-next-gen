@@ -10,11 +10,19 @@ use roaring::RoaringTreemap;
 use crate::{
     cypher::Parser,
     matrix::{self, Matrix, Remove, Set, Size},
-    planner::{IR, Planner},
-    runtime::{Runtime, evaluate_param, ro_run, run},
+    planner::{Planner, IR},
+    runtime::{evaluate_param, ro_run, run, Runtime},
     tensor::{self, Tensor},
     value::Value,
 };
+
+pub trait ValueCallback {
+    fn return_value(
+        &self,
+        graph: &Graph,
+        value: Value,
+    );
+}
 
 pub struct Graph {
     node_cap: u64,
@@ -108,12 +116,15 @@ impl Graph {
             .map(|p| p as u64)
     }
 
-    pub fn query(
+    pub fn query<CB>(
         &mut self,
         query: &str,
-        result_fn: &mut dyn FnMut(&Self, Value),
+        callback: &CB,
         debug: bool,
-    ) -> Result<ResultSummary, String> {
+    ) -> Result<ResultSummary, String>
+    where
+        CB: ValueCallback,
+    {
         let mut parse_duration = Duration::ZERO;
         let mut plan_duration = Duration::ZERO;
 
@@ -157,7 +168,7 @@ impl Graph {
             &mut BTreeMap::new(),
             self,
             &mut runtime,
-            result_fn,
+            callback,
             &evaluate.root(),
         )?;
         let run_duration = start.elapsed();
