@@ -1,5 +1,5 @@
 use graph::{
-    cypher::Parser, graph::Graph, graph::ValueCallback, matrix::init, planner::Planner,
+    cypher::Parser, graph::Graph, graph::ReturnCallback, matrix::init, planner::Planner,
     value::Value,
 };
 use redis_module::{
@@ -170,7 +170,7 @@ impl RedisValuesCollector {
     }
 }
 
-impl ValueCallback for RedisValuesCollector {
+impl ReturnCallback for RedisValuesCollector {
     fn return_value(
         &self,
         graph: &Graph,
@@ -220,7 +220,6 @@ fn query_mut(
     graph
         .query(query, &collector, debug > 0)
         .map(|summary| {
-            let res = collector.take();
             vec![
                 vec![
                     vec![
@@ -229,7 +228,7 @@ fn query_mut(
                     ]
                     .into(),
                 ],
-                res,
+                collector.take(),
                 vec![
                     RedisValue::SimpleString(format!("Labels added: {}", summary.labels_added)),
                     RedisValue::SimpleString(format!("Nodes created: {}", summary.nodes_created)),
@@ -296,14 +295,8 @@ fn graph_ro_query(
         // If the key does not exist, we return an error
         EMPTY_KEY_ERR,
         |graph| {
-            let mut res = Vec::new();
-            match graph.ro_query(
-                query,
-                &mut |g, r| {
-                    res.push(raw_value_to_redis_value(g, &r));
-                },
-                debug > 0,
-            ) {
+            let collector = RedisValuesCollector::new();
+            match graph.ro_query(query, &collector, debug > 0) {
                 Ok(_) => Ok(vec![
                     vec![
                         vec![
@@ -312,7 +305,7 @@ fn graph_ro_query(
                         ]
                         .into(),
                     ],
-                    res,
+                    collector.take(),
                     vec![],
                 ]
                 .into()),

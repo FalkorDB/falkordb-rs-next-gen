@@ -16,7 +16,7 @@ use crate::{
     value::Value,
 };
 
-pub trait ValueCallback {
+pub trait ReturnCallback {
     fn return_value(
         &self,
         graph: &Graph,
@@ -116,15 +116,12 @@ impl Graph {
             .map(|p| p as u64)
     }
 
-    pub fn query<CB>(
+    pub fn query<CB: ReturnCallback>(
         &mut self,
         query: &str,
         callback: &CB,
         debug: bool,
-    ) -> Result<ResultSummary, String>
-    where
-        CB: ValueCallback,
-    {
+    ) -> Result<ResultSummary, String> {
         let mut parse_duration = Duration::ZERO;
         let mut plan_duration = Duration::ZERO;
 
@@ -188,10 +185,10 @@ impl Graph {
         })
     }
 
-    pub fn ro_query(
+    pub fn ro_query<CB: ReturnCallback>(
         &self,
         query: &str,
-        result_fn: &mut dyn FnMut(&Self, Value),
+        callback: &CB,
         debug: bool,
     ) -> Result<ResultSummary, String> {
         let mut parse_duration = Duration::ZERO;
@@ -236,7 +233,7 @@ impl Graph {
             &mut BTreeMap::new(),
             self,
             &mut runtime,
-            result_fn,
+            callback,
             &evaluate.root(),
         )?;
         let run_duration = start.elapsed();
