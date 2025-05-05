@@ -185,7 +185,7 @@ fn query_mut(
     debug: u64,
     query: &str,
 ) -> Result<RedisValue, RedisError> {
-    let mut res = Vec::new();
+    let mut res: Vec<RedisValue> = Vec::new();
     graph
         .query(
             query,
