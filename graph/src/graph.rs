@@ -12,18 +12,9 @@ use crate::{
     cypher::Parser,
     matrix::{self, Matrix, Remove, Set, Size},
     planner::{IR, Planner},
-    runtime::Runtime,
     tensor::{self, Tensor},
     value::Value,
 };
-
-pub trait ReturnCallback {
-    fn return_value(
-        &self,
-        graph: &Graph,
-        value: Value,
-    );
-}
 
 pub struct Graph {
     node_cap: u64,
@@ -76,6 +67,10 @@ impl Graph {
         }
     }
 
+    pub fn get_labels_count(&self) -> usize {
+        self.node_labels.len()
+    }
+
     pub fn get_labels(&self) -> impl Iterator<Item = &String> {
         self.node_labels.iter()
     }
@@ -117,7 +112,7 @@ impl Graph {
             .map(|p| p as u64)
     }
 
-    fn get_plan(
+    pub fn get_plan(
         &self,
         query: &str,
     ) -> Result<
@@ -155,61 +150,6 @@ impl Graph {
             }
             Err(_) => Err("Failed to acquire read lock on cache".to_string()),
         }
-    }
-
-    pub fn query<CB: ReturnCallback>(
-        &mut self,
-        query: &str,
-        callback: &CB,
-    ) -> Result<ResultSummary, String> {
-        let (evaluate, parameters, parse_duration, plan_duration) = self.get_plan(query)?;
-
-        let labels_count = self.node_labels.len();
-        let mut runtime = Runtime::new(parameters);
-        let start = Instant::now();
-        runtime.run(self, callback, &evaluate.root())?;
-        let run_duration = start.elapsed();
-
-        Ok(ResultSummary {
-            parse_duration,
-            plan_duration,
-            run_duration,
-            labels_added: self.node_labels.len() - labels_count,
-            labels_removed: 0,
-            nodes_created: runtime.nodes_created,
-            relationships_created: runtime.relationships_created,
-            nodes_deleted: runtime.nodes_deleted,
-            relationships_deleted: runtime.relationships_deleted,
-            properties_set: runtime.properties_set,
-            properties_removed: runtime.properties_removed,
-        })
-    }
-
-    pub fn ro_query<CB: ReturnCallback>(
-        &self,
-        query: &str,
-        callback: &CB,
-    ) -> Result<ResultSummary, String> {
-        let (evaluate, parameters, parse_duration, plan_duration) = self.get_plan(query)?;
-
-        let mut runtime = Runtime::new(parameters);
-        let start = Instant::now();
-        runtime.ro_run(self, callback, &evaluate.root())?;
-        let run_duration = start.elapsed();
-
-        Ok(ResultSummary {
-            parse_duration,
-            plan_duration,
-            run_duration,
-            labels_added: 0,
-            labels_removed: 0,
-            nodes_created: 0,
-            relationships_created: 0,
-            nodes_deleted: 0,
-            relationships_deleted: 0,
-            properties_set: 0,
-            properties_removed: 0,
-        })
     }
 
     fn get_label_matrix(
@@ -544,18 +484,4 @@ impl Graph {
             .get(&id)
             .unwrap_or_else(|| panic!("Relationship with id {id} not found"))
     }
-}
-
-pub struct ResultSummary {
-    pub parse_duration: Duration,
-    pub plan_duration: Duration,
-    pub run_duration: Duration,
-    pub labels_added: usize,
-    pub labels_removed: i32,
-    pub nodes_created: i32,
-    pub relationships_created: i32,
-    pub nodes_deleted: i32,
-    pub relationships_deleted: i32,
-    pub properties_set: i32,
-    pub properties_removed: i32,
 }
