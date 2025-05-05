@@ -8,10 +8,11 @@ use orx_tree::DynTree;
 use roaring::RoaringTreemap;
 
 use crate::{
+    ast::ExprIR,
     cypher::Parser,
     matrix::{self, Matrix, Remove, Set, Size},
     planner::{IR, Planner},
-    runtime::{Runtime, evaluate_param, ro_run, run},
+    runtime::Runtime,
     tensor::{self, Tensor},
     value::Value,
 };
@@ -116,58 +117,57 @@ impl Graph {
             .map(|p| p as u64)
     }
 
-    pub fn query<CB: ReturnCallback>(
-        &mut self,
+    fn get_plan(
+        &self,
         query: &str,
-        callback: &CB,
-        debug: bool,
-    ) -> Result<ResultSummary, String> {
+    ) -> Result<
+        (
+            DynTree<IR>,
+            BTreeMap<String, DynTree<ExprIR>>,
+            Duration,
+            Duration,
+        ),
+        String,
+    > {
         let mut parse_duration = Duration::ZERO;
         let mut plan_duration = Duration::ZERO;
 
         let mut parser = Parser::new(query);
         let (parameters, query) = parser.parse_parameters()?;
 
-        let evaluate = {
-            match self.cache.lock() {
-                Ok(mut cache) => {
-                    if let Some(f) = cache.get(query) {
-                        f.to_owned()
-                    } else {
-                        let start = Instant::now();
-                        let ir = parser.parse()?;
-                        parse_duration = start.elapsed();
+        match self.cache.lock() {
+            Ok(mut cache) => {
+                if let Some(f) = cache.get(query) {
+                    Ok((f.to_owned(), parameters, parse_duration, plan_duration))
+                } else {
+                    let start = Instant::now();
+                    let ir = parser.parse()?;
+                    parse_duration = start.elapsed();
 
-                        let mut planner = Planner::new();
-                        let start = Instant::now();
-                        let value = planner.plan(ir, debug);
-                        plan_duration = start.elapsed();
+                    let mut planner = Planner::new();
+                    let start = Instant::now();
+                    let value = planner.plan(ir);
+                    plan_duration = start.elapsed();
 
-                        cache.insert(query.to_string(), value.clone());
-                        value
-                    }
-                }
-                Err(_) => {
-                    return Err("Failed to acquire read lock on cache".to_string());
+                    cache.insert(query.to_string(), value.clone());
+                    Ok((value, parameters, parse_duration, plan_duration))
                 }
             }
-        };
+            Err(_) => Err("Failed to acquire read lock on cache".to_string()),
+        }
+    }
+
+    pub fn query<CB: ReturnCallback>(
+        &mut self,
+        query: &str,
+        callback: &CB,
+    ) -> Result<ResultSummary, String> {
+        let (evaluate, parameters, parse_duration, plan_duration) = self.get_plan(query)?;
 
         let labels_count = self.node_labels.len();
-        let mut runtime = Runtime::new(
-            parameters
-                .into_iter()
-                .map(|(k, v)| (k, evaluate_param(v.root())))
-                .collect(),
-        );
+        let mut runtime = Runtime::new(parameters);
         let start = Instant::now();
-        run(
-            &mut BTreeMap::new(),
-            self,
-            &mut runtime,
-            callback,
-            &evaluate.root(),
-        )?;
+        runtime.run(self, callback, &evaluate.root())?;
         let run_duration = start.elapsed();
 
         Ok(ResultSummary {
@@ -189,53 +189,12 @@ impl Graph {
         &self,
         query: &str,
         callback: &CB,
-        debug: bool,
     ) -> Result<ResultSummary, String> {
-        let mut parse_duration = Duration::ZERO;
-        let mut plan_duration = Duration::ZERO;
+        let (evaluate, parameters, parse_duration, plan_duration) = self.get_plan(query)?;
 
-        let mut parser = Parser::new(query);
-        let (parameters, query) = parser.parse_parameters()?;
-
-        let evaluate = {
-            match self.cache.lock() {
-                Ok(mut cache) => {
-                    if let Some(f) = cache.get(query) {
-                        f.to_owned()
-                    } else {
-                        let start = Instant::now();
-                        let ir = parser.parse()?;
-                        parse_duration = start.elapsed();
-
-                        let mut planner = Planner::new();
-                        let start = Instant::now();
-                        let value = planner.plan(ir, debug);
-                        plan_duration = start.elapsed();
-
-                        cache.insert(query.to_string(), value.clone());
-                        value
-                    }
-                }
-                Err(_) => {
-                    return Err("Failed to acquire read lock on cache".to_string());
-                }
-            }
-        };
-
-        let mut runtime = Runtime::new(
-            parameters
-                .into_iter()
-                .map(|(k, v)| (k, evaluate_param(v.root())))
-                .collect(),
-        );
+        let mut runtime = Runtime::new(parameters);
         let start = Instant::now();
-        ro_run(
-            &mut BTreeMap::new(),
-            self,
-            &mut runtime,
-            callback,
-            &evaluate.root(),
-        )?;
+        runtime.ro_run(self, callback, &evaluate.root())?;
         let run_duration = start.elapsed();
 
         Ok(ResultSummary {

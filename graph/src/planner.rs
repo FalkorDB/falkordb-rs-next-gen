@@ -476,7 +476,6 @@ impl Planner {
     pub fn plan(
         &mut self,
         ir: QueryIR,
-        _debug: bool,
     ) -> DynTree<IR> {
         self.plan_query(ir, &mut Vec::new().into_iter())
     }

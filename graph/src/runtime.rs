@@ -1,7 +1,7 @@
 use crate::graph::ReturnCallback;
 use crate::{ast::ExprIR, graph::Graph, planner::IR, value::Contains, value::Value};
 use crate::{matrix, tensor};
-use orx_tree::{DynNode, NodeRef};
+use orx_tree::{DynNode, DynTree, NodeRef};
 use rand::Rng;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
@@ -17,6 +17,7 @@ pub struct Runtime {
     node_iters: Vec<matrix::Iter<bool>>,
     relationship_iters: Vec<tensor::Iter>,
     parameters: BTreeMap<String, Value>,
+    vars: BTreeMap<String, Value>,
     pub nodes_created: i32,
     pub relationships_created: i32,
     pub nodes_deleted: i32,
@@ -27,7 +28,7 @@ pub struct Runtime {
 
 impl Runtime {
     #[must_use]
-    pub fn new(parameters: BTreeMap<String, Value>) -> Self {
+    pub fn new(parameters: BTreeMap<String, DynTree<ExprIR>>) -> Self {
         let mut write_functions: BTreeMap<String, WriteFn> = BTreeMap::new();
         let mut read_functions: BTreeMap<String, ReadFn> = BTreeMap::new();
 
@@ -110,13 +111,602 @@ impl Runtime {
             agg_ctxs: BTreeMap::new(),
             node_iters: Vec::new(),
             relationship_iters: Vec::new(),
-            parameters,
+            parameters: parameters
+                .into_iter()
+                .map(|(k, v)| (k, evaluate_param(v.root())))
+                .collect(),
+            vars: BTreeMap::new(),
             nodes_created: 0,
             relationships_created: 0,
             nodes_deleted: 0,
             relationships_deleted: 0,
             properties_set: 0,
             properties_removed: 0,
+        }
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn ro_run_expr(
+        &mut self,
+        g: &Graph,
+        ir: &DynNode<ExprIR>,
+    ) -> Result<Value, String> {
+        match ir.data() {
+            ExprIR::Null => Ok(Value::Null),
+            ExprIR::Bool(x) => Ok(Value::Bool(*x)),
+            ExprIR::Integer(x) => Ok(Value::Int(*x)),
+            ExprIR::Float(x) => Ok(Value::Float(*x)),
+            ExprIR::String(x) => Ok(Value::String(x.to_string())),
+            ExprIR::Var(x) => self.vars.get(x).map_or_else(
+                || Err(format!("Variable {x} not found")),
+                |v| Ok(v.to_owned()),
+            ),
+            ExprIR::Parameter(x) => self.parameters.get(x).map_or_else(
+                || Err(format!("Parameter {x} not found")),
+                |v| Ok(v.to_owned()),
+            ),
+            ExprIR::List => Ok(Value::List(
+                ir.children()
+                    .map(|ir| self.ro_run_expr(g, &ir))
+                    .collect::<Result<Vec<_>, _>>()?,
+            )),
+            ExprIR::Length => match self.ro_run_expr(g, &ir.child(0))? {
+                Value::List(arr) => Ok(Value::Int(arr.len() as _)),
+                _ => Err("Length operator requires a list".to_string()),
+            },
+            ExprIR::GetElement => {
+                let arr = self.ro_run_expr(g, &ir.child(0))?;
+                let i = self.ro_run_expr(g, &ir.child(1))?;
+                match (arr, i) {
+                    (Value::List(values), Value::Int(i)) => {
+                        if i >= 0 && i < values.len() as _ {
+                            Ok(values[i as usize].clone())
+                        } else {
+                            Ok(Value::Null)
+                        }
+                    }
+                    (Value::List(_), v) => {
+                        Err(format!("Type mismatch: expected Bool but was {v:?}"))
+                    }
+                    v => Err(format!("Type mismatch: expected List but was {v:?}")),
+                }
+            }
+            ExprIR::GetElements => {
+                let arr = self.ro_run_expr(g, &ir.child(0))?;
+                let a = self.ro_run_expr(g, &ir.child(1))?;
+                let b = self.ro_run_expr(g, &ir.child(2))?;
+                get_elements(arr, a, b)
+            }
+            ExprIR::IsNull => match self.ro_run_expr(g, &ir.child(0))? {
+                Value::Null => Ok(Value::Bool(true)),
+                _ => Ok(Value::Bool(false)),
+            },
+            ExprIR::IsNode => match self.ro_run_expr(g, &ir.child(0))? {
+                Value::Node(_) => Ok(Value::Bool(true)),
+                _ => Ok(Value::Bool(false)),
+            },
+            ExprIR::IsRelationship => match self.ro_run_expr(g, &ir.child(0))? {
+                Value::Relationship(_, _, _) => Ok(Value::Bool(true)),
+                _ => Ok(Value::Bool(false)),
+            },
+            ExprIR::Or => {
+                let mut is_null = false;
+                for ir in ir.children() {
+                    match self.ro_run_expr(g, &ir)? {
+                        Value::Bool(true) => return Ok(Value::Bool(true)),
+                        Value::Bool(false) => {}
+                        Value::Null => is_null = true,
+                        _ => return Err(format!("Type mismatch: expected Bool but was {ir:?}")),
+                    }
+                }
+                if is_null {
+                    return Ok(Value::Null);
+                }
+
+                Ok(Value::Bool(false))
+            }
+            ExprIR::Xor => {
+                let mut last = None;
+                for ir in ir.children() {
+                    match self.ro_run_expr(g, &ir)? {
+                        Value::Bool(b) => last = Some(last.map_or(b, |l| logical_xor(l, b))),
+                        Value::Null => return Ok(Value::Null),
+                        _ => return Err(format!("Type mismatch: expected Bool but was {ir:?}")),
+                    }
+                }
+                Ok(Value::Bool(last.unwrap_or(false)))
+            }
+            ExprIR::And => {
+                let mut is_null = false;
+                for ir in ir.children() {
+                    match self.ro_run_expr(g, &ir)? {
+                        Value::Bool(false) => return Ok(Value::Bool(false)),
+                        Value::Bool(true) => {}
+                        Value::Null => is_null = true,
+                        _ => return Err(format!("Type mismatch: expected Bool but was {ir:?}")),
+                    }
+                }
+                if is_null {
+                    return Ok(Value::Null);
+                }
+
+                Ok(Value::Bool(true))
+            }
+            ExprIR::Not => match self.ro_run_expr(g, &ir.child(0))? {
+                Value::Bool(b) => Ok(Value::Bool(!b)),
+                Value::Null => Ok(Value::Null),
+                _ => {
+                    Err("InvalidArgumentType: Not operator requires a boolean or null".to_string())
+                }
+            },
+            ExprIR::Negate => match self.ro_run_expr(g, &ir.child(0))? {
+                Value::Int(i) => Ok(Value::Int(-i)),
+                Value::Float(f) => Ok(Value::Float(-f)),
+                Value::Null => Ok(Value::Null),
+                _ => Err(
+                    "InvalidArgumentType: Negate operator requires an Integer or Float".to_string(),
+                ),
+            },
+            ExprIR::Eq => all_equals(ir.children().map(|ir| self.ro_run_expr(g, &ir))),
+            ExprIR::Neq => ir
+                .children()
+                .flat_map(|ir| self.ro_run_expr(g, &ir))
+                .reduce(|a, b| Value::Bool(a != b))
+                .ok_or_else(|| "Neq operator requires at least one argument".to_string()),
+            ExprIR::Lt => match (
+                self.ro_run_expr(g, &ir.child(0))?,
+                self.ro_run_expr(g, &ir.child(1))?,
+            ) {
+                (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a < b)),
+                _ => Err("Lt operator requires two integers".to_string()),
+            },
+            ExprIR::Gt => match (
+                self.ro_run_expr(g, &ir.child(0))?,
+                self.ro_run_expr(g, &ir.child(1))?,
+            ) {
+                (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a > b)),
+                _ => Err("Gt operator requires two integers".to_string()),
+            },
+            ExprIR::Le => match (
+                self.ro_run_expr(g, &ir.child(0))?,
+                self.ro_run_expr(g, &ir.child(1))?,
+            ) {
+                (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a <= b)),
+                _ => Err("Le operator requires two integers".to_string()),
+            },
+            ExprIR::Ge => match (
+                self.ro_run_expr(g, &ir.child(0))?,
+                self.ro_run_expr(g, &ir.child(1))?,
+            ) {
+                (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a >= b)),
+                _ => Err("Ge operator requires two integers".to_string()),
+            },
+            ExprIR::In => {
+                let value = self.ro_run_expr(g, &ir.child(0))?;
+                let list = self.ro_run_expr(g, &ir.child(1))?;
+                list_contains(&list, &value)
+            }
+            ExprIR::Add => ir
+                .children()
+                .map(|ir| self.ro_run_expr(g, &ir))
+                .reduce(|acc, value| acc? + value?)
+                .ok_or_else(|| "Add operator requires at least one operand".to_string())?,
+            ExprIR::Sub => ir
+                .children()
+                .flat_map(|ir| self.ro_run_expr(g, &ir))
+                .reduce(|a, b| match (a, b) {
+                    (Value::Int(a), Value::Int(b)) => Value::Int(a - b),
+                    _ => Value::Null,
+                })
+                .ok_or_else(|| "Sub operator requires at least one argument".to_string()),
+            ExprIR::Mul => ir
+                .children()
+                .flat_map(|ir| self.ro_run_expr(g, &ir))
+                .reduce(|a, b| match (a, b) {
+                    (Value::Int(a), Value::Int(b)) => Value::Int(a * b),
+                    _ => Value::Null,
+                })
+                .ok_or_else(|| "Mul operator requires at least one argument".to_string()),
+            ExprIR::Div => ir
+                .children()
+                .flat_map(|ir| self.ro_run_expr(g, &ir))
+                .reduce(|a, b| match (a, b) {
+                    (Value::Int(a), Value::Int(b)) => Value::Int(a / b),
+                    (Value::Int(a), Value::Float(b)) => Value::Float(a as f64 / b),
+                    (Value::Float(a), Value::Int(b)) => Value::Float(a / b as f64),
+                    (Value::Float(a), Value::Float(b)) => Value::Float(a / b),
+                    _ => Value::Null,
+                })
+                .ok_or_else(|| "Div operator requires at least one argument".to_string()),
+            ExprIR::Pow => ir
+                .children()
+                .flat_map(|ir| self.ro_run_expr(g, &ir))
+                .reduce(|a, b| match (a, b) {
+                    (Value::Int(a), Value::Int(b)) => Value::Float((a as f64).powf(b as _)),
+                    _ => Value::Null,
+                })
+                .ok_or_else(|| "Pow operator requires at least one argument".to_string()),
+            ExprIR::Modulo => ir
+                .children()
+                .flat_map(|ir| self.ro_run_expr(g, &ir))
+                .reduce(|a, b| match (a, b) {
+                    (Value::Int(a), Value::Int(b)) => Value::Int(a % b),
+                    _ => Value::Null,
+                })
+                .ok_or_else(|| "Modulo operator requires at least one argument".to_string()),
+            ExprIR::FuncInvocation(name) => {
+                let args = ir
+                    .children()
+                    .map(|ir| self.ro_run_expr(g, &ir))
+                    .collect::<Result<Vec<_>, _>>()?;
+                #[allow(clippy::option_if_let_else)]
+                if let Some(func) = self.read_functions.get(name) {
+                    func(g, self, args)
+                } else {
+                    Err(format!("Function {name} not found"))
+                }
+            }
+            ExprIR::Map => Ok(Value::Map(
+                ir.children()
+                    .map(|child| {
+                        (
+                            if let ExprIR::Var(key) = child.data() {
+                                key.to_string()
+                            } else {
+                                todo!();
+                            },
+                            self.ro_run_expr(g, &child.child(0)).unwrap_or(Value::Null),
+                        )
+                    })
+                    .collect(),
+            )),
+            ExprIR::Set(x) => {
+                let v = self.ro_run_expr(g, &ir.child(0))?;
+                self.vars.insert(x.to_string(), v.clone());
+                Ok(v)
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_lines)]
+    pub fn ro_run<CB: ReturnCallback>(
+        &mut self,
+        g: &Graph,
+        callback: &CB,
+        ir: &DynNode<IR>,
+    ) -> Result<Value, String> {
+        match ir.data() {
+            IR::Expr(expr) => self.ro_run_expr(g, &expr.root()),
+            IR::If => match self.ro_run(g, callback, &ir.child(0))? {
+                Value::Bool(true) => self.ro_run(g, callback, &ir.child(1)),
+                _ => Ok(Value::Null),
+            },
+            IR::For => {
+                self.ro_run(g, callback, &ir.child(0))?;
+                while self.ro_run(g, callback, &ir.child(1))? == Value::Bool(true) {
+                    self.ro_run(g, callback, &ir.child(3))?;
+                    self.ro_run(g, callback, &ir.child(2))?;
+                }
+                Ok(Value::Null)
+            }
+            IR::Return => {
+                let v = self.ro_run(g, callback, &ir.child(0))?;
+                callback.return_value(g, v);
+                Ok(Value::Null)
+            }
+            IR::ReturnAggregation => {
+                self.ro_run(g, callback, &ir.child(0))?;
+                for (keys, r) in self.agg_ctxs.values_mut() {
+                    if let Value::List(keys) = keys {
+                        keys.push(r.clone());
+                        callback.return_value(g, Value::List(keys.clone()));
+                    } else {
+                        callback.return_value(g, Value::List(vec![r.clone()]));
+                    }
+                }
+                self.agg_ctxs.clear();
+                Ok(Value::Null)
+            }
+            IR::Block => {
+                let mut v = Value::Null;
+                for ir in ir.children() {
+                    v = self.ro_run(g, callback, &ir)?;
+                }
+                Ok(v)
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn run_expr(
+        &mut self,
+        g: &mut Graph,
+        ir: &DynNode<ExprIR>,
+    ) -> Result<Value, String> {
+        match ir.data() {
+            ExprIR::Null => Ok(Value::Null),
+            ExprIR::Bool(x) => Ok(Value::Bool(*x)),
+            ExprIR::Integer(x) => Ok(Value::Int(*x)),
+            ExprIR::Float(x) => Ok(Value::Float(*x)),
+            ExprIR::String(x) => Ok(Value::String(x.to_string())),
+            ExprIR::Var(x) => self.vars.get(x).map_or_else(
+                || Err(format!("Variable {x} not found")),
+                |v| Ok(v.to_owned()),
+            ),
+            ExprIR::Parameter(x) => self.parameters.get(x).map_or_else(
+                || Err(format!("Parameter {x} not found")),
+                |v| Ok(v.to_owned()),
+            ),
+            ExprIR::List => Ok(Value::List(
+                ir.children()
+                    .map(|ir| self.run_expr(g, &ir))
+                    .collect::<Result<Vec<_>, _>>()?,
+            )),
+            ExprIR::Length => match self.run_expr(g, &ir.child(0))? {
+                Value::List(arr) => Ok(Value::Int(arr.len() as _)),
+                _ => Err("Length operator requires a list".to_string()),
+            },
+            ExprIR::GetElement => {
+                let arr = self.run_expr(g, &ir.child(0))?;
+                let i = self.run_expr(g, &ir.child(1))?;
+                match (arr, i) {
+                    (Value::List(values), Value::Int(i)) => {
+                        if i >= 0 && i < values.len() as _ {
+                            Ok(values[i as usize].clone())
+                        } else {
+                            Ok(Value::Null)
+                        }
+                    }
+                    (Value::List(_), v) => {
+                        Err(format!("Type mismatch: expected Bool but was {v:?}"))
+                    }
+                    v => Err(format!("Type mismatch: expected List but was {v:?}")),
+                }
+            }
+            ExprIR::GetElements => {
+                let arr = self.run_expr(g, &ir.child(0))?;
+                let a = self.run_expr(g, &ir.child(1))?;
+                let b = self.run_expr(g, &ir.child(2))?;
+                get_elements(arr, a, b)
+            }
+            ExprIR::IsNull => match self.run_expr(g, &ir.child(0))? {
+                Value::Null => Ok(Value::Bool(true)),
+                _ => Ok(Value::Bool(false)),
+            },
+            ExprIR::IsNode => match self.run_expr(g, &ir.child(0))? {
+                Value::Node(_) => Ok(Value::Bool(true)),
+                _ => Ok(Value::Bool(false)),
+            },
+            ExprIR::IsRelationship => match self.run_expr(g, &ir.child(0))? {
+                Value::Relationship(_, _, _) => Ok(Value::Bool(true)),
+                _ => Ok(Value::Bool(false)),
+            },
+            ExprIR::Or => {
+                let mut is_null = false;
+                for ir in ir.children() {
+                    match self.run_expr(g, &ir)? {
+                        Value::Bool(true) => return Ok(Value::Bool(true)),
+                        Value::Bool(false) => {}
+                        Value::Null => is_null = true,
+                        _ => return Err(format!("Type mismatch: expected Bool but was {ir:?}")),
+                    }
+                }
+                if is_null {
+                    return Ok(Value::Null);
+                }
+
+                Ok(Value::Bool(false))
+            }
+            ExprIR::Xor => {
+                let mut last = None;
+                for ir in ir.children() {
+                    match self.run_expr(g, &ir)? {
+                        Value::Bool(b) => last = Some(last.map_or(b, |l| logical_xor(l, b))),
+                        Value::Null => return Ok(Value::Null),
+                        _ => return Err(format!("Type mismatch: expected Bool but was {ir:?}")),
+                    }
+                }
+                Ok(Value::Bool(last.unwrap_or(false)))
+            }
+            ExprIR::And => {
+                let mut is_null = false;
+                for ir in ir.children() {
+                    match self.run_expr(g, &ir)? {
+                        Value::Bool(false) => return Ok(Value::Bool(false)),
+                        Value::Bool(true) => {}
+                        Value::Null => is_null = true,
+                        _ => return Err(format!("Type mismatch: expected Bool but was {ir:?}")),
+                    }
+                }
+                if is_null {
+                    return Ok(Value::Null);
+                }
+
+                Ok(Value::Bool(true))
+            }
+            ExprIR::Not => match self.run_expr(g, &ir.child(0))? {
+                Value::Bool(b) => Ok(Value::Bool(!b)),
+                Value::Null => Ok(Value::Null),
+                _ => {
+                    Err("InvalidArgumentType: Not operator requires a boolean or null".to_string())
+                }
+            },
+            ExprIR::Negate => match self.run_expr(g, &ir.child(0))? {
+                Value::Int(i) => Ok(Value::Int(-i)),
+                Value::Float(f) => Ok(Value::Float(-f)),
+                Value::Null => Ok(Value::Null),
+                _ => Err(
+                    "InvalidArgumentType: Negate operator requires an Integer or Float".to_string(),
+                ),
+            },
+            ExprIR::Eq => all_equals(ir.children().map(|ir| self.run_expr(g, &ir))),
+            ExprIR::Neq => ir
+                .children()
+                .flat_map(|ir| self.run_expr(g, &ir))
+                .reduce(|a, b| Value::Bool(a != b))
+                .ok_or_else(|| "Neq operator requires at least one argument".to_string()),
+            ExprIR::Lt => match (
+                self.run_expr(g, &ir.child(0))?,
+                self.run_expr(g, &ir.child(1))?,
+            ) {
+                (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a < b)),
+                _ => Err("Lt operator requires two integers".to_string()),
+            },
+            ExprIR::Gt => match (
+                self.run_expr(g, &ir.child(0))?,
+                self.run_expr(g, &ir.child(1))?,
+            ) {
+                (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a > b)),
+                _ => Err("Gt operator requires two integers".to_string()),
+            },
+            ExprIR::Le => match (
+                self.run_expr(g, &ir.child(0))?,
+                self.run_expr(g, &ir.child(1))?,
+            ) {
+                (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a <= b)),
+                _ => Err("Le operator requires two integers".to_string()),
+            },
+            ExprIR::Ge => match (
+                self.run_expr(g, &ir.child(0))?,
+                self.run_expr(g, &ir.child(1))?,
+            ) {
+                (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a >= b)),
+                _ => Err("Ge operator requires two integers".to_string()),
+            },
+            ExprIR::In => {
+                let value = self.run_expr(g, &ir.child(0))?;
+                let list = self.run_expr(g, &ir.child(1))?;
+                list_contains(&list, &value)
+            }
+            ExprIR::Add => ir
+                .children()
+                .map(|ir| self.run_expr(g, &ir))
+                .reduce(|acc, value| acc? + value?)
+                .ok_or_else(|| "Add operator requires at least one operand".to_string())?,
+            ExprIR::Sub => ir
+                .children()
+                .flat_map(|ir| self.run_expr(g, &ir))
+                .reduce(|a, b| match (a, b) {
+                    (Value::Int(a), Value::Int(b)) => Value::Int(a - b),
+                    _ => Value::Null,
+                })
+                .ok_or_else(|| "Sub operator requires at least one argument".to_string()),
+            ExprIR::Mul => ir
+                .children()
+                .flat_map(|ir| self.run_expr(g, &ir))
+                .reduce(|a, b| match (a, b) {
+                    (Value::Int(a), Value::Int(b)) => Value::Int(a * b),
+                    _ => Value::Null,
+                })
+                .ok_or_else(|| "Mul operator requires at least one argument".to_string()),
+            ExprIR::Div => ir
+                .children()
+                .flat_map(|ir| self.run_expr(g, &ir))
+                .reduce(|a, b| match (a, b) {
+                    (Value::Int(a), Value::Int(b)) => Value::Int(a / b),
+                    (Value::Int(a), Value::Float(b)) => Value::Float(a as f64 / b),
+                    (Value::Float(a), Value::Int(b)) => Value::Float(a / b as f64),
+                    (Value::Float(a), Value::Float(b)) => Value::Float(a / b),
+                    _ => Value::Null,
+                })
+                .ok_or_else(|| "Div operator requires at least one argument".to_string()),
+            ExprIR::Pow => ir
+                .children()
+                .flat_map(|ir| self.run_expr(g, &ir))
+                .reduce(|a, b| match (a, b) {
+                    (Value::Int(a), Value::Int(b)) => Value::Float((a as f64).powf(b as _)),
+                    _ => Value::Null,
+                })
+                .ok_or_else(|| "Pow operator requires at least one argument".to_string()),
+            ExprIR::Modulo => ir
+                .children()
+                .flat_map(|ir| self.run_expr(g, &ir))
+                .reduce(|a, b| match (a, b) {
+                    (Value::Int(a), Value::Int(b)) => Value::Int(a % b),
+                    _ => Value::Null,
+                })
+                .ok_or_else(|| "Modulo operator requires at least one argument".to_string()),
+            ExprIR::FuncInvocation(name) => {
+                let args = ir
+                    .children()
+                    .map(|ir| self.run_expr(g, &ir))
+                    .collect::<Result<Vec<_>, _>>()?;
+                if let Some(func) = self.write_functions.get(name) {
+                    func(g, self, args)
+                } else if let Some(func) = self.read_functions.get(name) {
+                    func(g, self, args)
+                } else {
+                    Err(format!("Function {name} not found"))
+                }
+            }
+            ExprIR::Map => Ok(Value::Map(
+                ir.children()
+                    .map(|child| {
+                        (
+                            if let ExprIR::Var(key) = child.data() {
+                                key.to_string()
+                            } else {
+                                todo!();
+                            },
+                            self.run_expr(g, &child.child(0)).unwrap_or(Value::Null),
+                        )
+                    })
+                    .collect(),
+            )),
+            ExprIR::Set(x) => {
+                let v = self.run_expr(g, &ir.child(0))?;
+                self.vars.insert(x.to_string(), v.clone());
+                Ok(v)
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_lines)]
+    pub fn run<CB: ReturnCallback>(
+        &mut self,
+        g: &mut Graph,
+        callback: &CB,
+        ir: &DynNode<IR>,
+    ) -> Result<Value, String> {
+        match ir.data() {
+            IR::Expr(expr) => self.run_expr(g, &expr.root()),
+            IR::If => match self.run(g, callback, &ir.child(0))? {
+                Value::Bool(true) => self.run(g, callback, &ir.child(1)),
+                _ => Ok(Value::Null),
+            },
+            IR::For => {
+                self.run(g, callback, &ir.child(0))?;
+                while self.run(g, callback, &ir.child(1))? == Value::Bool(true) {
+                    self.run(g, callback, &ir.child(3))?;
+                    self.run(g, callback, &ir.child(2))?;
+                }
+                Ok(Value::Null)
+            }
+            IR::Return => {
+                let v = self.run(g, callback, &ir.child(0))?;
+                callback.return_value(g, v);
+                Ok(Value::Null)
+            }
+            IR::ReturnAggregation => {
+                self.run(g, callback, &ir.child(0))?;
+                for (keys, r) in self.agg_ctxs.values_mut() {
+                    if let Value::List(keys) = keys {
+                        keys.push(r.clone());
+                        callback.return_value(g, Value::List(keys.clone()));
+                    } else {
+                        callback.return_value(g, Value::List(vec![r.clone()]));
+                    }
+                }
+                self.agg_ctxs.clear();
+                Ok(Value::Null)
+            }
+            IR::Block => {
+                let mut v = Value::Null;
+                for ir in ir.children() {
+                    v = self.run(g, callback, &ir)?;
+                }
+                Ok(v)
+            }
         }
     }
 
@@ -1284,589 +1874,8 @@ impl Runtime {
     }
 }
 
-#[allow(clippy::too_many_lines)]
-fn ro_run_expr(
-    vars: &mut BTreeMap<String, Value>,
-    g: &Graph,
-    runtime: &mut Runtime,
-    ir: &DynNode<ExprIR>,
-) -> Result<Value, String> {
-    match ir.data() {
-        ExprIR::Null => Ok(Value::Null),
-        ExprIR::Bool(x) => Ok(Value::Bool(*x)),
-        ExprIR::Integer(x) => Ok(Value::Int(*x)),
-        ExprIR::Float(x) => Ok(Value::Float(*x)),
-        ExprIR::String(x) => Ok(Value::String(x.to_string())),
-        ExprIR::Var(x) => vars.get(x).map_or_else(
-            || Err(format!("Variable {x} not found")),
-            |v| Ok(v.to_owned()),
-        ),
-        ExprIR::Parameter(x) => runtime.parameters.get(x).map_or_else(
-            || Err(format!("Parameter {x} not found")),
-            |v| Ok(v.to_owned()),
-        ),
-        ExprIR::List => Ok(Value::List(
-            ir.children()
-                .map(|ir| ro_run_expr(vars, g, runtime, &ir))
-                .collect::<Result<Vec<_>, _>>()?,
-        )),
-        ExprIR::Length => match ro_run_expr(vars, g, runtime, &ir.child(0))? {
-            Value::List(arr) => Ok(Value::Int(arr.len() as _)),
-            _ => Err("Length operator requires a list".to_string()),
-        },
-        ExprIR::GetElement => {
-            let arr = ro_run_expr(vars, g, runtime, &ir.child(0))?;
-            let i = ro_run_expr(vars, g, runtime, &ir.child(1))?;
-            match (arr, i) {
-                (Value::List(values), Value::Int(i)) => {
-                    if i >= 0 && i < values.len() as _ {
-                        Ok(values[i as usize].clone())
-                    } else {
-                        Ok(Value::Null)
-                    }
-                }
-                (Value::List(_), v) => Err(format!("Type mismatch: expected Bool but was {v:?}")),
-                v => Err(format!("Type mismatch: expected List but was {v:?}")),
-            }
-        }
-        ExprIR::GetElements => {
-            let arr = ro_run_expr(vars, g, runtime, &ir.child(0))?;
-            let a = ro_run_expr(vars, g, runtime, &ir.child(1))?;
-            let b = ro_run_expr(vars, g, runtime, &ir.child(2))?;
-            get_elements(arr, a, b)
-        }
-        ExprIR::IsNull => match ro_run_expr(vars, g, runtime, &ir.child(0))? {
-            Value::Null => Ok(Value::Bool(true)),
-            _ => Ok(Value::Bool(false)),
-        },
-        ExprIR::IsNode => match ro_run_expr(vars, g, runtime, &ir.child(0))? {
-            Value::Node(_) => Ok(Value::Bool(true)),
-            _ => Ok(Value::Bool(false)),
-        },
-        ExprIR::IsRelationship => match ro_run_expr(vars, g, runtime, &ir.child(0))? {
-            Value::Relationship(_, _, _) => Ok(Value::Bool(true)),
-            _ => Ok(Value::Bool(false)),
-        },
-        ExprIR::Or => {
-            let mut is_null = false;
-            for ir in ir.children() {
-                match ro_run_expr(vars, g, runtime, &ir)? {
-                    Value::Bool(true) => return Ok(Value::Bool(true)),
-                    Value::Bool(false) => {}
-                    Value::Null => is_null = true,
-                    _ => return Err(format!("Type mismatch: expected Bool but was {ir:?}")),
-                }
-            }
-            if is_null {
-                return Ok(Value::Null);
-            }
-
-            Ok(Value::Bool(false))
-        }
-        ExprIR::Xor => {
-            let mut last = None;
-            for ir in ir.children() {
-                match ro_run_expr(vars, g, runtime, &ir)? {
-                    Value::Bool(b) => last = Some(last.map_or(b, |l| logical_xor(l, b))),
-                    Value::Null => return Ok(Value::Null),
-                    _ => return Err(format!("Type mismatch: expected Bool but was {ir:?}")),
-                }
-            }
-            Ok(Value::Bool(last.unwrap_or(false)))
-        }
-        ExprIR::And => {
-            let mut is_null = false;
-            for ir in ir.children() {
-                match ro_run_expr(vars, g, runtime, &ir)? {
-                    Value::Bool(false) => return Ok(Value::Bool(false)),
-                    Value::Bool(true) => {}
-                    Value::Null => is_null = true,
-                    _ => return Err(format!("Type mismatch: expected Bool but was {ir:?}")),
-                }
-            }
-            if is_null {
-                return Ok(Value::Null);
-            }
-
-            Ok(Value::Bool(true))
-        }
-        ExprIR::Not => match ro_run_expr(vars, g, runtime, &ir.child(0))? {
-            Value::Bool(b) => Ok(Value::Bool(!b)),
-            Value::Null => Ok(Value::Null),
-            _ => Err("InvalidArgumentType: Not operator requires a boolean or null".to_string()),
-        },
-        ExprIR::Negate => match ro_run_expr(vars, g, runtime, &ir.child(0))? {
-            Value::Int(i) => Ok(Value::Int(-i)),
-            Value::Float(f) => Ok(Value::Float(-f)),
-            Value::Null => Ok(Value::Null),
-            _ => {
-                Err("InvalidArgumentType: Negate operator requires an Integer or Float".to_string())
-            }
-        },
-        ExprIR::Eq => all_equals(ir.children().map(|ir| ro_run_expr(vars, g, runtime, &ir))),
-        ExprIR::Neq => ir
-            .children()
-            .flat_map(|ir| ro_run_expr(vars, g, runtime, &ir))
-            .reduce(|a, b| Value::Bool(a != b))
-            .ok_or_else(|| "Neq operator requires at least one argument".to_string()),
-        ExprIR::Lt => match (
-            ro_run_expr(vars, g, runtime, &ir.child(0))?,
-            ro_run_expr(vars, g, runtime, &ir.child(1))?,
-        ) {
-            (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a < b)),
-            _ => Err("Lt operator requires two integers".to_string()),
-        },
-        ExprIR::Gt => match (
-            ro_run_expr(vars, g, runtime, &ir.child(0))?,
-            ro_run_expr(vars, g, runtime, &ir.child(1))?,
-        ) {
-            (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a > b)),
-            _ => Err("Gt operator requires two integers".to_string()),
-        },
-        ExprIR::Le => match (
-            ro_run_expr(vars, g, runtime, &ir.child(0))?,
-            ro_run_expr(vars, g, runtime, &ir.child(1))?,
-        ) {
-            (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a <= b)),
-            _ => Err("Le operator requires two integers".to_string()),
-        },
-        ExprIR::Ge => match (
-            ro_run_expr(vars, g, runtime, &ir.child(0))?,
-            ro_run_expr(vars, g, runtime, &ir.child(1))?,
-        ) {
-            (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a >= b)),
-            _ => Err("Ge operator requires two integers".to_string()),
-        },
-        ExprIR::In => {
-            let value = ro_run_expr(vars, g, runtime, &ir.child(0))?;
-            let list = ro_run_expr(vars, g, runtime, &ir.child(1))?;
-            list_contains(&list, &value)
-        }
-        ExprIR::Add => ir
-            .children()
-            .map(|ir| ro_run_expr(vars, g, runtime, &ir))
-            .reduce(|acc, value| acc? + value?)
-            .ok_or_else(|| "Add operator requires at least one operand".to_string())?,
-        ExprIR::Sub => ir
-            .children()
-            .flat_map(|ir| ro_run_expr(vars, g, runtime, &ir))
-            .reduce(|a, b| match (a, b) {
-                (Value::Int(a), Value::Int(b)) => Value::Int(a - b),
-                _ => Value::Null,
-            })
-            .ok_or_else(|| "Sub operator requires at least one argument".to_string()),
-        ExprIR::Mul => ir
-            .children()
-            .flat_map(|ir| ro_run_expr(vars, g, runtime, &ir))
-            .reduce(|a, b| match (a, b) {
-                (Value::Int(a), Value::Int(b)) => Value::Int(a * b),
-                _ => Value::Null,
-            })
-            .ok_or_else(|| "Mul operator requires at least one argument".to_string()),
-        ExprIR::Div => ir
-            .children()
-            .flat_map(|ir| ro_run_expr(vars, g, runtime, &ir))
-            .reduce(|a, b| match (a, b) {
-                (Value::Int(a), Value::Int(b)) => Value::Int(a / b),
-                (Value::Int(a), Value::Float(b)) => Value::Float(a as f64 / b),
-                (Value::Float(a), Value::Int(b)) => Value::Float(a / b as f64),
-                (Value::Float(a), Value::Float(b)) => Value::Float(a / b),
-                _ => Value::Null,
-            })
-            .ok_or_else(|| "Div operator requires at least one argument".to_string()),
-        ExprIR::Pow => ir
-            .children()
-            .flat_map(|ir| ro_run_expr(vars, g, runtime, &ir))
-            .reduce(|a, b| match (a, b) {
-                (Value::Int(a), Value::Int(b)) => Value::Float((a as f64).powf(b as _)),
-                _ => Value::Null,
-            })
-            .ok_or_else(|| "Pow operator requires at least one argument".to_string()),
-        ExprIR::Modulo => ir
-            .children()
-            .flat_map(|ir| ro_run_expr(vars, g, runtime, &ir))
-            .reduce(|a, b| match (a, b) {
-                (Value::Int(a), Value::Int(b)) => Value::Int(a % b),
-                _ => Value::Null,
-            })
-            .ok_or_else(|| "Modulo operator requires at least one argument".to_string()),
-        ExprIR::FuncInvocation(name) => {
-            let args = ir
-                .children()
-                .map(|ir| ro_run_expr(vars, g, runtime, &ir))
-                .collect::<Result<Vec<_>, _>>()?;
-            #[allow(clippy::option_if_let_else)]
-            if let Some(func) = runtime.read_functions.get(name) {
-                func(g, runtime, args)
-            } else {
-                Err(format!("Function {name} not found"))
-            }
-        }
-        ExprIR::Map => Ok(Value::Map(
-            ir.children()
-                .map(|child| {
-                    (
-                        if let ExprIR::Var(key) = child.data() {
-                            key.to_string()
-                        } else {
-                            todo!();
-                        },
-                        ro_run_expr(vars, g, runtime, &child.child(0)).unwrap_or(Value::Null),
-                    )
-                })
-                .collect(),
-        )),
-        ExprIR::Set(x) => {
-            let v = ro_run_expr(vars, g, runtime, &ir.child(0))?;
-            vars.insert(x.to_string(), v.clone());
-            Ok(v)
-        }
-    }
-}
-
-#[allow(clippy::too_many_lines)]
-pub fn ro_run<CB: ReturnCallback>(
-    vars: &mut BTreeMap<String, Value>,
-    g: &Graph,
-    runtime: &mut Runtime,
-    callback: &CB,
-    ir: &DynNode<IR>,
-) -> Result<Value, String> {
-    match ir.data() {
-        IR::Expr(expr) => ro_run_expr(vars, g, runtime, &expr.root()),
-        IR::If => match ro_run(vars, g, runtime, callback, &ir.child(0))? {
-            Value::Bool(true) => ro_run(vars, g, runtime, callback, &ir.child(1)),
-            _ => Ok(Value::Null),
-        },
-        IR::For => {
-            ro_run(vars, g, runtime, callback, &ir.child(0))?;
-            while ro_run(vars, g, runtime, callback, &ir.child(1))? == Value::Bool(true) {
-                ro_run(vars, g, runtime, callback, &ir.child(3))?;
-                ro_run(vars, g, runtime, callback, &ir.child(2))?;
-            }
-            Ok(Value::Null)
-        }
-        IR::Return => {
-            let v = ro_run(vars, g, runtime, callback, &ir.child(0))?;
-            callback.return_value(g, v);
-            Ok(Value::Null)
-        }
-        IR::ReturnAggregation => {
-            ro_run(vars, g, runtime, callback, &ir.child(0))?;
-            for (keys, r) in runtime.agg_ctxs.values_mut() {
-                if let Value::List(keys) = keys {
-                    keys.push(r.clone());
-                    callback.return_value(g, Value::List(keys.clone()));
-                } else {
-                    callback.return_value(g, Value::List(vec![r.clone()]));
-                }
-            }
-            runtime.agg_ctxs.clear();
-            Ok(Value::Null)
-        }
-        IR::Block => {
-            let mut v = Value::Null;
-            for ir in ir.children() {
-                v = ro_run(vars, g, runtime, callback, &ir)?;
-            }
-            Ok(v)
-        }
-    }
-}
-
-#[allow(clippy::too_many_lines)]
-fn run_expr(
-    vars: &mut BTreeMap<String, Value>,
-    g: &mut Graph,
-    runtime: &mut Runtime,
-    ir: &DynNode<ExprIR>,
-) -> Result<Value, String> {
-    match ir.data() {
-        ExprIR::Null => Ok(Value::Null),
-        ExprIR::Bool(x) => Ok(Value::Bool(*x)),
-        ExprIR::Integer(x) => Ok(Value::Int(*x)),
-        ExprIR::Float(x) => Ok(Value::Float(*x)),
-        ExprIR::String(x) => Ok(Value::String(x.to_string())),
-        ExprIR::Var(x) => vars.get(x).map_or_else(
-            || Err(format!("Variable {x} not found")),
-            |v| Ok(v.to_owned()),
-        ),
-        ExprIR::Parameter(x) => runtime.parameters.get(x).map_or_else(
-            || Err(format!("Parameter {x} not found")),
-            |v| Ok(v.to_owned()),
-        ),
-        ExprIR::List => Ok(Value::List(
-            ir.children()
-                .map(|ir| run_expr(vars, g, runtime, &ir))
-                .collect::<Result<Vec<_>, _>>()?,
-        )),
-        ExprIR::Length => match run_expr(vars, g, runtime, &ir.child(0))? {
-            Value::List(arr) => Ok(Value::Int(arr.len() as _)),
-            _ => Err("Length operator requires a list".to_string()),
-        },
-        ExprIR::GetElement => {
-            let arr = run_expr(vars, g, runtime, &ir.child(0))?;
-            let i = run_expr(vars, g, runtime, &ir.child(1))?;
-            match (arr, i) {
-                (Value::List(values), Value::Int(i)) => {
-                    if i >= 0 && i < values.len() as _ {
-                        Ok(values[i as usize].clone())
-                    } else {
-                        Ok(Value::Null)
-                    }
-                }
-                (Value::List(_), v) => Err(format!("Type mismatch: expected Bool but was {v:?}")),
-                v => Err(format!("Type mismatch: expected List but was {v:?}")),
-            }
-        }
-        ExprIR::GetElements => {
-            let arr = run_expr(vars, g, runtime, &ir.child(0))?;
-            let a = run_expr(vars, g, runtime, &ir.child(1))?;
-            let b = run_expr(vars, g, runtime, &ir.child(2))?;
-            get_elements(arr, a, b)
-        }
-        ExprIR::IsNull => match run_expr(vars, g, runtime, &ir.child(0))? {
-            Value::Null => Ok(Value::Bool(true)),
-            _ => Ok(Value::Bool(false)),
-        },
-        ExprIR::IsNode => match run_expr(vars, g, runtime, &ir.child(0))? {
-            Value::Node(_) => Ok(Value::Bool(true)),
-            _ => Ok(Value::Bool(false)),
-        },
-        ExprIR::IsRelationship => match run_expr(vars, g, runtime, &ir.child(0))? {
-            Value::Relationship(_, _, _) => Ok(Value::Bool(true)),
-            _ => Ok(Value::Bool(false)),
-        },
-        ExprIR::Or => {
-            let mut is_null = false;
-            for ir in ir.children() {
-                match run_expr(vars, g, runtime, &ir)? {
-                    Value::Bool(true) => return Ok(Value::Bool(true)),
-                    Value::Bool(false) => {}
-                    Value::Null => is_null = true,
-                    _ => return Err(format!("Type mismatch: expected Bool but was {ir:?}")),
-                }
-            }
-            if is_null {
-                return Ok(Value::Null);
-            }
-
-            Ok(Value::Bool(false))
-        }
-        ExprIR::Xor => {
-            let mut last = None;
-            for ir in ir.children() {
-                match run_expr(vars, g, runtime, &ir)? {
-                    Value::Bool(b) => last = Some(last.map_or(b, |l| logical_xor(l, b))),
-                    Value::Null => return Ok(Value::Null),
-                    _ => return Err(format!("Type mismatch: expected Bool but was {ir:?}")),
-                }
-            }
-            Ok(Value::Bool(last.unwrap_or(false)))
-        }
-        ExprIR::And => {
-            let mut is_null = false;
-            for ir in ir.children() {
-                match run_expr(vars, g, runtime, &ir)? {
-                    Value::Bool(false) => return Ok(Value::Bool(false)),
-                    Value::Bool(true) => {}
-                    Value::Null => is_null = true,
-                    _ => return Err(format!("Type mismatch: expected Bool but was {ir:?}")),
-                }
-            }
-            if is_null {
-                return Ok(Value::Null);
-            }
-
-            Ok(Value::Bool(true))
-        }
-        ExprIR::Not => match run_expr(vars, g, runtime, &ir.child(0))? {
-            Value::Bool(b) => Ok(Value::Bool(!b)),
-            Value::Null => Ok(Value::Null),
-            _ => Err("InvalidArgumentType: Not operator requires a boolean or null".to_string()),
-        },
-        ExprIR::Negate => match run_expr(vars, g, runtime, &ir.child(0))? {
-            Value::Int(i) => Ok(Value::Int(-i)),
-            Value::Float(f) => Ok(Value::Float(-f)),
-            Value::Null => Ok(Value::Null),
-            _ => {
-                Err("InvalidArgumentType: Negate operator requires an Integer or Float".to_string())
-            }
-        },
-        ExprIR::Eq => all_equals(ir.children().map(|ir| run_expr(vars, g, runtime, &ir))),
-        ExprIR::Neq => ir
-            .children()
-            .flat_map(|ir| run_expr(vars, g, runtime, &ir))
-            .reduce(|a, b| Value::Bool(a != b))
-            .ok_or_else(|| "Neq operator requires at least one argument".to_string()),
-        ExprIR::Lt => match (
-            run_expr(vars, g, runtime, &ir.child(0))?,
-            run_expr(vars, g, runtime, &ir.child(1))?,
-        ) {
-            (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a < b)),
-            _ => Err("Lt operator requires two integers".to_string()),
-        },
-        ExprIR::Gt => match (
-            run_expr(vars, g, runtime, &ir.child(0))?,
-            run_expr(vars, g, runtime, &ir.child(1))?,
-        ) {
-            (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a > b)),
-            _ => Err("Gt operator requires two integers".to_string()),
-        },
-        ExprIR::Le => match (
-            run_expr(vars, g, runtime, &ir.child(0))?,
-            run_expr(vars, g, runtime, &ir.child(1))?,
-        ) {
-            (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a <= b)),
-            _ => Err("Le operator requires two integers".to_string()),
-        },
-        ExprIR::Ge => match (
-            run_expr(vars, g, runtime, &ir.child(0))?,
-            run_expr(vars, g, runtime, &ir.child(1))?,
-        ) {
-            (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a >= b)),
-            _ => Err("Ge operator requires two integers".to_string()),
-        },
-        ExprIR::In => {
-            let value = run_expr(vars, g, runtime, &ir.child(0))?;
-            let list = run_expr(vars, g, runtime, &ir.child(1))?;
-            list_contains(&list, &value)
-        }
-        ExprIR::Add => ir
-            .children()
-            .map(|ir| run_expr(vars, g, runtime, &ir))
-            .reduce(|acc, value| acc? + value?)
-            .ok_or_else(|| "Add operator requires at least one operand".to_string())?,
-        ExprIR::Sub => ir
-            .children()
-            .flat_map(|ir| run_expr(vars, g, runtime, &ir))
-            .reduce(|a, b| match (a, b) {
-                (Value::Int(a), Value::Int(b)) => Value::Int(a - b),
-                _ => Value::Null,
-            })
-            .ok_or_else(|| "Sub operator requires at least one argument".to_string()),
-        ExprIR::Mul => ir
-            .children()
-            .flat_map(|ir| run_expr(vars, g, runtime, &ir))
-            .reduce(|a, b| match (a, b) {
-                (Value::Int(a), Value::Int(b)) => Value::Int(a * b),
-                _ => Value::Null,
-            })
-            .ok_or_else(|| "Mul operator requires at least one argument".to_string()),
-        ExprIR::Div => ir
-            .children()
-            .flat_map(|ir| run_expr(vars, g, runtime, &ir))
-            .reduce(|a, b| match (a, b) {
-                (Value::Int(a), Value::Int(b)) => Value::Int(a / b),
-                (Value::Int(a), Value::Float(b)) => Value::Float(a as f64 / b),
-                (Value::Float(a), Value::Int(b)) => Value::Float(a / b as f64),
-                (Value::Float(a), Value::Float(b)) => Value::Float(a / b),
-                _ => Value::Null,
-            })
-            .ok_or_else(|| "Div operator requires at least one argument".to_string()),
-        ExprIR::Pow => ir
-            .children()
-            .flat_map(|ir| run_expr(vars, g, runtime, &ir))
-            .reduce(|a, b| match (a, b) {
-                (Value::Int(a), Value::Int(b)) => Value::Float((a as f64).powf(b as _)),
-                _ => Value::Null,
-            })
-            .ok_or_else(|| "Pow operator requires at least one argument".to_string()),
-        ExprIR::Modulo => ir
-            .children()
-            .flat_map(|ir| run_expr(vars, g, runtime, &ir))
-            .reduce(|a, b| match (a, b) {
-                (Value::Int(a), Value::Int(b)) => Value::Int(a % b),
-                _ => Value::Null,
-            })
-            .ok_or_else(|| "Modulo operator requires at least one argument".to_string()),
-        ExprIR::FuncInvocation(name) => {
-            let args = ir
-                .children()
-                .map(|ir| run_expr(vars, g, runtime, &ir))
-                .collect::<Result<Vec<_>, _>>()?;
-            if let Some(func) = runtime.write_functions.get(name) {
-                func(g, runtime, args)
-            } else if let Some(func) = runtime.read_functions.get(name) {
-                func(g, runtime, args)
-            } else {
-                Err(format!("Function {name} not found"))
-            }
-        }
-        ExprIR::Map => Ok(Value::Map(
-            ir.children()
-                .map(|child| {
-                    (
-                        if let ExprIR::Var(key) = child.data() {
-                            key.to_string()
-                        } else {
-                            todo!();
-                        },
-                        run_expr(vars, g, runtime, &child.child(0)).unwrap_or(Value::Null),
-                    )
-                })
-                .collect(),
-        )),
-        ExprIR::Set(x) => {
-            let v = run_expr(vars, g, runtime, &ir.child(0))?;
-            vars.insert(x.to_string(), v.clone());
-            Ok(v)
-        }
-    }
-}
-
-#[allow(clippy::too_many_lines)]
-pub fn run<CB: ReturnCallback>(
-    vars: &mut BTreeMap<String, Value>,
-    g: &mut Graph,
-    runtime: &mut Runtime,
-    callback: &CB,
-    ir: &DynNode<IR>,
-) -> Result<Value, String> {
-    match ir.data() {
-        IR::Expr(expr) => run_expr(vars, g, runtime, &expr.root()),
-        IR::If => match run(vars, g, runtime, callback, &ir.child(0))? {
-            Value::Bool(true) => run(vars, g, runtime, callback, &ir.child(1)),
-            _ => Ok(Value::Null),
-        },
-        IR::For => {
-            run(vars, g, runtime, callback, &ir.child(0))?;
-            while run(vars, g, runtime, callback, &ir.child(1))? == Value::Bool(true) {
-                run(vars, g, runtime, callback, &ir.child(3))?;
-                run(vars, g, runtime, callback, &ir.child(2))?;
-            }
-            Ok(Value::Null)
-        }
-        IR::Return => {
-            let v = run(vars, g, runtime, callback, &ir.child(0))?;
-            callback.return_value(g, v);
-            Ok(Value::Null)
-        }
-        IR::ReturnAggregation => {
-            run(vars, g, runtime, callback, &ir.child(0))?;
-            for (keys, r) in runtime.agg_ctxs.values_mut() {
-                if let Value::List(keys) = keys {
-                    keys.push(r.clone());
-                    callback.return_value(g, Value::List(keys.clone()));
-                } else {
-                    callback.return_value(g, Value::List(vec![r.clone()]));
-                }
-            }
-            runtime.agg_ctxs.clear();
-            Ok(Value::Null)
-        }
-        IR::Block => {
-            let mut v = Value::Null;
-            for ir in ir.children() {
-                v = run(vars, g, runtime, callback, &ir)?;
-            }
-            Ok(v)
-        }
-    }
-}
-
 #[must_use]
-pub fn evaluate_param(expr: DynNode<ExprIR>) -> Value {
+fn evaluate_param(expr: DynNode<ExprIR>) -> Value {
     match expr.data() {
         ExprIR::Null => Value::Null,
         ExprIR::Bool(x) => Value::Bool(*x),

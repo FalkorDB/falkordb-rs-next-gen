@@ -214,12 +214,11 @@ fn graph_delete(
 #[inline]
 fn query_mut(
     graph: &mut Graph,
-    debug: u64,
     query: &str,
 ) -> Result<RedisValue, RedisError> {
     let collector = RedisValuesCollector::new();
     graph
-        .query(query, &collector, debug > 0)
+        .query(query, &collector)
         .map(|summary| {
             vec![
                 vec![
@@ -257,15 +256,14 @@ fn graph_query(
     let mut args = args.into_iter().skip(1);
     let key = args.next_arg()?;
     let query = args.next_str()?;
-    let debug = args.next_u64().unwrap_or(0);
 
     let key = ctx.open_key_writable(&key);
 
     if let Some(graph) = key.get_value::<Graph>(&GRAPH_TYPE)? {
-        query_mut(graph, debug, query)
+        query_mut(graph, query)
     } else {
         let mut value = Graph::new(16384, 16384);
-        let res = query_mut(&mut value, debug, query);
+        let res = query_mut(&mut value, query);
         key.set_value(&GRAPH_TYPE, value)?;
         res
     }
@@ -287,7 +285,6 @@ fn graph_ro_query(
     let mut args = args.into_iter().skip(1);
     let key = args.next_arg()?;
     let query = args.next_str()?;
-    let debug = args.next_u64().unwrap_or(0);
 
     let key = ctx.open_key(&key);
 
@@ -297,7 +294,7 @@ fn graph_ro_query(
         EMPTY_KEY_ERR,
         |graph| {
             let collector = RedisValuesCollector::new();
-            match graph.ro_query(query, &collector, debug > 0) {
+            match graph.ro_query(query, &collector) {
                 Ok(_) => Ok(vec![
                     vec![
                         vec![
@@ -394,7 +391,7 @@ fn graph_plan(
     match parser.parse() {
         Ok(ir) => {
             let mut planner = Planner::new();
-            let ir = planner.plan(ir, false);
+            let ir = planner.plan(ir);
             Ok(RedisValue::BulkString(format!("{ir}")))
         }
         Err(err) => Err(RedisError::String(err)),
