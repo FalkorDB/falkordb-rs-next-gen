@@ -16,6 +16,14 @@ use crate::{
     value::Value,
 };
 
+pub trait ReturnCallback {
+    fn return_value(
+        &self,
+        graph: &Graph,
+        value: Value,
+    );
+}
+
 pub struct Graph {
     node_cap: u64,
     relationship_cap: u64,
@@ -112,10 +120,10 @@ impl Graph {
             .map(|p| p as u64)
     }
 
-    pub fn query(
+    pub fn query<CB: ReturnCallback>(
         &mut self,
         query: &str,
-        result_fn: &mut dyn FnMut(&Self, Value),
+        callback: &CB,
         debug: bool,
     ) -> Result<ResultSummary, String> {
         let mut parse_duration = Duration::ZERO;
@@ -157,7 +165,7 @@ impl Graph {
                 .collect(),
         );
         let start = Instant::now();
-        run(self, &mut runtime, result_fn, &mut evaluate.root_mut())?;
+        run(self, &mut runtime, callback, &mut evaluate.root_mut())?;
         let run_duration = start.elapsed();
 
         Ok(ResultSummary {
@@ -175,10 +183,10 @@ impl Graph {
         })
     }
 
-    pub fn ro_query(
+    pub fn ro_query<CB: ReturnCallback>(
         &self,
         query: &str,
-        result_fn: &mut dyn FnMut(&Self, Value),
+        callback: &CB,
         debug: bool,
     ) -> Result<ResultSummary, String> {
         let mut parse_duration = Duration::ZERO;
@@ -219,7 +227,7 @@ impl Graph {
                 .collect(),
         );
         let start = Instant::now();
-        ro_run(self, &mut runtime, result_fn, &mut evaluate.root_mut())?;
+        ro_run(self, &mut runtime, callback, &mut evaluate.root_mut())?;
         let run_duration = start.elapsed();
 
         Ok(ResultSummary {

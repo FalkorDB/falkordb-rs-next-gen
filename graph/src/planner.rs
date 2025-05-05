@@ -1,4 +1,7 @@
-use std::{fmt::Display, vec::IntoIter};
+use std::{
+    fmt::{Debug, Display},
+    vec::IntoIter,
+};
 
 use orx_tree::{Dyn, DynTree, NodeMut, NodeRef};
 

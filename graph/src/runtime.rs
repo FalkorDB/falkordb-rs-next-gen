@@ -1,3 +1,4 @@
+use crate::graph::ReturnCallback;
 use crate::planner::IR;
 use crate::{ast::ExprIR, graph::Graph, value::Contains, value::Value};
 use crate::{matrix, tensor};
@@ -1513,10 +1514,10 @@ pub fn ro_run_expr(
     }
 }
 
-fn ro_consume(
+fn ro_consume<CB: ReturnCallback>(
     g: &Graph,
     runtime: &mut Runtime,
-    result_fn: &mut dyn FnMut(&Graph, Value),
+    callback: &CB,
     ir: &mut NodeMut<'_, Dyn<IR>>,
     res: Option<()>,
 ) -> Result<Option<()>, String> {
@@ -1565,34 +1566,34 @@ fn ro_consume(
                 .iter()
                 .flat_map(|e| ro_run_expr(g, runtime, e.root()))
                 .collect();
-            result_fn(g, Value::List(vs));
+            callback.return_value(g, Value::List(vs));
             Ok(Some(()))
         }
         (IR::Commit, _) => todo!(),
     }
 }
 
-fn ro_run_inner(
+fn ro_run_inner<CB: ReturnCallback>(
     g: &Graph,
     runtime: &mut Runtime,
-    result_fn: &mut dyn FnMut(&Graph, Value),
+    callback: &CB,
     ir: &mut NodeMut<Dyn<IR>>,
 ) -> Result<Option<()>, String> {
     if ir.num_children() == 1 {
-        let res = ro_run_inner(g, runtime, result_fn, &mut ir.child_mut(0))?;
-        return ro_consume(g, runtime, result_fn, ir, res);
+        let res = ro_run_inner(g, runtime, callback, &mut ir.child_mut(0))?;
+        return ro_consume(g, runtime, callback, ir, res);
     }
 
-    ro_consume(g, runtime, result_fn, ir, Some(()))
+    ro_consume(g, runtime, callback, ir, Some(()))
 }
 
-pub fn ro_run(
+pub fn ro_run<CB: ReturnCallback>(
     g: &Graph,
     runtime: &mut Runtime,
-    result_fn: &mut dyn FnMut(&Graph, Value),
+    callback: &CB,
     ir: &mut NodeMut<Dyn<IR>>,
 ) -> Result<(), String> {
-    while ro_run_inner(g, runtime, result_fn, ir)?.is_some() {}
+    while ro_run_inner(g, runtime, callback, ir)?.is_some() {}
     Ok(())
 }
 
@@ -1868,10 +1869,10 @@ pub fn run_expr(
     }
 }
 
-fn consume(
+fn consume<CB: ReturnCallback>(
     g: &mut Graph,
     runtime: &mut Runtime,
-    result_fn: &mut dyn FnMut(&Graph, Value),
+    callback: &CB,
     ir: &mut NodeMut<'_, Dyn<IR>>,
     res: Option<()>,
 ) -> Result<Option<()>, String> {
@@ -1920,34 +1921,34 @@ fn consume(
                 .iter()
                 .flat_map(|e| run_expr(g, runtime, e.root()))
                 .collect();
-            result_fn(g, Value::List(vs));
+            callback.return_value(g, Value::List(vs));
             Ok(Some(()))
         }
         (IR::Commit, _) => todo!(),
     }
 }
 
-fn run_inner(
+fn run_inner<CB: ReturnCallback>(
     g: &mut Graph,
     runtime: &mut Runtime,
-    result_fn: &mut dyn FnMut(&Graph, Value),
+    callback: &CB,
     ir: &mut NodeMut<Dyn<IR>>,
 ) -> Result<Option<()>, String> {
     if ir.num_children() == 1 {
-        let res = run_inner(g, runtime, result_fn, &mut ir.child_mut(0))?;
-        return consume(g, runtime, result_fn, ir, res);
+        let res = run_inner(g, runtime, callback, &mut ir.child_mut(0))?;
+        return consume(g, runtime, callback, ir, res);
     }
 
-    consume(g, runtime, result_fn, ir, Some(()))
+    consume(g, runtime, callback, ir, Some(()))
 }
 
-pub fn run(
+pub fn run<CB: ReturnCallback>(
     g: &mut Graph,
     runtime: &mut Runtime,
-    result_fn: &mut dyn FnMut(&Graph, Value),
+    callback: &CB,
     ir: &mut NodeMut<Dyn<IR>>,
 ) -> Result<(), String> {
-    while run_inner(g, runtime, result_fn, ir)?.is_some() {}
+    while run_inner(g, runtime, callback, ir)?.is_some() {}
     Ok(())
 }
 

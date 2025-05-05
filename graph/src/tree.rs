@@ -11,13 +11,13 @@ macro_rules! tree {
             n
         }
     };
-    ($value:expr ; $iter:expr) => {
+    ($value:expr ; $($iter:expr),*) => {
         {
             let mut n = DynTree::new($value);
             let mut root = n.root_mut();
-            for child in $iter {
+            $(for child in $iter {
                 root.push_child_tree(child);
-            }
+            })*
             n
         }
     };

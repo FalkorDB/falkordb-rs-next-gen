@@ -794,13 +794,13 @@ impl<'a> Parser<'a> {
 
             let from = self.parse_expr();
             if optional_match_token!(self.lexer, DotDot) {
-                let to = self.parse_expr().ok();
+                let to = self.parse_expr();
                 match_token!(self.lexer, RBrace);
                 expr = tree!(
                     ExprIR::GetElements,
-                    expr,
-                    from.unwrap_or(tree!(ExprIR::Integer(0))),
-                    to.unwrap_or(tree!(ExprIR::Integer(0)))
+                    expr.clone(),
+                    from.unwrap_or_else(|_| tree!(ExprIR::Integer(0))),
+                    to.unwrap_or_else(|_| tree!(ExprIR::Length, expr))
                 );
             } else {
                 match_token!(self.lexer, RBrace);
