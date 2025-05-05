@@ -1,8 +1,8 @@
-use crate::ast::{
-    Alias, NodePattern, PathPattern, Pattern, QueryExprIR, QueryIR, RelationshipPattern,
-};
+use crate::ast::{Alias, ExprIR, NodePattern, PathPattern, Pattern, QueryIR, RelationshipPattern};
 use crate::cypher::Token::{RBrace, RParen};
+use crate::tree;
 use falkordb_macro::parse_binary_expr;
+use orx_tree::DynTree;
 use std::collections::{BTreeMap, HashSet};
 use std::iter::Peekable;
 use std::str::Chars;
@@ -480,7 +480,9 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn parse_parameters(&mut self) -> Result<(BTreeMap<String, QueryExprIR>, &'a str), String> {
+    pub fn parse_parameters(
+        &mut self
+    ) -> Result<(BTreeMap<String, DynTree<ExprIR>>, &'a str), String> {
         match self.lexer.current() {
             Token::Ident(id) => {
                 if id == "CYPHER" {
@@ -508,23 +510,27 @@ impl<'a> Parser<'a> {
 
     fn parse_query(&mut self) -> Result<QueryIR, String> {
         let mut clauses = Vec::new();
+        let mut write = false;
         loop {
             while let Ok(clause) = self.parse_reading_clasue() {
                 clauses.push(clause);
             }
             while let Ok(clause) = self.parse_writing_clause() {
+                write = true;
                 clauses.push(clause);
             }
             if optional_match_token!(self.lexer, With) {
-                clauses.push(self.parse_with_clause()?);
+                clauses.push(self.parse_with_clause(write)?);
             } else {
                 break;
             }
+            write = false;
         }
         if optional_match_token!(self.lexer, Return) {
-            clauses.push(self.parse_return_clause()?);
+            clauses.push(self.parse_return_clause(write)?);
+            write = false;
         }
-        Ok(QueryIR::Query(clauses))
+        Ok(QueryIR::Query(clauses, write))
     }
 
     fn parse_reading_clasue(&mut self) -> Result<QueryIR, String> {
@@ -612,12 +618,18 @@ impl<'a> Parser<'a> {
         Ok(QueryIR::Where(self.parse_expr()?))
     }
 
-    fn parse_with_clause(&mut self) -> Result<QueryIR, String> {
-        Ok(QueryIR::With(self.parse_named_exprs()?))
+    fn parse_with_clause(
+        &mut self,
+        write: bool,
+    ) -> Result<QueryIR, String> {
+        Ok(QueryIR::With(self.parse_named_exprs()?, write))
     }
 
-    fn parse_return_clause(&mut self) -> Result<QueryIR, String> {
-        Ok(QueryIR::Return(self.parse_named_exprs()?))
+    fn parse_return_clause(
+        &mut self,
+        write: bool,
+    ) -> Result<QueryIR, String> {
+        Ok(QueryIR::Return(self.parse_named_exprs()?, write))
     }
 
     fn parse_pattern(
@@ -673,7 +685,6 @@ impl<'a> Parser<'a> {
             match self.lexer.current() {
                 Token::Comma => {
                     self.lexer.next();
-                    continue;
                 }
                 token => {
                     if token == clause {
@@ -688,7 +699,7 @@ impl<'a> Parser<'a> {
         Ok(Pattern::new(nodes, relationships, paths))
     }
 
-    fn parse_primary_expr(&mut self) -> Result<QueryExprIR, String> {
+    fn parse_primary_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
         match self.lexer.current() {
             Token::Ident(ident) => {
                 let mut namespace_and_function = ident.clone();
@@ -708,48 +719,44 @@ impl<'a> Parser<'a> {
                 if self.lexer.current() == Token::LParen {
                     self.lexer.next();
 
-                    return Ok(QueryExprIR::FuncInvocation(
-                        namespace_and_function,
-                        self.parse_expression_list(ExpressionListType::ZeroOrMoreClosedBy(RParen))?,
-                    ));
+                    return Ok(tree!(ExprIR::FuncInvocation(
+                        namespace_and_function
+                    ); self.parse_expression_list(ExpressionListType::ZeroOrMoreClosedBy(RParen))?));
                 }
                 self.lexer.set_pos(pos);
-                Ok(QueryExprIR::Ident(ident))
+                Ok(tree!(ExprIR::Var(ident)))
             }
             Token::Parameter(param) => {
                 self.lexer.next();
-                Ok(QueryExprIR::Parameter(param))
+                Ok(tree!(ExprIR::Parameter(param)))
             }
             Token::Null => {
                 self.lexer.next();
-                Ok(QueryExprIR::Null)
+                Ok(tree!(ExprIR::Null))
             }
             Token::Bool(b) => {
                 self.lexer.next();
-                Ok(QueryExprIR::Bool(b))
+                Ok(tree!(ExprIR::Bool(b)))
             }
             Token::Integer(i) => {
                 self.lexer.next();
-                Ok(QueryExprIR::Integer(i))
+                Ok(tree!(ExprIR::Integer(i)))
             }
             Token::Float(f) => {
                 self.lexer.next();
-                Ok(QueryExprIR::Float(f))
+                Ok(tree!(ExprIR::Float(f)))
             }
             Token::String(s) => {
                 self.lexer.next();
-                Ok(QueryExprIR::String(s))
+                Ok(tree!(ExprIR::String(s)))
             }
             Token::LBrace => {
                 self.lexer.next();
-                Ok(QueryExprIR::List(self.parse_expression_list(
+                Ok(tree!(ExprIR::List; self.parse_expression_list(
                     ExpressionListType::ZeroOrMoreClosedBy(RBrace),
                 )?))
             }
-            Token::LBracket => {
-                let attrs = self.parse_map()?;
-                Ok(QueryExprIR::Map(attrs))
-            }
+            Token::LBracket => self.parse_map(),
             Token::LParen => {
                 self.lexer.next();
                 let expr = self.parse_expr()?;
@@ -762,15 +769,16 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_property_expression(&mut self) -> Result<QueryExprIR, String> {
+    fn parse_property_expression(&mut self) -> Result<DynTree<ExprIR>, String> {
         let mut expr = self.parse_primary_expr()?;
 
         while self.lexer.current() == Token::Dot {
             self.lexer.next();
             let ident = self.parse_ident()?;
-            expr = QueryExprIR::FuncInvocation(
-                "property".to_string(),
-                vec![expr, QueryExprIR::String(ident)],
+            expr = tree!(
+                ExprIR::FuncInvocation("property".to_string()),
+                expr,
+                tree!(ExprIR::String(ident))
             );
         }
 
@@ -778,7 +786,7 @@ impl<'a> Parser<'a> {
     }
 
     // match one of those kind [..4], [4..], [4..5], [6]
-    fn parse_list_operator_expression(&mut self) -> Result<QueryExprIR, String> {
+    fn parse_list_operator_expression(&mut self) -> Result<DynTree<ExprIR>, String> {
         let mut expr = self.parse_property_expression()?;
 
         while self.lexer.current() == Token::LBrace {
@@ -786,19 +794,24 @@ impl<'a> Parser<'a> {
 
             let from = self.parse_expr();
             if optional_match_token!(self.lexer, DotDot) {
-                let to = self.parse_expr().ok();
+                let to = self.parse_expr();
                 match_token!(self.lexer, RBrace);
-                expr = QueryExprIR::GetElements(Box::new((expr, from.ok(), to)));
+                expr = tree!(
+                    ExprIR::GetElements,
+                    expr.clone(),
+                    from.unwrap_or_else(|_| tree!(ExprIR::Integer(0))),
+                    to.unwrap_or_else(|_| tree!(ExprIR::Length, expr))
+                );
             } else {
                 match_token!(self.lexer, RBrace);
-                expr = QueryExprIR::GetElement(Box::new((expr, from?)));
+                expr = tree!(ExprIR::GetElement, expr, from?);
             }
         }
 
         Ok(expr)
     }
 
-    fn parse_null_operator_expression(&mut self) -> Result<QueryExprIR, String> {
+    fn parse_null_operator_expression(&mut self) -> Result<DynTree<ExprIR>, String> {
         let expr = self.parse_list_operator_expression()?;
 
         match self.lexer.current() {
@@ -807,7 +820,7 @@ impl<'a> Parser<'a> {
                 match self.lexer.current() {
                     Token::Null => {
                         self.lexer.next();
-                        Ok(QueryExprIR::IsNull(Box::new(expr)))
+                        Ok(tree!(ExprIR::IsNull, expr))
                     }
                     _ => Ok(expr),
                 }
@@ -816,7 +829,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_unary_add_or_subtract_expr(&mut self) -> Result<QueryExprIR, String> {
+    fn parse_unary_add_or_subtract_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
         match self.lexer.current() {
             Token::Plus => {
                 self.lexer.next();
@@ -825,75 +838,79 @@ impl<'a> Parser<'a> {
             Token::Dash => {
                 self.lexer.next();
                 let expr = self.parse_null_operator_expression()?;
-                Ok(QueryExprIR::Negate(Box::new(expr)))
+                Ok(tree!(ExprIR::Negate, expr))
             }
             _ => self.parse_null_operator_expression(),
         }
     }
 
-    fn parse_power_expr(&mut self) -> Result<QueryExprIR, String> {
+    fn parse_power_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
         parse_binary_expr!(self.parse_unary_add_or_subtract_expr()?, Power => Pow);
     }
 
-    fn parse_mul_div_modulo_expr(&mut self) -> Result<QueryExprIR, String> {
+    fn parse_mul_div_modulo_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
         parse_binary_expr!(self.parse_power_expr()?, Star => Mul, Slash =>  Div, Modulo => Modulo);
     }
 
-    fn parse_add_sub_expr(&mut self) -> Result<QueryExprIR, String> {
+    fn parse_add_sub_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
         parse_binary_expr!(self.parse_mul_div_modulo_expr()?, Plus => Add, Dash => Sub);
     }
 
-    fn parser_string_list_null_predicate_expr(&mut self) -> Result<QueryExprIR, String> {
+    fn parser_string_list_null_predicate_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
         let lhs = self.parse_add_sub_expr()?;
         match self.lexer.current() {
             Token::In => {
                 self.lexer.next();
                 let rhs = self.parse_add_sub_expr()?;
-                Ok(QueryExprIR::In(Box::new((lhs, rhs))))
+                Ok(tree!(ExprIR::In, lhs, rhs))
             }
             Token::Starts => {
                 self.lexer.next();
                 match_token!(self.lexer, With);
                 let rhs = self.parse_add_sub_expr()?;
-                Ok(QueryExprIR::FuncInvocation(
-                    "@starts_with".to_string(),
-                    vec![lhs, rhs],
+                Ok(tree!(
+                    ExprIR::FuncInvocation("@starts_with".to_string()),
+                    lhs,
+                    rhs
                 ))
             }
             Token::Ends => {
                 self.lexer.next();
                 match_token!(self.lexer, With);
                 let rhs = self.parse_add_sub_expr()?;
-                Ok(QueryExprIR::FuncInvocation(
-                    "@ends_with".to_string(),
-                    vec![lhs, rhs],
+                Ok(tree!(
+                    ExprIR::FuncInvocation("@ends_with".to_string()),
+                    lhs,
+                    rhs
                 ))
             }
             Token::Contains => {
                 self.lexer.next();
                 let rhs = self.parse_add_sub_expr()?;
-                Ok(QueryExprIR::FuncInvocation(
-                    "@contains".to_string(),
-                    vec![lhs, rhs],
+                Ok(tree!(
+                    ExprIR::FuncInvocation("@contains".to_string()),
+                    lhs,
+                    rhs
                 ))
             }
             Token::RegexMatches => {
                 self.lexer.next();
                 let rhs = self.parse_add_sub_expr()?;
-                Ok(QueryExprIR::FuncInvocation(
-                    "@regex_matches".to_string(),
-                    vec![lhs, rhs],
+                Ok(tree!(
+                    ExprIR::FuncInvocation("@regex_matches".to_string()),
+                    lhs,
+                    rhs
                 ))
             }
             _ => Ok(lhs),
         }
     }
 
-    fn parse_comparison_expr(&mut self) -> Result<QueryExprIR, String> {
+    fn parse_comparison_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
         parse_binary_expr!(self.parser_string_list_null_predicate_expr()?, Equal => Eq);
     }
 
-    fn parse_not_expr(&mut self) -> Result<QueryExprIR, String> {
+    fn parse_not_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
         let mut not_count = 0;
 
         while self.lexer.current() == Token::Not {
@@ -906,23 +923,23 @@ impl<'a> Parser<'a> {
         if not_count % 2 == 0 {
             Ok(expr)
         } else {
-            Ok(QueryExprIR::Not(Box::new(expr)))
+            Ok(tree!(ExprIR::Not, expr))
         }
     }
 
-    fn parse_and_expr(&mut self) -> Result<QueryExprIR, String> {
+    fn parse_and_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
         parse_binary_expr!(self.parse_not_expr()?, And => And);
     }
 
-    fn parse_xor_expr(&mut self) -> Result<QueryExprIR, String> {
+    fn parse_xor_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
         parse_binary_expr!(self.parse_and_expr()?, Xor => Xor);
     }
 
-    fn parse_or_expr(&mut self) -> Result<QueryExprIR, String> {
+    fn parse_or_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
         parse_binary_expr!(self.parse_xor_expr()?, Or => Or);
     }
 
-    fn parse_expr(&mut self) -> Result<QueryExprIR, String> {
+    fn parse_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
         self.parse_or_expr()
     }
 
@@ -938,14 +955,14 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_named_exprs(&mut self) -> Result<Vec<QueryExprIR>, String> {
+    fn parse_named_exprs(&mut self) -> Result<Vec<DynTree<ExprIR>>, String> {
         let mut exprs = Vec::new();
         loop {
             let expr = self.parse_expr()?;
             if self.lexer.current() == Token::As {
                 self.lexer.next();
                 let ident = self.parse_ident()?;
-                exprs.push(QueryExprIR::Named(ident, Box::new(expr)));
+                exprs.push(tree!(ExprIR::Set(ident), expr));
             } else {
                 exprs.push(expr);
             }
@@ -959,7 +976,7 @@ impl<'a> Parser<'a> {
     fn parse_expression_list(
         &mut self,
         expression_list_type: ExpressionListType,
-    ) -> Result<Vec<QueryExprIR>, String> {
+    ) -> Result<Vec<DynTree<ExprIR>>, String> {
         let mut exprs = Vec::new();
         while !expression_list_type.is_end_token(self.lexer.current()) {
             exprs.push(self.parse_expr()?);
@@ -1055,12 +1072,12 @@ impl<'a> Parser<'a> {
         Ok(labels)
     }
 
-    fn parse_map(&mut self) -> Result<BTreeMap<String, QueryExprIR>, String> {
-        let mut attrs = BTreeMap::new();
+    fn parse_map(&mut self) -> Result<DynTree<ExprIR>, String> {
+        let mut attrs = Vec::new();
         if self.lexer.current() == Token::LBracket {
             self.lexer.next();
         } else {
-            return Ok(attrs);
+            return Ok(tree!(ExprIR::Map));
         }
 
         loop {
@@ -1068,13 +1085,13 @@ impl<'a> Parser<'a> {
                 self.lexer.next();
                 match_token!(self.lexer, Colon);
                 let value = self.parse_expr()?;
-                attrs.insert(key, value);
+                attrs.push(tree!(ExprIR::Var(key), value));
 
                 match self.lexer.current() {
                     Token::Comma => self.lexer.next(),
                     Token::RBracket => {
                         self.lexer.next();
-                        return Ok(attrs);
+                        return Ok(tree!(ExprIR::Map ; attrs));
                     }
                     token => {
                         return Err(self
@@ -1084,7 +1101,7 @@ impl<'a> Parser<'a> {
                 }
             } else {
                 match_token!(self.lexer, RBracket);
-                return Ok(attrs);
+                return Ok(tree!(ExprIR::Map ; attrs));
             }
         }
     }
@@ -1134,7 +1151,7 @@ mod tests {
             ("0b1", Token::Integer(1)),
             ("0b10", Token::Integer(2)),
             ("0b1111", Token::Integer(15)),
-            ("02613152366", Token::Integer(372036854)),
+            ("02613152366", Token::Integer(372_036_854)),
         ];
 
         for (input, expected) in inputs {

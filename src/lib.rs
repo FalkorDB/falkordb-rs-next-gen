@@ -160,11 +160,12 @@ struct RedisValuesCollector {
 }
 
 impl RedisValuesCollector {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self {
             res: RefCell::new(Vec::new()),
         }
     }
+
     fn take(&self) -> Vec<RedisValue> {
         std::mem::take(&mut *self.res.borrow_mut())
     }
