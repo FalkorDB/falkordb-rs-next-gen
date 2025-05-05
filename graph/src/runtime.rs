@@ -1,3 +1,4 @@
+use crate::graph::ReturnCallback;
 use crate::{ast::ExprIR, graph::Graph, planner::IR, value::Contains, value::Value};
 use crate::{matrix, tensor};
 use orx_tree::{DynNode, NodeRef};
@@ -1524,40 +1525,40 @@ fn ro_run_expr(
 }
 
 #[allow(clippy::too_many_lines)]
-pub fn ro_run(
+pub fn ro_run<CB: ReturnCallback>(
     vars: &mut BTreeMap<String, Value>,
     g: &Graph,
     runtime: &mut Runtime,
-    result_fn: &mut dyn FnMut(&Graph, Value),
+    callback: &CB,
     ir: &DynNode<IR>,
 ) -> Result<Value, String> {
     match ir.data() {
         IR::Expr(expr) => ro_run_expr(vars, g, runtime, &expr.root()),
-        IR::If => match ro_run(vars, g, runtime, result_fn, &ir.child(0))? {
-            Value::Bool(true) => ro_run(vars, g, runtime, result_fn, &ir.child(1)),
+        IR::If => match ro_run(vars, g, runtime, callback, &ir.child(0))? {
+            Value::Bool(true) => ro_run(vars, g, runtime, callback, &ir.child(1)),
             _ => Ok(Value::Null),
         },
         IR::For => {
-            ro_run(vars, g, runtime, result_fn, &ir.child(0))?;
-            while ro_run(vars, g, runtime, result_fn, &ir.child(1))? == Value::Bool(true) {
-                ro_run(vars, g, runtime, result_fn, &ir.child(3))?;
-                ro_run(vars, g, runtime, result_fn, &ir.child(2))?;
+            ro_run(vars, g, runtime, callback, &ir.child(0))?;
+            while ro_run(vars, g, runtime, callback, &ir.child(1))? == Value::Bool(true) {
+                ro_run(vars, g, runtime, callback, &ir.child(3))?;
+                ro_run(vars, g, runtime, callback, &ir.child(2))?;
             }
             Ok(Value::Null)
         }
         IR::Return => {
-            let v = ro_run(vars, g, runtime, result_fn, &ir.child(0))?;
-            result_fn(g, v);
+            let v = ro_run(vars, g, runtime, callback, &ir.child(0))?;
+            callback.return_value(g, v);
             Ok(Value::Null)
         }
         IR::ReturnAggregation => {
-            ro_run(vars, g, runtime, result_fn, &ir.child(0))?;
+            ro_run(vars, g, runtime, callback, &ir.child(0))?;
             for (keys, r) in runtime.agg_ctxs.values_mut() {
                 if let Value::List(keys) = keys {
                     keys.push(r.clone());
-                    result_fn(g, Value::List(keys.clone()));
+                    callback.return_value(g, Value::List(keys.clone()));
                 } else {
-                    result_fn(g, Value::List(vec![r.clone()]));
+                    callback.return_value(g, Value::List(vec![r.clone()]));
                 }
             }
             runtime.agg_ctxs.clear();
@@ -1566,7 +1567,7 @@ pub fn ro_run(
         IR::Block => {
             let mut v = Value::Null;
             for ir in ir.children() {
-                v = ro_run(vars, g, runtime, result_fn, &ir)?;
+                v = ro_run(vars, g, runtime, callback, &ir)?;
             }
             Ok(v)
         }
@@ -1815,40 +1816,40 @@ fn run_expr(
 }
 
 #[allow(clippy::too_many_lines)]
-pub fn run(
+pub fn run<CB: ReturnCallback>(
     vars: &mut BTreeMap<String, Value>,
     g: &mut Graph,
     runtime: &mut Runtime,
-    result_fn: &mut dyn FnMut(&Graph, Value),
+    callback: &CB,
     ir: &DynNode<IR>,
 ) -> Result<Value, String> {
     match ir.data() {
         IR::Expr(expr) => run_expr(vars, g, runtime, &expr.root()),
-        IR::If => match run(vars, g, runtime, result_fn, &ir.child(0))? {
-            Value::Bool(true) => run(vars, g, runtime, result_fn, &ir.child(1)),
+        IR::If => match run(vars, g, runtime, callback, &ir.child(0))? {
+            Value::Bool(true) => run(vars, g, runtime, callback, &ir.child(1)),
             _ => Ok(Value::Null),
         },
         IR::For => {
-            run(vars, g, runtime, result_fn, &ir.child(0))?;
-            while run(vars, g, runtime, result_fn, &ir.child(1))? == Value::Bool(true) {
-                run(vars, g, runtime, result_fn, &ir.child(3))?;
-                run(vars, g, runtime, result_fn, &ir.child(2))?;
+            run(vars, g, runtime, callback, &ir.child(0))?;
+            while run(vars, g, runtime, callback, &ir.child(1))? == Value::Bool(true) {
+                run(vars, g, runtime, callback, &ir.child(3))?;
+                run(vars, g, runtime, callback, &ir.child(2))?;
             }
             Ok(Value::Null)
         }
         IR::Return => {
-            let v = run(vars, g, runtime, result_fn, &ir.child(0))?;
-            result_fn(g, v);
+            let v = run(vars, g, runtime, callback, &ir.child(0))?;
+            callback.return_value(g, v);
             Ok(Value::Null)
         }
         IR::ReturnAggregation => {
-            run(vars, g, runtime, result_fn, &ir.child(0))?;
+            run(vars, g, runtime, callback, &ir.child(0))?;
             for (keys, r) in runtime.agg_ctxs.values_mut() {
                 if let Value::List(keys) = keys {
                     keys.push(r.clone());
-                    result_fn(g, Value::List(keys.clone()));
+                    callback.return_value(g, Value::List(keys.clone()));
                 } else {
-                    result_fn(g, Value::List(vec![r.clone()]));
+                    callback.return_value(g, Value::List(vec![r.clone()]));
                 }
             }
             runtime.agg_ctxs.clear();
@@ -1857,7 +1858,7 @@ pub fn run(
         IR::Block => {
             let mut v = Value::Null;
             for ir in ir.children() {
-                v = run(vars, g, runtime, result_fn, &ir)?;
+                v = run(vars, g, runtime, callback, &ir)?;
             }
             Ok(v)
         }
