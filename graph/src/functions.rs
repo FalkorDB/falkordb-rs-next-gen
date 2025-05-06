@@ -568,10 +568,11 @@ fn count(
     runtime: &mut Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
-    match args.as_slice() {
-        [Value::Null, _] => {}
-        [_, Value::Int(hash)] => {
-            runtime.agg_ctxs.entry(*hash as _).and_modify(|v| {
+    let mut iter = args.into_iter();
+    match (iter.next(), iter.next()) {
+        (Some(Value::Null), _) => {}
+        (_, Some(Value::Int(hash))) => {
+            runtime.agg_ctxs.entry(hash as _).and_modify(|v| {
                 if let (_, Value::Int(count)) = v {
                     *count += 1;
                 } else {
@@ -643,23 +644,23 @@ fn value_to_integer(
     _runtime: &mut Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
-    match args.as_slice() {
-        [Value::String(s)] => s.parse::<i64>().map(Value::Int).or_else(|_| {
+    let len = args.len();
+    match args.into_iter().next() {
+        Some(Value::String(s)) => s.parse::<i64>().map(Value::Int).or_else(|_| {
             s.parse::<f64>()
                 .map(|f| Value::Int(f as i64))
                 .or(Ok(Value::Null))
         }),
-        [Value::Int(i)] => Ok(Value::Int(*i)),
-        [Value::Float(f)] => Ok(Value::Int(*f as i64)),
-        [Value::Null] => Ok(Value::Null),
-        [Value::Bool(b)] => Ok(Value::Int(i64::from(*b))),
-        [arg] => Err(format!(
+        Some(v @ Value::Int(_)) => Ok(v),
+        Some(Value::Float(f)) => Ok(Value::Int(f as i64)),
+        Some(Value::Null) => Ok(Value::Null),
+        Some(Value::Bool(b)) => Ok(Value::Int(i64::from(b))),
+        Some(arg) => Err(format!(
             "Type mismatch: expected String, Boolean, Integer, Float, or Null but was {}",
             arg.name()
         )),
-        args => Err(format!(
-            "Expected one argument for value_to_integer, instead {}",
-            args.len()
+        _ => Err(format!(
+            "Expected one argument for value_to_integer, instead {len}"
         )),
     }
 }
@@ -668,11 +669,11 @@ fn size(
     _: &mut Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
-    match args.as_slice() {
-        [Value::String(s)] => Ok(Value::Int(s.len() as i64)),
-        [Value::List(v)] => Ok(Value::Int(v.len() as i64)),
-        [Value::Null] => Ok(Value::Null),
-        [arg] => Err(format!(
+    match args.into_iter().next() {
+        Some(Value::String(s)) => Ok(Value::Int(s.len() as i64)),
+        Some(Value::List(v)) => Ok(Value::Int(v.len() as i64)),
+        Some(Value::Null) => Ok(Value::Null),
+        Some(arg) => Err(format!(
             "Type mismatch: expected List, String, or Null but was {}",
             arg.name()
         )),
@@ -684,16 +685,16 @@ fn head(
     _: &mut Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
-    match args.as_slice() {
-        [Value::List(v)] => {
+    match args.into_iter().next() {
+        Some(Value::List(v)) => {
             if v.is_empty() {
                 Ok(Value::Null)
             } else {
                 Ok(v[0].clone())
             }
         }
-        [Value::Null] => Ok(Value::Null),
-        [arg] => Err(format!(
+        Some(Value::Null) => Ok(Value::Null),
+        Some(arg) => Err(format!(
             "Type mismatch: expected List or Null but was {}",
             arg.name()
         )),
@@ -705,10 +706,10 @@ fn last(
     _: &mut Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
-    match args.as_slice() {
-        [Value::List(v)] => Ok(v.last().unwrap_or(&Value::Null).clone()),
-        [Value::Null] => Ok(Value::Null),
-        [arg] => Err(format!(
+    match args.into_iter().next() {
+        Some(Value::List(v)) => Ok(v.last().unwrap_or(&Value::Null).clone()),
+        Some(Value::Null) => Ok(Value::Null),
+        Some(arg) => Err(format!(
             "Type mismatch: expected List or Null but was {}",
             arg.name()
         )),
@@ -720,16 +721,16 @@ fn tail(
     _: &mut Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
-    match args.as_slice() {
-        [Value::List(v)] => {
+    match args.into_iter().next() {
+        Some(Value::List(v)) => {
             if v.is_empty() {
                 Ok(Value::List(vec![]))
             } else {
                 Ok(Value::List(v[1..].to_vec()))
             }
         }
-        [Value::Null] => Ok(Value::Null),
-        [arg] => Err(format!(
+        Some(Value::Null) => Ok(Value::Null),
+        Some(arg) => Err(format!(
             "Type mismatch: expected List or Null but was {}",
             arg.name()
         )),
@@ -741,15 +742,15 @@ fn reverse(
     _: &mut Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
-    match args.as_slice() {
-        [Value::List(v)] => {
+    match args.into_iter().next() {
+        Some(Value::List(v)) => {
             let mut v = v.clone();
             v.reverse();
             Ok(Value::List(v))
         }
-        [Value::Null] => Ok(Value::Null),
-        [Value::String(s)] => Ok(Value::String(s.chars().rev().collect())),
-        [arg] => Err(format!(
+        Some(Value::Null) => Ok(Value::Null),
+        Some(Value::String(s)) => Ok(Value::String(s.chars().rev().collect())),
+        Some(arg) => Err(format!(
             "Type mismatch: expected List, String or null, but was {}",
             arg.name()
         )),
@@ -761,12 +762,12 @@ fn substring(
     _: &mut Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
-    match args.as_slice() {
+    let mut iter = args.into_iter();
+    match (iter.next(), iter.next(), iter.next()) {
         // Handle NULL input case
-        [Value::Null, _] | [Value::Null, _, _] => Ok(Value::Null),
+        (Some(Value::Null), _, _) => Ok(Value::Null),
         // Two-argument version: (string, start)
-        [Value::String(s), Value::Int(start)] => {
-            let start = *start;
+        (Some(Value::String(s)), Some(Value::Int(start)), None) => {
             if start < 0 {
                 return Err("start must be a non-negative integer".into());
             }
@@ -776,9 +777,7 @@ fn substring(
         }
 
         // Three-argument version: (string, start, length)
-        [Value::String(s), Value::Int(start), Value::Int(length)] => {
-            let start = *start;
-            let length = *length;
+        (Some(Value::String(s)), Some(Value::Int(start)), Some(Value::Int(length))) => {
             if length < 0 {
                 return Err("length must be a non-negative integer".into());
             }
@@ -792,20 +791,20 @@ fn substring(
             Ok(Value::String(s[start..end].to_string()))
         }
 
-        [Value::String(_), t] => Err(format!(
+        (Some(Value::String(_)), Some(t), None) => Err(format!(
             "Type mismatch: expected Integer Or Null but got {}",
             t.name()
         )),
-        [t, Value::Int(_)] | [t, Value::Int(_), Value::Int(_)] => Err(format!(
+        (Some(t), Some(Value::Int(_)), None | Some(Value::Int(_))) => Err(format!(
             "Type mismatch: expected String Or Null but got {}",
             t.name()
         )),
-        [Value::String(_), t, Value::Int(_)] | [Value::String(_), Value::Int(_), t] => {
-            Err(format!(
-                "Type mismatch: expected Integer Or Null but got {}",
-                t.name()
-            ))
-        }
+        (Some(Value::String(_)), Some(t), Some(Value::Int(_)))
+        | (Some(Value::String(_)), Some(Value::Int(_)), Some(t)) => Err(format!(
+            "Type mismatch: expected Integer Or Null but got {}",
+            t.name()
+        )),
+
         _ => unreachable!(),
     }
 }
@@ -814,8 +813,9 @@ fn split(
     _: &mut Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
-    match args.as_slice() {
-        [Value::String(string), Value::String(delimiter)] => {
+    let mut iter = args.into_iter();
+    match (iter.next(), iter.next()) {
+        (Some(Value::String(string)), Some(Value::String(delimiter))) => {
             if delimiter.is_empty() {
                 // split string to characters
                 let parts: Vec<Value> = string
@@ -831,15 +831,11 @@ fn split(
                 Ok(Value::List(parts))
             }
         }
-        [Value::Null, _] | [_, Value::Null] => Ok(Value::Null),
-        [arg1, arg2] => Err(format!(
+        (Some(Value::Null), Some(_)) | (Some(_), Some(Value::Null)) => Ok(Value::Null),
+        (Some(arg1), Some(arg2)) => Err(format!(
             "Type mismatch: expected 2 String or null arguments, but was {} {}",
             arg1.name(),
             arg2.name()
-        )),
-        [arg] => Err(format!(
-            "Type mismatch: expected 2 String or null arguments, but was {}",
-            arg.name()
         )),
         _ => unreachable!(),
     }
@@ -849,10 +845,10 @@ fn string_to_lower(
     _: &mut Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
-    match args.as_slice() {
-        [Value::String(s)] => Ok(Value::String(s.to_lowercase())),
-        [Value::Null] => Ok(Value::Null),
-        [arg] => Err(format!(
+    match args.into_iter().next() {
+        Some(Value::String(s)) => Ok(Value::String(s.to_lowercase())),
+        Some(Value::Null) => Ok(Value::Null),
+        Some(arg) => Err(format!(
             "Type mismatch: expected List, String or null, but was {}",
             arg.name()
         )),
@@ -864,10 +860,10 @@ fn string_to_upper(
     _: &mut Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
-    match args.as_slice() {
-        [Value::String(s)] => Ok(Value::String(s.to_uppercase())),
-        [Value::Null] => Ok(Value::Null),
-        [arg] => Err(format!(
+    match args.into_iter().next() {
+        Some(Value::String(s)) => Ok(Value::String(s.to_uppercase())),
+        Some(Value::Null) => Ok(Value::Null),
+        Some(arg) => Err(format!(
             "Type mismatch: expected List, String or null, but was {}",
             arg.name()
         )),
@@ -879,14 +875,17 @@ fn string_replace(
     _: &mut Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
-    match args.as_slice() {
-        [
-            Value::String(s),
-            Value::String(search),
-            Value::String(replacement),
-        ] => Ok(Value::String(s.replace(search, replacement))),
-        [Value::Null, _, _] | [_, Value::Null, _] | [_, _, Value::Null] => Ok(Value::Null),
-        [arg1, arg2, arg3] => Err(format!(
+    let mut iter = args.into_iter();
+    match (iter.next(), iter.next(), iter.next()) {
+        (Some(Value::String(s)), Some(Value::String(search)), Some(Value::String(replacement))) => {
+            Ok(Value::String(
+                s.replace(search.as_str(), replacement.as_str()),
+            ))
+        }
+        (Some(Value::Null), _, _) | (_, Some(Value::Null), _) | (_, _, Some(Value::Null)) => {
+            Ok(Value::Null)
+        }
+        (Some(arg1), Some(arg2), Some(arg3)) => Err(format!(
             "Type mismatch: expected (String, String, String) or null, but was: ({}, {}, {})",
             arg1.name(),
             arg2.name(),
@@ -900,17 +899,18 @@ fn string_left(
     _: &mut Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
-    match args.as_slice() {
-        [Value::String(s), Value::Int(n)] => {
-            if *n < 0 {
+    let mut iter = args.into_iter();
+    match (iter.next(), iter.next()) {
+        (Some(Value::String(s)), Some(Value::Int(n))) => {
+            if n < 0 {
                 Err("length must be a non-negative integer".to_string())
             } else {
-                Ok(Value::String(s.chars().take(*n as usize).collect()))
+                Ok(Value::String(s.chars().take(n as usize).collect()))
             }
         }
-        [Value::Null, _] => Ok(Value::Null),
-        [_, Value::Null] => Err("length must be a non-negative integer".to_string()),
-        [arg1, arg2] => Err(format!(
+        (Some(Value::Null), _) => Ok(Value::Null),
+        (_, Some(Value::Null)) => Err("length must be a non-negative integer".to_string()),
+        (Some(arg1), Some(arg2)) => Err(format!(
             "Type mismatch: expected (String, Integer) or null, but was: ({}, {})",
             arg1.name(),
             arg2.name()
@@ -923,10 +923,10 @@ fn string_ltrim(
     _: &mut Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
-    match args.as_slice() {
-        [Value::String(s)] => Ok(Value::String(s.trim_start().to_string())),
-        [Value::Null] => Ok(Value::Null),
-        [arg] => Err(format!(
+    match args.into_iter().next() {
+        Some(Value::String(s)) => Ok(Value::String(s.trim_start().to_string())),
+        Some(Value::Null) => Ok(Value::Null),
+        Some(arg) => Err(format!(
             "Type mismatch: expected String or null, but was {}",
             arg.name()
         )),
@@ -938,18 +938,19 @@ fn string_right(
     _: &mut Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
-    match args.as_slice() {
-        [Value::String(s), Value::Int(n)] => {
-            if *n < 0 {
+    let mut iter = args.into_iter();
+    match (iter.next(), iter.next()) {
+        (Some(Value::String(s)), Some(Value::Int(n))) => {
+            if n < 0 {
                 Err("length must be a non-negative integer".to_string())
             } else {
-                let start = s.len().saturating_sub(*n as usize);
+                let start = s.len().saturating_sub(n as usize);
                 Ok(Value::String(s.chars().skip(start).collect()))
             }
         }
-        [Value::Null, _] => Ok(Value::Null),
-        [_, Value::Null] => Err("length must be a non-negative integer".to_string()),
-        [arg1, arg2] => Err(format!(
+        (Some(Value::Null), _) => Ok(Value::Null),
+        (_, Some(Value::Null)) => Err("length must be a non-negative integer".to_string()),
+        (Some(arg1), Some(arg2)) => Err(format!(
             "Type mismatch: expected (String, Integer) or null, but was: ({}, {})",
             arg1.name(),
             arg2.name()
@@ -957,15 +958,16 @@ fn string_right(
         _ => unreachable!(),
     }
 }
+
 fn string_join(
     _: &mut Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
-    fn to_string_vec(vec: &[Value]) -> Result<Vec<String>, String> {
-        vec.iter()
+    fn to_string_vec(vec: Vec<Value>) -> Result<Vec<String>, String> {
+        vec.into_iter()
             .map(|item| {
                 if let Value::String(s) = item {
-                    Ok(s.clone())
+                    Ok(s)
                 } else {
                     Err(format!(
                         "Type mismatch: expected String but was {}",
@@ -975,18 +977,18 @@ fn string_join(
             })
             .collect()
     }
-
-    match args.as_slice() {
-        [Value::List(vec), Value::String(s)] => {
+    let mut iter = args.into_iter();
+    match (iter.next(), iter.next()) {
+        (Some(Value::List(vec)), Some(Value::String(s))) => {
             let result = to_string_vec(vec);
-            result.map(|strings| Value::String(strings.join(s)))
+            result.map(|strings| Value::String(strings.join(s.as_str())))
         }
-        [Value::List(vec)] => {
+        (Some(Value::List(vec)), None) => {
             let result = to_string_vec(vec);
             result.map(|strings| Value::String(strings.join("")))
         }
-        [Value::Null, _] => Ok(Value::Null),
-        [arg1, _arg2] => Err(format!(
+        (Some(Value::Null), _) => Ok(Value::Null),
+        (Some(arg1), Some(_)) => Err(format!(
             "Type mismatch: expected List or Null but was {}",
             arg1.name()
         )),
@@ -998,27 +1000,30 @@ fn string_match_reg_ex(
     _: &mut Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
-    match args.as_slice() {
-        [Value::String(text), Value::String(pattern)] => match regex::Regex::new(pattern) {
-            Ok(re) => {
-                let mut all_matches = Vec::new();
-                for caps in re.captures_iter(text) {
-                    for i in 0..caps.len() {
-                        if let Some(m) = caps.get(i) {
-                            all_matches.push(Value::String(m.as_str().to_string()));
+    let mut iter = args.into_iter();
+    match (iter.next(), iter.next()) {
+        (Some(Value::String(text)), Some(Value::String(pattern))) => {
+            match regex::Regex::new(pattern.as_str()) {
+                Ok(re) => {
+                    let mut all_matches = Vec::new();
+                    for caps in re.captures_iter(text.as_str()) {
+                        for i in 0..caps.len() {
+                            if let Some(m) = caps.get(i) {
+                                all_matches.push(Value::String(m.as_str().to_string()));
+                            }
                         }
                     }
+                    Ok(Value::List(all_matches))
                 }
-                Ok(Value::List(all_matches))
+                Err(e) => Err(format!("Invalid regex, {e}")),
             }
-            Err(e) => Err(format!("Invalid regex, {e}")),
-        },
-        [Value::Null, _] | [_, Value::Null] => Ok(Value::List(vec![])),
-        [Value::String(_), arg2] => Err(format!(
+        }
+        (Some(Value::Null), Some(_)) | (Some(_), Some(Value::Null)) => Ok(Value::List(vec![])),
+        (Some(Value::String(_)), Some(arg2)) => Err(format!(
             "Type mismatch: expected String or Null but was {}",
             arg2.name(),
         )),
-        [arg1, _] => Err(format!(
+        (Some(arg1), Some(_)) => Err(format!(
             "Type mismatch: expected String or Null but was {}",
             arg1.name(),
         )),
@@ -1030,28 +1035,31 @@ fn string_replace_reg_ex(
     _: &mut Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
-    match args.as_slice() {
-        [
-            Value::String(text),
-            Value::String(pattern),
-            Value::String(replacement),
-        ] => match regex::Regex::new(pattern) {
+    let mut iter = args.into_iter();
+    match (iter.next(), iter.next(), iter.next()) {
+        (
+            Some(Value::String(text)),
+            Some(Value::String(pattern)),
+            Some(Value::String(replacement)),
+        ) => match regex::Regex::new(pattern.as_str()) {
             Ok(re) => {
-                let replaced_text = re.replace_all(text, replacement).to_string();
+                let replaced_text = re.replace_all(text.as_str(), replacement).to_string();
                 Ok(Value::String(replaced_text))
             }
             Err(e) => Err(format!("Invalid regex, {e}")),
         },
-        [Value::Null, _, _] | [_, Value::Null, _] | [_, _, Value::Null] => Ok(Value::Null),
-        [Value::String(_), arg2, Value::String(_)] => Err(format!(
+        (Some(Value::Null), Some(_), Some(_))
+        | (Some(_), Some(Value::Null), Some(_))
+        | (Some(_), Some(_), Some(Value::Null)) => Ok(Value::Null),
+        (Some(Value::String(_)), Some(arg2), Some(Value::String(_))) => Err(format!(
             "Type mismatch: expected String or Null but was {}",
             arg2.name(),
         )),
-        [Value::String(_), Value::String(_), arg3] => Err(format!(
+        (Some(Value::String(_)), Some(Value::String(_)), Some(arg3)) => Err(format!(
             "Type mismatch: expected String or Null but was {}",
             arg3.name(),
         )),
-        [arg1, _, _] => Err(format!(
+        (Some(arg1), Some(_), Some(_)) => Err(format!(
             "Type mismatch: expected String or Null but was {}",
             arg1.name(),
         )),
@@ -1063,11 +1071,11 @@ fn abs(
     _: &mut Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
-    match args.as_slice() {
-        [Value::Int(n)] => Ok(Value::Int(n.abs())),
-        [Value::Float(f)] => Ok(Value::Float(f.abs())),
-        [Value::Null] => Ok(Value::Null),
-        [v] => Err(format!(
+    match args.into_iter().next() {
+        Some(Value::Int(n)) => Ok(Value::Int(n.abs())),
+        Some(Value::Float(f)) => Ok(Value::Float(f.abs())),
+        Some(Value::Null) => Ok(Value::Null),
+        Some(v) => Err(format!(
             "Type mismatch: expected Integer, Float, or Null but was {}",
             v.name()
         )),
@@ -1079,11 +1087,11 @@ fn ceil(
     _: &mut Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
-    match args.as_slice() {
-        [Value::Int(n)] => Ok(Value::Int(*n)),
-        [Value::Float(f)] => Ok(Value::Float(f.ceil())),
-        [Value::Null] => Ok(Value::Null),
-        [v] => Err(format!(
+    match args.into_iter().next() {
+        Some(Value::Int(n)) => Ok(Value::Int(n)),
+        Some(Value::Float(f)) => Ok(Value::Float(f.ceil())),
+        Some(Value::Null) => Ok(Value::Null),
+        Some(v) => Err(format!(
             "Type mismatch: expected Integer, Float, or Null but was {}",
             v.name()
         )),
@@ -1095,8 +1103,8 @@ fn e(
     _: &mut Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
-    match args.as_slice() {
-        [] => Ok(Value::Float(std::f64::consts::E)),
+    match args.into_iter().next() {
+        None => Ok(Value::Float(std::f64::consts::E)),
         _ => unreachable!(),
     }
 }
@@ -1105,11 +1113,11 @@ fn exp(
     _: &mut Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
-    match args.as_slice() {
-        [Value::Int(n)] => Ok(Value::Float((*n as f64).exp())),
-        [Value::Float(f)] => Ok(Value::Float(f.exp())),
-        [Value::Null] => Ok(Value::Null),
-        [v] => Err(format!(
+    match args.into_iter().next() {
+        Some(Value::Int(n)) => Ok(Value::Float((n as f64).exp())),
+        Some(Value::Float(f)) => Ok(Value::Float(f.exp())),
+        Some(Value::Null) => Ok(Value::Null),
+        Some(v) => Err(format!(
             "Type mismatch: expected Integer, Float, or Null but was {}",
             v.name()
         )),
@@ -1121,11 +1129,11 @@ fn floor(
     _: &mut Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
-    match args.as_slice() {
-        [Value::Int(n)] => Ok(Value::Int(*n)),
-        [Value::Float(f)] => Ok(Value::Float(f.floor())),
-        [Value::Null] => Ok(Value::Null),
-        [v] => Err(format!(
+    match args.into_iter().next() {
+        Some(Value::Int(n)) => Ok(Value::Int(n)),
+        Some(Value::Float(f)) => Ok(Value::Float(f.floor())),
+        Some(Value::Null) => Ok(Value::Null),
+        Some(v) => Err(format!(
             "Type mismatch: expected Integer, Float, or Null but was {}",
             v.name()
         )),
@@ -1137,11 +1145,11 @@ fn log(
     _: &mut Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
-    match args.as_slice() {
-        [Value::Int(n)] => Ok(Value::Float((*n as f64).ln())),
-        [Value::Float(f)] => Ok(Value::Float(f.ln())),
-        [Value::Null] => Ok(Value::Null),
-        [v] => Err(format!(
+    match args.into_iter().next() {
+        Some(Value::Int(n)) => Ok(Value::Float((n as f64).ln())),
+        Some(Value::Float(f)) => Ok(Value::Float(f.ln())),
+        Some(Value::Null) => Ok(Value::Null),
+        Some(v) => Err(format!(
             "Type mismatch: expected Integer, Float, or Null but was {}",
             v.name()
         )),
@@ -1153,59 +1161,59 @@ fn log10(
     _: &mut Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
-    match args.as_slice() {
-        [Value::Int(n)] => Ok(Value::Float((*n as f64).log10())),
-        [Value::Float(f)] => Ok(Value::Float(f.log10())),
-        [Value::Null] => Ok(Value::Null),
-        [v] => Err(format!(
+    match args.into_iter().next() {
+        Some(Value::Int(n)) => Ok(Value::Float((n as f64).log10())),
+        Some(Value::Float(f)) => Ok(Value::Float(f.log10())),
+        Some(Value::Null) => Ok(Value::Null),
+        Some(v) => Err(format!(
             "Type mismatch: expected Integer, Float, or Null but was {}",
             v.name()
         )),
         _ => unreachable!(),
     }
 }
+
 fn pow(
     _: &mut Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
-    match args.as_slice() {
-        [Value::Int(i1), Value::Int(i2)] => Ok(Value::Float((*i1 as f64).powi(*i2 as i32))),
-        [Value::Float(f1), Value::Float(f2)] => Ok(Value::Float(f1.powf(*f2))),
-        [Value::Int(i1), Value::Float(f1)] => Ok(Value::Float((*i1 as f64).powf(*f1))),
-        [Value::Float(f1), Value::Int(i1)] => Ok(Value::Float(f1.powi(*i1 as i32))),
-        [Value::Null, _] | [_, Value::Null] => Ok(Value::Null),
-        [Value::Int(_) | Value::Float(_), v] | [v, Value::Int(_) | Value::Float(_)] => {
-            Err(format!(
-                "Type mismatch: expected Integer, Float, or Null but was {}",
-                v.name()
-            ))
+    let mut iter = args.into_iter();
+    match (iter.next(), iter.next()) {
+        (Some(Value::Int(i1)), Some(Value::Int(i2))) => {
+            Ok(Value::Float((i1 as f64).powi(i2 as i32)))
         }
+        (Some(Value::Float(f1)), Some(Value::Float(f2))) => Ok(Value::Float(f1.powf(f2))),
+        (Some(Value::Int(i1)), Some(Value::Float(f1))) => Ok(Value::Float((i1 as f64).powf(f1))),
+        (Some(Value::Float(f1)), Some(Value::Int(i1))) => Ok(Value::Float(f1.powi(i1 as i32))),
+        (Some(Value::Null), Some(_)) | (Some(_), Some(Value::Null)) => Ok(Value::Null),
+        (Some(Value::Int(_) | Value::Float(_)), Some(v))
+        | (Some(v), Some(Value::Int(_) | Value::Float(_))) => Err(format!(
+            "Type mismatch: expected Integer, Float, or Null but was {}",
+            v.name()
+        )),
         _ => unreachable!(),
     }
 }
 
+#[allow(clippy::unnecessary_wraps)]
 fn rand(
     _: &mut Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
-    match args.as_slice() {
-        [] => {
-            let mut rng = rand::rng();
-            Ok(Value::Float(rng.random_range(0.0..1.0)))
-        }
-        _ => unreachable!(),
-    }
+    debug_assert!(args.is_empty());
+    let mut rng = rand::rng();
+    Ok(Value::Float(rng.random_range(0.0..1.0)))
 }
 
 fn round(
     _: &mut Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
-    match args.as_slice() {
-        [Value::Int(n)] => Ok(Value::Int(*n)),
-        [Value::Float(f)] => Ok(Value::Float(f.round())),
-        [Value::Null] => Ok(Value::Null),
-        [v] => Err(format!(
+    match args.into_iter().next() {
+        Some(Value::Int(n)) => Ok(Value::Int(n)),
+        Some(Value::Float(f)) => Ok(Value::Float(f.round())),
+        Some(Value::Null) => Ok(Value::Null),
+        Some(v) => Err(format!(
             "Type mismatch: expected Integer, Float, or Null but was {}",
             v.name()
         )),
@@ -1217,15 +1225,15 @@ fn sign(
     _: &mut Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
-    match args.as_slice() {
-        [Value::Int(n)] => Ok(Value::Int(n.signum())),
-        [Value::Float(f)] => Ok(if *f == 0.0 {
+    match args.into_iter().next() {
+        Some(Value::Int(n)) => Ok(Value::Int(n.signum())),
+        Some(Value::Float(f)) => Ok(if f == 0.0 {
             Value::Int(0)
         } else {
             Value::Float(f.signum().round())
         }),
-        [Value::Null] => Ok(Value::Null),
-        [v] => Err(format!(
+        Some(Value::Null) => Ok(Value::Null),
+        Some(v) => Err(format!(
             "Type mismatch: expected Integer, Float, or Null but was {}",
             v.name()
         )),
@@ -1237,23 +1245,23 @@ fn sqrt(
     _: &mut Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
-    match args.as_slice() {
-        [Value::Int(n)] => {
-            if *n < 0 {
+    match args.into_iter().next() {
+        Some(Value::Int(n)) => {
+            if n < 0 {
                 Ok(Value::Float(f64::NAN))
             } else {
-                Ok(Value::Float((*n as f64).sqrt()))
+                Ok(Value::Float((n as f64).sqrt()))
             }
         }
-        [Value::Float(f)] => {
-            if *f > 0f64 {
+        Some(Value::Float(f)) => {
+            if f > 0f64 {
                 Ok(Value::Float(f.sqrt()))
             } else {
                 Ok(Value::Float(f64::NAN))
             }
         }
-        [Value::Null] => Ok(Value::Null),
-        [v] => Err(format!(
+        Some(Value::Null) => Ok(Value::Null),
+        Some(v) => Err(format!(
             "Type mismatch: expected Integer, Float, or Null but was {}",
             v.name()
         )),
@@ -1265,25 +1273,26 @@ fn range(
     _: &mut Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
-    let start = &args[0];
-    let end = &args[1];
-    let step = args.get(2).unwrap_or(&Value::Int(1));
+    let mut iter = args.into_iter();
+    let start = iter.next().ok_or("Missing start value")?;
+    let end = iter.next().ok_or("Missing end value")?;
+    let step = iter.next().unwrap_or(Value::Int(1));
     match (start, end, step) {
         (Value::Int(start), Value::Int(end), Value::Int(step)) => {
-            if start >= end && step < &0 {
+            if start >= end && step < 0 {
                 Ok(Value::List(
-                    (*end..=*start)
+                    (end..=start)
                         .rev()
                         .step_by(step.abs() as usize)
                         .map(Value::Int)
                         .collect(),
                 ))
-            } else if step < &0 {
+            } else if step < 0 {
                 Ok(Value::List(vec![]))
             } else {
                 Ok(Value::List(
-                    (*start..=*end)
-                        .step_by(*step as usize)
+                    (start..=end)
+                        .step_by(step as usize)
                         .map(Value::Int)
                         .collect(),
                 ))
@@ -1301,11 +1310,14 @@ fn internal_starts_with(
     _: &mut Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
-    match args.as_slice() {
-        [Value::String(s), Value::String(prefix)] => Ok(Value::Bool(s.starts_with(prefix))),
+    let mut iter = args.into_iter();
+    match (iter.next(), iter.next()) {
+        (Some(Value::String(s)), Some(Value::String(prefix))) => {
+            Ok(Value::Bool(s.starts_with(prefix.as_str())))
+        }
 
-        [_, Value::Null] | [Value::Null, _] => Ok(Value::Null),
-        [arg1, arg2] => Err(format!(
+        (_, Some(Value::Null)) | (Some(Value::Null), _) => Ok(Value::Null),
+        (Some(arg1), Some(arg2)) => Err(format!(
             "Type mismatch: expected String or Null but was ({}, {})",
             arg1.name(),
             arg2.name()
@@ -1318,10 +1330,13 @@ fn internal_ends_with(
     _: &mut Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
-    match args.as_slice() {
-        [Value::String(s), Value::String(suffix)] => Ok(Value::Bool(s.ends_with(suffix))),
-        [_, Value::Null] | [Value::Null, _] => Ok(Value::Null),
-        [arg1, arg2] => Err(format!(
+    let mut iter = args.into_iter();
+    match (iter.next(), iter.next()) {
+        (Some(Value::String(s)), Some(Value::String(suffix))) => {
+            Ok(Value::Bool(s.ends_with(suffix.as_str())))
+        }
+        (_, Some(Value::Null)) | (Some(Value::Null), _) => Ok(Value::Null),
+        (Some(arg1), Some(arg2)) => Err(format!(
             "Type mismatch: Type mismatch: expected String or Null but was ({}, {})",
             arg1.name(),
             arg2.name()
@@ -1334,10 +1349,13 @@ fn internal_contains(
     _: &mut Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
-    match args.as_slice() {
-        [Value::String(s), Value::String(substring)] => Ok(Value::Bool(s.contains(substring))),
-        [_, Value::Null] | [Value::Null, _] => Ok(Value::Null),
-        [arg1, arg2] => Err(format!(
+    let mut iter = args.into_iter();
+    match (iter.next(), iter.next()) {
+        (Some(Value::String(s)), Some(Value::String(substring))) => {
+            Ok(Value::Bool(s.contains(substring.as_str())))
+        }
+        (_, Some(Value::Null)) | (Some(Value::Null), _) => Ok(Value::Null),
+        (Some(arg1), Some(arg2)) => Err(format!(
             "Type mismatch: expected String or Null but was ({}, {})",
             arg1.name(),
             arg2.name()
@@ -1350,21 +1368,22 @@ fn internal_regex_matches(
     _: &mut Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
-    match args.as_slice() {
-        [Value::String(s), Value::String(pattern)] => {
+    let mut iter = args.into_iter();
+    match (iter.next(), iter.next()) {
+        (Some(Value::String(s)), Some(Value::String(pattern))) => {
             // Compile the regex pattern
-            match regex::Regex::new(pattern) {
-                Ok(re) => Ok(Value::Bool(re.is_match(s))),
+            match regex::Regex::new(pattern.as_str()) {
+                Ok(re) => Ok(Value::Bool(re.is_match(s.as_str()))),
                 Err(e) => Err(format!("Invalid regex pattern: {e}")),
             }
         }
-        [Value::Null, _] | [_, Value::Null] => Ok(Value::Null),
-        [arg1, arg2] => Err(format!(
+        (Some(Value::Null), _) | (_, Some(Value::Null)) => Ok(Value::Null),
+        (Some(arg1), Some(arg2)) => Err(format!(
             "Type mismatch: expected (String, String) or null, but was: ({}, {})",
             arg1.name(),
             arg2.name()
         )),
-        _ => Err("Expected two arguments for regex matching".to_string()),
+        _ => unreachable!(),
     }
 }
 
