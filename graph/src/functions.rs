@@ -115,18 +115,20 @@ impl Functions {
         })
     }
 
+    #[must_use]
     pub fn is_aggregate(
         &self,
         name: &str,
     ) -> bool {
         self.functions
             .get(name)
-            .map_or(false, |graph_fn| graph_fn.fn_type == FnType::Aggregation)
+            .is_some_and(|graph_fn| graph_fn.fn_type == FnType::Aggregation)
     }
 }
 
 static FUNCTIONS: OnceLock<Functions> = OnceLock::new();
 
+#[allow(clippy::too_many_lines)]
 pub fn init_functions() -> Result<(), Functions> {
     let mut funcs = Functions::new();
     funcs.add("create_node", create_node, true, 2, 2, FnType::Internal);
@@ -519,29 +521,6 @@ fn labels(
     }
 }
 
-fn args_size_error(
-    args: &[Value],
-    function_name: &str,
-    min: usize,
-    max: usize,
-) -> Result<Value, String> {
-    if max < args.len() {
-        Err(format!(
-            "Received {} arguments to function '{}', expected at most {}",
-            args.len(),
-            function_name,
-            max
-        ))
-    } else {
-        Err(format!(
-            "Received {} arguments to function '{}', expected at least {}",
-            args.len(),
-            function_name,
-            min
-        ))
-    }
-}
-
 #[allow(clippy::unnecessary_wraps)]
 fn start_node(
     _runtime: &mut Runtime,
@@ -697,7 +676,7 @@ fn size(
             "Type mismatch: expected List, String, or Null but was {}",
             arg.name()
         )),
-        args => args_size_error(args, "size", 1, 1),
+        _ => unreachable!(),
     }
 }
 
@@ -718,7 +697,7 @@ fn head(
             "Type mismatch: expected List or Null but was {}",
             arg.name()
         )),
-        args => args_size_error(args, "head", 1, 1),
+        _ => unreachable!(),
     }
 }
 
@@ -733,7 +712,7 @@ fn last(
             "Type mismatch: expected List or Null but was {}",
             arg.name()
         )),
-        args => args_size_error(args, "last", 1, 1),
+        _ => unreachable!(),
     }
 }
 
@@ -754,7 +733,7 @@ fn tail(
             "Type mismatch: expected List or Null but was {}",
             arg.name()
         )),
-        args => args_size_error(args, "tail", 1, 1),
+        _ => unreachable!(),
     }
 }
 
@@ -774,7 +753,7 @@ fn reverse(
             "Type mismatch: expected List, String or null, but was {}",
             arg.name()
         )),
-        args => args_size_error(args, "reverse", 1, 1),
+        _ => unreachable!(),
     }
 }
 
@@ -827,9 +806,7 @@ fn substring(
                 t.name()
             ))
         }
-
-        // Type mismatch handling
-        args => args_size_error(args, "substring", 2, 3),
+        _ => unreachable!(),
     }
 }
 
@@ -864,7 +841,7 @@ fn split(
             "Type mismatch: expected 2 String or null arguments, but was {}",
             arg.name()
         )),
-        args => args_size_error(args, "split", 2, 2),
+        _ => unreachable!(),
     }
 }
 
@@ -879,7 +856,7 @@ fn string_to_lower(
             "Type mismatch: expected List, String or null, but was {}",
             arg.name()
         )),
-        args => args_size_error(args, "toLower", 1, 1),
+        _ => unreachable!(),
     }
 }
 
@@ -894,7 +871,7 @@ fn string_to_upper(
             "Type mismatch: expected List, String or null, but was {}",
             arg.name()
         )),
-        args => args_size_error(args, "toUpper", 1, 1),
+        _ => unreachable!(),
     }
 }
 
@@ -915,7 +892,7 @@ fn string_replace(
             arg2.name(),
             arg3.name()
         )),
-        args => args_size_error(args, "replace", 3, 3),
+        _ => unreachable!(),
     }
 }
 
@@ -938,7 +915,7 @@ fn string_left(
             arg1.name(),
             arg2.name()
         )),
-        args => args_size_error(args, "left", 2, 2),
+        _ => unreachable!(),
     }
 }
 
@@ -953,7 +930,7 @@ fn string_ltrim(
             "Type mismatch: expected String or null, but was {}",
             arg.name()
         )),
-        args => args_size_error(args, "ltrim", 1, 1),
+        _ => unreachable!(),
     }
 }
 
@@ -977,7 +954,7 @@ fn string_right(
             arg1.name(),
             arg2.name()
         )),
-        args => args_size_error(args, "right", 2, 2),
+        _ => unreachable!(),
     }
 }
 fn string_join(
@@ -1013,7 +990,7 @@ fn string_join(
             "Type mismatch: expected List or Null but was {}",
             arg1.name()
         )),
-        args => args_size_error(args, "string.join", 1, 2),
+        _ => unreachable!(),
     }
 }
 
@@ -1045,7 +1022,7 @@ fn string_match_reg_ex(
             "Type mismatch: expected String or Null but was {}",
             arg1.name(),
         )),
-        args => args_size_error(args, "string.matchRegEx", 2, 2),
+        _ => unreachable!(),
     }
 }
 
@@ -1078,7 +1055,7 @@ fn string_replace_reg_ex(
             "Type mismatch: expected String or Null but was {}",
             arg1.name(),
         )),
-        args => args_size_error(args, "string.replaceRegEx", 3, 3),
+        _ => unreachable!(),
     }
 }
 
@@ -1094,7 +1071,7 @@ fn abs(
             "Type mismatch: expected Integer, Float, or Null but was {}",
             v.name()
         )),
-        args => args_size_error(args, "abs", 1, 1),
+        _ => unreachable!(),
     }
 }
 
@@ -1110,7 +1087,7 @@ fn ceil(
             "Type mismatch: expected Integer, Float, or Null but was {}",
             v.name()
         )),
-        args => args_size_error(args, "ceil", 1, 1),
+        _ => unreachable!(),
     }
 }
 
@@ -1120,7 +1097,7 @@ fn e(
 ) -> Result<Value, String> {
     match args.as_slice() {
         [] => Ok(Value::Float(std::f64::consts::E)),
-        args => args_size_error(args, "e", 0, 0),
+        _ => unreachable!(),
     }
 }
 
@@ -1136,7 +1113,7 @@ fn exp(
             "Type mismatch: expected Integer, Float, or Null but was {}",
             v.name()
         )),
-        args => args_size_error(args, "exp", 1, 1),
+        _ => unreachable!(),
     }
 }
 
@@ -1152,7 +1129,7 @@ fn floor(
             "Type mismatch: expected Integer, Float, or Null but was {}",
             v.name()
         )),
-        args => args_size_error(args, "floor", 1, 1),
+        _ => unreachable!(),
     }
 }
 
@@ -1168,7 +1145,7 @@ fn log(
             "Type mismatch: expected Integer, Float, or Null but was {}",
             v.name()
         )),
-        args => args_size_error(args, "log", 1, 1),
+        _ => unreachable!(),
     }
 }
 
@@ -1184,7 +1161,7 @@ fn log10(
             "Type mismatch: expected Integer, Float, or Null but was {}",
             v.name()
         )),
-        args => args_size_error(args, "log10", 1, 1),
+        _ => unreachable!(),
     }
 }
 fn pow(
@@ -1203,7 +1180,7 @@ fn pow(
                 v.name()
             ))
         }
-        args => args_size_error(args, "pow", 2, 2),
+        _ => unreachable!(),
     }
 }
 
@@ -1216,7 +1193,7 @@ fn rand(
             let mut rng = rand::rng();
             Ok(Value::Float(rng.random_range(0.0..1.0)))
         }
-        args => args_size_error(args, "rand", 0, 0),
+        _ => unreachable!(),
     }
 }
 
@@ -1232,7 +1209,7 @@ fn round(
             "Type mismatch: expected Integer, Float, or Null but was {}",
             v.name()
         )),
-        args => args_size_error(args, "round", 1, 1),
+        _ => unreachable!(),
     }
 }
 
@@ -1252,7 +1229,7 @@ fn sign(
             "Type mismatch: expected Integer, Float, or Null but was {}",
             v.name()
         )),
-        args => args_size_error(args, "sign", 1, 1),
+        _ => unreachable!(),
     }
 }
 
@@ -1280,7 +1257,7 @@ fn sqrt(
             "Type mismatch: expected Integer, Float, or Null but was {}",
             v.name()
         )),
-        args => args_size_error(args, "sqrt", 1, 1),
+        _ => unreachable!(),
     }
 }
 
