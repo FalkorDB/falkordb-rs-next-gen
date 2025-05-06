@@ -2,7 +2,7 @@ use std::{collections::HashSet, fmt::Display};
 
 use orx_tree::{DynNode, DynTree, NodeRef};
 
-use crate::functions::get_functions;
+use crate::functions::{FnType, get_functions};
 
 #[derive(Clone, Debug)]
 pub enum ExprIR {
@@ -38,7 +38,7 @@ pub enum ExprIR {
     Div,
     Pow,
     Modulo,
-    FuncInvocation(String),
+    FuncInvocation(String, FnType),
     Map,
     Set(String),
 }
@@ -107,8 +107,8 @@ impl Validate for DynNode<'_, ExprIR> {
                 }
                 Ok(())
             }
-            ExprIR::FuncInvocation(name) => {
-                get_functions().validate(name, self.num_children())?;
+            ExprIR::FuncInvocation(name, fn_type) => {
+                get_functions().validate(name, fn_type, self.num_children())?;
                 for expr in self.children() {
                     expr.validate(env)?;
                 }
@@ -162,12 +162,7 @@ pub trait SupportAggregation {
 impl SupportAggregation for DynNode<'_, ExprIR> {
     fn is_aggregation(&self) -> bool {
         match self.data() {
-            ExprIR::FuncInvocation(name) => {
-                matches!(
-                    name.as_str(),
-                    "count" | "sum" | "avg" | "min" | "max" | "collect"
-                )
-            }
+            ExprIR::FuncInvocation(_, FnType::Aggregation) => true,
             ExprIR::Set(_) => self.child(0).is_aggregation(),
             _ => false,
         }

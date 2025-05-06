@@ -5,12 +5,54 @@ use std::collections::BTreeMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::OnceLock;
 
+type RuntimeFn = fn(&mut Runtime, Vec<Value>) -> Result<Value, String>;
+
+#[derive(Eq, PartialEq, Debug, Clone)]
+pub enum FnType {
+    Function,
+    Internal,
+    Procedure,
+    Aggregation,
+}
+
+#[derive(Debug)]
+pub struct GraphFn {
+    pub name: String,
+    pub func: RuntimeFn,
+    pub write: bool,
+    pub min_args: usize,
+    pub max_args: usize,
+    pub fn_type: FnType,
+}
+
+impl GraphFn {
+    #[must_use]
+    pub fn new(
+        name: &str,
+        func: RuntimeFn,
+        write: bool,
+        min_args: usize,
+        max_args: usize,
+        fn_type: FnType,
+    ) -> Self {
+        Self {
+            name: name.to_string(),
+            func,
+            write,
+            min_args,
+            max_args,
+            fn_type,
+        }
+    }
+}
+
 #[derive(Default, Debug)]
 pub struct Functions {
     functions: BTreeMap<String, GraphFn>,
 }
 
 impl Functions {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -18,165 +60,228 @@ impl Functions {
     pub fn add(
         &mut self,
         name: &str,
-        fn_type: FnType,
+        func: RuntimeFn,
+        write: bool,
         min_args: usize,
         max_args: usize,
+        fn_type: FnType,
     ) {
-        if self.functions.contains_key(name) {
-            panic!("Function '{}' already exists", name);
-        }
-        let graph_fn = GraphFn::new(name, fn_type, min_args, max_args);
+        assert!(
+            !self.functions.contains_key(name),
+            "Function '{name}' already exists"
+        );
+        let graph_fn = GraphFn::new(name, func, write, min_args, max_args, fn_type);
         self.functions.insert(name.to_owned(), graph_fn);
     }
 
     pub fn validate(
         &self,
         name: &str,
+        fn_type: &FnType,
         args: usize,
     ) -> Result<(), String> {
-        if let Some(graph_fn) = self.functions.get(name) {
-            if args < graph_fn.min_args {
-                Err(format!(
-                    "Received {} arguments to function '{}', expected at least {}",
-                    args, name, graph_fn.min_args
-                ))
-            } else if graph_fn.max_args < args {
-                Err(format!(
-                    "Received {} arguments to function '{}', expected at most {}",
-                    args, name, graph_fn.max_args
-                ))
-            } else {
-                Ok(())
-            }
-        } else {
-            Err(format!("Function {} not found", name))
-        }
+        self.get(name, fn_type).map_or_else(
+            || Err(format!("Function {name} not found")),
+            |graph_fn| {
+                if args < graph_fn.min_args {
+                    Err(format!(
+                        "Received {} arguments to function '{}', expected at least {}",
+                        args, name, graph_fn.min_args
+                    ))
+                } else if graph_fn.max_args < args {
+                    Err(format!(
+                        "Received {} arguments to function '{}', expected at most {}",
+                        args, name, graph_fn.max_args
+                    ))
+                } else {
+                    Ok(())
+                }
+            },
+        )
     }
+
+    #[must_use]
     pub fn get(
         &self,
         name: &str,
+        fn_type: &FnType,
     ) -> Option<&GraphFn> {
-        self.functions.get(name)
+        self.functions.get(name).and_then(|graph_fn| {
+            if &graph_fn.fn_type == fn_type {
+                Some(graph_fn)
+            } else {
+                None
+            }
+        })
     }
-}
 
-#[derive(Debug)]
-pub struct GraphFn {
-    pub name: String,
-    pub fn_type: FnType,
-    pub min_args: usize,
-    pub max_args: usize,
-}
-
-impl GraphFn {
-    pub fn new(
+    pub fn is_aggregate(
+        &self,
         name: &str,
-        fn_type: FnType,
-        min_args: usize,
-        max_args: usize,
-    ) -> Self {
-        Self {
-            name: name.to_string(),
-            fn_type,
-            min_args,
-            max_args,
-        }
+    ) -> bool {
+        self.functions
+            .get(name)
+            .map_or(false, |graph_fn| graph_fn.fn_type == FnType::Aggregation)
     }
 }
-
-#[derive(Debug)]
-pub enum FnType {
-    Read(RuntimeFn),
-    Write(RuntimeFn),
-}
-
-type RuntimeFn = fn(&mut Runtime, Vec<Value>) -> Result<Value, String>;
 
 static FUNCTIONS: OnceLock<Functions> = OnceLock::new();
 
 pub fn init_functions() -> Result<(), Functions> {
     let mut funcs = Functions::new();
-    funcs.add("create_node", FnType::Write(create_node), 2, 2);
+    funcs.add("create_node", create_node, true, 2, 2, FnType::Internal);
     funcs.add(
         "create_relationship",
-        FnType::Write(create_relationship),
+        create_relationship,
+        true,
         4,
         4,
+        FnType::Internal,
     );
-    funcs.add("delete_entity", FnType::Write(delete_entity), 1, usize::MAX);
+    funcs.add(
+        "delete_entity",
+        delete_entity,
+        true,
+        1,
+        usize::MAX,
+        FnType::Internal,
+    );
 
     funcs.add(
         "create_aggregate_ctx",
-        FnType::Read(create_aggregate_ctx),
+        create_aggregate_ctx,
+        false,
         1,
         usize::MAX,
+        FnType::Internal,
     );
-    funcs.add("create_node_iter", FnType::Read(create_node_iter), 1, 1);
-    funcs.add("next_node", FnType::Read(next_node), 1, 1);
+    funcs.add(
+        "create_node_iter",
+        create_node_iter,
+        false,
+        1,
+        1,
+        FnType::Internal,
+    );
+    funcs.add("next_node", next_node, false, 1, 1, FnType::Internal);
     funcs.add(
         "create_relationship_iter",
-        FnType::Read(create_relationship_iter),
+        create_relationship_iter,
+        false,
         1,
         1,
+        FnType::Internal,
     );
-    funcs.add("next_relationship", FnType::Read(next_relationship), 1, 1);
-    funcs.add("property", FnType::Read(property), 2, 2);
-    funcs.add("toInteger", FnType::Read(value_to_integer), 1, 1);
-    funcs.add("labels", FnType::Read(labels), 1, 1);
-    funcs.add("startnode", FnType::Read(start_node), 1, 1);
-    funcs.add("endnode", FnType::Read(end_node), 1, 1);
-    funcs.add("size", FnType::Read(size), 1, 1);
-    funcs.add("head", FnType::Read(head), 1, 1);
-    funcs.add("last", FnType::Read(last), 1, 1);
-    funcs.add("tail", FnType::Read(tail), 1, 1);
-    funcs.add("reverse", FnType::Read(reverse), 1, 1);
-    funcs.add("substring", FnType::Read(substring), 2, 3);
-    funcs.add("split", FnType::Read(split), 2, 2);
-    funcs.add("toLower", FnType::Read(string_to_lower), 1, 1);
-    funcs.add("toUpper", FnType::Read(string_to_upper), 1, 1);
-    funcs.add("replace", FnType::Read(string_replace), 3, 3);
-    funcs.add("left", FnType::Read(string_left), 2, 2);
-    funcs.add("ltrim", FnType::Read(string_ltrim), 1, 1);
-    funcs.add("right", FnType::Read(string_right), 2, 2);
-    funcs.add("string.join", FnType::Read(string_join), 1, 2);
-    funcs.add("string.matchRegEx", FnType::Read(string_match_reg_ex), 2, 2);
+    funcs.add(
+        "next_relationship",
+        next_relationship,
+        false,
+        1,
+        1,
+        FnType::Internal,
+    );
+    funcs.add("property", property, false, 2, 2, FnType::Internal);
+
+    funcs.add("toInteger", value_to_integer, false, 1, 1, FnType::Function);
+    funcs.add("labels", labels, false, 1, 1, FnType::Function);
+    funcs.add("startnode", start_node, false, 1, 1, FnType::Function);
+    funcs.add("endnode", end_node, false, 1, 1, FnType::Function);
+    funcs.add("size", size, false, 1, 1, FnType::Function);
+    funcs.add("head", head, false, 1, 1, FnType::Function);
+    funcs.add("last", last, false, 1, 1, FnType::Function);
+    funcs.add("tail", tail, false, 1, 1, FnType::Function);
+    funcs.add("reverse", reverse, false, 1, 1, FnType::Function);
+    funcs.add("substring", substring, false, 2, 3, FnType::Function);
+    funcs.add("split", split, false, 2, 2, FnType::Function);
+    funcs.add("toLower", string_to_lower, false, 1, 1, FnType::Function);
+    funcs.add("toUpper", string_to_upper, false, 1, 1, FnType::Function);
+    funcs.add("replace", string_replace, false, 3, 3, FnType::Function);
+    funcs.add("left", string_left, false, 2, 2, FnType::Function);
+    funcs.add("ltrim", string_ltrim, false, 1, 1, FnType::Function);
+    funcs.add("right", string_right, false, 2, 2, FnType::Function);
+    funcs.add("string.join", string_join, false, 1, 2, FnType::Function);
+    funcs.add(
+        "string.matchRegEx",
+        string_match_reg_ex,
+        false,
+        2,
+        2,
+        FnType::Function,
+    );
     funcs.add(
         "string.replaceRegEx",
-        FnType::Read(string_replace_reg_ex),
+        string_replace_reg_ex,
+        false,
         3,
         3,
+        FnType::Function,
     );
-    funcs.add("abs", FnType::Read(abs), 1, 1);
-    funcs.add("ceil", FnType::Read(ceil), 1, 1);
-    funcs.add("e", FnType::Read(e), 0, 0);
-    funcs.add("exp", FnType::Read(exp), 1, 1);
-    funcs.add("floor", FnType::Read(floor), 1, 1);
-    funcs.add("log", FnType::Read(log), 1, 1);
-    funcs.add("log10", FnType::Read(log10), 1, 1);
-    funcs.add("pow", FnType::Read(pow), 2, 2);
-    funcs.add("rand", FnType::Read(rand), 0, 0);
-    funcs.add("round", FnType::Read(round), 1, 1);
-    funcs.add("sign", FnType::Read(sign), 1, 1);
-    funcs.add("sqrt", FnType::Read(sqrt), 1, 1);
-    funcs.add("range", FnType::Read(range), 1, 3);
+    funcs.add("abs", abs, false, 1, 1, FnType::Function);
+    funcs.add("ceil", ceil, false, 1, 1, FnType::Function);
+    funcs.add("e", e, false, 0, 0, FnType::Function);
+    funcs.add("exp", exp, false, 1, 1, FnType::Function);
+    funcs.add("floor", floor, false, 1, 1, FnType::Function);
+    funcs.add("log", log, false, 1, 1, FnType::Function);
+    funcs.add("log10", log10, false, 1, 1, FnType::Function);
+    funcs.add("pow", pow, false, 2, 2, FnType::Function);
+    funcs.add("rand", rand, false, 0, 0, FnType::Function);
+    funcs.add("round", round, false, 1, 1, FnType::Function);
+    funcs.add("sign", sign, false, 1, 1, FnType::Function);
+    funcs.add("sqrt", sqrt, false, 1, 1, FnType::Function);
+    funcs.add("range", range, false, 1, 3, FnType::Function);
 
     // aggregation functions
-    funcs.add("collect", FnType::Read(collect), 1, 2);
-    funcs.add("count", FnType::Read(count), 1, 2);
-    funcs.add("sum", FnType::Read(sum), 1, 2);
-    funcs.add("max", FnType::Read(max), 1, 2);
-    funcs.add("min", FnType::Read(min), 1, 2);
+    funcs.add("collect", collect, false, 1, 2, FnType::Aggregation);
+    funcs.add("count", count, false, 1, 2, FnType::Aggregation);
+    funcs.add("sum", sum, false, 1, 2, FnType::Aggregation);
+    funcs.add("max", max, false, 1, 2, FnType::Aggregation);
+    funcs.add("min", min, false, 1, 2, FnType::Aggregation);
 
     // Internal functions
-    funcs.add("@starts_with", FnType::Read(internal_starts_with), 2, 2);
-    funcs.add("@ends_with", FnType::Read(internal_ends_with), 2, 2);
-    funcs.add("@contains", FnType::Read(internal_contains), 2, 2);
-    funcs.add("@regex_matches", FnType::Read(internal_regex_matches), 2, 2);
+    funcs.add(
+        "starts_with",
+        internal_starts_with,
+        false,
+        2,
+        2,
+        FnType::Internal,
+    );
+    funcs.add(
+        "ends_with",
+        internal_ends_with,
+        false,
+        2,
+        2,
+        FnType::Internal,
+    );
+    funcs.add("contains", internal_contains, false, 2, 2, FnType::Internal);
+    funcs.add(
+        "regex_matches",
+        internal_regex_matches,
+        false,
+        2,
+        2,
+        FnType::Internal,
+    );
 
     // Procedures
-    funcs.add("db.labels", FnType::Read(db_labels), 0, 0);
-    funcs.add("db.relationshiptypes", FnType::Read(db_types), 0, 0);
-    funcs.add("db.propertykeys", FnType::Read(db_properties), 0, 0);
+    funcs.add("db.labels", db_labels, false, 0, 0, FnType::Procedure);
+    funcs.add(
+        "db.relationshiptypes",
+        db_types,
+        false,
+        0,
+        0,
+        FnType::Procedure,
+    );
+    funcs.add(
+        "db.propertykeys",
+        db_properties,
+        false,
+        0,
+        0,
+        FnType::Procedure,
+    );
 
     FUNCTIONS.set(funcs)
 }

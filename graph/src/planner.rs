@@ -7,6 +7,7 @@ use orx_tree::{Dyn, DynTree, NodeMut, NodeRef};
 
 use crate::{
     ast::{Alias, ExprIR, NodePattern, Pattern, QueryIR, RelationshipPattern, SupportAggregation},
+    functions::FnType,
     tree,
 };
 
@@ -64,7 +65,7 @@ impl Planner {
         expr: &mut NodeMut<Dyn<ExprIR>>,
     ) {
         match expr.data() {
-            ExprIR::FuncInvocation(_) => {
+            ExprIR::FuncInvocation(_, FnType::Aggregation) => {
                 expr.push_child_tree(tree!(ExprIR::Var(agg_ctx_var)));
             }
             ExprIR::Set(_) => {
@@ -86,7 +87,7 @@ impl Planner {
                     tree!(IR::Expr(tree!(
                         ExprIR::Set(n.alias.to_string()),
                         tree!(
-                            ExprIR::FuncInvocation(String::from("create_node")),
+                            ExprIR::FuncInvocation(String::from("create_node"), FnType::Internal),
                             tree!(ExprIR::List ; n
                                 .labels
                                 .iter()
@@ -99,7 +100,7 @@ impl Planner {
                     tree!(IR::Expr(tree!(
                         ExprIR::Set(l.alias.to_string()),
                         tree!(
-                            ExprIR::FuncInvocation(String::from("create_relationship")),
+                            ExprIR::FuncInvocation(String::from("create_relationship"), FnType::Internal),
                             tree!(ExprIR::String(l.relationship_type.to_string())),
                             tree!(ExprIR::Var(l.from.to_string())),
                             tree!(ExprIR::Var(l.to.to_string())),
@@ -116,7 +117,7 @@ impl Planner {
                     tree!(IR::Expr(tree!(
                         ExprIR::Set(n.alias.to_string()),
                         tree!(
-                            ExprIR::FuncInvocation(String::from("create_node")),
+                            ExprIR::FuncInvocation(String::from("create_node"), FnType::Internal),
                             tree!(ExprIR::List ; n
                                 .labels
                                 .iter()
@@ -129,7 +130,7 @@ impl Planner {
                     tree!(IR::Expr(tree!(
                         ExprIR::Set(l.alias.to_string()),
                         tree!(
-                            ExprIR::FuncInvocation(String::from("create_relationship")),
+                            ExprIR::FuncInvocation(String::from("create_relationship"), FnType::Internal),
                             tree!(ExprIR::String(l.relationship_type.to_string())),
                             tree!(ExprIR::Var(l.from.to_string())),
                             tree!(ExprIR::Var(l.to.to_string())),
@@ -150,13 +151,13 @@ impl Planner {
             tree!(
                 IR::Block,
                 tree!(IR::Expr(
-                    tree!(ExprIR::FuncInvocation(String::from("delete_entity")) ; exprs)
+                    tree!(ExprIR::FuncInvocation(String::from("delete_entity"), FnType::Internal) ; exprs)
                 )),
                 self.plan_query(body_ir, iter)
             )
         } else {
             tree!(IR::Expr(
-                tree!(ExprIR::FuncInvocation(String::from("delete_entity")) ; exprs)
+                tree!(ExprIR::FuncInvocation(String::from("delete_entity"), FnType::Internal) ; exprs)
             ))
         }
     }
@@ -167,7 +168,8 @@ impl Planner {
         iter: &mut IntoIter<QueryIR>,
         alias: String,
     ) -> DynTree<IR> {
-        if matches!(list.root().data(), ExprIR::FuncInvocation(f) if f == &"range".to_string()) {
+        if matches!(list.root().data(), ExprIR::FuncInvocation(f, FnType::Function) if f == &"range".to_string())
+        {
             let init = tree!(IR::Expr(tree!(
                 ExprIR::Set(alias.to_string()),
                 list.root().child(0).as_cloned_subtree()
@@ -249,7 +251,7 @@ impl Planner {
             tree!(IR::Expr(tree!(
                 ExprIR::Set(format!("iter_{}", node.alias)),
                 tree!(
-                    ExprIR::FuncInvocation(String::from("create_node_iter")),
+                    ExprIR::FuncInvocation(String::from("create_node_iter"), FnType::Internal),
                     tree!(ExprIR::List ; node
                             .labels
                             .into_iter()
@@ -259,7 +261,7 @@ impl Planner {
             tree!(IR::Expr(tree!(
                 ExprIR::Set(node.alias.to_string()),
                 tree!(
-                    ExprIR::FuncInvocation(String::from("next_node")),
+                    ExprIR::FuncInvocation(String::from("next_node"), FnType::Internal),
                     tree!(ExprIR::Var(format!("iter_{}", node.alias)))
                 )
             )))
@@ -271,7 +273,7 @@ impl Planner {
         let next = tree!(IR::Expr(tree!(
             ExprIR::Set(node.alias.to_string()),
             tree!(
-                ExprIR::FuncInvocation(String::from("next_node")),
+                ExprIR::FuncInvocation(String::from("next_node"), FnType::Internal),
                 tree!(ExprIR::Var(format!("iter_{}", node.alias)))
             )
         )));
@@ -288,14 +290,17 @@ impl Planner {
             tree!(IR::Expr(tree!(
                 ExprIR::Set(format!("iter_{}", rel.alias)),
                 tree!(
-                    ExprIR::FuncInvocation(String::from("create_relationship_iter")),
+                    ExprIR::FuncInvocation(
+                        String::from("create_relationship_iter"),
+                        FnType::Internal
+                    ),
                     tree!(ExprIR::String(rel.relationship_type.to_string()))
                 )
             ))),
             tree!(IR::Expr(tree!(
                 ExprIR::Set(rel.alias.to_string()),
                 tree!(
-                    ExprIR::FuncInvocation(String::from("next_relationship")),
+                    ExprIR::FuncInvocation(String::from("next_relationship"), FnType::Internal),
                     tree!(ExprIR::Var(format!("iter_{}", rel.alias)))
                 )
             )))
@@ -309,7 +314,7 @@ impl Planner {
             tree!(IR::Expr(tree!(
                 ExprIR::Set(rel.alias.to_string()),
                 tree!(
-                    ExprIR::FuncInvocation("next_relationship".to_string()),
+                    ExprIR::FuncInvocation("next_relationship".to_string(), FnType::Internal),
                     tree!(ExprIR::Var(format!("iter_{}", rel.alias)))
                 )
             )))
@@ -318,14 +323,14 @@ impl Planner {
             init.root_mut().push_child_tree(tree!(IR::Expr(tree!(
                 ExprIR::Set(from.to_string()),
                 tree!(
-                    ExprIR::FuncInvocation("startnode".to_string()),
+                    ExprIR::FuncInvocation("startnode".to_string(), FnType::Function),
                     tree!(ExprIR::Var(rel.alias.to_string()))
                 )
             ))));
             next.root_mut().push_child_tree(tree!(IR::Expr(tree!(
                 ExprIR::Set(from.to_string()),
                 tree!(
-                    ExprIR::FuncInvocation("startnode".to_string()),
+                    ExprIR::FuncInvocation("startnode".to_string(), FnType::Function),
                     tree!(ExprIR::Var(rel.alias.to_string()))
                 )
             ))));
@@ -334,14 +339,14 @@ impl Planner {
             init.root_mut().push_child_tree(tree!(IR::Expr(tree!(
                 ExprIR::Set(to.to_string()),
                 tree!(
-                    ExprIR::FuncInvocation("endnode".to_string()),
+                    ExprIR::FuncInvocation("endnode".to_string(), FnType::Function),
                     tree!(ExprIR::Var(rel.alias.to_string()))
                 )
             ))));
             next.root_mut().push_child_tree(tree!(IR::Expr(tree!(
                 ExprIR::Set(to.to_string()),
                 tree!(
-                    ExprIR::FuncInvocation("endnode".to_string()),
+                    ExprIR::FuncInvocation("endnode".to_string(), FnType::Function),
                     tree!(ExprIR::Var(rel.alias.to_string()))
                 )
             ))));
@@ -381,7 +386,7 @@ impl Planner {
                     IR::Block,
                     tree!(IR::Expr(tree!(
                         ExprIR::Set("res".to_string()),
-                        tree!(ExprIR::FuncInvocation(name.to_lowercase()) ; exprs)
+                        tree!(ExprIR::FuncInvocation(name.to_lowercase(), FnType::Procedure) ; exprs)
                     ))),
                     tree!(IR::Expr(tree!(
                         ExprIR::Set("i".to_string()),
@@ -447,7 +452,7 @@ impl Planner {
                         [tree!(IR::Expr(tree!(
                             ExprIR::Set(agg_ctx_var),
                             tree!(ExprIR::FuncInvocation(
-                                "create_aggregate_ctx".to_string()) ;
+                                "create_aggregate_ctx".to_string(), FnType::Internal) ;
                                 group_by_keys
                             )
                         )))],

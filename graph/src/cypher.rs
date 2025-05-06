@@ -1,5 +1,6 @@
 use crate::ast::{Alias, ExprIR, NodePattern, PathPattern, Pattern, QueryIR, RelationshipPattern};
 use crate::cypher::Token::{RBrace, RParen};
+use crate::functions::{FnType, get_functions};
 use crate::tree;
 use falkordb_macro::parse_binary_expr;
 use orx_tree::DynTree;
@@ -719,8 +720,10 @@ impl<'a> Parser<'a> {
                 if self.lexer.current() == Token::LParen {
                     self.lexer.next();
 
+                    let is_aggregate = get_functions().is_aggregate(&namespace_and_function);
                     return Ok(tree!(ExprIR::FuncInvocation(
-                        namespace_and_function
+                        namespace_and_function,
+                        if is_aggregate { FnType::Aggregation } else { FnType::Function },
                     ); self.parse_expression_list(ExpressionListType::ZeroOrMoreClosedBy(RParen))?));
                 }
                 self.lexer.set_pos(pos);
@@ -776,7 +779,7 @@ impl<'a> Parser<'a> {
             self.lexer.next();
             let ident = self.parse_ident()?;
             expr = tree!(
-                ExprIR::FuncInvocation("property".to_string()),
+                ExprIR::FuncInvocation("property".to_string(), FnType::Internal),
                 expr,
                 tree!(ExprIR::String(ident))
             );
@@ -869,7 +872,7 @@ impl<'a> Parser<'a> {
                 match_token!(self.lexer, With);
                 let rhs = self.parse_add_sub_expr()?;
                 Ok(tree!(
-                    ExprIR::FuncInvocation("@starts_with".to_string()),
+                    ExprIR::FuncInvocation("starts_with".to_string(), FnType::Internal),
                     lhs,
                     rhs
                 ))
@@ -879,7 +882,7 @@ impl<'a> Parser<'a> {
                 match_token!(self.lexer, With);
                 let rhs = self.parse_add_sub_expr()?;
                 Ok(tree!(
-                    ExprIR::FuncInvocation("@ends_with".to_string()),
+                    ExprIR::FuncInvocation("ends_with".to_string(), FnType::Internal),
                     lhs,
                     rhs
                 ))
@@ -888,7 +891,7 @@ impl<'a> Parser<'a> {
                 self.lexer.next();
                 let rhs = self.parse_add_sub_expr()?;
                 Ok(tree!(
-                    ExprIR::FuncInvocation("@contains".to_string()),
+                    ExprIR::FuncInvocation("contains".to_string(), FnType::Internal),
                     lhs,
                     rhs
                 ))
@@ -897,7 +900,7 @@ impl<'a> Parser<'a> {
                 self.lexer.next();
                 let rhs = self.parse_add_sub_expr()?;
                 Ok(tree!(
-                    ExprIR::FuncInvocation("@regex_matches".to_string()),
+                    ExprIR::FuncInvocation("regex_matches".to_string(), FnType::Internal),
                     lhs,
                     rhs
                 ))

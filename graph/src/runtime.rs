@@ -1,4 +1,4 @@
-use crate::functions::{FnType, Functions, GraphFn, get_functions};
+use crate::functions::{Functions, GraphFn, get_functions};
 use crate::{ast::ExprIR, graph::Graph, planner::IR, value::Contains, value::Value};
 use crate::{matrix, tensor};
 use orx_tree::{DynNode, DynTree, NodeRef};
@@ -276,19 +276,17 @@ impl<'a> Runtime<'a> {
                     _ => Value::Null,
                 })
                 .ok_or_else(|| "Pow operator requires at least one argument".to_string()),
-            ExprIR::FuncInvocation(name) => {
+            ExprIR::FuncInvocation(name, fn_type) => {
                 let args = ir
                     .children()
                     .map(|ir| self.run_expr(&ir))
                     .collect::<Result<Vec<_>, _>>()?;
-                match self.functions.get(name) {
+                match self.functions.get(name, fn_type) {
                     Some(GraphFn {
-                        fn_type: FnType::Read(func),
-                        ..
+                        func, write: false, ..
                     }) => func(self, args),
                     Some(GraphFn {
-                        fn_type: FnType::Write(func),
-                        ..
+                        func, write: true, ..
                     }) => {
                         if !self.write {
                             return Err(
