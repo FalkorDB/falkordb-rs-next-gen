@@ -331,31 +331,24 @@ impl<'a> Runtime<'a> {
                 .ok_or_else(|| "Add operator requires at least one operand".to_string())?,
             ExprIR::Sub => ir
                 .children()
-                .flat_map(|ir| self.run_expr(&ir))
-                .reduce(|a, b| match (a, b) {
-                    (Value::Int(a), Value::Int(b)) => Value::Int(a - b),
-                    _ => Value::Null,
-                })
-                .ok_or_else(|| "Sub operator requires at least one argument".to_string()),
+                .map(|ir| self.run_expr(&ir))
+                .reduce(|acc, value| acc? - value?)
+                .ok_or_else(|| "Sub operator requires at least one argument".to_string())?,
             ExprIR::Mul => ir
                 .children()
-                .flat_map(|ir| self.run_expr(&ir))
-                .reduce(|a, b| match (a, b) {
-                    (Value::Int(a), Value::Int(b)) => Value::Int(a * b),
-                    _ => Value::Null,
-                })
-                .ok_or_else(|| "Mul operator requires at least one argument".to_string()),
+                .map(|ir| self.run_expr(&ir))
+                .reduce(|acc, value| acc? * value?)
+                .ok_or_else(|| "Mul operator requires at least one argument".to_string())?,
             ExprIR::Div => ir
                 .children()
-                .flat_map(|ir| self.run_expr(&ir))
-                .reduce(|a, b| match (a, b) {
-                    (Value::Int(a), Value::Int(b)) => Value::Int(a / b),
-                    (Value::Int(a), Value::Float(b)) => Value::Float(a as f64 / b),
-                    (Value::Float(a), Value::Int(b)) => Value::Float(a / b as f64),
-                    (Value::Float(a), Value::Float(b)) => Value::Float(a / b),
-                    _ => Value::Null,
-                })
-                .ok_or_else(|| "Div operator requires at least one argument".to_string()),
+                .map(|ir| self.run_expr(&ir))
+                .reduce(|acc, value| acc? / value?)
+                .ok_or_else(|| "Div operator requires at least one argument".to_string())?,
+            ExprIR::Modulo => ir
+                .children()
+                .map(|ir| self.run_expr(&ir))
+                .reduce(|acc, value| acc? % value?)
+                .ok_or_else(|| "Modulo operator requires at least one argument".to_string())?,
             ExprIR::Pow => ir
                 .children()
                 .flat_map(|ir| self.run_expr(&ir))
@@ -364,14 +357,6 @@ impl<'a> Runtime<'a> {
                     _ => Value::Null,
                 })
                 .ok_or_else(|| "Pow operator requires at least one argument".to_string()),
-            ExprIR::Modulo => ir
-                .children()
-                .flat_map(|ir| self.run_expr(&ir))
-                .reduce(|a, b| match (a, b) {
-                    (Value::Int(a), Value::Int(b)) => Value::Int(a % b),
-                    _ => Value::Null,
-                })
-                .ok_or_else(|| "Modulo operator requires at least one argument".to_string()),
             ExprIR::FuncInvocation(name) => {
                 let args = ir
                     .children()
@@ -1458,17 +1443,24 @@ impl<'a> Runtime<'a> {
         let step = args.get(2).unwrap_or(&Value::Int(1));
         match (start, end, step) {
             (Value::Int(start), Value::Int(end), Value::Int(step)) => {
-                Ok(Value::List(if step < &0 {
-                    (*end..=*start)
-                        .step_by((-step) as usize)
-                        .map(Value::Int)
-                        .collect()
+                if start >= end && step < &0 {
+                    Ok(Value::List(
+                        (*end..=*start)
+                            .rev()
+                            .step_by(step.abs() as usize)
+                            .map(Value::Int)
+                            .collect(),
+                    ))
+                } else if step < &0 {
+                    Ok(Value::List(vec![]))
                 } else {
-                    (*start..=*end)
-                        .step_by(*step as usize)
-                        .map(Value::Int)
-                        .collect()
-                }))
+                    Ok(Value::List(
+                        (*start..=*end)
+                            .step_by(*step as usize)
+                            .map(Value::Int)
+                            .collect(),
+                    ))
+                }
             }
             _ => Err("Range operator requires two integers".to_string()),
         }
