@@ -1,3 +1,4 @@
+use graph::functions::init_functions;
 use graph::runtime::{ReturnCallback, Runtime};
 use graph::{cypher::Parser, graph::Graph, matrix::init, planner::Planner, value::Value};
 use redis_module::{
@@ -415,7 +416,10 @@ fn graph_init(
             RedisModule_Free,
         );
     }
-    Status::Ok
+    match init_functions() {
+        Ok(_) => Status::Ok,
+        Err(_) => Status::Err,
+    }
 }
 
 //////////////////////////////////////////////////////
