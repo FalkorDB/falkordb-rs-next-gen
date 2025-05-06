@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::hash::Hash;
-use std::ops::Add;
+use std::ops::{Add, Div, Mul, Rem, Sub};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
@@ -68,6 +68,142 @@ impl Add for Value {
             (Self::String(s), Self::Bool(f)) => Ok(Self::String(s + &f.to_string().to_lowercase())),
             (a, b) => Err(format!(
                 "Unexpected types for add operator ({}, {})",
+                a.name(),
+                b.name()
+            )),
+        }
+    }
+}
+
+impl Sub for Value {
+    type Output = Result<Self, String>;
+
+    fn sub(
+        self,
+        rhs: Self,
+    ) -> Self::Output {
+        match (self, rhs) {
+            (Self::Null, _) | (_, Self::Null) => Ok(Self::Null),
+            (Self::Int(a), Self::Int(b)) => Ok(Self::Int(a.wrapping_sub(b))),
+            (Self::Float(a), Self::Float(b)) => Ok(Self::Float(a - b)),
+            (Self::Float(a), Self::Int(b)) => Ok(Self::Float(a - b as f64)),
+            (Self::Int(a), Self::Float(b)) => Ok(Self::Float(a as f64 - b)),
+            (a, b) => Err(format!(
+                "Unexpected types for sub operator ({}, {})",
+                a.name(),
+                b.name()
+            )),
+        }
+    }
+}
+
+impl Mul for Value {
+    type Output = Result<Self, String>;
+
+    fn mul(
+        self,
+        rhs: Self,
+    ) -> Self::Output {
+        match (self, rhs) {
+            (Self::Null, _) | (_, Self::Null) => Ok(Self::Null),
+            (Self::Int(a), Self::Int(b)) => Ok(Self::Int(a.wrapping_mul(b))),
+            (Self::Float(a), Self::Float(b)) => Ok(Self::Float(a * b)),
+            (Self::Float(a), Self::Int(b)) => Ok(Self::Float(a * b as f64)),
+            (Self::Int(a), Self::Float(b)) => Ok(Self::Float(a as f64 * b)),
+            (a, b) => Err(format!(
+                "Unexpected types for mul operator ({}, {})",
+                a.name(),
+                b.name()
+            )),
+        }
+    }
+}
+
+impl Div for Value {
+    type Output = Result<Self, String>;
+
+    fn div(
+        self,
+        rhs: Self,
+    ) -> Self::Output {
+        match (self, rhs) {
+            (Self::Null, _) | (_, Self::Null) => Ok(Self::Null),
+            (Self::Int(a), Self::Int(b)) => {
+                if b == 0 {
+                    Err("Division by zero".to_string())
+                } else {
+                    Ok(Self::Int(a.wrapping_div(b)))
+                }
+            }
+            (Self::Float(a), Self::Float(b)) => {
+                if b == 0.0 {
+                    Err("Division by zero".to_string())
+                } else {
+                    Ok(Self::Float(a / b))
+                }
+            }
+            (Self::Float(a), Self::Int(b)) => {
+                if b == 0 {
+                    Err("Division by zero".to_string())
+                } else {
+                    Ok(Self::Float(a / b as f64))
+                }
+            }
+            (Self::Int(a), Self::Float(b)) => {
+                if b == 0.0 {
+                    Err("Division by zero".to_string())
+                } else {
+                    Ok(Self::Float(a as f64 / b))
+                }
+            }
+            (a, b) => Err(format!(
+                "Unexpected types for div operator ({}, {})",
+                a.name(),
+                b.name()
+            )),
+        }
+    }
+}
+
+impl Rem for Value {
+    type Output = Result<Self, String>;
+
+    fn rem(
+        self,
+        rhs: Self,
+    ) -> Self::Output {
+        match (self, rhs) {
+            (Self::Null, _) | (_, Self::Null) => Ok(Self::Null),
+            (Self::Int(a), Self::Int(b)) => {
+                if b == 0 {
+                    Err("Division by zero".to_string())
+                } else {
+                    Ok(Self::Int(a.wrapping_rem(b)))
+                }
+            }
+            (Self::Float(a), Self::Float(b)) => {
+                if b == 0.0 {
+                    Err("Division by zero".to_string())
+                } else {
+                    Ok(Self::Float(a % b))
+                }
+            }
+            (Self::Float(a), Self::Int(b)) => {
+                if b == 0 {
+                    Err("Division by zero".to_string())
+                } else {
+                    Ok(Self::Float(a % b as f64))
+                }
+            }
+            (Self::Int(a), Self::Float(b)) => {
+                if b == 0.0 {
+                    Err("Division by zero".to_string())
+                } else {
+                    Ok(Self::Float(a as f64 % b))
+                }
+            }
+            (a, b) => Err(format!(
+                "Unexpected types for rem operator ({}, {})",
                 a.name(),
                 b.name()
             )),
