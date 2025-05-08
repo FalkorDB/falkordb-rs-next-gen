@@ -110,8 +110,10 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
   benchmark:
     runs-on: ubuntu-latest
-    container: aviavni/falkordb-build:latest
-    needs: docker
+    container: aviavni/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && github.event.pull_request.number || 'latest' }}
+    needs:
+      - check-files
+      - docker
     if: always()
     steps:
       - uses: actions/checkout@v4
