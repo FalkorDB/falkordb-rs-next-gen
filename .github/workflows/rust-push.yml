@@ -114,6 +114,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Run benchmark
         run: |
+          git config --global --add safe.directory $GITHUB_WORKSPACE
           rustup default stable
           cargo build --release
           . /data/venv/bin/activate
