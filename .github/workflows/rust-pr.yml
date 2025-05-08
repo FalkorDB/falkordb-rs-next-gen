@@ -108,6 +108,30 @@ jobs:
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
+  benchmark:
+    runs-on: ubuntu-latest
+    container: aviavni/falkordb-build:latest
+    needs: docker
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run benchmark
+        run: |
+          rustup default stable
+          cargo build --release
+          . /data/venv/bin/activate
+          pytest tests/bench.py --benchmark-json output.json
+      - name: Store benchmark result
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          name: FalkorDB Benchmark
+          tool: 'pytest'
+          output-file-path: output.txt
+          # GitHub API token to make a commit comment
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          summary-always: true
+          # Don't push to gh-pages branch in the PR
+          auto-push: false
   falkordb-e2e-compatibility:
     runs-on: ubuntu-latest
     permissions:
