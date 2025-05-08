@@ -128,7 +128,7 @@ jobs:
         with:
           name: FalkorDB Benchmark
           tool: 'pytest'
-          output-file-path: output.txt
+          output-file-path: output.json
           # GitHub API token to make a commit comment
           github-token: ${{ secrets.GITHUB_TOKEN }}
           summary-always: true
