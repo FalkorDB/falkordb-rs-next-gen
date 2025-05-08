@@ -59,6 +59,31 @@ enum Token {
     EndOfFile,
 }
 
+const KEYWORDS: [(&str, Token); 22] = [
+    ("call", Token::Call),
+    ("match", Token::Match),
+    ("unwind", Token::Unwind),
+    ("create", Token::Create),
+    ("delete", Token::Delete),
+    ("where", Token::Where),
+    ("with", Token::With),
+    ("return", Token::Return),
+    ("as", Token::As),
+    ("null", Token::Null),
+    ("true", Token::Bool(true)),
+    ("false", Token::Bool(false)),
+    ("or", Token::Or),
+    ("xor", Token::Xor),
+    ("and", Token::And),
+    ("not", Token::Not),
+    ("is", Token::Is),
+    ("in", Token::In),
+    ("starts", Token::Starts),
+    ("ends", Token::Ends),
+    ("contains", Token::Contains),
+    ("nan", Token::Float(f64::NAN)),
+];
+
 struct Lexer<'a> {
     str: &'a str,
     pos: usize,
@@ -192,31 +217,14 @@ impl<'a> Lexer<'a> {
                     while let Some('a'..='z' | 'A'..='Z' | '0'..='9') = chars.next() {
                         len += 1;
                     }
-                    let token = match str[pos..pos + len].to_lowercase().as_str() {
-                        "call" => Token::Call,
-                        "match" => Token::Match,
-                        "unwind" => Token::Unwind,
-                        "create" => Token::Create,
-                        "delete" => Token::Delete,
-                        "where" => Token::Where,
-                        "with" => Token::With,
-                        "return" => Token::Return,
-                        "null" => Token::Null,
-                        "true" => Token::Bool(true),
-                        "false" => Token::Bool(false),
-                        "as" => Token::As,
-                        "or" => Token::Or,
-                        "xor" => Token::Xor,
-                        "and" => Token::And,
-                        "not" => Token::Not,
-                        "is" => Token::Is,
-                        "in" => Token::In,
-                        "starts" => Token::Starts,
-                        "ends" => Token::Ends,
-                        "contains" => Token::Contains,
-                        "nan" => Token::Float(f64::NAN),
-                        _ => Token::Ident(str[pos..pos + len].to_string()),
-                    };
+
+                    let token = KEYWORDS
+                        .iter()
+                        .find(|&other| str[pos..pos + len].eq_ignore_ascii_case(other.0))
+                        .map_or_else(
+                            || Token::Ident(str[pos..pos + len].to_string()),
+                            |o| o.1.clone(),
+                        );
                     (token, len)
                 }
                 '`' => {
