@@ -1,3 +1,4 @@
+use crate::ast::Pattern;
 use crate::functions::{FnType, Functions, GraphFn, get_functions};
 use crate::iter::AggregateIter;
 use crate::{ast::ExprIR, graph::Graph, planner::IR, value::Contains, value::Value};
@@ -439,119 +440,11 @@ impl<'a> Runtime<'a> {
                 if ir.num_children() == 1 {
                     let pattern = pattern.clone();
                     return Ok(Box::new(self.run(ir.child(0))?.map(move |_| {
-                        for node in pattern.nodes.clone() {
-                            let properties = self.run_expr(node.attrs.root())?;
-                            match properties {
-                                Value::Map(properties) => {
-                                    let id = self.g.borrow_mut().reserve_node();
-                                    self.pending.borrow_mut().created_nodes.push((
-                                        id,
-                                        node.labels,
-                                        properties,
-                                    ));
-                                    self.vars
-                                        .borrow_mut()
-                                        .insert(node.alias.to_string(), Value::Node(id));
-                                }
-                                _ => return Err("Invalid node properties".to_string()),
-                            }
-                        }
-                        for rel in pattern.relationships.clone() {
-                            let (from_id, to_id) = {
-                                let vars = self.vars.borrow();
-                                let from_id = vars
-                                    .get(&rel.from.to_string())
-                                    .ok_or_else(|| format!("Variable {} not found", rel.from))?;
-                                let from_id = match from_id {
-                                    Value::Node(id) => *id,
-                                    _ => return Err("Invalid node id".to_string()),
-                                };
-                                let to_id = vars
-                                    .get(&rel.to.to_string())
-                                    .ok_or_else(|| format!("Variable {} not found", rel.to))?;
-                                let to_id = match to_id {
-                                    Value::Node(id) => *id,
-                                    _ => return Err("Invalid node id".to_string()),
-                                };
-                                (from_id, to_id)
-                            };
-                            let properties = self.run_expr(rel.attrs.root())?;
-                            match properties {
-                                Value::Map(properties) => {
-                                    let id = self.g.borrow_mut().reserve_relationship();
-                                    self.pending.borrow_mut().created_relationships.push((
-                                        id,
-                                        rel.relationship_type,
-                                        from_id,
-                                        to_id,
-                                        properties,
-                                    ));
-                                    self.vars.borrow_mut().insert(
-                                        rel.alias.to_string(),
-                                        Value::Relationship(id, from_id, to_id),
-                                    );
-                                }
-                                _ => return Err("Invalid relationship properties".to_string()),
-                            }
-                        }
+                        self.create(pattern.clone())?;
                         Ok(Value::List(vec![]))
                     })));
                 }
-                for node in pattern.nodes.clone() {
-                    let properties = self.run_expr(node.attrs.root())?;
-                    match properties {
-                        Value::Map(properties) => {
-                            let id = self.g.borrow_mut().reserve_node();
-                            self.pending.borrow_mut().created_nodes.push((
-                                id,
-                                node.labels,
-                                properties,
-                            ));
-                            self.vars
-                                .borrow_mut()
-                                .insert(node.alias.to_string(), Value::Node(id));
-                        }
-                        _ => return Err("Invalid node properties".to_string()),
-                    }
-                }
-                for rel in pattern.relationships.clone() {
-                    let (from_id, to_id) = {
-                        let vars = self.vars.borrow();
-                        let from_id = vars
-                            .get(&rel.from.to_string())
-                            .ok_or_else(|| format!("Variable {} not found", rel.from))?;
-                        let from_id = match from_id {
-                            Value::Node(id) => *id,
-                            _ => return Err("Invalid node id".to_string()),
-                        };
-                        let to_id = vars
-                            .get(&rel.to.to_string())
-                            .ok_or_else(|| format!("Variable {} not found", rel.to))?;
-                        let to_id = match to_id {
-                            Value::Node(id) => *id,
-                            _ => return Err("Invalid node id".to_string()),
-                        };
-                        (from_id, to_id)
-                    };
-                    let properties = self.run_expr(rel.attrs.root())?;
-                    match properties {
-                        Value::Map(properties) => {
-                            let id = self.g.borrow_mut().reserve_relationship();
-                            self.pending.borrow_mut().created_relationships.push((
-                                id,
-                                rel.relationship_type,
-                                from_id,
-                                to_id,
-                                properties,
-                            ));
-                            self.vars.borrow_mut().insert(
-                                rel.alias.to_string(),
-                                Value::Relationship(id, from_id, to_id),
-                            );
-                        }
-                        _ => return Err("Invalid relationship properties".to_string()),
-                    }
-                }
+                self.create(pattern.clone())?;
                 Ok(Box::new(empty()))
             }
             IR::Delete(trees) => {
@@ -739,6 +632,67 @@ impl<'a> Runtime<'a> {
                 Ok(Box::new(iter))
             }
         }
+    }
+
+    fn create(
+        &self,
+        pattern: Pattern,
+    ) -> Result<(), String> {
+        for node in pattern.nodes {
+            let properties = self.run_expr(node.attrs.root())?;
+            match properties {
+                Value::Map(properties) => {
+                    let id = self.g.borrow_mut().reserve_node();
+                    self.pending
+                        .borrow_mut()
+                        .created_nodes
+                        .push((id, node.labels, properties));
+                    self.vars
+                        .borrow_mut()
+                        .insert(node.alias.to_string(), Value::Node(id));
+                }
+                _ => return Err("Invalid node properties".to_string()),
+            }
+        }
+        for rel in pattern.relationships {
+            let (from_id, to_id) = {
+                let vars = self.vars.borrow();
+                let from_id = vars
+                    .get(&rel.from.to_string())
+                    .ok_or_else(|| format!("Variable {} not found", rel.from))?;
+                let from_id = match from_id {
+                    Value::Node(id) => *id,
+                    _ => return Err("Invalid node id".to_string()),
+                };
+                let to_id = vars
+                    .get(&rel.to.to_string())
+                    .ok_or_else(|| format!("Variable {} not found", rel.to))?;
+                let to_id = match to_id {
+                    Value::Node(id) => *id,
+                    _ => return Err("Invalid node id".to_string()),
+                };
+                (from_id, to_id)
+            };
+            let properties = self.run_expr(rel.attrs.root())?;
+            match properties {
+                Value::Map(properties) => {
+                    let id = self.g.borrow_mut().reserve_relationship();
+                    self.pending.borrow_mut().created_relationships.push((
+                        id,
+                        rel.relationship_type,
+                        from_id,
+                        to_id,
+                        properties,
+                    ));
+                    self.vars.borrow_mut().insert(
+                        rel.alias.to_string(),
+                        Value::Relationship(id, from_id, to_id),
+                    );
+                }
+                _ => return Err("Invalid relationship properties".to_string()),
+            }
+        }
+        Ok(())
     }
 
     fn commit(&self) {
