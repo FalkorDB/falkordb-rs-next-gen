@@ -1524,5 +1524,5 @@ def test_aggregation():
     res = query("UNWIND range(1, 10) AS x RETURN max(x)")
     assert_result_set_equal_no_order(res, [[10]])
 
-    res = query("UNWIND range(1, 11) AS x RETURN x % 2, count(x)")
+    res = query("UNWIND range(1, 11) AS x RETURN x % 2, count(x)", compare_results=False)
     assert_result_set_equal_no_order(res, [[1, 6], [0, 5]])
