@@ -280,7 +280,7 @@ impl Display for RelationshipPattern {
     ) -> std::fmt::Result {
         write!(
             f,
-            "({})-[{}:{}]->({}",
+            "({})-[{}:{}]->({})",
             self.from, self.alias, self.relationship_type, self.to
         )
     }

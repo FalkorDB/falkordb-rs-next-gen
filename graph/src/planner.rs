@@ -88,7 +88,7 @@ impl Planner {
         &mut self,
         mut pattern: Pattern,
     ) -> DynTree<IR> {
-        if pattern.relationships.is_empty() {
+        if pattern.relationships.is_empty() && !pattern.nodes.is_empty() {
             let mut iter = pattern.nodes.into_iter().rev();
             let mut body = tree!(IR::NodeScan(iter.next().unwrap()));
             for node in iter {

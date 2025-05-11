@@ -521,7 +521,7 @@ fn reverse(
         Some(Value::Null) => Ok(Value::Null),
         Some(Value::String(s)) => Ok(Value::String(s.chars().rev().collect())),
         Some(arg) => Err(format!(
-            "Type mismatch: expected List, String or null, but was {}",
+            "Type mismatch: expected List, String, or Null but was {}",
             arg.name()
         )),
         _ => unreachable!(),
@@ -562,16 +562,16 @@ fn substring(
         }
 
         (Some(Value::String(_)), Some(t), None) => Err(format!(
-            "Type mismatch: expected Integer Or Null but got {}",
+            "Type mismatch: expected Integer but was {}",
             t.name()
         )),
         (Some(t), Some(Value::Int(_)), None | Some(Value::Int(_))) => Err(format!(
-            "Type mismatch: expected String Or Null but got {}",
+            "Type mismatch: expected String or Null but was {}",
             t.name()
         )),
         (Some(Value::String(_)), Some(t), Some(Value::Int(_)))
         | (Some(Value::String(_)), Some(Value::Int(_)), Some(t)) => Err(format!(
-            "Type mismatch: expected Integer Or Null but got {}",
+            "Type mismatch: expected Integer but was {}",
             t.name()
         )),
 
@@ -619,7 +619,7 @@ fn string_to_lower(
         Some(Value::String(s)) => Ok(Value::String(s.to_lowercase())),
         Some(Value::Null) => Ok(Value::Null),
         Some(arg) => Err(format!(
-            "Type mismatch: expected List, String or null, but was {}",
+            "Type mismatch: expected String or Null but was {}",
             arg.name()
         )),
         _ => unreachable!(),
@@ -634,7 +634,7 @@ fn string_to_upper(
         Some(Value::String(s)) => Ok(Value::String(s.to_uppercase())),
         Some(Value::Null) => Ok(Value::Null),
         Some(arg) => Err(format!(
-            "Type mismatch: expected List, String or null, but was {}",
+            "Type mismatch: expected String or Null but was {}",
             arg.name()
         )),
         _ => unreachable!(),
