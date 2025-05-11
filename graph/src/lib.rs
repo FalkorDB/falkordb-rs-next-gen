@@ -3,6 +3,7 @@ pub mod ast;
 pub mod cypher;
 pub mod functions;
 pub mod graph;
+pub mod iter;
 pub mod matrix;
 pub mod planner;
 pub mod runtime;

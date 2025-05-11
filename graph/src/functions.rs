@@ -2,10 +2,9 @@ use crate::runtime::Runtime;
 use crate::value::Value;
 use rand::Rng;
 use std::collections::BTreeMap;
-use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::OnceLock;
 
-type RuntimeFn = fn(&mut Runtime, Vec<Value>) -> Result<Value, String>;
+type RuntimeFn = fn(&Runtime, Vec<Value>) -> Result<Value, String>;
 
 #[derive(Eq, PartialEq, Debug, Clone)]
 pub enum FnType {
@@ -66,12 +65,13 @@ impl Functions {
         max_args: usize,
         fn_type: FnType,
     ) {
+        let name = name.to_lowercase();
         assert!(
-            !self.functions.contains_key(name),
+            !self.functions.contains_key(&name),
             "Function '{name}' already exists"
         );
-        let graph_fn = GraphFn::new(name, func, write, min_args, max_args, fn_type);
-        self.functions.insert(name.to_owned(), graph_fn);
+        let graph_fn = GraphFn::new(&name, func, write, min_args, max_args, fn_type);
+        self.functions.insert(name, graph_fn);
     }
 
     pub fn validate(
@@ -106,13 +106,15 @@ impl Functions {
         name: &str,
         fn_type: &FnType,
     ) -> Option<&GraphFn> {
-        self.functions.get(name).and_then(|graph_fn| {
-            if &graph_fn.fn_type == fn_type {
-                Some(graph_fn)
-            } else {
-                None
-            }
-        })
+        self.functions
+            .get(name.to_lowercase().as_str())
+            .and_then(|graph_fn| {
+                if &graph_fn.fn_type == fn_type {
+                    Some(graph_fn)
+                } else {
+                    None
+                }
+            })
     }
 
     #[must_use]
@@ -131,57 +133,7 @@ static FUNCTIONS: OnceLock<Functions> = OnceLock::new();
 #[allow(clippy::too_many_lines)]
 pub fn init_functions() -> Result<(), Functions> {
     let mut funcs = Functions::new();
-    funcs.add("create_node", create_node, true, 2, 2, FnType::Internal);
-    funcs.add(
-        "create_relationship",
-        create_relationship,
-        true,
-        4,
-        4,
-        FnType::Internal,
-    );
-    funcs.add(
-        "delete_entity",
-        delete_entity,
-        true,
-        1,
-        usize::MAX,
-        FnType::Internal,
-    );
 
-    funcs.add(
-        "create_aggregate_ctx",
-        create_aggregate_ctx,
-        false,
-        1,
-        usize::MAX,
-        FnType::Internal,
-    );
-    funcs.add(
-        "create_node_iter",
-        create_node_iter,
-        false,
-        1,
-        1,
-        FnType::Internal,
-    );
-    funcs.add("next_node", next_node, false, 1, 1, FnType::Internal);
-    funcs.add(
-        "create_relationship_iter",
-        create_relationship_iter,
-        false,
-        1,
-        1,
-        FnType::Internal,
-    );
-    funcs.add(
-        "next_relationship",
-        next_relationship,
-        false,
-        1,
-        1,
-        FnType::Internal,
-    );
     funcs.add("property", property, false, 2, 2, FnType::Internal);
 
     funcs.add("toInteger", value_to_integer, false, 1, 1, FnType::Function);
@@ -296,188 +248,8 @@ pub fn get_functions() -> &'static Functions {
 ///////////// functions ///////////
 ///////////////////////////////////
 
-#[allow(clippy::unnecessary_wraps)]
-fn create_node(
-    runtime: &mut Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
-    let mut iter = args.into_iter();
-    match (iter.next(), iter.next(), iter.next()) {
-        (Some(Value::List(raw_labels)), Some(Value::Map(attrs)), None) => {
-            let labels = raw_labels
-                .into_iter()
-                .filter_map(|label| {
-                    if let Value::String(label) = label {
-                        Some(label)
-                    } else {
-                        None
-                    }
-                })
-                .collect::<Vec<_>>();
-            runtime.nodes_created += 1;
-            runtime.properties_set += attrs
-                .values()
-                .map(|v| match v {
-                    Value::Null => 0,
-                    _ => 1,
-                })
-                .sum::<i32>();
-            Ok(runtime.g.borrow_mut().create_node(&labels, attrs))
-        }
-        _ => Ok(Value::Null),
-    }
-}
-
-#[allow(clippy::unnecessary_wraps)]
-fn delete_entity(
-    runtime: &mut Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
-    for n in args {
-        if let Value::Node(id) = n {
-            runtime.nodes_deleted += 1;
-            let mut g = runtime.g.borrow_mut();
-            for (src, dest, id) in g.get_node_relationships(id).collect::<Vec<_>>() {
-                runtime.relationships_deleted += 1;
-                g.delete_relationship(id, src, dest);
-            }
-            g.delete_node(id);
-        }
-    }
-
-    Ok(Value::Null)
-}
-
-fn create_relationship(
-    runtime: &mut Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
-    let mut iter = args.into_iter();
-    match (
-        iter.next(),
-        iter.next(),
-        iter.next(),
-        iter.next(),
-        iter.next(),
-    ) {
-        (
-            Some(Value::String(relationship_type)),
-            Some(Value::Node(from)),
-            Some(Value::Node(to)),
-            Some(Value::Map(attrs)),
-            None,
-        ) => {
-            runtime.relationships_created += 1;
-            runtime.properties_set += attrs
-                .values()
-                .map(|v| match v {
-                    Value::Null => 0,
-                    _ => 1,
-                })
-                .sum::<i32>();
-            Ok(runtime
-                .g
-                .borrow_mut()
-                .create_relationship(&relationship_type, from, to, attrs))
-        }
-        _ => todo!(),
-    }
-}
-
-#[allow(clippy::unnecessary_wraps)]
-fn create_aggregate_ctx(
-    runtime: &mut Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
-    let mut hasher = DefaultHasher::new();
-    args.hash(&mut hasher);
-    let key = hasher.finish();
-    runtime
-        .agg_ctxs
-        .entry(key)
-        .or_insert_with(|| (Value::List(args), Value::Null));
-    Ok(Value::Int(key as i64))
-}
-
-fn create_node_iter(
-    runtime: &mut Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
-    let mut iter = args.into_iter();
-    match (iter.next(), iter.next()) {
-        (Some(Value::List(raw_labels)), None) => {
-            runtime.node_iters.push(
-                runtime
-                    .g
-                    .borrow()
-                    .get_nodes(
-                        raw_labels
-                            .into_iter()
-                            .filter_map(|label| {
-                                if let Value::String(label) = label {
-                                    Some(label)
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect::<Vec<_>>()
-                            .as_slice(),
-                    )
-                    .unwrap(),
-            );
-
-            Ok(Value::Int(runtime.node_iters.len() as i64 - 1))
-        }
-        _ => todo!(),
-    }
-}
-
-fn next_node(
-    runtime: &mut Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
-    let mut iter = args.into_iter();
-    match (iter.next(), iter.next()) {
-        (Some(Value::Int(iter)), None) => runtime.node_iters[iter as usize]
-            .next()
-            .map_or_else(|| Ok(Value::Null), |(n, _)| Ok(Value::Node(n))),
-        _ => todo!(),
-    }
-}
-
-fn create_relationship_iter(
-    runtime: &mut Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
-    let mut iter = args.into_iter();
-    match (iter.next(), iter.next()) {
-        (Some(Value::String(raw_type)), None) => {
-            runtime
-                .relationship_iters
-                .push(runtime.g.borrow().get_relationships(&[raw_type]).unwrap());
-            Ok(Value::Int(runtime.relationship_iters.len() as i64 - 1))
-        }
-        _ => todo!(),
-    }
-}
-
-fn next_relationship(
-    runtime: &mut Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
-    let mut iter = args.into_iter();
-    match (iter.next(), iter.next()) {
-        (Some(Value::Int(iter)), None) => runtime.relationship_iters[iter as usize]
-            .next()
-            .map_or(Ok(Value::Null), |(src, dest, id)| {
-                Ok(Value::Relationship(id, src, dest))
-            }),
-        _ => todo!(),
-    }
-}
-
 fn property(
-    runtime: &mut Runtime,
+    runtime: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
@@ -502,7 +274,7 @@ fn property(
 
 #[allow(clippy::unnecessary_wraps)]
 fn labels(
-    runtime: &mut Runtime,
+    runtime: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
@@ -523,7 +295,7 @@ fn labels(
 
 #[allow(clippy::unnecessary_wraps)]
 fn start_node(
-    _runtime: &mut Runtime,
+    _runtime: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
@@ -535,7 +307,7 @@ fn start_node(
 
 #[allow(clippy::unnecessary_wraps)]
 fn end_node(
-    _runtime: &mut Runtime,
+    _runtime: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
@@ -547,38 +319,17 @@ fn end_node(
 
 #[allow(clippy::unnecessary_wraps)]
 fn collect(
-    runtime: &mut Runtime,
+    _: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
-    if let (Some(x), Some(Value::Int(hash)), None) = (iter.next(), iter.next(), iter.next()) {
-        runtime.agg_ctxs.entry(hash as _).and_modify(|v| {
-            if let (_, Value::List(values)) = v {
-                values.push(x.clone());
-            } else {
-                v.1 = Value::List(vec![x.clone()]);
-            }
-        });
-    }
-    Ok(Value::Null)
-}
-
-#[allow(clippy::unnecessary_wraps)]
-fn count(
-    runtime: &mut Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
-    let mut iter = args.into_iter();
-    match (iter.next(), iter.next()) {
-        (Some(Value::Null), _) => {}
-        (_, Some(Value::Int(hash))) => {
-            runtime.agg_ctxs.entry(hash as _).and_modify(|v| {
-                if let (_, Value::Int(count)) = v {
-                    *count += 1;
-                } else {
-                    v.1 = Value::Int(1);
-                }
-            });
+    match (iter.next(), iter.next(), iter.next()) {
+        (Some(a), Some(Value::Null), None) => {
+            return Ok(Value::List(vec![a]));
+        }
+        (Some(a), Some(Value::List(mut l)), None) => {
+            l.push(a);
+            return Ok(Value::List(l));
         }
         _ => (),
     }
@@ -586,62 +337,81 @@ fn count(
 }
 
 #[allow(clippy::unnecessary_wraps)]
-fn sum(
-    runtime: &mut Runtime,
+fn count(
+    _: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
-    if let [a, Value::Int(hash)] = args.as_slice() {
-        runtime.agg_ctxs.entry(*hash as _).and_modify(|v| {
-            if let (_, Value::Null) = v {
-                v.1 = a.clone();
-            } else {
-                v.1 = (v.1.clone() + a.clone()).unwrap();
-            }
-        });
+    let mut iter = args.into_iter();
+    match (iter.next(), iter.next(), iter.next()) {
+        (Some(_), Some(Value::Null), None) => {
+            return Ok(Value::Int(1));
+        }
+        (Some(Value::Null), Some(a), None) => {
+            return Ok(a);
+        }
+        (Some(_), Some(Value::Int(a)), None) => {
+            return Ok(Value::Int(a + 1));
+        }
+
+        _ => (),
+    }
+    Ok(Value::Null)
+}
+
+#[allow(clippy::unnecessary_wraps)]
+fn sum(
+    _: &Runtime,
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    let mut iter = args.into_iter();
+    match (iter.next(), iter.next(), iter.next()) {
+        (Some(Value::Null), Some(a), None) | (Some(a), Some(Value::Null), None) => {
+            return Ok(a);
+        }
+        (Some(a), Some(b), None) => return a + b,
+        _ => (),
     }
     Ok(Value::Null)
 }
 
 #[allow(clippy::unnecessary_wraps)]
 fn max(
-    runtime: &mut Runtime,
+    _: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
-    if let [Value::Int(a), Value::Int(hash)] = args.as_slice() {
-        runtime.agg_ctxs.entry(*hash as _).and_modify(|v| {
-            if let (_, Value::Int(b)) = v {
-                if a > b {
-                    *b = *a;
-                }
-            } else {
-                v.1 = Value::Int(*a);
+    match args.as_slice() {
+        [Value::Int(a), Value::Null] => return Ok(Value::Int(*a)),
+        [Value::Int(a), Value::Int(b)] => {
+            if a > b {
+                return Ok(Value::Int(*a));
             }
-        });
+            return Ok(Value::Int(*b));
+        }
+        _ => (),
     }
     Ok(Value::Null)
 }
 
 #[allow(clippy::unnecessary_wraps)]
 fn min(
-    runtime: &mut Runtime,
+    _: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
-    if let [Value::Int(a), Value::Int(hash)] = args.as_slice() {
-        runtime.agg_ctxs.entry(*hash as _).and_modify(|v| {
-            if let (_, Value::Int(b)) = v {
-                if a < b {
-                    *b = *a;
-                }
-            } else {
-                v.1 = Value::Int(*a);
+    match args.as_slice() {
+        [Value::Int(a), Value::Null] => return Ok(Value::Int(*a)),
+        [Value::Int(a), Value::Int(b)] => {
+            if a < b {
+                return Ok(Value::Int(*a));
             }
-        });
+            return Ok(Value::Int(*b));
+        }
+        _ => (),
     }
     Ok(Value::Null)
 }
 
 fn value_to_integer(
-    _runtime: &mut Runtime,
+    _runtime: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
     let len = args.len();
@@ -666,7 +436,7 @@ fn value_to_integer(
 }
 
 fn size(
-    _: &mut Runtime,
+    _: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
@@ -682,7 +452,7 @@ fn size(
 }
 
 fn head(
-    _: &mut Runtime,
+    _: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
@@ -703,7 +473,7 @@ fn head(
 }
 
 fn last(
-    _: &mut Runtime,
+    _: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
@@ -718,7 +488,7 @@ fn last(
 }
 
 fn tail(
-    _: &mut Runtime,
+    _: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
@@ -739,7 +509,7 @@ fn tail(
 }
 
 fn reverse(
-    _: &mut Runtime,
+    _: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
@@ -751,7 +521,7 @@ fn reverse(
         Some(Value::Null) => Ok(Value::Null),
         Some(Value::String(s)) => Ok(Value::String(s.chars().rev().collect())),
         Some(arg) => Err(format!(
-            "Type mismatch: expected List, String or null, but was {}",
+            "Type mismatch: expected List, String, or Null but was {}",
             arg.name()
         )),
         _ => unreachable!(),
@@ -759,7 +529,7 @@ fn reverse(
 }
 
 fn substring(
-    _: &mut Runtime,
+    _: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
@@ -792,16 +562,16 @@ fn substring(
         }
 
         (Some(Value::String(_)), Some(t), None) => Err(format!(
-            "Type mismatch: expected Integer Or Null but got {}",
+            "Type mismatch: expected Integer but was {}",
             t.name()
         )),
         (Some(t), Some(Value::Int(_)), None | Some(Value::Int(_))) => Err(format!(
-            "Type mismatch: expected String Or Null but got {}",
+            "Type mismatch: expected String or Null but was {}",
             t.name()
         )),
         (Some(Value::String(_)), Some(t), Some(Value::Int(_)))
         | (Some(Value::String(_)), Some(Value::Int(_)), Some(t)) => Err(format!(
-            "Type mismatch: expected Integer Or Null but got {}",
+            "Type mismatch: expected Integer but was {}",
             t.name()
         )),
 
@@ -810,7 +580,7 @@ fn substring(
 }
 
 fn split(
-    _: &mut Runtime,
+    _: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
@@ -842,14 +612,14 @@ fn split(
 }
 
 fn string_to_lower(
-    _: &mut Runtime,
+    _: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
         Some(Value::String(s)) => Ok(Value::String(s.to_lowercase())),
         Some(Value::Null) => Ok(Value::Null),
         Some(arg) => Err(format!(
-            "Type mismatch: expected List, String or null, but was {}",
+            "Type mismatch: expected String or Null but was {}",
             arg.name()
         )),
         _ => unreachable!(),
@@ -857,14 +627,14 @@ fn string_to_lower(
 }
 
 fn string_to_upper(
-    _: &mut Runtime,
+    _: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
         Some(Value::String(s)) => Ok(Value::String(s.to_uppercase())),
         Some(Value::Null) => Ok(Value::Null),
         Some(arg) => Err(format!(
-            "Type mismatch: expected List, String or null, but was {}",
+            "Type mismatch: expected String or Null but was {}",
             arg.name()
         )),
         _ => unreachable!(),
@@ -872,7 +642,7 @@ fn string_to_upper(
 }
 
 fn string_replace(
-    _: &mut Runtime,
+    _: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
@@ -896,7 +666,7 @@ fn string_replace(
 }
 
 fn string_left(
-    _: &mut Runtime,
+    _: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
@@ -920,7 +690,7 @@ fn string_left(
 }
 
 fn string_ltrim(
-    _: &mut Runtime,
+    _: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
@@ -935,7 +705,7 @@ fn string_ltrim(
 }
 
 fn string_right(
-    _: &mut Runtime,
+    _: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
@@ -960,7 +730,7 @@ fn string_right(
 }
 
 fn string_join(
-    _: &mut Runtime,
+    _: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
     fn to_string_vec(vec: Vec<Value>) -> Result<Vec<String>, String> {
@@ -997,7 +767,7 @@ fn string_join(
 }
 
 fn string_match_reg_ex(
-    _: &mut Runtime,
+    _: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
@@ -1032,7 +802,7 @@ fn string_match_reg_ex(
 }
 
 fn string_replace_reg_ex(
-    _: &mut Runtime,
+    _: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
@@ -1068,7 +838,7 @@ fn string_replace_reg_ex(
 }
 
 fn abs(
-    _: &mut Runtime,
+    _: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
@@ -1084,7 +854,7 @@ fn abs(
 }
 
 fn ceil(
-    _: &mut Runtime,
+    _: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
@@ -1100,7 +870,7 @@ fn ceil(
 }
 
 fn e(
-    _: &mut Runtime,
+    _: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
@@ -1110,7 +880,7 @@ fn e(
 }
 
 fn exp(
-    _: &mut Runtime,
+    _: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
@@ -1126,7 +896,7 @@ fn exp(
 }
 
 fn floor(
-    _: &mut Runtime,
+    _: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
@@ -1142,7 +912,7 @@ fn floor(
 }
 
 fn log(
-    _: &mut Runtime,
+    _: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
@@ -1158,7 +928,7 @@ fn log(
 }
 
 fn log10(
-    _: &mut Runtime,
+    _: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
@@ -1174,7 +944,7 @@ fn log10(
 }
 
 fn pow(
-    _: &mut Runtime,
+    _: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
@@ -1197,7 +967,7 @@ fn pow(
 
 #[allow(clippy::unnecessary_wraps)]
 fn rand(
-    _: &mut Runtime,
+    _: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
     debug_assert!(args.is_empty());
@@ -1206,7 +976,7 @@ fn rand(
 }
 
 fn round(
-    _: &mut Runtime,
+    _: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
@@ -1222,7 +992,7 @@ fn round(
 }
 
 fn sign(
-    _: &mut Runtime,
+    _: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
@@ -1242,7 +1012,7 @@ fn sign(
 }
 
 fn sqrt(
-    _: &mut Runtime,
+    _: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
@@ -1270,7 +1040,7 @@ fn sqrt(
 }
 
 fn range(
-    _: &mut Runtime,
+    _: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
@@ -1307,7 +1077,7 @@ fn range(
 //
 
 fn internal_starts_with(
-    _: &mut Runtime,
+    _: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
@@ -1327,7 +1097,7 @@ fn internal_starts_with(
 }
 
 fn internal_ends_with(
-    _: &mut Runtime,
+    _: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
@@ -1346,7 +1116,7 @@ fn internal_ends_with(
 }
 
 fn internal_contains(
-    _: &mut Runtime,
+    _: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
@@ -1365,7 +1135,7 @@ fn internal_contains(
 }
 
 fn internal_regex_matches(
-    _: &mut Runtime,
+    _: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
@@ -1389,7 +1159,7 @@ fn internal_regex_matches(
 
 #[allow(clippy::unnecessary_wraps)]
 fn db_labels(
-    runtime: &mut Runtime,
+    runtime: &Runtime,
     _args: Vec<Value>,
 ) -> Result<Value, String> {
     Ok(Value::List(
@@ -1404,7 +1174,7 @@ fn db_labels(
 
 #[allow(clippy::unnecessary_wraps)]
 fn db_types(
-    runtime: &mut Runtime,
+    runtime: &Runtime,
     _args: Vec<Value>,
 ) -> Result<Value, String> {
     Ok(Value::List(
@@ -1419,7 +1189,7 @@ fn db_types(
 
 #[allow(clippy::unnecessary_wraps)]
 fn db_properties(
-    runtime: &mut Runtime,
+    runtime: &Runtime,
     _args: Vec<Value>,
 ) -> Result<Value, String> {
     Ok(Value::List(

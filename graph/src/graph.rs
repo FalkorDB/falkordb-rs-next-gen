@@ -19,6 +19,8 @@ use crate::{
 pub struct Graph {
     node_cap: u64,
     relationship_cap: u64,
+    reserved_node_count: u64,
+    reserved_relationship_count: u64,
     node_count: u64,
     relationship_count: u64,
     deleted_nodes: RoaringTreemap,
@@ -47,6 +49,8 @@ impl Graph {
         Self {
             node_cap: n,
             relationship_cap: e,
+            reserved_node_count: 0,
+            reserved_relationship_count: 0,
             node_count: 0,
             relationship_count: 0,
             deleted_nodes: RoaringTreemap::new(),
@@ -133,7 +137,7 @@ impl Graph {
         match self.cache.lock() {
             Ok(mut cache) => {
                 if let Some(f) = cache.get(query) {
-                    Ok((f.to_owned(), parameters, parse_duration, plan_duration))
+                    Ok((f.clone(), parameters, parse_duration, plan_duration))
                 } else {
                     let start = Instant::now();
                     let ir = parser.parse()?;
@@ -263,38 +267,54 @@ impl Graph {
         property_id as u64
     }
 
-    pub fn create_node(
+    pub fn reserve_node(&mut self) -> u64 {
+        let mut iter = self.deleted_nodes.iter();
+        iter.advance_to(self.reserved_node_count);
+        if let Some(id) = iter.next() {
+            self.reserved_node_count += 1;
+            return id;
+        }
+        self.reserved_node_count += 1;
+        self.node_count + self.reserved_node_count - 1
+    }
+
+    pub fn create_nodes(
         &mut self,
-        labels: &Vec<String>,
-        attrs: BTreeMap<String, Value>,
-    ) -> Value {
-        let id = self.deleted_nodes.min().unwrap_or(self.node_count);
-        self.deleted_nodes.remove(id);
-        self.node_count += 1;
+        nodes: &Vec<(u64, Vec<String>, BTreeMap<String, Value>)>,
+    ) {
+        self.node_count += nodes.len() as u64;
+        self.reserved_node_count -= nodes.len() as u64;
+
+        for (id, _, _) in nodes {
+            if self.deleted_nodes.is_empty() {
+                break;
+            }
+            self.deleted_nodes.remove(*id);
+        }
 
         self.resize();
 
-        self.all_nodes_matrix.set(id, id, true);
+        for (id, labels, attrs) in nodes {
+            self.all_nodes_matrix.set(*id, *id, true);
 
-        for label in labels {
-            let label_matrix = self.get_label_matrix_mut(label);
-            label_matrix.set(id, id, true);
-            let label_id = self.get_label_id(label).unwrap();
-            self.resize();
-            self.node_labels_matrix.set(id, label_id, true);
-        }
-
-        let mut map = BTreeMap::new();
-        for (key, value) in attrs {
-            if value == Value::Null {
-                continue;
+            for label in labels {
+                let label_matrix = self.get_label_matrix_mut(label);
+                label_matrix.set(*id, *id, true);
+                let label_id = self.get_label_id(label).unwrap();
+                self.resize();
+                self.node_labels_matrix.set(*id, label_id, true);
             }
-            let property_id = self.get_or_add_node_property_id(&key);
-            map.insert(property_id, value);
-        }
-        self.node_properties_map.insert(id, map);
 
-        Value::Node(id)
+            let mut map = BTreeMap::new();
+            for (key, value) in attrs {
+                if *value == Value::Null {
+                    continue;
+                }
+                let property_id = self.get_or_add_node_property_id(key);
+                map.insert(property_id, value.clone());
+            }
+            self.node_properties_map.insert(*id, map);
+        }
     }
 
     pub fn delete_node(
@@ -355,47 +375,58 @@ impl Graph {
             .cloned()
     }
 
-    pub fn create_relationship(
-        &mut self,
-        relationship_type: &String,
-        from: u64,
-        to: u64,
-        attrs: BTreeMap<String, Value>,
-    ) -> Value {
-        let id = self
-            .deleted_relationships
-            .min()
-            .unwrap_or(self.relationship_count);
-        self.deleted_relationships.remove(id);
-        self.relationship_count += 1;
-
-        self.resize();
-
-        let relationship_type_matrix = self.get_relationship_matrix_mut(relationship_type);
-        relationship_type_matrix.set(from, to, id);
-
-        self.resize();
-
-        self.relationship_type_matrix.set(
-            id,
-            self.relationship_types
-                .iter()
-                .position(|p| p == relationship_type)
-                .unwrap() as u64,
-            true,
-        );
-
-        let mut map = BTreeMap::new();
-        for (key, value) in attrs {
-            if value == Value::Null {
-                continue;
-            }
-            let property_id = self.get_relationship_property_id(&key);
-            map.insert(property_id, value);
+    pub fn reserve_relationship(&mut self) -> u64 {
+        let mut iter = self.deleted_relationships.iter();
+        iter.advance_to(self.reserved_relationship_count);
+        if let Some(id) = iter.next() {
+            self.reserved_relationship_count += 1;
+            return id;
         }
-        self.relationship_properties_map.insert(id, map);
+        self.reserved_relationship_count += 1;
+        self.relationship_count + self.reserved_relationship_count - 1
+    }
 
-        Value::Relationship(id, from, to)
+    pub fn create_relationships(
+        &mut self,
+        relationships: &Vec<(u64, String, u64, u64, BTreeMap<String, Value>)>,
+    ) {
+        self.relationship_count += relationships.len() as u64;
+        self.reserved_relationship_count -= relationships.len() as u64;
+
+        for (id, _, _, _, _) in relationships {
+            if self.deleted_relationships.is_empty() {
+                break;
+            }
+            self.deleted_relationships.remove(*id);
+        }
+
+        for (id, relationship_type, from, to, _) in relationships {
+            let relationship_type_matrix = self.get_relationship_matrix_mut(relationship_type);
+            relationship_type_matrix.set(*from, *to, *id);
+        }
+
+        self.resize();
+
+        for (id, relationship_type, _, _, attrs) in relationships {
+            self.relationship_type_matrix.set(
+                *id,
+                self.relationship_types
+                    .iter()
+                    .position(|p| p == relationship_type)
+                    .unwrap() as u64,
+                true,
+            );
+
+            let mut map = BTreeMap::new();
+            for (key, value) in attrs {
+                if *value == Value::Null {
+                    continue;
+                }
+                let property_id = self.get_relationship_property_id(&key);
+                map.insert(property_id, value.clone());
+            }
+            self.relationship_properties_map.insert(*id, map);
+        }
     }
 
     pub fn delete_relationship(
@@ -437,7 +468,9 @@ impl Graph {
 
     fn resize(&mut self) {
         if self.node_count > self.node_cap {
-            self.node_cap *= 2;
+            while self.node_count > self.node_cap {
+                self.node_cap *= 2;
+            }
             self.adjacancy_matrix.resize(self.node_cap, self.node_cap);
             self.node_labels_matrix
                 .resize(self.node_cap, self.labels_matices.len() as u64);
@@ -456,7 +489,9 @@ impl Graph {
         }
 
         if self.relationship_count > self.relationship_cap {
-            self.relationship_cap *= 2;
+            while self.relationship_count > self.relationship_cap {
+                self.relationship_cap *= 2;
+            }
             self.relationship_type_matrix
                 .resize(self.relationship_cap, self.relationship_types.len() as u64);
         }

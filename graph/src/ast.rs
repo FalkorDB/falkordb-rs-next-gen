@@ -43,6 +43,51 @@ pub enum ExprIR {
     Set(String),
 }
 
+impl Display for ExprIR {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        match self {
+            Self::Null => write!(f, "null"),
+            Self::Bool(b) => write!(f, "{b}"),
+            Self::Integer(i) => write!(f, "{i}"),
+            Self::Float(fl) => write!(f, "{fl}"),
+            Self::String(s) => write!(f, "{s}"),
+            Self::Var(id) => write!(f, "{id}"),
+            Self::Parameter(p) => write!(f, "@{p}"),
+            Self::List => write!(f, "[]"),
+            Self::Length => write!(f, "length()"),
+            Self::GetElement => write!(f, "get_element()"),
+            Self::GetElements => write!(f, "get_elements()"),
+            Self::IsNull => write!(f, "is_null()"),
+            Self::IsNode => write!(f, "is_node()"),
+            Self::IsRelationship => write!(f, "is_relationship()"),
+            Self::Or => write!(f, "or()"),
+            Self::Xor => write!(f, "xor()"),
+            Self::And => write!(f, "and()"),
+            Self::Not => write!(f, "not()"),
+            Self::Negate => write!(f, "-negate()"),
+            Self::Eq => write!(f, "="),
+            Self::Neq => write!(f, "<>"),
+            Self::Lt => write!(f, "<"),
+            Self::Gt => write!(f, ">"),
+            Self::Le => write!(f, "<="),
+            Self::Ge => write!(f, ">="),
+            Self::In => write!(f, "in()"),
+            Self::Add => write!(f, "+"),
+            Self::Sub => write!(f, "-"),
+            Self::Mul => write!(f, "*"),
+            Self::Div => write!(f, "/"),
+            Self::Pow => write!(f, "^"),
+            Self::Modulo => write!(f, "%"),
+            Self::FuncInvocation(name, _) => write!(f, "{name}()"),
+            Self::Map => write!(f, "{{}}"),
+            Self::Set(id) => write!(f, "set({id})"),
+        }
+    }
+}
+
 pub trait Validate {
     fn validate(
         self,
@@ -194,6 +239,15 @@ pub struct NodePattern {
     pub attrs: DynTree<ExprIR>,
 }
 
+impl Display for NodePattern {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        write!(f, "({}:{})", self.alias, self.labels.join(":"))
+    }
+}
+
 impl NodePattern {
     #[must_use]
     pub const fn new(
@@ -217,6 +271,19 @@ pub struct RelationshipPattern {
     pub from: Alias,
     pub to: Alias,
     pub bidirectional: bool,
+}
+
+impl Display for RelationshipPattern {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        write!(
+            f,
+            "({})-[{}:{}]->({})",
+            self.from, self.alias, self.relationship_type, self.to
+        )
+    }
 }
 
 impl RelationshipPattern {
@@ -263,6 +330,24 @@ pub struct Pattern {
     pub paths: Vec<PathPattern>,
 }
 
+impl Display for Pattern {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        for node in &self.nodes {
+            write!(f, "{node}, ")?;
+        }
+        for relationship in &self.relationships {
+            write!(f, "{relationship}, ")?;
+        }
+        for path in &self.paths {
+            write!(f, "{path:?}, ")?;
+        }
+        Ok(())
+    }
+}
+
 impl Pattern {
     #[must_use]
     pub const fn new(
@@ -289,6 +374,60 @@ pub enum QueryIR {
     With(Vec<DynTree<ExprIR>>, bool),
     Return(Vec<DynTree<ExprIR>>, bool),
     Query(Vec<QueryIR>, bool),
+}
+
+impl Display for QueryIR {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        match self {
+            Self::Call(name, args) => {
+                writeln!(f, "{name}():")?;
+                for arg in args {
+                    write!(f, "{arg}")?;
+                }
+                Ok(())
+            }
+            Self::Match(p) => writeln!(f, "MATCH {p}"),
+            Self::Unwind(l, v) => {
+                writeln!(f, "UNWIND {v}:")?;
+                write!(f, "{l}")
+            }
+            Self::Where(expr) => {
+                writeln!(f, "WHERE:")?;
+                write!(f, "{expr}")
+            }
+            Self::Create(p) => write!(f, "CREATE {p}"),
+            Self::Delete(exprs) => {
+                writeln!(f, "DELETE:")?;
+                for expr in exprs {
+                    write!(f, "{expr}")?;
+                }
+                Ok(())
+            }
+            Self::With(exprs, _) => {
+                writeln!(f, "WITH:")?;
+                for expr in exprs {
+                    write!(f, "{expr}")?;
+                }
+                Ok(())
+            }
+            Self::Return(exprs, _) => {
+                writeln!(f, "RETURN:")?;
+                for expr in exprs {
+                    write!(f, "{expr}")?;
+                }
+                Ok(())
+            }
+            Self::Query(qs, _) => {
+                for q in qs {
+                    write!(f, "{q}")?;
+                }
+                Ok(())
+            }
+        }
+    }
 }
 
 impl QueryIR {
