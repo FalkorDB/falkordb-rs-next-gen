@@ -82,8 +82,7 @@ impl<'a> Runtime<'a> {
     ) -> Result<ResultSummary, String> {
         let labels_count = self.g.borrow().get_labels_count();
         let start = Instant::now();
-        let vec = self.run(&plan.root())?.collect::<Vec<_>>();
-        for v in vec {
+        for v in self.run(&plan.root())? {
             callback.return_value(self.g, v?);
         }
         let run_duration = start.elapsed();
@@ -755,49 +754,50 @@ impl<'a> Runtime<'a> {
                         "graph.RO_QUERY is to be executed only on read-only queries".to_string()
                     );
                 }
-                Ok(Box::new(with_final_action(
-                    self.run(&ir.child(0).clone())?,
-                    || {
-                        if !self.pending.borrow().created_nodes.is_empty() {
-                            self.stats.borrow_mut().nodes_created +=
-                                self.pending.borrow().created_nodes.len();
-                            self.stats.borrow_mut().properties_set += self
-                                .pending
-                                .borrow()
-                                .created_nodes
-                                .iter()
-                                .flat_map(|v| v.2.values())
-                                .map(|v| match v {
-                                    Value::Null => 0,
-                                    _ => 1,
-                                })
-                                .sum::<usize>();
-                            self.g
-                                .borrow_mut()
-                                .create_nodes(&self.pending.borrow().created_nodes);
-                            self.pending.borrow_mut().created_nodes.clear();
-                        }
-                        if !self.pending.borrow().created_relationships.is_empty() {
-                            self.stats.borrow_mut().relationships_created +=
-                                self.pending.borrow().created_relationships.len();
-                            self.stats.borrow_mut().properties_set += self
-                                .pending
-                                .borrow()
-                                .created_relationships
-                                .iter()
-                                .flat_map(|v| v.4.values())
-                                .map(|v| match v {
-                                    Value::Null => 0,
-                                    _ => 1,
-                                })
-                                .sum::<usize>();
-                            self.g
-                                .borrow_mut()
-                                .create_relationships(&self.pending.borrow().created_relationships);
-                            self.pending.borrow_mut().created_relationships.clear();
-                        }
-                    },
-                )))
+                let iter = self
+                    .run(&ir.child(0).clone())?
+                    .collect::<Result<Vec<Value>, String>>()?
+                    .into_iter()
+                    .map(Ok);
+                if !self.pending.borrow().created_nodes.is_empty() {
+                    self.stats.borrow_mut().nodes_created +=
+                        self.pending.borrow().created_nodes.len();
+                    self.stats.borrow_mut().properties_set += self
+                        .pending
+                        .borrow()
+                        .created_nodes
+                        .iter()
+                        .flat_map(|v| v.2.values())
+                        .map(|v| match v {
+                            Value::Null => 0,
+                            _ => 1,
+                        })
+                        .sum::<usize>();
+                    self.g
+                        .borrow_mut()
+                        .create_nodes(&self.pending.borrow().created_nodes);
+                    self.pending.borrow_mut().created_nodes.clear();
+                }
+                if !self.pending.borrow().created_relationships.is_empty() {
+                    self.stats.borrow_mut().relationships_created +=
+                        self.pending.borrow().created_relationships.len();
+                    self.stats.borrow_mut().properties_set += self
+                        .pending
+                        .borrow()
+                        .created_relationships
+                        .iter()
+                        .flat_map(|v| v.4.values())
+                        .map(|v| match v {
+                            Value::Null => 0,
+                            _ => 1,
+                        })
+                        .sum::<usize>();
+                    self.g
+                        .borrow_mut()
+                        .create_relationships(&self.pending.borrow().created_relationships);
+                    self.pending.borrow_mut().created_relationships.clear();
+                }
+                Ok(Box::new(iter))
             }
         }
     }
