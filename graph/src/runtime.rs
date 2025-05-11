@@ -328,7 +328,7 @@ impl<'a> Runtime<'a> {
         ir: DynNode<IR>,
     ) -> Result<Box<dyn Iterator<Item = Result<Value, String>> + '_>, String> {
         match ir.data() {
-            IR::Empty => todo!(),
+            IR::Empty => Ok(Box::new(empty())),
             IR::Call(name, trees) => match self.functions.get(name, &FnType::Procedure) {
                 Some(func) => {
                     let args = trees
@@ -735,46 +735,49 @@ impl<'a> Runtime<'a> {
                     .collect::<Result<Vec<Value>, String>>()?
                     .into_iter()
                     .map(Ok);
-                if !self.pending.borrow().created_nodes.is_empty() {
-                    self.stats.borrow_mut().nodes_created +=
-                        self.pending.borrow().created_nodes.len();
-                    self.stats.borrow_mut().properties_set += self
-                        .pending
-                        .borrow()
-                        .created_nodes
-                        .iter()
-                        .flat_map(|v| v.2.values())
-                        .map(|v| match v {
-                            Value::Null => 0,
-                            _ => 1,
-                        })
-                        .sum::<usize>();
-                    self.g
-                        .borrow_mut()
-                        .create_nodes(&self.pending.borrow().created_nodes);
-                    self.pending.borrow_mut().created_nodes.clear();
-                }
-                if !self.pending.borrow().created_relationships.is_empty() {
-                    self.stats.borrow_mut().relationships_created +=
-                        self.pending.borrow().created_relationships.len();
-                    self.stats.borrow_mut().properties_set += self
-                        .pending
-                        .borrow()
-                        .created_relationships
-                        .iter()
-                        .flat_map(|v| v.4.values())
-                        .map(|v| match v {
-                            Value::Null => 0,
-                            _ => 1,
-                        })
-                        .sum::<usize>();
-                    self.g
-                        .borrow_mut()
-                        .create_relationships(&self.pending.borrow().created_relationships);
-                    self.pending.borrow_mut().created_relationships.clear();
-                }
+                self.commit();
                 Ok(Box::new(iter))
             }
+        }
+    }
+
+    fn commit(&self) {
+        if !self.pending.borrow().created_nodes.is_empty() {
+            self.stats.borrow_mut().nodes_created += self.pending.borrow().created_nodes.len();
+            self.stats.borrow_mut().properties_set += self
+                .pending
+                .borrow()
+                .created_nodes
+                .iter()
+                .flat_map(|v| v.2.values())
+                .map(|v| match v {
+                    Value::Null => 0,
+                    _ => 1,
+                })
+                .sum::<usize>();
+            self.g
+                .borrow_mut()
+                .create_nodes(&self.pending.borrow().created_nodes);
+            self.pending.borrow_mut().created_nodes.clear();
+        }
+        if !self.pending.borrow().created_relationships.is_empty() {
+            self.stats.borrow_mut().relationships_created +=
+                self.pending.borrow().created_relationships.len();
+            self.stats.borrow_mut().properties_set += self
+                .pending
+                .borrow()
+                .created_relationships
+                .iter()
+                .flat_map(|v| v.4.values())
+                .map(|v| match v {
+                    Value::Null => 0,
+                    _ => 1,
+                })
+                .sum::<usize>();
+            self.g
+                .borrow_mut()
+                .create_relationships(&self.pending.borrow().created_relationships);
+            self.pending.borrow_mut().created_relationships.clear();
         }
     }
 }

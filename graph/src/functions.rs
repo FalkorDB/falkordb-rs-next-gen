@@ -319,7 +319,7 @@ fn end_node(
 
 #[allow(clippy::unnecessary_wraps)]
 fn collect(
-    runtime: &Runtime,
+    _: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
@@ -343,7 +343,7 @@ fn count(
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
     match (iter.next(), iter.next(), iter.next()) {
-        (Some(a), Some(Value::Null), None) => {
+        (Some(_), Some(Value::Null), None) => {
             return Ok(Value::Int(1));
         }
         (Some(Value::Null), Some(a), None) => {
