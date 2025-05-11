@@ -1,6 +1,7 @@
 use graph::functions::init_functions;
 use graph::runtime::{ReturnCallback, Runtime};
 use graph::{cypher::Parser, graph::Graph, matrix::init, planner::Planner, value::Value};
+use redis_module::RedisModuleIO;
 use redis_module::{
     Context, NextArg, REDISMODULE_TYPE_METHOD_VERSION, RedisError, RedisModule_Alloc,
     RedisModule_Calloc, RedisModule_Free, RedisModule_Realloc, RedisModuleTypeMethods, RedisResult,
@@ -9,6 +10,7 @@ use redis_module::{
 };
 use std::cell::RefCell;
 use std::os::raw::c_void;
+use std::ptr::null_mut;
 
 const EMPTY_KEY_ERR: RedisResult = Err(RedisError::Str("ERR Invalid graph operation on empty key"));
 
@@ -17,8 +19,8 @@ static GRAPH_TYPE: RedisType = RedisType::new(
     0,
     RedisModuleTypeMethods {
         version: REDISMODULE_TYPE_METHOD_VERSION as u64,
-        rdb_load: None,
-        rdb_save: None,
+        rdb_load: Some(graph_rdb_load),
+        rdb_save: Some(graph_rdb_save),
         aof_rewrite: None,
         free: Some(my_free),
 
@@ -43,6 +45,21 @@ static GRAPH_TYPE: RedisType = RedisType::new(
         unlink2: None,
     },
 );
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn graph_rdb_load(
+    rdb: *mut RedisModuleIO,
+    encver: i32,
+) -> *mut c_void {
+    null_mut()
+}
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn graph_rdb_save(
+    rdb: *mut RedisModuleIO,
+    value: *mut c_void,
+) {
+}
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn my_free(value: *mut c_void) {
@@ -223,6 +240,43 @@ fn query_mut(
     runtime
         .query(plan, &collector)
         .map(|summary| {
+            let mut stats = vec![];
+            if summary.labels_added > 0 {
+                stats.push(RedisValue::SimpleString(format!(
+                    "Labels added: {}",
+                    summary.labels_added
+                )));
+            }
+            if summary.nodes_created > 0 {
+                stats.push(RedisValue::SimpleString(format!(
+                    "Nodes created: {}",
+                    summary.nodes_created
+                )));
+            }
+            if summary.nodes_deleted > 0 {
+                stats.push(RedisValue::SimpleString(format!(
+                    "Nodes deleted: {}",
+                    summary.nodes_deleted
+                )));
+            }
+            if summary.properties_set > 0 {
+                stats.push(RedisValue::SimpleString(format!(
+                    "Properties set: {}",
+                    summary.properties_set
+                )));
+            }
+            if summary.relationships_created > 0 {
+                stats.push(RedisValue::SimpleString(format!(
+                    "Relationships created: {}",
+                    summary.relationships_created
+                )));
+            }
+            if summary.relationships_deleted > 0 {
+                stats.push(RedisValue::SimpleString(format!(
+                    "Relationships deleted: {}",
+                    summary.relationships_deleted
+                )));
+            }
             vec![
                 vec![
                     vec![
@@ -232,20 +286,7 @@ fn query_mut(
                     .into(),
                 ],
                 collector.take(),
-                vec![
-                    RedisValue::SimpleString(format!("Labels added: {}", summary.labels_added)),
-                    RedisValue::SimpleString(format!("Nodes created: {}", summary.nodes_created)),
-                    RedisValue::SimpleString(format!("Nodes deleted: {}", summary.nodes_deleted)),
-                    RedisValue::SimpleString(format!("Properties set: {}", summary.properties_set)),
-                    RedisValue::SimpleString(format!(
-                        "Relationships created: {}",
-                        summary.relationships_created
-                    )),
-                    RedisValue::SimpleString(format!(
-                        "Relationships deleted: {}",
-                        summary.relationships_deleted
-                    )),
-                ],
+                stats,
             ]
             .into()
         })
@@ -381,7 +422,7 @@ fn graph_parse(
 
     let mut parser = Parser::new(query);
     match parser.parse() {
-        Ok(ir) => Ok(RedisValue::BulkString(format!("{ir:?}"))),
+        Ok(ir) => Ok(RedisValue::BulkString(format!("{ir}"))),
         Err(err) => Err(RedisError::String(err)),
     }
 }

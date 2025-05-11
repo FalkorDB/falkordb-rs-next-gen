@@ -711,7 +711,7 @@ impl<'a> Parser<'a> {
     fn parse_primary_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
         match self.lexer.current() {
             Token::Ident(ident) => {
-                let mut namespace_and_function = ident.clone();
+                let mut namespace_and_function = ident.to_lowercase();
                 self.lexer.next();
                 let pos = self.lexer.pos;
                 while self.lexer.current() == Token::Dot {
@@ -720,7 +720,7 @@ impl<'a> Parser<'a> {
                         Token::Ident(id) => {
                             self.lexer.next();
                             namespace_and_function.push('.');
-                            namespace_and_function.push_str(&id);
+                            namespace_and_function.push_str(&id.to_lowercase());
                         }
                         _ => break,
                     }
