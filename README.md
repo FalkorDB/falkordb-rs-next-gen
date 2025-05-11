@@ -31,3 +31,5 @@ TCK_INCLUDE=tests/tck/features/expressions/list pytest tests/tck/test_tck.py
 ```
 
 - run unit tests with `cargo test -p graph`
+
+- [benchmark](https://falkordb.github.io/falkordb-rs-next-gen/dev/bench/)
