@@ -288,13 +288,8 @@ impl<'a> Runtime<'a> {
                     .map(|ir| self.run_expr(ir))
                     .collect::<Result<Vec<_>, _>>()?;
                 match self.functions.get(name, fn_type) {
-                    Some(GraphFn {
-                        func, write: false, ..
-                    }) => func(self, args),
-                    Some(GraphFn {
-                        func, write: true, ..
-                    }) => {
-                        if !self.write {
+                    Some(GraphFn { func, write, .. }) => {
+                        if !self.write && *write {
                             return Err(
                                 "graph.RO_QUERY is to be executed only on read-only queries"
                                     .to_string(),
