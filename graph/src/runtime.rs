@@ -1,5 +1,5 @@
 use crate::functions::{FnType, Functions, GraphFn, get_functions};
-use crate::iter::{AggregateIter, with_final_action};
+use crate::iter::AggregateIter;
 use crate::{ast::ExprIR, graph::Graph, planner::IR, value::Contains, value::Value};
 use orx_tree::{DynNode, DynTree, NodeRef};
 use std::cell::RefCell;
@@ -82,7 +82,7 @@ impl<'a> Runtime<'a> {
     ) -> Result<ResultSummary, String> {
         let labels_count = self.g.borrow().get_labels_count();
         let start = Instant::now();
-        for v in self.run(&plan.root())? {
+        for v in self.run(plan.root())? {
             callback.return_value(self.g, v?);
         }
         let run_duration = start.elapsed();
@@ -104,7 +104,7 @@ impl<'a> Runtime<'a> {
     #[allow(clippy::too_many_lines)]
     fn run_expr(
         &self,
-        ir: &DynNode<ExprIR>,
+        ir: DynNode<ExprIR>,
     ) -> Result<Value, String> {
         match ir.data() {
             ExprIR::Null => Ok(Value::Null),
@@ -122,16 +122,16 @@ impl<'a> Runtime<'a> {
             ),
             ExprIR::List => Ok(Value::List(
                 ir.children()
-                    .map(|ir| self.run_expr(&ir))
+                    .map(|ir| self.run_expr(ir))
                     .collect::<Result<Vec<_>, _>>()?,
             )),
-            ExprIR::Length => match self.run_expr(&ir.child(0))? {
+            ExprIR::Length => match self.run_expr(ir.child(0))? {
                 Value::List(arr) => Ok(Value::Int(arr.len() as _)),
                 _ => Err("Length operator requires a list".to_string()),
             },
             ExprIR::GetElement => {
-                let arr = self.run_expr(&ir.child(0))?;
-                let i = self.run_expr(&ir.child(1))?;
+                let arr = self.run_expr(ir.child(0))?;
+                let i = self.run_expr(ir.child(1))?;
                 match (arr, i) {
                     (Value::List(values), Value::Int(i)) => {
                         if i >= 0 && i < values.len() as _ {
@@ -147,31 +147,31 @@ impl<'a> Runtime<'a> {
                 }
             }
             ExprIR::GetElements => {
-                let arr = self.run_expr(&ir.child(0))?;
-                let a = self.run_expr(&ir.child(1))?;
-                let b = self.run_expr(&ir.child(2))?;
+                let arr = self.run_expr(ir.child(0))?;
+                let a = self.run_expr(ir.child(1))?;
+                let b = self.run_expr(ir.child(2))?;
                 get_elements(arr, a, b)
             }
-            ExprIR::IsNull => match self.run_expr(&ir.child(0))? {
+            ExprIR::IsNull => match self.run_expr(ir.child(0))? {
                 Value::Null => Ok(Value::Bool(true)),
                 _ => Ok(Value::Bool(false)),
             },
-            ExprIR::IsNode => match self.run_expr(&ir.child(0))? {
+            ExprIR::IsNode => match self.run_expr(ir.child(0))? {
                 Value::Node(_) => Ok(Value::Bool(true)),
                 _ => Ok(Value::Bool(false)),
             },
-            ExprIR::IsRelationship => match self.run_expr(&ir.child(0))? {
+            ExprIR::IsRelationship => match self.run_expr(ir.child(0))? {
                 Value::Relationship(_, _, _) => Ok(Value::Bool(true)),
                 _ => Ok(Value::Bool(false)),
             },
             ExprIR::Or => {
                 let mut is_null = false;
                 for ir in ir.children() {
-                    match self.run_expr(&ir)? {
+                    match self.run_expr(ir)? {
                         Value::Bool(true) => return Ok(Value::Bool(true)),
                         Value::Bool(false) => {}
                         Value::Null => is_null = true,
-                        _ => return Err(format!("Type mismatch: expected Bool but was {ir:?}")),
+                        ir => return Err(format!("Type mismatch: expected Bool but was {ir:?}")),
                     }
                 }
                 if is_null {
@@ -183,10 +183,10 @@ impl<'a> Runtime<'a> {
             ExprIR::Xor => {
                 let mut last = None;
                 for ir in ir.children() {
-                    match self.run_expr(&ir)? {
+                    match self.run_expr(ir)? {
                         Value::Bool(b) => last = Some(last.map_or(b, |l| logical_xor(l, b))),
                         Value::Null => return Ok(Value::Null),
-                        _ => return Err(format!("Type mismatch: expected Bool but was {ir:?}")),
+                        ir => return Err(format!("Type mismatch: expected Bool but was {ir:?}")),
                     }
                 }
                 Ok(Value::Bool(last.unwrap_or(false)))
@@ -194,11 +194,11 @@ impl<'a> Runtime<'a> {
             ExprIR::And => {
                 let mut is_null = false;
                 for ir in ir.children() {
-                    match self.run_expr(&ir)? {
+                    match self.run_expr(ir)? {
                         Value::Bool(false) => return Ok(Value::Bool(false)),
                         Value::Bool(true) => {}
                         Value::Null => is_null = true,
-                        _ => return Err(format!("Type mismatch: expected Bool but was {ir:?}")),
+                        ir => return Err(format!("Type mismatch: expected Bool but was {ir:?}")),
                     }
                 }
                 if is_null {
@@ -207,14 +207,14 @@ impl<'a> Runtime<'a> {
 
                 Ok(Value::Bool(true))
             }
-            ExprIR::Not => match self.run_expr(&ir.child(0))? {
+            ExprIR::Not => match self.run_expr(ir.child(0))? {
                 Value::Bool(b) => Ok(Value::Bool(!b)),
                 Value::Null => Ok(Value::Null),
                 _ => {
                     Err("InvalidArgumentType: Not operator requires a boolean or null".to_string())
                 }
             },
-            ExprIR::Negate => match self.run_expr(&ir.child(0))? {
+            ExprIR::Negate => match self.run_expr(ir.child(0))? {
                 Value::Int(i) => Ok(Value::Int(-i)),
                 Value::Float(f) => Ok(Value::Float(-f)),
                 Value::Null => Ok(Value::Null),
@@ -222,61 +222,61 @@ impl<'a> Runtime<'a> {
                     "InvalidArgumentType: Negate operator requires an Integer or Float".to_string(),
                 ),
             },
-            ExprIR::Eq => all_equals(ir.children().map(|ir| self.run_expr(&ir))),
+            ExprIR::Eq => all_equals(ir.children().map(|ir| self.run_expr(ir))),
             ExprIR::Neq => ir
                 .children()
-                .flat_map(|ir| self.run_expr(&ir))
+                .flat_map(|ir| self.run_expr(ir))
                 .reduce(|a, b| Value::Bool(a != b))
                 .ok_or_else(|| "Neq operator requires at least one argument".to_string()),
-            ExprIR::Lt => match (self.run_expr(&ir.child(0))?, self.run_expr(&ir.child(1))?) {
+            ExprIR::Lt => match (self.run_expr(ir.child(0))?, self.run_expr(ir.child(1))?) {
                 (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a < b)),
                 _ => Err("Lt operator requires two integers".to_string()),
             },
-            ExprIR::Gt => match (self.run_expr(&ir.child(0))?, self.run_expr(&ir.child(1))?) {
+            ExprIR::Gt => match (self.run_expr(ir.child(0))?, self.run_expr(ir.child(1))?) {
                 (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a > b)),
                 _ => Err("Gt operator requires two integers".to_string()),
             },
-            ExprIR::Le => match (self.run_expr(&ir.child(0))?, self.run_expr(&ir.child(1))?) {
+            ExprIR::Le => match (self.run_expr(ir.child(0))?, self.run_expr(ir.child(1))?) {
                 (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a <= b)),
                 _ => Err("Le operator requires two integers".to_string()),
             },
-            ExprIR::Ge => match (self.run_expr(&ir.child(0))?, self.run_expr(&ir.child(1))?) {
+            ExprIR::Ge => match (self.run_expr(ir.child(0))?, self.run_expr(ir.child(1))?) {
                 (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a >= b)),
                 _ => Err("Ge operator requires two integers".to_string()),
             },
             ExprIR::In => {
-                let value = self.run_expr(&ir.child(0))?;
-                let list = self.run_expr(&ir.child(1))?;
+                let value = self.run_expr(ir.child(0))?;
+                let list = self.run_expr(ir.child(1))?;
                 list_contains(&list, &value)
             }
             ExprIR::Add => ir
                 .children()
-                .map(|ir| self.run_expr(&ir))
+                .map(|ir| self.run_expr(ir))
                 .reduce(|acc, value| acc? + value?)
                 .ok_or_else(|| "Add operator requires at least one operand".to_string())?,
             ExprIR::Sub => ir
                 .children()
-                .map(|ir| self.run_expr(&ir))
+                .map(|ir| self.run_expr(ir))
                 .reduce(|acc, value| acc? - value?)
                 .ok_or_else(|| "Sub operator requires at least one argument".to_string())?,
             ExprIR::Mul => ir
                 .children()
-                .map(|ir| self.run_expr(&ir))
+                .map(|ir| self.run_expr(ir))
                 .reduce(|acc, value| acc? * value?)
                 .ok_or_else(|| "Mul operator requires at least one argument".to_string())?,
             ExprIR::Div => ir
                 .children()
-                .map(|ir| self.run_expr(&ir))
+                .map(|ir| self.run_expr(ir))
                 .reduce(|acc, value| acc? / value?)
                 .ok_or_else(|| "Div operator requires at least one argument".to_string())?,
             ExprIR::Modulo => ir
                 .children()
-                .map(|ir| self.run_expr(&ir))
+                .map(|ir| self.run_expr(ir))
                 .reduce(|acc, value| acc? % value?)
                 .ok_or_else(|| "Modulo operator requires at least one argument".to_string())?,
             ExprIR::Pow => ir
                 .children()
-                .flat_map(|ir| self.run_expr(&ir))
+                .flat_map(|ir| self.run_expr(ir))
                 .reduce(|a, b| match (a, b) {
                     (Value::Int(a), Value::Int(b)) => Value::Float((a as f64).powf(b as _)),
                     _ => Value::Null,
@@ -285,7 +285,7 @@ impl<'a> Runtime<'a> {
             ExprIR::FuncInvocation(name, fn_type) => {
                 let args = ir
                     .children()
-                    .map(|ir| self.run_expr(&ir))
+                    .map(|ir| self.run_expr(ir))
                     .collect::<Result<Vec<_>, _>>()?;
                 match self.functions.get(name, fn_type) {
                     Some(GraphFn {
@@ -314,13 +314,13 @@ impl<'a> Runtime<'a> {
                             } else {
                                 todo!();
                             },
-                            self.run_expr(&child.child(0)).unwrap_or(Value::Null),
+                            self.run_expr(child.child(0)).unwrap_or(Value::Null),
                         )
                     })
                     .collect(),
             )),
             ExprIR::Set(x) => {
-                let v = self.run_expr(&ir.child(0))?;
+                let v = self.run_expr(ir.child(0))?;
                 self.vars.borrow_mut().insert(x.to_string(), v.clone());
                 Ok(v)
             }
@@ -330,7 +330,7 @@ impl<'a> Runtime<'a> {
     #[allow(clippy::too_many_lines)]
     fn run(
         &self,
-        ir: &DynNode<IR>,
+        ir: DynNode<IR>,
     ) -> Result<Box<dyn Iterator<Item = Result<Value, String>> + '_>, String> {
         match ir.data() {
             IR::Empty => todo!(),
@@ -338,7 +338,7 @@ impl<'a> Runtime<'a> {
                 Some(func) => {
                     let args = trees
                         .iter()
-                        .map(|ir| self.run_expr(&ir.root()))
+                        .map(|ir| self.run_expr(ir.root()))
                         .collect::<Result<Vec<_>, _>>()?;
                     if !self.write && func.write {
                         return Err("graph.RO_QUERY is to be executed only on read-only queries"
@@ -358,9 +358,9 @@ impl<'a> Runtime<'a> {
                 if ir.num_children() == 1 {
                     let tree = tree.clone();
                     let name = name.to_string();
-                    return Ok(Box::new(self.run(&ir.child(0).clone())?.flat_map(
+                    return Ok(Box::new(self.run(ir.child(0).clone())?.flat_map(
                         move |_| {
-                            let value = self.run_expr(&tree.root());
+                            let value = self.run_expr(tree.root());
                             let arr = match value {
                                 Ok(Value::List(arr)) => arr.into_iter().map(Ok).collect(),
                                 Ok(_) => vec![Err("Unwind operator requires a list".to_string())],
@@ -379,7 +379,7 @@ impl<'a> Runtime<'a> {
                         },
                     )));
                 }
-                let value = self.run_expr(&tree.root())?;
+                let value = self.run_expr(tree.root())?;
                 if let Value::List(arr) = value {
                     let name = name.to_string();
                     return Ok(Box::new(arr.into_iter().map(move |v| {
@@ -395,11 +395,11 @@ impl<'a> Runtime<'a> {
                     let stop = stop.clone();
                     let step = step.clone();
                     let name = name.to_string();
-                    return Ok(Box::new(self.run(&ir.child(0).clone())?.flat_map(
+                    return Ok(Box::new(self.run(ir.child(0).clone())?.flat_map(
                         move |_| {
-                            let start = self.run_expr(&start.root());
-                            let stop = self.run_expr(&stop.root());
-                            let step = self.run_expr(&step.root());
+                            let start = self.run_expr(start.root());
+                            let stop = self.run_expr(stop.root());
+                            let step = self.run_expr(step.root());
                             let name = name.to_string();
                             match (start, stop, step) {
                                 (
@@ -425,9 +425,9 @@ impl<'a> Runtime<'a> {
                         },
                     )));
                 }
-                let start = self.run_expr(&start.root())?;
-                let stop = self.run_expr(&stop.root())?;
-                let step = self.run_expr(&step.root())?;
+                let start = self.run_expr(start.root())?;
+                let stop = self.run_expr(stop.root())?;
+                let step = self.run_expr(step.root())?;
                 let name = name.to_string();
                 match (start, stop, step) {
                     (Value::Int(start), Value::Int(stop), Value::Int(step)) => {
@@ -453,9 +453,9 @@ impl<'a> Runtime<'a> {
                 }
                 if ir.num_children() == 1 {
                     let pattern = pattern.clone();
-                    return Ok(Box::new(self.run(&ir.child(0).clone())?.map(move |_| {
+                    return Ok(Box::new(self.run(ir.child(0).clone())?.map(move |_| {
                         for node in pattern.nodes.clone() {
-                            let properties = self.run_expr(&node.attrs.root())?;
+                            let properties = self.run_expr(node.attrs.root())?;
                             match properties {
                                 Value::Map(properties) => {
                                     let id = self.g.borrow_mut().reserve_node();
@@ -490,7 +490,7 @@ impl<'a> Runtime<'a> {
                                 };
                                 (from_id, to_id)
                             };
-                            let properties = self.run_expr(&rel.attrs.root())?;
+                            let properties = self.run_expr(rel.attrs.root())?;
                             match properties {
                                 Value::Map(properties) => {
                                     let id = self.g.borrow_mut().reserve_relationship();
@@ -513,7 +513,7 @@ impl<'a> Runtime<'a> {
                     })));
                 }
                 for node in pattern.nodes.clone() {
-                    let properties = self.run_expr(&node.attrs.root())?;
+                    let properties = self.run_expr(node.attrs.root())?;
                     match properties {
                         Value::Map(properties) => {
                             let id = self.g.borrow_mut().reserve_node();
@@ -548,7 +548,7 @@ impl<'a> Runtime<'a> {
                         };
                         (from_id, to_id)
                     };
-                    let properties = self.run_expr(&rel.attrs.root())?;
+                    let properties = self.run_expr(rel.attrs.root())?;
                     match properties {
                         Value::Map(properties) => {
                             let id = self.g.borrow_mut().reserve_relationship();
@@ -577,9 +577,9 @@ impl<'a> Runtime<'a> {
                 }
                 if ir.num_children() == 1 {
                     let trees = trees.clone();
-                    return Ok(Box::new(self.run(&ir.child(0).clone())?.map(move |_| {
+                    return Ok(Box::new(self.run(ir.child(0).clone())?.map(move |_| {
                         for tree in &trees {
-                            let value = self.run_expr(&tree.root());
+                            let value = self.run_expr(tree.root());
                             match value {
                                 Ok(Value::Node(id)) => {
                                     self.stats.borrow_mut().nodes_deleted += 1;
@@ -595,7 +595,7 @@ impl<'a> Runtime<'a> {
                 let trees = trees.clone();
                 Ok(Box::new(once(trees).map(move |trees| {
                     for tree in trees {
-                        let value = self.run_expr(&tree.root())?;
+                        let value = self.run_expr(tree.root())?;
                         match value {
                             Value::Node(id) => {
                                 self.g.borrow_mut().delete_node(id);
@@ -610,7 +610,7 @@ impl<'a> Runtime<'a> {
             IR::NodeScan(node_pattern) => {
                 if ir.num_children() == 1 {
                     let node_pattern = node_pattern.clone();
-                    return Ok(Box::new(self.run(&ir.child(0).clone())?.flat_map(
+                    return Ok(Box::new(self.run(ir.child(0).clone())?.flat_map(
                         move |_| {
                             let alias = node_pattern.alias.to_string();
                             let iter = self.g.borrow().get_nodes(&node_pattern.labels).unwrap();
@@ -636,7 +636,7 @@ impl<'a> Runtime<'a> {
             IR::RelationshipScan(relationship_pattern) => {
                 if ir.num_children() == 1 {
                     let relationship_pattern = relationship_pattern.clone();
-                    return Ok(Box::new(self.run(&ir.child(0).clone())?.flat_map(
+                    return Ok(Box::new(self.run(ir.child(0).clone())?.flat_map(
                         move |_| {
                             let relationship_pattern = relationship_pattern.clone();
                             let iter = self
@@ -686,9 +686,9 @@ impl<'a> Runtime<'a> {
             }
             IR::Filter(tree) => {
                 let tree = tree.clone();
-                Ok(Box::new(self.run(&ir.child(0).clone())?.filter(
-                    move |_| self.run_expr(&tree.root()) == Ok(Value::Bool(true)),
-                )))
+                Ok(Box::new(self.run(ir.child(0).clone())?.filter(move |_| {
+                    self.run_expr(tree.root()) == Ok(Value::Bool(true))
+                })))
             }
             IR::Aggregate(name, trees, trees1) => {
                 if ir.num_children() == 1 {
@@ -696,11 +696,11 @@ impl<'a> Runtime<'a> {
                     let trees1 = trees1.clone();
                     let name = name.to_string();
                     let aggregator = AggregateIter {
-                        iter: self.run(&ir.child(0).clone())?,
+                        iter: self.run(ir.child(0).clone())?,
                         key_fn: move |_| {
                             let mut vec = Vec::new();
                             for tree in &trees {
-                                vec.push(self.run_expr(&tree.root()).unwrap());
+                                vec.push(self.run_expr(tree.root()).unwrap());
                             }
                             vec
                         },
@@ -709,7 +709,7 @@ impl<'a> Runtime<'a> {
                             self.vars.borrow_mut().insert(name.clone(), acc.unwrap());
                             let mut tmp = trees1.iter();
                             if let Some(tree) = tmp.next() {
-                                return self.run_expr(&tree.root());
+                                return self.run_expr(tree.root());
                             }
                             Ok(Value::Null)
                         },
@@ -729,11 +729,11 @@ impl<'a> Runtime<'a> {
             IR::Project(trees) => {
                 if ir.num_children() == 1 {
                     let trees = trees.clone();
-                    Ok(Box::new(self.run(&ir.child(0).clone())?.map(move |_| {
+                    Ok(Box::new(self.run(ir.child(0).clone())?.map(move |_| {
                         Ok(Value::List(
                             trees
                                 .iter()
-                                .map(|tree| self.run_expr(&tree.root()))
+                                .map(|tree| self.run_expr(tree.root()))
                                 .collect::<Result<Vec<Value>, String>>()?,
                         ))
                     })))
@@ -742,7 +742,7 @@ impl<'a> Runtime<'a> {
                         Ok(Value::List(
                             trees
                                 .iter()
-                                .map(|tree| self.run_expr(&tree.root()))
+                                .map(|tree| self.run_expr(tree.root()))
                                 .collect::<Result<Vec<Value>, String>>()?,
                         ))
                     })))
@@ -755,7 +755,7 @@ impl<'a> Runtime<'a> {
                     );
                 }
                 let iter = self
-                    .run(&ir.child(0).clone())?
+                    .run(ir.child(0).clone())?
                     .collect::<Result<Vec<Value>, String>>()?
                     .into_iter()
                     .map(Ok);
