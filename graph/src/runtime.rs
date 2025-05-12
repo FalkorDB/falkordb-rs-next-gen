@@ -115,7 +115,7 @@ impl<'a> Runtime<'a> {
             ExprIR::Bool(x) => Ok(Value::Bool(*x)),
             ExprIR::Integer(x) => Ok(Value::Int(*x)),
             ExprIR::Float(x) => Ok(Value::Float(*x)),
-            ExprIR::String(x) => Ok(Value::String(x.to_string())),
+            ExprIR::String(x) => Ok(Value::String(x.clone())),
             ExprIR::Var(x) => self.vars.borrow().get(x).map_or_else(
                 || Err(format!("Variable {x} not found")),
                 |v| Ok(v.to_owned()),
@@ -131,7 +131,7 @@ impl<'a> Runtime<'a> {
             )),
             ExprIR::Length => match self.run_expr(ir.child(0))? {
                 Value::List(arr) => Ok(Value::Int(arr.len() as _)),
-                _ => Err("Length operator requires a list".to_string()),
+                _ => Err(String::from("Length operator requires a list")),
             },
             ExprIR::GetElement => {
                 let arr = self.run_expr(ir.child(0))?;
@@ -214,39 +214,39 @@ impl<'a> Runtime<'a> {
             ExprIR::Not => match self.run_expr(ir.child(0))? {
                 Value::Bool(b) => Ok(Value::Bool(!b)),
                 Value::Null => Ok(Value::Null),
-                _ => {
-                    Err("InvalidArgumentType: Not operator requires a boolean or null".to_string())
-                }
+                _ => Err(String::from(
+                    "InvalidArgumentType: Not operator requires a boolean or null",
+                )),
             },
             ExprIR::Negate => match self.run_expr(ir.child(0))? {
                 Value::Int(i) => Ok(Value::Int(-i)),
                 Value::Float(f) => Ok(Value::Float(-f)),
                 Value::Null => Ok(Value::Null),
-                _ => Err(
-                    "InvalidArgumentType: Negate operator requires an Integer or Float".to_string(),
-                ),
+                _ => Err(String::from(
+                    "InvalidArgumentType: Negate operator requires an Integer or Float",
+                )),
             },
             ExprIR::Eq => all_equals(ir.children().map(|ir| self.run_expr(ir))),
             ExprIR::Neq => ir
                 .children()
                 .flat_map(|ir| self.run_expr(ir))
                 .reduce(|a, b| Value::Bool(a != b))
-                .ok_or_else(|| "Neq operator requires at least one argument".to_string()),
+                .ok_or_else(|| String::from("Neq operator requires at least one argument")),
             ExprIR::Lt => match (self.run_expr(ir.child(0))?, self.run_expr(ir.child(1))?) {
                 (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a < b)),
-                _ => Err("Lt operator requires two integers".to_string()),
+                _ => Err(String::from("Lt operator requires two integers")),
             },
             ExprIR::Gt => match (self.run_expr(ir.child(0))?, self.run_expr(ir.child(1))?) {
                 (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a > b)),
-                _ => Err("Gt operator requires two integers".to_string()),
+                _ => Err(String::from("Gt operator requires two integers")),
             },
             ExprIR::Le => match (self.run_expr(ir.child(0))?, self.run_expr(ir.child(1))?) {
                 (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a <= b)),
-                _ => Err("Le operator requires two integers".to_string()),
+                _ => Err(String::from("Le operator requires two integers")),
             },
             ExprIR::Ge => match (self.run_expr(ir.child(0))?, self.run_expr(ir.child(1))?) {
                 (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a >= b)),
-                _ => Err("Ge operator requires two integers".to_string()),
+                _ => Err(String::from("Ge operator requires two integers")),
             },
             ExprIR::In => {
                 let value = self.run_expr(ir.child(0))?;
@@ -257,27 +257,27 @@ impl<'a> Runtime<'a> {
                 .children()
                 .map(|ir| self.run_expr(ir))
                 .reduce(|acc, value| acc? + value?)
-                .ok_or_else(|| "Add operator requires at least one operand".to_string())?,
+                .ok_or_else(|| String::from("Add operator requires at least one operand"))?,
             ExprIR::Sub => ir
                 .children()
                 .map(|ir| self.run_expr(ir))
                 .reduce(|acc, value| acc? - value?)
-                .ok_or_else(|| "Sub operator requires at least one argument".to_string())?,
+                .ok_or_else(|| String::from("Sub operator requires at least one argument"))?,
             ExprIR::Mul => ir
                 .children()
                 .map(|ir| self.run_expr(ir))
                 .reduce(|acc, value| acc? * value?)
-                .ok_or_else(|| "Mul operator requires at least one argument".to_string())?,
+                .ok_or_else(|| String::from("Mul operator requires at least one argument"))?,
             ExprIR::Div => ir
                 .children()
                 .map(|ir| self.run_expr(ir))
                 .reduce(|acc, value| acc? / value?)
-                .ok_or_else(|| "Div operator requires at least one argument".to_string())?,
+                .ok_or_else(|| String::from("Div operator requires at least one argument"))?,
             ExprIR::Modulo => ir
                 .children()
                 .map(|ir| self.run_expr(ir))
                 .reduce(|acc, value| acc? % value?)
-                .ok_or_else(|| "Modulo operator requires at least one argument".to_string())?,
+                .ok_or_else(|| String::from("Modulo operator requires at least one argument"))?,
             ExprIR::Pow => ir
                 .children()
                 .flat_map(|ir| self.run_expr(ir))
@@ -285,7 +285,7 @@ impl<'a> Runtime<'a> {
                     (Value::Int(a), Value::Int(b)) => Value::Float((a as f64).powf(b as _)),
                     _ => Value::Null,
                 })
-                .ok_or_else(|| "Pow operator requires at least one argument".to_string()),
+                .ok_or_else(|| String::from("Pow operator requires at least one argument")),
             ExprIR::FuncInvocation(name, fn_type) => {
                 let args = ir
                     .children()
@@ -294,10 +294,9 @@ impl<'a> Runtime<'a> {
                 match self.functions.get(name, fn_type) {
                     Some(GraphFn { func, write, .. }) => {
                         if !self.write && *write {
-                            return Err(
-                                "graph.RO_QUERY is to be executed only on read-only queries"
-                                    .to_string(),
-                            );
+                            return Err(String::from(
+                                "graph.RO_QUERY is to be executed only on read-only queries",
+                            ));
                         }
                         func(self, args)
                     }
@@ -309,7 +308,7 @@ impl<'a> Runtime<'a> {
                     .map(|child| {
                         (
                             if let ExprIR::Var(key) = child.data() {
-                                key.to_string()
+                                key.clone()
                             } else {
                                 todo!();
                             },
@@ -320,7 +319,7 @@ impl<'a> Runtime<'a> {
             )),
             ExprIR::Set(x) => {
                 let v = self.run_expr(ir.child(0))?;
-                self.vars.borrow_mut().insert(x.to_string(), v.clone());
+                self.vars.borrow_mut().insert(x.clone(), v.clone());
                 Ok(v)
             }
         }
@@ -341,8 +340,9 @@ impl<'a> Runtime<'a> {
                         .map(|ir| self.run_expr(ir.root()))
                         .collect::<Result<Vec<_>, _>>()?;
                     if !self.write && func.write {
-                        return Err("graph.RO_QUERY is to be executed only on read-only queries"
-                            .to_string());
+                        return Err(String::from(
+                            "graph.RO_QUERY is to be executed only on read-only queries",
+                        ));
                     }
                     let res = (func.func)(self, args)?;
                     match res {
@@ -361,7 +361,7 @@ impl<'a> Runtime<'a> {
                         let arr = match value {
                             Ok(Value::List(arr)) => arr.into_iter().map(Ok).collect(),
                             Ok(_) => {
-                                vec![Err("Unwind operator requires a list".to_string())]
+                                vec![Err(String::from("Unwind operator requires a list"))]
                             }
                             Err(e) => {
                                 vec![Err(e)]
@@ -369,7 +369,7 @@ impl<'a> Runtime<'a> {
                         };
                         arr.into_iter().map(move |v| match v {
                             Ok(v) => {
-                                self.vars.borrow_mut().insert(name.to_string(), v.clone());
+                                self.vars.borrow_mut().insert(name.clone(), v.clone());
                                 Ok(v)
                             }
                             Err(e) => Err(e),
@@ -379,13 +379,13 @@ impl<'a> Runtime<'a> {
                 let value = self.run_expr(tree.root())?;
                 if let Value::List(arr) = value {
                     return Ok(Box::new(arr.into_iter().map(move |v| {
-                        self.vars.borrow_mut().insert(name.to_string(), v.clone());
+                        self.vars.borrow_mut().insert(name.clone(), v.clone());
                         Ok(v)
                     })));
                 }
-                Ok(Box::new(once(Err(
-                    "Unwind operator requires a list".to_string()
-                ))))
+                Ok(Box::new(once(Err(String::from(
+                    "Unwind operator requires a list",
+                )))))
             }
             IR::UnwindRange(start, stop, step, name) => {
                 if let Some(child_idx) = child_idx {
@@ -400,9 +400,7 @@ impl<'a> Runtime<'a> {
                                         .enumerate()
                                         .map(move |(i, v)| v + i as i64 * step);
                                 iter.map(move |v| {
-                                    self.vars
-                                        .borrow_mut()
-                                        .insert(name.to_string(), Value::Int(v));
+                                    self.vars.borrow_mut().insert(name.clone(), Value::Int(v));
                                     Ok(Value::Int(v))
                                 })
                             }
@@ -418,19 +416,17 @@ impl<'a> Runtime<'a> {
                 match (start, stop, step) {
                     (Value::Int(start), Value::Int(stop), Value::Int(step)) => {
                         if step == 0 {
-                            return Err("Step cannot be zero".to_string());
+                            return Err(String::from("Step cannot be zero"));
                         }
                         let iter = std::iter::repeat_n(start, ((stop - start) / step + 1) as _)
                             .enumerate()
                             .map(move |(i, v)| v + i as i64 * step);
                         Ok(Box::new(iter.map(move |v| {
-                            self.vars
-                                .borrow_mut()
-                                .insert(name.to_string(), Value::Int(v));
+                            self.vars.borrow_mut().insert(name.clone(), Value::Int(v));
                             Ok(Value::Int(v))
                         })))
                     }
-                    _ => Err("UnwindRange operator requires three integers".to_string()),
+                    _ => Err(String::from("UnwindRange operator requires three integers")),
                 }
             }
             IR::Create(pattern) => {
@@ -477,7 +473,9 @@ impl<'a> Runtime<'a> {
                         self.run_expr(tree.root()) == Ok(Value::Bool(true))
                     })));
                 }
-                Err("Filter operator requires a boolean expression".to_string())
+                Err(String::from(
+                    "Filter operator requires a boolean expression",
+                ))
             }
             IR::Aggregate(name, trees, trees1) => {
                 if let Some(child_idx) = child_idx {
@@ -492,9 +490,7 @@ impl<'a> Runtime<'a> {
                         },
                         default_value: Ok(Value::Null),
                         agg_fn: move |x, acc| {
-                            self.vars
-                                .borrow_mut()
-                                .insert(name.to_string(), acc.unwrap());
+                            self.vars.borrow_mut().insert(name.clone(), acc.unwrap());
                             let mut tmp = trees1.iter();
                             if let Some(tree) = tmp.next() {
                                 return self.run_expr(tree.root());
@@ -536,9 +532,9 @@ impl<'a> Runtime<'a> {
             }
             IR::Commit => {
                 if !self.write {
-                    return Err(
-                        "graph.RO_QUERY is to be executed only on read-only queries".to_string()
-                    );
+                    return Err(String::from(
+                        "graph.RO_QUERY is to be executed only on read-only queries",
+                    ));
                 }
                 let iter = self
                     .run(&child_idx.unwrap())?
@@ -603,7 +599,7 @@ impl<'a> Runtime<'a> {
                     // self.pending.borrow_mut().nodes_deleted.push(id);
                 }
                 _ => {
-                    return Err("Delete operator requires a node".to_string());
+                    return Err(String::from("Delete operator requires a node"));
                 }
             }
         }
@@ -628,7 +624,7 @@ impl<'a> Runtime<'a> {
                         .borrow_mut()
                         .insert(node.alias.to_string(), Value::Node(id));
                 }
-                _ => return Err("Invalid node properties".to_string()),
+                _ => return Err(String::from("Invalid node properties")),
             }
         }
         for rel in &pattern.relationships {
@@ -639,14 +635,14 @@ impl<'a> Runtime<'a> {
                     .ok_or_else(|| format!("Variable {} not found", rel.from))?;
                 let from_id = match from_id {
                     Value::Node(id) => *id,
-                    _ => return Err("Invalid node id".to_string()),
+                    _ => return Err(String::from("Invalid node id")),
                 };
                 let to_id = vars
                     .get(&rel.to.to_string())
                     .ok_or_else(|| format!("Variable {} not found", rel.to))?;
                 let to_id = match to_id {
                     Value::Node(id) => *id,
-                    _ => return Err("Invalid node id".to_string()),
+                    _ => return Err(String::from("Invalid node id")),
                 };
                 (from_id, to_id)
             };
@@ -656,7 +652,7 @@ impl<'a> Runtime<'a> {
                     let id = self.g.borrow_mut().reserve_relationship();
                     self.pending.borrow_mut().created_relationships.push((
                         id,
-                        rel.relationship_type.to_string(),
+                        rel.relationship_type.clone(),
                         from_id,
                         to_id,
                         properties,
@@ -667,7 +663,7 @@ impl<'a> Runtime<'a> {
                     );
                 }
                 _ => {
-                    return Err("Invalid relationship properties".to_string());
+                    return Err(String::from("Invalid relationship properties"));
                 }
             }
         }
@@ -722,12 +718,12 @@ fn evaluate_param(expr: DynNode<ExprIR>) -> Value {
         ExprIR::Bool(x) => Value::Bool(*x),
         ExprIR::Integer(x) => Value::Int(*x),
         ExprIR::Float(x) => Value::Float(*x),
-        ExprIR::String(x) => Value::String(x.to_string()),
+        ExprIR::String(x) => Value::String(x.clone()),
         ExprIR::List => Value::List(expr.children().map(evaluate_param).collect()),
         ExprIR::Map => Value::Map(
             expr.children()
                 .map(|ir| match ir.data() {
-                    ExprIR::Var(key) => (key.to_string(), evaluate_param(ir.child(0))),
+                    ExprIR::Var(key) => (key.clone(), evaluate_param(ir.child(0))),
                     _ => todo!(),
                 })
                 .collect(),
@@ -765,7 +761,7 @@ fn get_elements(
             Ok(Value::List(values[start as usize..end as usize].to_vec()))
         }
         (_, Value::Null, _) | (_, _, Value::Null) => Ok(Value::Null),
-        _ => Err("Invalid array range parameters.".to_string()),
+        _ => Err(String::from("Invalid array range parameters.")),
     }
 }
 
@@ -800,7 +796,7 @@ where
         }
         Ok(Value::Bool(true))
     } else {
-        Err("Eq operator requires at least two arguments".to_string())
+        Err(String::from("Eq operator requires at least two arguments"))
     }
 }
 
