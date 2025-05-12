@@ -496,7 +496,7 @@ impl QueryIR {
                     env.insert(path.name.to_string());
                 }
                 for node in &p.nodes {
-                    if env.contains(&node.alias.to_string()) {
+                    if env.contains(&node.alias.to_string()) && p.relationships.is_empty() {
                         return Err(format!(
                             "The bound variable {} can't be redeclared in a create clause",
                             node.alias.to_string().as_str()

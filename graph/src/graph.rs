@@ -280,12 +280,12 @@ impl Graph {
 
     pub fn create_nodes(
         &mut self,
-        nodes: &Vec<(u64, Vec<String>, BTreeMap<String, Value>)>,
+        nodes: &BTreeMap<u64, (Vec<String>, BTreeMap<String, Value>)>,
     ) {
         self.node_count += nodes.len() as u64;
         self.reserved_node_count -= nodes.len() as u64;
 
-        for (id, _, _) in nodes {
+        for (id, _) in nodes {
             if self.deleted_nodes.is_empty() {
                 break;
             }
@@ -294,7 +294,7 @@ impl Graph {
 
         self.resize();
 
-        for (id, labels, attrs) in nodes {
+        for (id, (labels, attrs)) in nodes {
             self.all_nodes_matrix.set(*id, *id, true);
 
             for label in labels {
@@ -388,26 +388,26 @@ impl Graph {
 
     pub fn create_relationships(
         &mut self,
-        relationships: &Vec<(u64, String, u64, u64, BTreeMap<String, Value>)>,
+        relationships: &BTreeMap<u64, (String, u64, u64, BTreeMap<String, Value>)>,
     ) {
         self.relationship_count += relationships.len() as u64;
         self.reserved_relationship_count -= relationships.len() as u64;
 
-        for (id, _, _, _, _) in relationships {
+        for (id, _) in relationships {
             if self.deleted_relationships.is_empty() {
                 break;
             }
             self.deleted_relationships.remove(*id);
         }
 
-        for (id, relationship_type, from, to, _) in relationships {
+        for (id, (relationship_type, from, to, _)) in relationships {
             let relationship_type_matrix = self.get_relationship_matrix_mut(relationship_type);
             relationship_type_matrix.set(*from, *to, *id);
         }
 
         self.resize();
 
-        for (id, relationship_type, _, _, attrs) in relationships {
+        for (id, (relationship_type, _, _, attrs)) in relationships {
             self.relationship_type_matrix.set(
                 *id,
                 self.relationship_types
