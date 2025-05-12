@@ -236,9 +236,9 @@ fn query_mut(
     let collector = RedisValuesCollector::new();
     let (plan, parameters, parse_duration, plan_duration) =
         graph.borrow().get_plan(query).map_err(RedisError::String)?;
-    let mut runtime = Runtime::new(graph, parameters, true);
+    let mut runtime = Runtime::new(graph, parameters, true, plan);
     runtime
-        .query(plan, &collector)
+        .query(&collector)
         .map(|summary| {
             let mut stats = vec![];
             if summary.labels_added > 0 {
@@ -340,8 +340,8 @@ fn graph_ro_query(
             let collector = RedisValuesCollector::new();
             let (plan, parameters, parse_duration, plan_duration) =
                 graph.borrow().get_plan(query).map_err(RedisError::String)?;
-            let mut runtime = Runtime::new(graph, parameters, false);
-            match runtime.query(plan, &collector) {
+            let mut runtime = Runtime::new(graph, parameters, false, plan);
+            match runtime.query(&collector) {
                 Ok(_) => Ok(vec![
                     vec![
                         vec![

@@ -69,7 +69,6 @@ impl Planner {
     }
 
     fn plan_aggregation(
-        &mut self,
         agg_ctx_var: String,
         expr: &mut NodeMut<Dyn<ExprIR>>,
     ) {
@@ -78,7 +77,7 @@ impl Planner {
                 expr.push_child_tree(tree!(ExprIR::Var(agg_ctx_var)));
             }
             ExprIR::Set(_) => {
-                self.plan_aggregation(agg_ctx_var, &mut expr.child_mut(0));
+                Self::plan_aggregation(agg_ctx_var, &mut expr.child_mut(0));
             }
             _ => unreachable!(),
         }
@@ -130,7 +129,7 @@ impl Planner {
             let agg_ctx_var = self.next_var();
             for mut expr in exprs {
                 if expr.root().is_aggregation() {
-                    self.plan_aggregation(agg_ctx_var.to_string(), &mut expr.root_mut());
+                    Self::plan_aggregation(agg_ctx_var.to_string(), &mut expr.root_mut());
                     aggregations.push(expr);
                 } else {
                     group_by_keys.push(expr);

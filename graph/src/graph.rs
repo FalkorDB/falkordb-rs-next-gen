@@ -422,7 +422,7 @@ impl Graph {
                 if *value == Value::Null {
                     continue;
                 }
-                let property_id = self.get_relationship_property_id(&key);
+                let property_id = self.get_relationship_property_id(key);
                 map.insert(property_id, value.clone());
             }
             self.relationship_properties_map.insert(*id, map);

@@ -513,8 +513,7 @@ fn reverse(
     args: Vec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
-        Some(Value::List(v)) => {
-            let mut v = v.clone();
+        Some(Value::List(mut v)) => {
             v.reverse();
             Ok(Value::List(v))
         }
