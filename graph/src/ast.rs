@@ -111,7 +111,7 @@ impl Validate for DynNode<'_, ExprIR> {
                 Ok(())
             }
             ExprIR::Var(id) => {
-                debug_assert!(self.num_children() <= 1);
+                debug_assert_eq!(self.num_children(), 0);
                 if env.contains(id) {
                     Ok(())
                 } else {
