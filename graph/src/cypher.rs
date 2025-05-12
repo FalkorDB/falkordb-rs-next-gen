@@ -59,6 +59,16 @@ enum Token {
     EndOfFile,
 }
 
+impl Token {
+    fn to_keyword_string(&self) -> Option<String> {
+        KEYWORDS
+            .iter()
+            .find(|(s, t)| t == self)
+            .map(|(s, _)| *s)
+            .map(String::from)
+    }
+}
+
 const KEYWORDS: [(&str, Token); 22] = [
     ("call", Token::Call),
     ("match", Token::Match),
@@ -1092,27 +1102,33 @@ impl<'a> Parser<'a> {
         }
 
         loop {
-            if let Token::Ident(key) = self.lexer.current() {
-                self.lexer.next();
-                match_token!(self.lexer, Colon);
-                let value = self.parse_expr()?;
-                attrs.push(tree!(ExprIR::Var(key), value));
+            match (
+                self.lexer.current(),
+                self.lexer.current().to_keyword_string(),
+            ) {
+                (Token::Ident(key), _) | (_, Some(key)) => {
+                    self.lexer.next();
+                    match_token!(self.lexer, Colon);
+                    let value = self.parse_expr()?;
+                    attrs.push(tree!(ExprIR::Var(key), value));
 
-                match self.lexer.current() {
-                    Token::Comma => self.lexer.next(),
-                    Token::RBracket => {
-                        self.lexer.next();
-                        return Ok(tree!(ExprIR::Map ; attrs));
-                    }
-                    token => {
-                        return Err(self
-                            .lexer
-                            .format_error(&format!("Unexpected token {token:?}")));
+                    match self.lexer.current() {
+                        Token::Comma => self.lexer.next(),
+                        Token::RBracket => {
+                            self.lexer.next();
+                            return Ok(tree!(ExprIR::Map ; attrs));
+                        }
+                        token => {
+                            return Err(self
+                                .lexer
+                                .format_error(&format!("Unexpected token {token:?}")));
+                        }
                     }
                 }
-            } else {
-                match_token!(self.lexer, RBracket);
-                return Ok(tree!(ExprIR::Map ; attrs));
+                _ => {
+                    match_token!(self.lexer, RBracket);
+                    return Ok(tree!(ExprIR::Map ; attrs));
+                }
             }
         }
     }
