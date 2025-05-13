@@ -214,16 +214,18 @@ impl<'a> Runtime<'a> {
             ExprIR::Not => match self.run_expr(ir.child(0))? {
                 Value::Bool(b) => Ok(Value::Bool(!b)),
                 Value::Null => Ok(Value::Null),
-                _ => Err(String::from(
-                    "InvalidArgumentType: Not operator requires a boolean or null",
+                v => Err(format!(
+                    "Type mismatch: expected Boolean or Null but was {}",
+                    v.name()
                 )),
             },
             ExprIR::Negate => match self.run_expr(ir.child(0))? {
                 Value::Int(i) => Ok(Value::Int(-i)),
                 Value::Float(f) => Ok(Value::Float(-f)),
                 Value::Null => Ok(Value::Null),
-                _ => Err(String::from(
-                    "InvalidArgumentType: Negate operator requires an Integer or Float",
+                v => Err(format!(
+                    "Type mismatch: expected Integer, Float, or Null but was {}",
+                    v.name()
                 )),
             },
             ExprIR::Eq => all_equals(ir.children().map(|ir| self.run_expr(ir))),
