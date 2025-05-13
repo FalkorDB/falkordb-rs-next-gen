@@ -659,6 +659,9 @@ impl<'a> Parser<'a> {
         &mut self,
         write: bool,
     ) -> Result<QueryIR, String> {
+        if optional_match_token!(self.lexer, Star) {
+            return Ok(QueryIR::With(vec![], write));
+        }
         Ok(QueryIR::With(self.parse_named_exprs()?, write))
     }
 
