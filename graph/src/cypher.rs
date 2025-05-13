@@ -60,6 +60,7 @@ enum Token {
     Colon,
     Dot,
     DotDot,
+    Pipe,
     RegexMatches,
     Error(String),
     EndOfFile,
@@ -178,6 +179,7 @@ impl<'a> Lexer<'a> {
                     Some('0'..='9') => Self::lex_number(str, pos),
                     _ => (Token::Dot, 1),
                 },
+                '|' => (Token::Pipe, 1),
                 '\'' => {
                     let mut len = 1;
                     let mut end = false;
@@ -534,7 +536,7 @@ impl<'a> Parser<'a> {
     }
 
     pub fn parse(&mut self) -> Result<QueryIR, String> {
-        let ir = self.parse_query()?;
+        let mut ir = self.parse_query()?;
         ir.validate()?;
         Ok(ir)
     }
@@ -543,12 +545,16 @@ impl<'a> Parser<'a> {
         let mut clauses = Vec::new();
         let mut write = false;
         loop {
-            while let Ok(clause) = self.parse_reading_clasue() {
-                clauses.push(clause);
+            while let Token::Keyword(
+                Keyword::Match | Keyword::Unwind | Keyword::Call | Keyword::Where,
+                _,
+            ) = self.lexer.current()
+            {
+                clauses.push(self.parse_reading_clasue()?);
             }
-            while let Ok(clause) = self.parse_writing_clause() {
+            while let Token::Keyword(Keyword::Create | Keyword::Delete, _) = self.lexer.current() {
                 write = true;
-                clauses.push(clause);
+                clauses.push(self.parse_writing_clause()?);
             }
             if optional_match_token!(self.lexer => With) {
                 clauses.push(self.parse_with_clause(write)?);
@@ -653,6 +659,9 @@ impl<'a> Parser<'a> {
         &mut self,
         write: bool,
     ) -> Result<QueryIR, String> {
+        if optional_match_token!(self.lexer, Star) {
+            return Ok(QueryIR::With(vec![], write));
+        }
         Ok(QueryIR::With(self.parse_named_exprs()?, write))
     }
 
@@ -683,7 +692,8 @@ impl<'a> Parser<'a> {
                 }
                 loop {
                     if let Token::Dash | Token::LessThan = self.lexer.current() {
-                        let (relationship, right) = self.parse_relationship_pattern(left_alias)?;
+                        let (relationship, right) =
+                            self.parse_relationship_pattern(left_alias, &clause)?;
                         vars.push(relationship.alias.clone());
                         vars.push(right.alias.clone());
                         left_alias = right.alias.clone();
@@ -704,7 +714,8 @@ impl<'a> Parser<'a> {
                     nodes.push(left);
                 }
                 while let Token::Dash | Token::LessThan = self.lexer.current() {
-                    let (relationship, right) = self.parse_relationship_pattern(left_alias)?;
+                    let (relationship, right) =
+                        self.parse_relationship_pattern(left_alias, &clause)?;
                     left_alias = right.alias.clone();
                     relationships.push(relationship);
                     if nodes_alias.insert(right.alias.to_string()) {
@@ -1054,49 +1065,49 @@ impl<'a> Parser<'a> {
     fn parse_relationship_pattern(
         &mut self,
         src: Alias,
+        clause: &Keyword,
     ) -> Result<(RelationshipPattern, NodePattern), String> {
         let is_incoming = optional_match_token!(self.lexer, LessThan);
         match_token!(self.lexer, Dash);
-        match_token!(self.lexer, LBrace);
-        let alias = if let Token::Ident(id) = self.lexer.current() {
-            self.lexer.next();
-            Alias::String(id)
+        let has_details = optional_match_token!(self.lexer, LBrace);
+        let (alias, types, attrs) = if has_details {
+            let alias = if let Token::Ident(id) = self.lexer.current() {
+                self.lexer.next();
+                Alias::String(id)
+            } else {
+                self.anon_id += 1;
+                Alias::Anon(self.anon_id - 1)
+            };
+            let mut types = vec![];
+            while optional_match_token!(self.lexer, Colon) {
+                types.push(self.parse_ident()?);
+                optional_match_token!(self.lexer, Pipe);
+            }
+            let attrs = self.parse_map()?;
+            match_token!(self.lexer, RBrace);
+            (alias, types, attrs)
         } else {
             self.anon_id += 1;
-            Alias::Anon(self.anon_id - 1)
+            (Alias::Anon(self.anon_id - 1), vec![], tree!(ExprIR::Map))
         };
-        match_token!(self.lexer, Colon);
-        let relationship_type = self.parse_ident()?;
-        let attrs = self.parse_map()?;
-        match_token!(self.lexer, RBrace);
         match_token!(self.lexer, Dash);
         let is_outgoing = optional_match_token!(self.lexer, GreaterThan);
         let dst = self.parse_node_pattern()?;
         let relationship = match (is_incoming, is_outgoing) {
-            (true, true) | (false, false) => RelationshipPattern::new(
-                alias,
-                relationship_type,
-                attrs,
-                src,
-                dst.alias.clone(),
-                true,
-            ),
-            (true, false) => RelationshipPattern::new(
-                alias,
-                relationship_type,
-                attrs,
-                dst.alias.clone(),
-                src,
-                false,
-            ),
-            (false, true) => RelationshipPattern::new(
-                alias,
-                relationship_type,
-                attrs,
-                src,
-                dst.alias.clone(),
-                false,
-            ),
+            (true, true) | (false, false) => {
+                if clause == &Keyword::Create {
+                    return Err(self
+                        .lexer
+                        .format_error("Only directed relationships are supported in CREATE"));
+                }
+                RelationshipPattern::new(alias, types, attrs, src, dst.alias.clone(), true)
+            }
+            (true, false) => {
+                RelationshipPattern::new(alias, types, attrs, dst.alias.clone(), src, false)
+            }
+            (false, true) => {
+                RelationshipPattern::new(alias, types, attrs, src, dst.alias.clone(), false)
+            }
         };
         Ok((relationship, dst))
     }

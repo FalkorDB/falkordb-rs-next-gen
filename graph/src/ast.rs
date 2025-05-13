@@ -244,6 +244,9 @@ impl Display for NodePattern {
         &self,
         f: &mut std::fmt::Formatter<'_>,
     ) -> std::fmt::Result {
+        if self.labels.is_empty() {
+            return write!(f, "({})", self.alias);
+        }
         write!(f, "({}:{})", self.alias, self.labels.join(":"))
     }
 }
@@ -266,7 +269,7 @@ impl NodePattern {
 #[derive(Clone, Debug)]
 pub struct RelationshipPattern {
     pub alias: Alias,
-    pub relationship_type: String,
+    pub types: Vec<String>,
     pub attrs: DynTree<ExprIR>,
     pub from: Alias,
     pub to: Alias,
@@ -278,10 +281,16 @@ impl Display for RelationshipPattern {
         &self,
         f: &mut std::fmt::Formatter<'_>,
     ) -> std::fmt::Result {
+        if self.types.is_empty() {
+            return write!(f, "({})-[{}]->({})", self.from, self.alias, self.to);
+        }
         write!(
             f,
             "({})-[{}:{}]->({})",
-            self.from, self.alias, self.relationship_type, self.to
+            self.from,
+            self.alias,
+            self.types.join("|"),
+            self.to
         )
     }
 }
@@ -290,7 +299,7 @@ impl RelationshipPattern {
     #[must_use]
     pub const fn new(
         alias: Alias,
-        relationship_type: String,
+        types: Vec<String>,
         attrs: DynTree<ExprIR>,
         from: Alias,
         to: Alias,
@@ -298,7 +307,7 @@ impl RelationshipPattern {
     ) -> Self {
         Self {
             alias,
-            relationship_type,
+            types,
             attrs,
             from,
             to,
@@ -431,18 +440,19 @@ impl Display for QueryIR {
 }
 
 impl QueryIR {
-    pub fn validate(&self) -> Result<(), String> {
+    pub fn validate(&mut self) -> Result<(), String> {
         let mut env = HashSet::new();
         self.inner_validate(std::iter::empty(), &mut env)
     }
 
+    #[allow(clippy::too_many_lines)]
     fn inner_validate<'a, T>(
-        &self,
+        &mut self,
         mut iter: T,
         env: &mut HashSet<String>,
     ) -> Result<(), String>
     where
-        T: Iterator<Item = &'a Self>,
+        T: Iterator<Item = &'a mut Self>,
     {
         match self {
             Self::Call(_, args) => {
@@ -495,14 +505,22 @@ impl QueryIR {
                     }
                     env.insert(path.name.to_string());
                 }
-                for node in &p.nodes {
+                let mut remove = Vec::new();
+                for (i, node) in p.nodes.iter().enumerate() {
                     if env.contains(&node.alias.to_string()) {
-                        return Err(format!(
-                            "The bound variable {} can't be redeclared in a create clause",
-                            node.alias.to_string().as_str()
-                        ));
+                        if p.relationships.is_empty() {
+                            return Err(format!(
+                                "The bound variable {} can't be redeclared in a create clause",
+                                node.alias.to_string().as_str()
+                            ));
+                        }
+                        remove.push(i);
                     }
                     node.attrs.root().validate(env)?;
+                }
+                remove.reverse();
+                for i in remove {
+                    p.nodes.remove(i);
                 }
                 for node in &p.nodes {
                     env.insert(node.alias.to_string());
@@ -510,8 +528,13 @@ impl QueryIR {
                 for relationship in &p.relationships {
                     if env.contains(&relationship.alias.to_string()) {
                         return Err(format!(
-                            "Duplicate alias {}",
+                            "The bound variable '{}' can't be redeclared in a CREATE clause",
                             relationship.alias.to_string().as_str()
+                        ));
+                    }
+                    if relationship.types.len() != 1 {
+                        return Err(String::from(
+                            "Exactly one relationship type must be specified for each relation in a CREATE pattern.",
                         ));
                     }
                     relationship.attrs.root().validate(env)?;
@@ -528,8 +551,8 @@ impl QueryIR {
                     .map_or(Ok(()), |first| first.inner_validate(iter, env))
             }
             Self::Query(q, _) => {
-                let mut iter = q.iter();
-                let first = iter.next().unwrap();
+                let mut iter = q.iter_mut();
+                let first = iter.next().ok_or("Empty query")?;
                 first.inner_validate(iter, env)
             }
         }

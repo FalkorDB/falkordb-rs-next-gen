@@ -1,4 +1,4 @@
-use crate::ast::Pattern;
+use crate::ast::{NodePattern, Pattern, RelationshipPattern};
 use crate::functions::{FnType, Functions, GraphFn, get_functions};
 use crate::iter::AggregateIter;
 use crate::{ast::ExprIR, graph::Graph, planner::IR, value::Contains, value::Value};
@@ -41,8 +41,8 @@ pub struct Stats {
 
 #[derive(Default)]
 pub struct Pending {
-    pub created_nodes: Vec<(u64, Vec<String>, BTreeMap<String, Value>)>,
-    pub created_relationships: Vec<(u64, String, u64, u64, BTreeMap<String, Value>)>,
+    pub created_nodes: BTreeMap<u64, (Vec<String>, BTreeMap<String, Value>)>,
+    pub created_relationships: BTreeMap<u64, (String, u64, u64, BTreeMap<String, Value>)>,
 }
 
 pub struct Runtime<'a> {
@@ -432,14 +432,30 @@ impl<'a> Runtime<'a> {
                 }
             }
             IR::Create(pattern) => {
+                let mut parent_commit = false;
+                if let Some(parent) = self.plan.node(idx).parent() {
+                    if matches!(parent.data(), IR::Commit) {
+                        parent_commit = true;
+                    }
+                }
                 if let Some(child_idx) = child_idx {
-                    return Ok(Box::new(self.run(&child_idx)?.map(move |_| {
-                        self.create(pattern)?;
-                        Ok(Value::List(vec![]))
+                    return Ok(Box::new(self.run(&child_idx)?.flat_map(move |_| {
+                        if let Err(e) = self.create(pattern) {
+                            return vec![Err(e)].into_iter();
+                        }
+
+                        if parent_commit {
+                            return vec![].into_iter();
+                        }
+
+                        vec![Ok(Value::List(vec![]))].into_iter()
                     })));
                 }
                 self.create(pattern)?;
-                Ok(Box::new(empty()))
+                if parent_commit {
+                    return Ok(Box::new(empty()));
+                }
+                Ok(Box::new(once(Ok(Value::List(vec![])))))
             }
             IR::Delete(trees) => {
                 if let Some(child_idx) = child_idx {
@@ -551,13 +567,13 @@ impl<'a> Runtime<'a> {
 
     fn relationship_scan(
         &self,
-        relationship_pattern: &crate::ast::RelationshipPattern,
+        relationship_pattern: &RelationshipPattern,
     ) -> std::iter::Map<crate::tensor::Iter, impl FnMut((u64, u64, u64)) -> Result<Value, String>>
     {
         let iter = self
             .g
             .borrow()
-            .get_relationships(&[relationship_pattern.relationship_type.clone()])
+            .get_relationships(&relationship_pattern.types)
             .unwrap();
         iter.map(move |(src, dst, id)| {
             self.vars.borrow_mut().insert(
@@ -576,7 +592,7 @@ impl<'a> Runtime<'a> {
 
     fn node_scan(
         &self,
-        node_pattern: &crate::ast::NodePattern,
+        node_pattern: &NodePattern,
     ) -> std::iter::Map<crate::matrix::Iter<bool>, impl FnMut((u64, u64)) -> Result<Value, String>>
     {
         let iter = self.g.borrow().get_nodes(&node_pattern.labels).unwrap();
@@ -617,11 +633,10 @@ impl<'a> Runtime<'a> {
             match properties {
                 Value::Map(properties) => {
                     let id = self.g.borrow_mut().reserve_node();
-                    self.pending.borrow_mut().created_nodes.push((
-                        id,
-                        node.labels.clone(),
-                        properties,
-                    ));
+                    self.pending
+                        .borrow_mut()
+                        .created_nodes
+                        .insert(id, (node.labels.clone(), properties));
                     self.vars
                         .borrow_mut()
                         .insert(node.alias.to_string(), Value::Node(id));
@@ -652,13 +667,15 @@ impl<'a> Runtime<'a> {
             match properties {
                 Value::Map(properties) => {
                     let id = self.g.borrow_mut().reserve_relationship();
-                    self.pending.borrow_mut().created_relationships.push((
+                    self.pending.borrow_mut().created_relationships.insert(
                         id,
-                        rel.relationship_type.clone(),
-                        from_id,
-                        to_id,
-                        properties,
-                    ));
+                        (
+                            rel.types.first().unwrap().clone(),
+                            from_id,
+                            to_id,
+                            properties,
+                        ),
+                    );
                     self.vars.borrow_mut().insert(
                         rel.alias.to_string(),
                         Value::Relationship(id, from_id, to_id),
@@ -680,7 +697,7 @@ impl<'a> Runtime<'a> {
                 .borrow()
                 .created_nodes
                 .iter()
-                .flat_map(|v| v.2.values())
+                .flat_map(|v| v.1.1.values())
                 .map(|v| match v {
                     Value::Null => 0,
                     _ => 1,
@@ -699,7 +716,7 @@ impl<'a> Runtime<'a> {
                 .borrow()
                 .created_relationships
                 .iter()
-                .flat_map(|v| v.4.values())
+                .flat_map(|v| v.1.3.values())
                 .map(|v| match v {
                     Value::Null => 0,
                     _ => 1,

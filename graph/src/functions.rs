@@ -254,17 +254,42 @@ fn property(
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
     match (iter.next(), iter.next(), iter.next()) {
-        (Some(Value::Node(node_id)), Some(Value::String(property)), None) => runtime
-            .g
-            .borrow()
-            .get_node_property_id(&property)
-            .map_or(Ok(Value::Null), |property_id| {
-                runtime
-                    .g
-                    .borrow()
-                    .get_node_property(node_id, property_id)
-                    .map_or(Ok(Value::Null), Ok)
-            }),
+        (Some(Value::Node(node_id)), Some(Value::String(property)), None) => {
+            if let Some(node) = runtime.pending.borrow().created_nodes.get(&node_id) {
+                if let Some(value) = node.1.get(&property) {
+                    return Ok(value.clone());
+                }
+            }
+            runtime.g.borrow().get_node_property_id(&property).map_or(
+                Ok(Value::Null),
+                |property_id| {
+                    runtime
+                        .g
+                        .borrow()
+                        .get_node_property(node_id, property_id)
+                        .map_or(Ok(Value::Null), Ok)
+                },
+            )
+        }
+        (Some(Value::Relationship(id, _, _)), Some(Value::String(property)), None) => {
+            if let Some(rel) = runtime.pending.borrow().created_relationships.get(&id) {
+                if let Some(value) = rel.3.get(&property) {
+                    return Ok(value.clone());
+                }
+            }
+            Ok(Value::Null)
+            // runtime
+            //     .g
+            //     .borrow()
+            //     .get_relationship_property_id(&property)
+            //     .map_or(Ok(Value::Null), |property_id| {
+            //         runtime
+            //             .g
+            //             .borrow()
+            //             .get_relationship_property(src, property_id)
+            //             .map_or(Ok(Value::Null), Ok)
+            //     })
+        }
         (Some(Value::Map(map)), Some(Value::String(property)), None) => {
             Ok(map.get(&property).unwrap_or(&Value::Null).clone())
         }
