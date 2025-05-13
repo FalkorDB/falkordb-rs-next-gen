@@ -9,7 +9,7 @@ use std::iter::Peekable;
 use std::str::Chars;
 
 #[derive(Debug, PartialEq, Clone)]
-enum Token {
+enum Keyword {
     Call,
     Match,
     Unwind,
@@ -19,10 +19,25 @@ enum Token {
     With,
     Return,
     As,
-    Ident(String),
-    Parameter(String),
     Null,
-    Bool(bool),
+    Or,
+    Xor,
+    And,
+    Not,
+    Is,
+    In,
+    Starts,
+    Ends,
+    Contains,
+    True,
+    False,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+enum Token {
+    Ident(String),
+    Keyword(Keyword, String),
+    Parameter(String),
     Integer(i64),
     Float(f64),
     String(String),
@@ -32,17 +47,12 @@ enum Token {
     RBracket,
     LParen,
     RParen,
-    Or,
-    Xor,
-    And,
-    Not,
     Modulo,
     Power,
     Star,
     Slash,
     Plus,
     Dash,
-    Is,
     Equal,
     LessThan,
     GreaterThan,
@@ -50,38 +60,33 @@ enum Token {
     Colon,
     Dot,
     DotDot,
-    In,
-    Starts,
-    Ends,
-    Contains,
     RegexMatches,
     Error(String),
     EndOfFile,
 }
 
-const KEYWORDS: [(&str, Token); 22] = [
-    ("call", Token::Call),
-    ("match", Token::Match),
-    ("unwind", Token::Unwind),
-    ("create", Token::Create),
-    ("delete", Token::Delete),
-    ("where", Token::Where),
-    ("with", Token::With),
-    ("return", Token::Return),
-    ("as", Token::As),
-    ("null", Token::Null),
-    ("true", Token::Bool(true)),
-    ("false", Token::Bool(false)),
-    ("or", Token::Or),
-    ("xor", Token::Xor),
-    ("and", Token::And),
-    ("not", Token::Not),
-    ("is", Token::Is),
-    ("in", Token::In),
-    ("starts", Token::Starts),
-    ("ends", Token::Ends),
-    ("contains", Token::Contains),
-    ("nan", Token::Float(f64::NAN)),
+const KEYWORDS: [(&str, Keyword); 21] = [
+    ("CALL", Keyword::Call),
+    ("MATCH", Keyword::Match),
+    ("UNWIND", Keyword::Unwind),
+    ("CREATE", Keyword::Create),
+    ("DELETE", Keyword::Delete),
+    ("WHERE", Keyword::Where),
+    ("WITH", Keyword::With),
+    ("RETURN", Keyword::Return),
+    ("AS", Keyword::As),
+    ("NULL", Keyword::Null),
+    ("OR", Keyword::Or),
+    ("XOR", Keyword::Xor),
+    ("AND", Keyword::And),
+    ("NOT", Keyword::Not),
+    ("IS", Keyword::Is),
+    ("IN", Keyword::In),
+    ("STARTS", Keyword::Starts),
+    ("ENDS", Keyword::Ends),
+    ("CONTAINS", Keyword::Contains),
+    ("TRUE", Keyword::True),
+    ("FALSE", Keyword::False),
 ];
 
 struct Lexer<'a> {
@@ -223,7 +228,7 @@ impl<'a> Lexer<'a> {
                         .find(|&other| str[pos..pos + len].eq_ignore_ascii_case(other.0))
                         .map_or_else(
                             || Token::Ident(str[pos..pos + len].to_string()),
-                            |o| o.1.clone(),
+                            |o| Token::Keyword(o.1.clone(), str[pos..pos + len].to_string()),
                         );
                     (token, len)
                 }
@@ -459,6 +464,14 @@ macro_rules! match_token {
             token => return Err($lexer.format_error(&format!("Unexpected token: {token:?}"))),
         }
     };
+    ($lexer:expr => $token:ident) => {
+        match $lexer.current() {
+            Token::Keyword(Keyword::$token, _) => {
+                $lexer.next();
+            }
+            token => return Err($lexer.format_error(&format!("Unexpected token: {token:?}"))),
+        }
+    };
     () => {};
 }
 
@@ -466,6 +479,15 @@ macro_rules! optional_match_token {
     ($lexer:expr, $token:ident) => {
         match $lexer.current() {
             Token::$token => {
+                $lexer.next();
+                true
+            }
+            _ => false,
+        }
+    };
+    ($lexer:expr => $token:ident) => {
+        match $lexer.current() {
+            Token::Keyword(Keyword::$token, _) => {
                 $lexer.next();
                 true
             }
@@ -528,14 +550,14 @@ impl<'a> Parser<'a> {
                 write = true;
                 clauses.push(clause);
             }
-            if optional_match_token!(self.lexer, With) {
+            if optional_match_token!(self.lexer => With) {
                 clauses.push(self.parse_with_clause(write)?);
             } else {
                 break;
             }
             write = false;
         }
-        if optional_match_token!(self.lexer, Return) {
+        if optional_match_token!(self.lexer => Return) {
             clauses.push(self.parse_return_clause(write)?);
             write = false;
         }
@@ -544,19 +566,19 @@ impl<'a> Parser<'a> {
 
     fn parse_reading_clasue(&mut self) -> Result<QueryIR, String> {
         match self.lexer.current() {
-            Token::Match => {
+            Token::Keyword(Keyword::Match, _) => {
                 self.lexer.next();
                 self.parse_match_clause()
             }
-            Token::Unwind => {
+            Token::Keyword(Keyword::Unwind, _) => {
                 self.lexer.next();
                 self.parse_unwind_clause()
             }
-            Token::Call => {
+            Token::Keyword(Keyword::Call, _) => {
                 self.lexer.next();
                 self.parse_call_clause()
             }
-            Token::Where => {
+            Token::Keyword(Keyword::Where, _) => {
                 self.lexer.next();
                 self.parse_where_clause()
             }
@@ -568,11 +590,11 @@ impl<'a> Parser<'a> {
 
     fn parse_writing_clause(&mut self) -> Result<QueryIR, String> {
         match self.lexer.current() {
-            Token::Create => {
+            Token::Keyword(Keyword::Create, _) => {
                 self.lexer.next();
                 self.parse_create_clause()
             }
-            Token::Delete => {
+            Token::Keyword(Keyword::Delete, _) => {
                 self.lexer.next();
                 self.parse_delete_clause()
             }
@@ -602,19 +624,19 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_match_clause(&mut self) -> Result<QueryIR, String> {
-        Ok(QueryIR::Match(self.parse_pattern(Token::Match)?))
+        Ok(QueryIR::Match(self.parse_pattern(Keyword::Match)?))
     }
 
     fn parse_unwind_clause(&mut self) -> Result<QueryIR, String> {
         let list = self.parse_expr()?;
-        match_token!(self.lexer, As);
+        match_token!(self.lexer => As);
         let ident = self.parse_ident()?;
 
         Ok(QueryIR::Unwind(list, ident))
     }
 
     fn parse_create_clause(&mut self) -> Result<QueryIR, String> {
-        Ok(QueryIR::Create(self.parse_pattern(Token::Create)?))
+        Ok(QueryIR::Create(self.parse_pattern(Keyword::Create)?))
     }
 
     fn parse_delete_clause(&mut self) -> Result<QueryIR, String> {
@@ -643,7 +665,7 @@ impl<'a> Parser<'a> {
 
     fn parse_pattern(
         &mut self,
-        clause: Token,
+        clause: Keyword,
     ) -> Result<Pattern, String> {
         let mut nodes = Vec::new();
         let mut nodes_alias = HashSet::new();
@@ -695,13 +717,14 @@ impl<'a> Parser<'a> {
                 Token::Comma => {
                     self.lexer.next();
                 }
-                token => {
+                Token::Keyword(token, _) => {
                     if token == clause {
                         self.lexer.next();
                         continue;
                     }
                     break;
                 }
+                _ => break,
             }
         }
 
@@ -741,13 +764,17 @@ impl<'a> Parser<'a> {
                 self.lexer.next();
                 Ok(tree!(ExprIR::Parameter(param)))
             }
-            Token::Null => {
+            Token::Keyword(Keyword::Null, _) => {
                 self.lexer.next();
                 Ok(tree!(ExprIR::Null))
             }
-            Token::Bool(b) => {
+            Token::Keyword(Keyword::True, _) => {
                 self.lexer.next();
-                Ok(tree!(ExprIR::Bool(b)))
+                Ok(tree!(ExprIR::Bool(true)))
+            }
+            Token::Keyword(Keyword::False, _) => {
+                self.lexer.next();
+                Ok(tree!(ExprIR::Bool(false)))
             }
             Token::Integer(i) => {
                 self.lexer.next();
@@ -826,10 +853,10 @@ impl<'a> Parser<'a> {
         let expr = self.parse_list_operator_expression()?;
 
         match self.lexer.current() {
-            Token::Is => {
+            Token::Keyword(Keyword::Is, _) => {
                 self.lexer.next();
                 match self.lexer.current() {
-                    Token::Null => {
+                    Token::Keyword(Keyword::Null, _) => {
                         self.lexer.next();
                         Ok(tree!(ExprIR::IsNull, expr))
                     }
@@ -856,28 +883,28 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_power_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
-        parse_binary_expr!(self.parse_unary_add_or_subtract_expr()?, Power => Pow);
+        parse_binary_expr!(self.parse_unary_add_or_subtract_expr()?, Token::Power => Pow);
     }
 
     fn parse_mul_div_modulo_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
-        parse_binary_expr!(self.parse_power_expr()?, Star => Mul, Slash =>  Div, Modulo => Modulo);
+        parse_binary_expr!(self.parse_power_expr()?, Token::Star => Mul, Token::Slash =>  Div, Token::Modulo => Modulo);
     }
 
     fn parse_add_sub_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
-        parse_binary_expr!(self.parse_mul_div_modulo_expr()?, Plus => Add, Dash => Sub);
+        parse_binary_expr!(self.parse_mul_div_modulo_expr()?, Token::Plus => Add, Token::Dash => Sub);
     }
 
     fn parser_string_list_null_predicate_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
         let lhs = self.parse_add_sub_expr()?;
         match self.lexer.current() {
-            Token::In => {
+            Token::Keyword(Keyword::In, _) => {
                 self.lexer.next();
                 let rhs = self.parse_add_sub_expr()?;
                 Ok(tree!(ExprIR::In, lhs, rhs))
             }
-            Token::Starts => {
+            Token::Keyword(Keyword::Starts, _) => {
                 self.lexer.next();
-                match_token!(self.lexer, With);
+                match_token!(self.lexer => With);
                 let rhs = self.parse_add_sub_expr()?;
                 Ok(tree!(
                     ExprIR::FuncInvocation("starts_with".to_string(), FnType::Internal),
@@ -885,9 +912,9 @@ impl<'a> Parser<'a> {
                     rhs
                 ))
             }
-            Token::Ends => {
+            Token::Keyword(Keyword::Ends, _) => {
                 self.lexer.next();
-                match_token!(self.lexer, With);
+                match_token!(self.lexer => With);
                 let rhs = self.parse_add_sub_expr()?;
                 Ok(tree!(
                     ExprIR::FuncInvocation("ends_with".to_string(), FnType::Internal),
@@ -895,7 +922,7 @@ impl<'a> Parser<'a> {
                     rhs
                 ))
             }
-            Token::Contains => {
+            Token::Keyword(Keyword::Contains, _) => {
                 self.lexer.next();
                 let rhs = self.parse_add_sub_expr()?;
                 Ok(tree!(
@@ -918,13 +945,13 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_comparison_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
-        parse_binary_expr!(self.parser_string_list_null_predicate_expr()?, Equal => Eq);
+        parse_binary_expr!(self.parser_string_list_null_predicate_expr()?, Token::Equal => Eq);
     }
 
     fn parse_not_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
         let mut not_count = 0;
 
-        while self.lexer.current() == Token::Not {
+        while let Token::Keyword(Keyword::Not, _) = self.lexer.current() {
             self.lexer.next();
             not_count += 1;
         }
@@ -939,15 +966,15 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_and_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
-        parse_binary_expr!(self.parse_not_expr()?, And => And);
+        parse_binary_expr!(self.parse_not_expr()?, Token::Keyword(Keyword::And, _) => And);
     }
 
     fn parse_xor_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
-        parse_binary_expr!(self.parse_and_expr()?, Xor => Xor);
+        parse_binary_expr!(self.parse_and_expr()?, Token::Keyword(Keyword::Xor, _) => Xor);
     }
 
     fn parse_or_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
-        parse_binary_expr!(self.parse_xor_expr()?, Or => Or);
+        parse_binary_expr!(self.parse_xor_expr()?, Token::Keyword(Keyword::Or, _) => Or);
     }
 
     fn parse_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
@@ -970,7 +997,7 @@ impl<'a> Parser<'a> {
         let mut exprs = Vec::new();
         loop {
             let expr = self.parse_expr()?;
-            if self.lexer.current() == Token::As {
+            if let Token::Keyword(Keyword::As, _) = self.lexer.current() {
                 self.lexer.next();
                 let ident = self.parse_ident()?;
                 exprs.push(tree!(ExprIR::Set(ident), expr));
@@ -1092,27 +1119,30 @@ impl<'a> Parser<'a> {
         }
 
         loop {
-            if let Token::Ident(key) = self.lexer.current() {
-                self.lexer.next();
-                match_token!(self.lexer, Colon);
-                let value = self.parse_expr()?;
-                attrs.push(tree!(ExprIR::Var(key), value));
+            match self.lexer.current() {
+                Token::Ident(key) | Token::Keyword(_, key) => {
+                    self.lexer.next();
+                    match_token!(self.lexer, Colon);
+                    let value = self.parse_expr()?;
+                    attrs.push(tree!(ExprIR::Var(key), value));
 
-                match self.lexer.current() {
-                    Token::Comma => self.lexer.next(),
-                    Token::RBracket => {
-                        self.lexer.next();
-                        return Ok(tree!(ExprIR::Map ; attrs));
-                    }
-                    token => {
-                        return Err(self
-                            .lexer
-                            .format_error(&format!("Unexpected token {token:?}")));
+                    match self.lexer.current() {
+                        Token::Comma => self.lexer.next(),
+                        Token::RBracket => {
+                            self.lexer.next();
+                            return Ok(tree!(ExprIR::Map ; attrs));
+                        }
+                        token => {
+                            return Err(self
+                                .lexer
+                                .format_error(&format!("Unexpected token {token:?}")));
+                        }
                     }
                 }
-            } else {
-                match_token!(self.lexer, RBracket);
-                return Ok(tree!(ExprIR::Map ; attrs));
+                _ => {
+                    match_token!(self.lexer, RBracket);
+                    return Ok(tree!(ExprIR::Map ; attrs));
+                }
             }
         }
     }

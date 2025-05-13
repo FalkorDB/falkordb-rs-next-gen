@@ -51,13 +51,13 @@ impl quote::ToTokens for BinaryOp {
 }
 
 struct BinaryOpAlt {
-    token_match: syn::Ident,
+    token_match: syn::Pat,
     ast_constructor: syn::Ident,
 }
 
 impl Parse for BinaryOpAlt {
     fn parse(input: ParseStream) -> Result<Self> {
-        let token_match = input.parse()?;
+        let token_match = syn::Pat::parse_single(input)?;
         _ = input.parse::<syn::Token![=>]>()?;
         let ast_constructor = input.parse()?;
         Ok(Self {
@@ -74,7 +74,7 @@ fn generate_token_stream(
         let token_match = &alt.token_match;
         let ast_constructor = &alt.ast_constructor;
         quote::quote! {
-            while Token::#token_match == self.lexer.current() {
+            while let #token_match = self.lexer.current() {
                self.lexer.next();
                vec.push(#parse_exp);
             }
@@ -86,7 +86,7 @@ fn generate_token_stream(
     let tokens = alts.iter().map(|alt| {
         let token_match = &alt.token_match;
         quote::quote! {
-            Token::#token_match
+            #token_match
         }
     });
 
@@ -95,7 +95,9 @@ fn generate_token_stream(
         vec.push(#parse_exp);
         loop {
             #(#whiles)*
-            if ![#(#tokens,)*].contains(&self.lexer.current()) {
+            if let #(| #tokens)* = &self.lexer.current() {
+
+            } else {
                 return Ok(vec.pop().unwrap());
             }
         }
