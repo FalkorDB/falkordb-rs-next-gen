@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747039971441,
+  "lastUpdate": 1747124451546,
   "repoUrl": "https://github.com/FalkorDB/falkordb-rs-next-gen",
   "entries": {
     "FalkorDB Benchmark": [
@@ -190,6 +190,44 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0631738066749367",
             "extra": "mean: 4.74034987839998 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "barak.bar@gmail.com",
+            "name": "Barak Bar Orion",
+            "username": "barakb"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "cd0e41ed352bd4bff4b698e7960d7a151c5ce7ee",
+          "message": "Implement TCK expressions/boolean (#66)\n\n* Implement TCK expressions/boolean\n\n* fix keyword parsing\n\n* Use TCK_DONE with code coverage\n\n---------\n\nCo-authored-by: Avi Avni <avi.avni@gmail.com>",
+          "timestamp": "2025-05-13T11:18:17+03:00",
+          "tree_id": "ea7585ccaa0c4ae20d1f1e9ad8d1e3b7058cc77d",
+          "url": "https://github.com/FalkorDB/falkordb-rs-next-gen/commit/cd0e41ed352bd4bff4b698e7960d7a151c5ce7ee"
+        },
+        "date": 1747124450562,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/bench.py::test_return",
+            "value": 10005.914217570522,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000015630228067896316",
+            "extra": "mean: 99.94089278158975 usec\nrounds: 2369"
+          },
+          {
+            "name": "tests/bench.py::test_unwind",
+            "value": 0.20763380192182013,
+            "unit": "iter/sec",
+            "range": "stddev: 0.049867191681219565",
+            "extra": "mean: 4.816171503600015 sec\nrounds: 5"
           }
         ]
       }
