@@ -1,4 +1,4 @@
-use crate::ast::Pattern;
+use crate::ast::{NodePattern, Pattern, RelationshipPattern};
 use crate::functions::{FnType, Functions, GraphFn, get_functions};
 use crate::iter::AggregateIter;
 use crate::{ast::ExprIR, graph::Graph, planner::IR, value::Contains, value::Value};
@@ -565,13 +565,13 @@ impl<'a> Runtime<'a> {
 
     fn relationship_scan(
         &self,
-        relationship_pattern: &crate::ast::RelationshipPattern,
+        relationship_pattern: &RelationshipPattern,
     ) -> std::iter::Map<crate::tensor::Iter, impl FnMut((u64, u64, u64)) -> Result<Value, String>>
     {
         let iter = self
             .g
             .borrow()
-            .get_relationships(&[relationship_pattern.relationship_type.clone()])
+            .get_relationships(&relationship_pattern.types)
             .unwrap();
         iter.map(move |(src, dst, id)| {
             self.vars.borrow_mut().insert(
@@ -590,7 +590,7 @@ impl<'a> Runtime<'a> {
 
     fn node_scan(
         &self,
-        node_pattern: &crate::ast::NodePattern,
+        node_pattern: &NodePattern,
     ) -> std::iter::Map<crate::matrix::Iter<bool>, impl FnMut((u64, u64)) -> Result<Value, String>>
     {
         let iter = self.g.borrow().get_nodes(&node_pattern.labels).unwrap();
@@ -667,7 +667,12 @@ impl<'a> Runtime<'a> {
                     let id = self.g.borrow_mut().reserve_relationship();
                     self.pending.borrow_mut().created_relationships.insert(
                         id,
-                        (rel.relationship_type.clone(), from_id, to_id, properties),
+                        (
+                            rel.types.first().unwrap().clone(),
+                            from_id,
+                            to_id,
+                            properties,
+                        ),
                     );
                     self.vars.borrow_mut().insert(
                         rel.alias.to_string(),

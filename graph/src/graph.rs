@@ -251,7 +251,7 @@ impl Graph {
         property_id as u64
     }
 
-    fn get_relationship_property_id(
+    pub fn get_relationship_property_id(
         &mut self,
         key: &String,
     ) -> u64 {
