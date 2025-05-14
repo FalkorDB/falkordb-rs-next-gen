@@ -1232,7 +1232,7 @@ mod tests {
             ("0", Token::Integer(0)),
             (
                 "12345678901234567890",
-                Token::Error("Invalid integer: 12345678901234567890".to_string()),
+                Token::Error("Integer overflow '12345678901234567890'".to_string()),
             ),
             ("0x1", Token::Integer(1)),
             ("0x10", Token::Integer(16)),
