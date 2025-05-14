@@ -25,7 +25,7 @@ pub struct Graph {
     relationship_count: u64,
     deleted_nodes: RoaringTreemap,
     deleted_relationships: RoaringTreemap,
-    adjacancy_matrix: Matrix<bool>,
+    adjacancy_matrix: Tensor,
     node_labels_matrix: Matrix<bool>,
     relationship_type_matrix: Matrix<bool>,
     all_nodes_matrix: Matrix<bool>,
@@ -55,7 +55,7 @@ impl Graph {
             relationship_count: 0,
             deleted_nodes: RoaringTreemap::new(),
             deleted_relationships: RoaringTreemap::new(),
-            adjacancy_matrix: Matrix::<bool>::new(0, 0),
+            adjacancy_matrix: Tensor::new(n, n),
             node_labels_matrix: Matrix::<bool>::new(0, 0),
             relationship_type_matrix: Matrix::<bool>::new(0, 0),
             all_nodes_matrix: Matrix::<bool>::new(n, n),
@@ -251,7 +251,7 @@ impl Graph {
         property_id as u64
     }
 
-    pub fn get_relationship_property_id(
+    pub fn get_or_add_relationship_property_id(
         &mut self,
         key: &String,
     ) -> u64 {
@@ -265,6 +265,16 @@ impl Graph {
                 len
             });
         property_id as u64
+    }
+
+    pub fn get_relationship_property_id(
+        &self,
+        key: &String,
+    ) -> Option<u64> {
+        self.relationship_properties
+            .iter()
+            .position(|p| p == key)
+            .map(|property_id| property_id as u64)
     }
 
     pub fn reserve_node(&mut self) -> u64 {
@@ -407,7 +417,8 @@ impl Graph {
 
         self.resize();
 
-        for (id, (relationship_type, _, _, attrs)) in relationships {
+        for (id, (relationship_type, src, dest, attrs)) in relationships {
+            self.adjacancy_matrix.set(*src, *dest, *id);
             self.relationship_type_matrix.set(
                 *id,
                 self.relationship_types
@@ -422,7 +433,7 @@ impl Graph {
                 if *value == Value::Null {
                     continue;
                 }
-                let property_id = self.get_relationship_property_id(key);
+                let property_id = self.get_or_add_relationship_property_id(key);
                 map.insert(property_id, value.clone());
             }
             self.relationship_properties_map.insert(*id, map);
@@ -447,7 +458,7 @@ impl Graph {
         types: &[String],
     ) -> Option<tensor::Iter> {
         if types.is_empty() {
-            return None;
+            return Some(self.adjacancy_matrix.iter(0, u64::MAX));
         }
         self.get_relationship_matrix(&types[0]).map(|m| {
             m.wait();
@@ -464,6 +475,18 @@ impl Graph {
             .map(|(_, l)| l)
             .next()
             .unwrap()
+    }
+
+    pub fn get_relationship_property(
+        &self,
+        relationship_id: u64,
+        property_id: u64,
+    ) -> Option<Value> {
+        self.relationship_properties_map
+            .get(&relationship_id)
+            .unwrap()
+            .get(&property_id)
+            .cloned()
     }
 
     fn resize(&mut self) {
