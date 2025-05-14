@@ -457,6 +457,32 @@ impl<'a> Runtime<'a> {
                 }
                 Ok(Box::new(once(Ok(Value::List(vec![])))))
             }
+            IR::Merge(pattern) => {
+                let mut parent_commit = false;
+                if let Some(parent) = self.plan.node(idx).parent() {
+                    if matches!(parent.data(), IR::Commit) {
+                        parent_commit = true;
+                    }
+                }
+                if let Some(child_idx) = child_idx {
+                    return Ok(Box::new(self.run(&child_idx)?.flat_map(move |_| {
+                        if let Err(e) = self.create(pattern) {
+                            return vec![Err(e)].into_iter();
+                        }
+
+                        if parent_commit {
+                            return vec![].into_iter();
+                        }
+
+                        vec![Ok(Value::List(vec![]))].into_iter()
+                    })));
+                }
+                self.create(pattern)?;
+                if parent_commit {
+                    return Ok(Box::new(empty()));
+                }
+                Ok(Box::new(once(Ok(Value::List(vec![])))))
+            }
             IR::Delete(trees) => {
                 if let Some(child_idx) = child_idx {
                     return Ok(Box::new(self.run(&child_idx)?.map(move |_| {
