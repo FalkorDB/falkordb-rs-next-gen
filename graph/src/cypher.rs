@@ -3,9 +3,10 @@ use crate::cypher::Token::{RBrace, RParen};
 use crate::functions::{FnType, get_functions};
 use crate::tree;
 use falkordb_macro::parse_binary_expr;
-use orx_tree::DynTree;
+use orx_tree::{DynTree, NodeRef};
 use std::collections::{BTreeMap, HashSet};
 use std::iter::Peekable;
+use std::num::IntErrorKind;
 use std::str::Chars;
 
 #[derive(Debug, PartialEq, Clone)]
@@ -88,6 +89,12 @@ const KEYWORDS: [(&str, Keyword); 21] = [
     ("CONTAINS", Keyword::Contains),
     ("TRUE", Keyword::True),
     ("FALSE", Keyword::False),
+];
+
+const MIN_I64: [&str; 3] = [
+    "9223372036854775808",
+    "40000000000000000000",
+    "8000000000000000",
 ];
 
 struct Lexer<'a> {
@@ -378,8 +385,23 @@ impl<'a> Lexer<'a> {
         } else {
             // Otherwise parse as integer
             let radix = if number_str.starts_with('0') { 8 } else { 10 };
+            if number_str == MIN_I64[0] && radix == 10 {
+                return (Token::Integer(i64::MIN), len);
+            }
+            if number_str == MIN_I64[1] && radix == 8 {
+                return (Token::Integer(i64::MIN), len);
+            }
+            if number_str == MIN_I64[2] && radix == 16 {
+                return (Token::Integer(i64::MIN), len);
+            }
             i64::from_str_radix(number_str, radix).map_or_else(
-                |_| (Token::Error(format!("Invalid integer: {number_str}")), len),
+                |err| match err.kind() {
+                    IntErrorKind::NegOverflow | IntErrorKind::PosOverflow => (
+                        Token::Error(format!("Integer overflow '{number_str}'")),
+                        len,
+                    ),
+                    _ => (Token::Error(format!("Invalid integer: {number_str}")), len),
+                },
                 |i| (Token::Integer(i), len),
             )
         }
@@ -429,8 +451,23 @@ impl<'a> Lexer<'a> {
             } else {
                 input[2..len].to_string()
             };
+            if number_str == MIN_I64[0] && radix == 10 {
+                return (Token::Integer(i64::MIN), len);
+            }
+            if number_str == MIN_I64[1] && radix == 8 {
+                return (Token::Integer(i64::MIN), len);
+            }
+            if number_str == MIN_I64[2] && radix == 16 {
+                return (Token::Integer(i64::MIN), len);
+            }
             i64::from_str_radix(number_str.as_str(), radix).map_or_else(
-                |_| (Token::Error(format!("Invalid integer: {number_str}")), len),
+                |err| match err.kind() {
+                    IntErrorKind::NegOverflow | IntErrorKind::PosOverflow => (
+                        Token::Error(format!("Integer overflow '{number_str}'")),
+                        len,
+                    ),
+                    _ => (Token::Error(format!("Invalid integer: {number_str}")), len),
+                },
                 |i| (Token::Integer(i), len),
             )
         } else {
@@ -879,18 +916,21 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_unary_add_or_subtract_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
-        match self.lexer.current() {
-            Token::Plus => {
-                self.lexer.next();
-                Ok(self.parse_null_operator_expression()?)
+        optional_match_token!(self.lexer, Plus);
+        let minus = optional_match_token!(self.lexer, Dash);
+        let expr = self.parse_null_operator_expression()?;
+        if matches!(expr.root().data(), ExprIR::Integer(i64::MIN)) {
+            if minus {
+                return Ok(tree!(ExprIR::Integer(i64::MIN)));
             }
-            Token::Dash => {
-                self.lexer.next();
-                let expr = self.parse_null_operator_expression()?;
-                Ok(tree!(ExprIR::Negate, expr))
-            }
-            _ => self.parse_null_operator_expression(),
+            return Err(self
+                .lexer
+                .format_error(format!("Integer overflow '{}'", i64::MAX).as_str()));
         }
+        if minus {
+            return Ok(tree!(ExprIR::Negate, expr));
+        }
+        Ok(expr)
     }
 
     fn parse_power_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
