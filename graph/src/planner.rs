@@ -152,18 +152,18 @@ impl Planner {
         q: Vec<QueryIR>,
         write: bool,
     ) -> DynTree<IR> {
-        let iter = &mut q.into_iter();
+        let iter = &mut q.into_iter().rev();
         let mut res = self.plan(iter.next().unwrap());
+        let mut idx = res.root().idx();
+        if matches!(res.node(&idx).data(), IR::Commit) {
+            idx = res.node(&idx).child(0).idx();
+        }
         for e in iter {
-            let mut n = self.plan(e);
-            let mut root = n.root_mut();
-            if root.num_children() == 1 {
-                let mut child = root.child_mut(0);
-                child.push_child_tree(res);
-            } else {
-                root.push_child_tree(res);
+            let n = self.plan(e);
+            idx = res.node_mut(&idx).push_child_tree(n);
+            if matches!(res.node(&idx).data(), IR::Commit) {
+                idx = res.node(&idx).child(0).idx();
             }
-            res = n;
         }
         if write {
             res = tree!(IR::Commit, res);

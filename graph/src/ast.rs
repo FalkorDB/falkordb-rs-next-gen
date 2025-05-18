@@ -503,23 +503,27 @@ impl QueryIR {
                 first.inner_validate(iter, env)
             }
             Self::Merge(p) => {
-                for node in &p.nodes {
+                let mut remove = Vec::new();
+                for (i, node) in p.nodes.iter().enumerate() {
                     if env.contains(&node.alias.to_string()) {
-                        return Err(format!(
-                            "Duplicate alias {}",
-                            node.alias.to_string().as_str()
-                        ));
+                        if p.relationships.is_empty() {
+                            return Err(format!(
+                                "The bound variable {} can't be redeclared in a create clause",
+                                node.alias.to_string().as_str()
+                            ));
+                        }
+                        remove.push(i);
                     }
                     node.attrs.root().validate(env)?;
+                }
+                remove.reverse();
+                for i in remove {
+                    p.nodes.remove(i);
+                }
+                for node in &p.nodes {
                     env.insert(node.alias.to_string());
                 }
                 for relationship in &p.relationships {
-                    if env.contains(&relationship.alias.to_string()) {
-                        return Err(format!(
-                            "Duplicate alias {}",
-                            relationship.alias.to_string().as_str()
-                        ));
-                    }
                     relationship.attrs.root().validate(env)?;
                     env.insert(relationship.alias.to_string());
                 }

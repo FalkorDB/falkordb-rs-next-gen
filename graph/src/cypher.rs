@@ -3,10 +3,9 @@ use crate::cypher::Token::{RBrace, RParen};
 use crate::functions::{FnType, get_functions};
 use crate::tree;
 use falkordb_macro::parse_binary_expr;
-use orx_tree::{DynTree, NodeRef};
+use orx_tree::DynTree;
 use std::collections::{BTreeMap, HashSet};
 use std::iter::Peekable;
-use std::num::IntErrorKind;
 use std::str::Chars;
 
 #[derive(Debug, PartialEq, Clone)]
@@ -739,6 +738,10 @@ impl<'a> Parser<'a> {
                         nodes.push(right);
                     }
                 }
+            }
+
+            if clause == Keyword::Merge {
+                break;
             }
 
             match self.lexer.current() {
