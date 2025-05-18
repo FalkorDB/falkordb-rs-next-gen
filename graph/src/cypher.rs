@@ -705,7 +705,7 @@ impl<'a> Parser<'a> {
         let mut relationships = Vec::new();
         let mut paths = Vec::new();
         loop {
-            if let Ok(p) = self.parse_ident() {
+            if let Token::Ident(p) = self.lexer.current() {
                 match_token!(self.lexer, Equal);
                 let mut vars = Vec::new();
                 let left = self.parse_node_pattern()?;
