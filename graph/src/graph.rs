@@ -25,7 +25,8 @@ pub struct Graph {
     relationship_count: u64,
     deleted_nodes: RoaringTreemap,
     deleted_relationships: RoaringTreemap,
-    zero_matrix: Tensor,
+    zero_matrix: Matrix<bool>,
+    zero_tensor: Tensor,
     adjacancy_matrix: Tensor,
     node_labels_matrix: Matrix<bool>,
     relationship_type_matrix: Matrix<bool>,
@@ -56,7 +57,8 @@ impl Graph {
             relationship_count: 0,
             deleted_nodes: RoaringTreemap::new(),
             deleted_relationships: RoaringTreemap::new(),
-            zero_matrix: Tensor::new(0, 0),
+            zero_matrix: Matrix::<bool>::new(0, 0),
+            zero_tensor: Tensor::new(0, 0),
             adjacancy_matrix: Tensor::new(n, n),
             node_labels_matrix: Matrix::<bool>::new(0, 0),
             relationship_type_matrix: Matrix::<bool>::new(0, 0),
@@ -357,12 +359,14 @@ impl Graph {
     pub fn get_nodes(
         &self,
         labels: &[String],
-    ) -> Option<matrix::Iter<bool>> {
+    ) -> matrix::Iter<bool> {
         if labels.is_empty() {
-            return Some(self.all_nodes_matrix.iter(0, u64::MAX));
+            return self.all_nodes_matrix.iter(0, u64::MAX);
         }
-        self.get_label_matrix(&labels[0])
-            .map(|m| m.iter(0, u64::MAX))
+        self.get_label_matrix(&labels[0]).map_or_else(
+            || self.zero_matrix.iter(0, u64::MAX),
+            |m| m.iter(0, u64::MAX),
+        )
     }
 
     #[allow(clippy::cast_possible_truncation)]
@@ -463,7 +467,7 @@ impl Graph {
             return self.adjacancy_matrix.iter(0, u64::MAX);
         }
         self.get_relationship_matrix(&types[0]).map_or_else(
-            || self.zero_matrix.iter(0, u64::MAX),
+            || self.zero_tensor.iter(0, u64::MAX),
             |m| {
                 m.wait();
                 m.iter(0, u64::MAX)

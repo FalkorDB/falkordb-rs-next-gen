@@ -471,7 +471,12 @@ impl<'a> Runtime<'a> {
                         Box::new(iter)
                     })));
                 }
-                Ok(Box::new(empty()))
+                let iter =
+                    LazyReplace::new(self.run(child0_idx.as_ref().unwrap()).unwrap(), || {
+                        self.create(pattern);
+                        Box::new(vec![Ok(Value::List(vec![]))].into_iter())
+                    });
+                Ok(Box::new(iter))
             }
             IR::Delete(trees) => {
                 if let Some(child_idx) = child0_idx {
@@ -610,7 +615,7 @@ impl<'a> Runtime<'a> {
         node_pattern: &NodePattern,
     ) -> std::iter::Map<crate::matrix::Iter<bool>, impl FnMut((u64, u64)) -> Result<Value, String>>
     {
-        let iter = self.g.borrow().get_nodes(&node_pattern.labels).unwrap();
+        let iter = self.g.borrow().get_nodes(&node_pattern.labels);
         iter.map(move |(v, _)| {
             self.vars
                 .borrow_mut()
