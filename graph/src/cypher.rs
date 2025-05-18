@@ -185,8 +185,10 @@ impl<'a> Lexer<'a> {
                 '\'' => {
                     let mut len = 1;
                     let mut end = false;
-                    for c in chars.by_ref() {
-                        if c == '\'' {
+                    while let Some(c) = chars.next() {
+                        if c == '\\' {
+                            len += chars.next().unwrap().len_utf8();
+                        } else if c == '\'' {
                             end = true;
                             break;
                         }
@@ -221,9 +223,9 @@ impl<'a> Lexer<'a> {
                     let token = Token::Parameter(str[pos + 1..pos + len].to_string());
                     (token, len)
                 }
-                'a'..='z' | 'A'..='Z' => {
+                'a'..='z' | 'A'..='Z' | '_' => {
                     let mut len = 1;
-                    while let Some('a'..='z' | 'A'..='Z' | '0'..='9') = chars.next() {
+                    while let Some('a'..='z' | 'A'..='Z' | '0'..='9' | '_') = chars.next() {
                         len += 1;
                     }
 
@@ -447,7 +449,13 @@ impl<'a> Lexer<'a> {
         &self,
         err: &str,
     ) -> String {
-        format!("{}\n{}^{}", self.str, " ".repeat(self.pos), err)
+        format!(
+            "{}\n{}^{} pos {}",
+            self.str,
+            " ".repeat(self.pos),
+            err,
+            self.pos
+        )
     }
 
     fn set_pos(
