@@ -1,2 +1,6 @@
 expressions/boolean
 expressions/string
+clauses/create/Create1.feature
+clauses/create/Create2.feature
+clauses/create/Create3.feature
+clauses/create/Create4.feature
