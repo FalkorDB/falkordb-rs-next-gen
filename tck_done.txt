@@ -1,3 +1,5 @@
+expressions/aggregation/Aggregation1.feature
+expressions/aggregation/Aggregation2.feature
 expressions/boolean
 expressions/literals
 expressions/string
