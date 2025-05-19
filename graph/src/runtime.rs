@@ -148,6 +148,10 @@ impl<'a> Runtime<'a> {
                     (Value::List(_), v) => {
                         Err(format!("Type mismatch: expected Bool but was {v:?}"))
                     }
+                    (Value::Map(map), Value::String(key)) => map
+                        .get(&key)
+                        .map_or_else(|| Ok(Value::Null), |v| Ok(v.clone())),
+                    (Value::Map(_), Value::Null) | (Value::Null, _) => Ok(Value::Null),
                     v => Err(format!("Type mismatch: expected List but was {v:?}")),
                 }
             }

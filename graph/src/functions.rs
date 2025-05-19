@@ -137,6 +137,7 @@ pub fn init_functions() -> Result<(), Functions> {
     funcs.add("property", property, false, 2, 2, FnType::Internal);
 
     funcs.add("toInteger", value_to_integer, false, 1, 1, FnType::Function);
+    funcs.add("toString", value_to_string, false, 1, 1, FnType::Function);
     funcs.add("labels", labels, false, 1, 1, FnType::Function);
     funcs.add("startnode", start_node, false, 1, 1, FnType::Function);
     funcs.add("endnode", end_node, false, 1, 1, FnType::Function);
@@ -183,6 +184,7 @@ pub fn init_functions() -> Result<(), Functions> {
     funcs.add("sign", sign, false, 1, 1, FnType::Function);
     funcs.add("sqrt", sqrt, false, 1, 1, FnType::Function);
     funcs.add("range", range, false, 1, 3, FnType::Function);
+    funcs.add("keys", keys, false, 1, 1, FnType::Function);
 
     // aggregation functions
     funcs.add("collect", collect, false, 1, 2, FnType::Aggregation);
@@ -292,6 +294,15 @@ fn property(
         (Some(Value::Map(map)), Some(Value::String(property)), None) => {
             Ok(map.get(&property).unwrap_or(&Value::Null).clone())
         }
+        (Some(Value::Null), Some(Value::String(_)), None) => Ok(Value::Null),
+        (Some(Value::Map(_)), Some(p), None) => Err(format!(
+            "Type mismatch: expected String but was {}",
+            p.name()
+        )),
+        (Some(m), Some(_), None) => Err(format!(
+            "Type mismatch: expected Node, Relationship, or Map but was {}",
+            m.name()
+        )),
         _ => Ok(Value::Null),
     }
 }
@@ -460,6 +471,23 @@ fn value_to_integer(
         Some(Value::Float(f)) => Ok(Value::Int(f as i64)),
         Some(Value::Null) => Ok(Value::Null),
         Some(Value::Bool(b)) => Ok(Value::Int(i64::from(b))),
+        Some(arg) => Err(format!(
+            "Type mismatch: expected String, Boolean, Integer, Float, or Null but was {}",
+            arg.name()
+        )),
+        _ => Err(format!(
+            "Expected one argument for value_to_integer, instead {len}"
+        )),
+    }
+}
+
+fn value_to_string(
+    _runtime: &Runtime,
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    let len = args.len();
+    match args.into_iter().next() {
+        Some(Value::String(s)) => Ok(Value::String(s)),
         Some(arg) => Err(format!(
             "Type mismatch: expected String, Boolean, Integer, Float, or Null but was {}",
             arg.name()
@@ -1103,6 +1131,20 @@ fn range(
             }
         }
         _ => Err("Range operator requires two integers".to_string()),
+    }
+}
+
+fn keys(
+    _: &Runtime,
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    let mut iter = args.into_iter();
+    match (iter.next(), iter.next()) {
+        (Some(Value::Map(map)), None) => Ok(Value::List(
+            map.keys().map(|k| Value::String(k.to_string())).collect(),
+        )),
+        (Some(Value::Null), None) => Ok(Value::Null),
+        _ => Err("Type mismatch: expected Map or Null".to_string()),
     }
 }
 
