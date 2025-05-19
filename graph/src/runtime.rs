@@ -2,6 +2,7 @@ use crate::ast::{NodePattern, Pattern, RelationshipPattern};
 use crate::functions::{FnType, Functions, GraphFn, get_functions};
 use crate::iter::{AggregateIter, LazyReplace};
 use crate::{ast::ExprIR, graph::Graph, planner::IR, value::Contains, value::Value};
+use ordermap::OrderMap;
 use orx_tree::{Dyn, DynNode, DynTree, NodeIdx, NodeRef};
 use std::cell::RefCell;
 use std::cmp::Ordering;
@@ -41,8 +42,8 @@ pub struct Stats {
 
 #[derive(Default)]
 pub struct Pending {
-    pub created_nodes: BTreeMap<u64, (Vec<String>, BTreeMap<String, Value>)>,
-    pub created_relationships: BTreeMap<u64, (String, u64, u64, BTreeMap<String, Value>)>,
+    pub created_nodes: BTreeMap<u64, (Vec<String>, OrderMap<String, Value>)>,
+    pub created_relationships: BTreeMap<u64, (String, u64, u64, OrderMap<String, Value>)>,
 }
 
 pub struct Runtime<'a> {

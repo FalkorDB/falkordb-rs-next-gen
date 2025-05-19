@@ -100,7 +100,7 @@ fn inner_raw_value_to_redis_value(
         ]),
         Value::String(x) => RedisValue::Array(vec![
             RedisValue::Integer(2),
-            RedisValue::SimpleString(x.to_string()),
+            RedisValue::BulkString(x.to_string()),
         ]),
         Value::List(values) => RedisValue::Array(vec![
             RedisValue::Integer(6),
@@ -111,19 +111,14 @@ fn inner_raw_value_to_redis_value(
                     .collect(),
             ),
         ]),
-        Value::Map(map) => RedisValue::Array(vec![
-            RedisValue::Integer(10),
-            RedisValue::OrderedMap(
-                map.iter()
-                    .map(|(key, value)| {
-                        (
-                            RedisValueKey::String(key.to_string()),
-                            inner_raw_value_to_redis_value(g, value),
-                        )
-                    })
-                    .collect(),
-            ),
-        ]),
+        Value::Map(map) => {
+            let mut vec = vec![];
+            for (key, value) in map {
+                vec.push(RedisValue::BulkString(key.to_string()));
+                vec.push(inner_raw_value_to_redis_value(g, value));
+            }
+            RedisValue::Array(vec![RedisValue::Integer(10), RedisValue::Array(vec)])
+        }
         Value::Node(id) => {
             let mut props = Vec::new();
             for (key, value) in g.borrow().get_node_properties(*id) {
