@@ -1,7 +1,8 @@
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
 use std::hash::Hash;
 use std::ops::{Add, Div, Mul, Rem, Sub};
+
+use ordermap::OrderMap;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
@@ -11,7 +12,7 @@ pub enum Value {
     Float(f64),
     String(String),
     List(Vec<Value>),
-    Map(BTreeMap<String, Value>),
+    Map(OrderMap<String, Value>),
     Node(u64),
     Relationship(u64, u64, u64),
 }
@@ -332,8 +333,8 @@ impl Value {
     }
 
     fn compare_map(
-        a: &BTreeMap<String, Self>,
-        b: &BTreeMap<String, Self>,
+        a: &OrderMap<String, Self>,
+        b: &OrderMap<String, Self>,
     ) -> (Ordering, DisjointOrNull) {
         let a_key_count = a.len();
         let b_key_count = b.len();

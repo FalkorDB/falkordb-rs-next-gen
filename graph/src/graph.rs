@@ -4,6 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use ordermap::OrderMap;
 use orx_tree::DynTree;
 use roaring::RoaringTreemap;
 
@@ -294,7 +295,7 @@ impl Graph {
 
     pub fn create_nodes(
         &mut self,
-        nodes: &BTreeMap<u64, (Vec<String>, BTreeMap<String, Value>)>,
+        nodes: &BTreeMap<u64, (Vec<String>, OrderMap<String, Value>)>,
     ) {
         self.node_count += nodes.len() as u64;
         self.reserved_node_count -= nodes.len() as u64;
@@ -404,7 +405,7 @@ impl Graph {
 
     pub fn create_relationships(
         &mut self,
-        relationships: &BTreeMap<u64, (String, u64, u64, BTreeMap<String, Value>)>,
+        relationships: &BTreeMap<u64, (String, u64, u64, OrderMap<String, Value>)>,
     ) {
         self.relationship_count += relationships.len() as u64;
         self.reserved_relationship_count -= relationships.len() as u64;
