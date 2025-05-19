@@ -392,7 +392,18 @@ fn sum(
         (Some(Value::Null), Some(a), None) | (Some(a), Some(Value::Null), None) => {
             return Ok(a);
         }
-        (Some(a), Some(b), None) => return a + b,
+        (Some(Value::Int(a)), Some(Value::Int(b)), None) => {
+            return Ok(Value::Float((a + b) as f64));
+        }
+        (Some(Value::Float(a)), Some(Value::Float(b)), None) => {
+            return Ok(Value::Float(a + b));
+        }
+        (Some(Value::Int(a)), Some(Value::Float(b)), None) => {
+            return Ok(Value::Float(a as f64 + b));
+        }
+        (Some(Value::Float(a)), Some(Value::Int(b)), None) => {
+            return Ok(Value::Float(a + b as f64));
+        }
         _ => (),
     }
     Ok(Value::Null)
@@ -404,12 +415,12 @@ fn max(
     args: Vec<Value>,
 ) -> Result<Value, String> {
     match args.as_slice() {
-        [Value::Int(a), Value::Null] => return Ok(Value::Int(*a)),
-        [Value::Int(a), Value::Int(b)] => {
-            if a > b {
-                return Ok(Value::Int(*a));
+        [a, Value::Null] => return Ok(a.clone()),
+        [a, b] => {
+            if a.partial_cmp(b) == Some(std::cmp::Ordering::Greater) {
+                return Ok(a.clone());
             }
-            return Ok(Value::Int(*b));
+            return Ok(b.clone());
         }
         _ => (),
     }
@@ -422,12 +433,12 @@ fn min(
     args: Vec<Value>,
 ) -> Result<Value, String> {
     match args.as_slice() {
-        [Value::Int(a), Value::Null] => return Ok(Value::Int(*a)),
-        [Value::Int(a), Value::Int(b)] => {
-            if a < b {
-                return Ok(Value::Int(*a));
+        [a, Value::Null] => return Ok(a.clone()),
+        [a, b] => {
+            if a.partial_cmp(b) == Some(std::cmp::Ordering::Less) {
+                return Ok(a.clone());
             }
-            return Ok(Value::Int(*b));
+            return Ok(b.clone());
         }
         _ => (),
     }

@@ -219,15 +219,15 @@ trait OrderedEnum {
 impl OrderedEnum for Value {
     fn order(&self) -> u32 {
         match self {
-            Self::Null => 0,
-            Self::Bool(_) => 1,
-            Self::Int(_) => 2,
-            Self::Float(_) => 3,
-            Self::String(_) => 4,
-            Self::List(_) => 5,
-            Self::Map(_) => 6,
-            Self::Node(_) => 7,
-            Self::Relationship(_, _, _) => 8,
+            Self::Null => 1 << 15,
+            Self::Bool(_) => 1 << 12,
+            Self::Int(_) => 1 << 13,
+            Self::Float(_) => 1 << 14,
+            Self::String(_) => 1 << 11,
+            Self::List(_) => 1 << 3,
+            Self::Map(_) => 1 << 0,
+            Self::Node(_) => 1 << 1,
+            Self::Relationship(_, _, _) => 1 << 2,
         }
     }
 }
