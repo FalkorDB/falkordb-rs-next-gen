@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747651285188,
+  "lastUpdate": 1747655600562,
   "repoUrl": "https://github.com/FalkorDB/falkordb-rs-next-gen",
   "entries": {
     "FalkorDB Benchmark": [
@@ -380,6 +380,44 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.048428221205754074",
             "extra": "mean: 4.7592519952000085 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "avi.avni@gmail.com",
+            "name": "Avi Avni",
+            "username": "AviAvni"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "44446dc77d1dc93629c7b68defc61696080b22c7",
+          "message": "add aggregation tck (#70)",
+          "timestamp": "2025-05-19T14:50:47+03:00",
+          "tree_id": "3e2b1e9cd307ac47122c0bfa36a57ef29f7325d0",
+          "url": "https://github.com/FalkorDB/falkordb-rs-next-gen/commit/44446dc77d1dc93629c7b68defc61696080b22c7"
+        },
+        "date": 1747655599672,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/bench.py::test_return",
+            "value": 10797.135569315084,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000010470161373810654",
+            "extra": "mean: 92.61715698392726 usec\nrounds: 1618"
+          },
+          {
+            "name": "tests/bench.py::test_unwind",
+            "value": 0.21562851454101817,
+            "unit": "iter/sec",
+            "range": "stddev: 0.02857558652159948",
+            "extra": "mean: 4.637605569599998 sec\nrounds: 5"
           }
         ]
       }
