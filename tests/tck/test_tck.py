@@ -7,6 +7,7 @@ from behave.__main__ import main as behave_main
 
 redis_server = None
 client = redis.Redis(protocol=3)
+shutdown = False
 
 
 def query(query):
@@ -14,13 +15,14 @@ def query(query):
 
 
 def setup_module(module):
-    global redis_server
+    global redis_server, shutdown
     target = os.environ.get("TARGET",
                             "target/debug/libfalkordb.dylib" if platform.system() == "Darwin" else "target/debug/libfalkordb.so")
     try:
         client.ping()
         return
     except:
+        shutdown = True
         if os.path.exists("redis-test.log"):
             os.remove("redis-test.log")
         redis_server = subprocess.Popen(executable="/usr/local/bin/redis-server",
@@ -35,8 +37,9 @@ def setup_module(module):
 
 
 def teardown_module(module):
-    client.shutdown(nosave=True)
-    redis_server.wait()
+    if shutdown:
+        client.shutdown(nosave=True)
+        redis_server.wait()
 
 
 def test_tck():

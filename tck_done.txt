@@ -6,3 +6,7 @@ expressions/literal/Literal3.feature
 expressions/literal/Literal4.feature
 expressions/literal/Literal5.feature
 expressions/literal/Literal6.feature
+clauses/create/Create1.feature
+clauses/create/Create2.feature
+clauses/create/Create3.feature
+clauses/create/Create4.feature

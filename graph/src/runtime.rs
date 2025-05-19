@@ -1,6 +1,6 @@
 use crate::ast::{NodePattern, Pattern, RelationshipPattern};
 use crate::functions::{FnType, Functions, GraphFn, get_functions};
-use crate::iter::AggregateIter;
+use crate::iter::{AggregateIter, LazyReplace};
 use crate::{ast::ExprIR, graph::Graph, planner::IR, value::Contains, value::Value};
 use orx_tree::{Dyn, DynNode, DynTree, NodeIdx, NodeRef};
 use std::cell::RefCell;
@@ -332,7 +332,8 @@ impl<'a> Runtime<'a> {
         &self,
         idx: &NodeIdx<Dyn<IR>>,
     ) -> Result<Box<dyn Iterator<Item = Result<Value, String>> + '_>, String> {
-        let child_idx = self.plan.node(idx).get_child(0).map(|n| n.idx());
+        let child0_idx = self.plan.node(idx).get_child(0).map(|n| n.idx());
+        let child1_idx = self.plan.node(idx).get_child(1).map(|n| n.idx());
         match self.plan.node(idx).data() {
             IR::Empty => Ok(Box::new(empty())),
             IR::Call(name, trees) => match self.functions.get(name, &FnType::Procedure) {
@@ -357,7 +358,7 @@ impl<'a> Runtime<'a> {
                 None => Err(format!("Function '{name}' not found")),
             },
             IR::Unwind(tree, name) => {
-                if let Some(child_idx) = child_idx {
+                if let Some(child_idx) = child0_idx {
                     return Ok(Box::new(self.run(&child_idx)?.flat_map(move |_| {
                         let value = self.run_expr(tree.root());
                         let arr = match value {
@@ -390,7 +391,7 @@ impl<'a> Runtime<'a> {
                 )))))
             }
             IR::UnwindRange(start, stop, step, name) => {
-                if let Some(child_idx) = child_idx {
+                if let Some(child_idx) = child0_idx {
                     return Ok(Box::new(self.run(&child_idx)?.flat_map(move |_| {
                         let start = self.run_expr(start.root());
                         let stop = self.run_expr(stop.root());
@@ -434,11 +435,11 @@ impl<'a> Runtime<'a> {
             IR::Create(pattern) => {
                 let mut parent_commit = false;
                 if let Some(parent) = self.plan.node(idx).parent() {
-                    if matches!(parent.data(), IR::Commit) {
+                    if matches!(parent.data(), IR::Commit) && parent.parent().is_none() {
                         parent_commit = true;
                     }
                 }
-                if let Some(child_idx) = child_idx {
+                if let Some(child_idx) = child0_idx {
                     return Ok(Box::new(self.run(&child_idx)?.flat_map(move |_| {
                         if let Err(e) = self.create(pattern) {
                             return vec![Err(e)].into_iter();
@@ -457,8 +458,28 @@ impl<'a> Runtime<'a> {
                 }
                 Ok(Box::new(once(Ok(Value::List(vec![])))))
             }
+            IR::Merge(pattern) => {
+                if let Some(child_idx) = child1_idx {
+                    return Ok(Box::new(self.run(&child_idx)?.flat_map(move |_| {
+                        let iter = LazyReplace::new(
+                            self.run(child0_idx.as_ref().unwrap()).unwrap(),
+                            || {
+                                self.create(pattern);
+                                Box::new(vec![Ok(Value::List(vec![]))].into_iter())
+                            },
+                        );
+                        Box::new(iter)
+                    })));
+                }
+                let iter =
+                    LazyReplace::new(self.run(child0_idx.as_ref().unwrap()).unwrap(), || {
+                        self.create(pattern);
+                        Box::new(vec![Ok(Value::List(vec![]))].into_iter())
+                    });
+                Ok(Box::new(iter))
+            }
             IR::Delete(trees) => {
-                if let Some(child_idx) = child_idx {
+                if let Some(child_idx) = child0_idx {
                     return Ok(Box::new(self.run(&child_idx)?.map(move |_| {
                         self.delete(trees)?;
                         Ok(Value::List(vec![]))
@@ -468,7 +489,7 @@ impl<'a> Runtime<'a> {
                 Ok(Box::new(empty()))
             }
             IR::NodeScan(node_pattern) => {
-                if let Some(child_idx) = child_idx {
+                if let Some(child_idx) = child0_idx {
                     return Ok(Box::new(
                         self.run(&child_idx)?
                             .flat_map(move |_| self.node_scan(node_pattern)),
@@ -477,7 +498,7 @@ impl<'a> Runtime<'a> {
                 Ok(Box::new(self.node_scan(node_pattern)))
             }
             IR::RelationshipScan(relationship_pattern) => {
-                if let Some(child_idx) = child_idx {
+                if let Some(child_idx) = child0_idx {
                     return Ok(Box::new(
                         self.run(&child_idx)?
                             .flat_map(move |_| self.relationship_scan(relationship_pattern)),
@@ -486,7 +507,7 @@ impl<'a> Runtime<'a> {
                 Ok(Box::new(self.relationship_scan(relationship_pattern)))
             }
             IR::Filter(tree) => {
-                if let Some(child_idx) = child_idx {
+                if let Some(child_idx) = child0_idx {
                     return Ok(Box::new(self.run(&child_idx)?.filter(move |_| {
                         self.run_expr(tree.root()) == Ok(Value::Bool(true))
                     })));
@@ -496,7 +517,7 @@ impl<'a> Runtime<'a> {
                 ))
             }
             IR::Aggregate(name, trees, trees1) => {
-                if let Some(child_idx) = child_idx {
+                if let Some(child_idx) = child0_idx {
                     let aggregator = AggregateIter {
                         iter: self.run(&child_idx)?,
                         key_fn: move |_| {
@@ -527,7 +548,7 @@ impl<'a> Runtime<'a> {
                 Ok(Box::new(empty()))
             }
             IR::Project(trees) => {
-                if let Some(child_idx) = child_idx {
+                if let Some(child_idx) = child0_idx {
                     Ok(Box::new(self.run(&child_idx)?.map(move |v| {
                         v?;
                         Ok(Value::List(
@@ -555,7 +576,7 @@ impl<'a> Runtime<'a> {
                     ));
                 }
                 let iter = self
-                    .run(&child_idx.unwrap())?
+                    .run(&child0_idx.unwrap())?
                     .collect::<Result<Vec<Value>, String>>()?
                     .into_iter()
                     .map(Ok);
@@ -573,8 +594,7 @@ impl<'a> Runtime<'a> {
         let iter = self
             .g
             .borrow()
-            .get_relationships(&relationship_pattern.types)
-            .unwrap();
+            .get_relationships(&relationship_pattern.types);
         iter.map(move |(src, dst, id)| {
             self.vars.borrow_mut().insert(
                 relationship_pattern.alias.to_string(),
@@ -595,7 +615,7 @@ impl<'a> Runtime<'a> {
         node_pattern: &NodePattern,
     ) -> std::iter::Map<crate::matrix::Iter<bool>, impl FnMut((u64, u64)) -> Result<Value, String>>
     {
-        let iter = self.g.borrow().get_nodes(&node_pattern.labels).unwrap();
+        let iter = self.g.borrow().get_nodes(&node_pattern.labels);
         iter.map(move |(v, _)| {
             self.vars
                 .borrow_mut()

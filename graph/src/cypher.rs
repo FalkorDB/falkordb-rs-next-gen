@@ -13,6 +13,7 @@ enum Keyword {
     Call,
     Match,
     Unwind,
+    Merge,
     Create,
     Delete,
     Where,
@@ -66,10 +67,11 @@ enum Token {
     EndOfFile,
 }
 
-const KEYWORDS: [(&str, Keyword); 21] = [
+const KEYWORDS: [(&str, Keyword); 22] = [
     ("CALL", Keyword::Call),
     ("MATCH", Keyword::Match),
     ("UNWIND", Keyword::Unwind),
+    ("MERGE", Keyword::Merge),
     ("CREATE", Keyword::Create),
     ("DELETE", Keyword::Delete),
     ("WHERE", Keyword::Where),
@@ -191,8 +193,10 @@ impl<'a> Lexer<'a> {
                 '\'' => {
                     let mut len = 1;
                     let mut end = false;
-                    for c in chars.by_ref() {
-                        if c == '\'' {
+                    while let Some(c) = chars.next() {
+                        if c == '\\' {
+                            len += chars.next().unwrap().len_utf8();
+                        } else if c == '\'' {
                             end = true;
                             break;
                         }
@@ -227,9 +231,9 @@ impl<'a> Lexer<'a> {
                     let token = Token::Parameter(str[pos + 1..pos + len].to_string());
                     (token, len)
                 }
-                'a'..='z' | 'A'..='Z' => {
+                'a'..='z' | 'A'..='Z' | '_' => {
                     let mut len = 1;
-                    while let Some('a'..='z' | 'A'..='Z' | '0'..='9') = chars.next() {
+                    while let Some('a'..='z' | 'A'..='Z' | '0'..='9' | '_') = chars.next() {
                         len += 1;
                     }
 
@@ -273,10 +277,8 @@ impl<'a> Lexer<'a> {
         mut len: usize,
     ) -> (Token, usize) {
         while let Some(c) = chars.next() {
-            if c == '.' {
-                if let Some('.') = chars.clone().next() {
-                    break; // Stop when encountering `..`
-                }
+            if c == '.' && chars.clone().next() == Some('.') {
+                break; // Stop when encountering `..`
             }
             if c.is_ascii_alphanumeric() || c == '_' || c == '$' || c == '+' || c == '-' || c == '.'
             {
@@ -346,7 +348,7 @@ impl<'a> Lexer<'a> {
         &self,
         err: &str,
     ) -> String {
-        format!("{}, errCtx: {}", err, self.str)
+        format!("{}, errCtx: {}, pos {}", err, self.str, self.pos)
     }
 
     fn set_pos(
@@ -453,7 +455,9 @@ impl<'a> Parser<'a> {
             {
                 clauses.push(self.parse_reading_clasue()?);
             }
-            while let Token::Keyword(Keyword::Create | Keyword::Delete, _) = self.lexer.current() {
+            while let Token::Keyword(Keyword::Create | Keyword::Merge | Keyword::Delete, _) =
+                self.lexer.current()
+            {
                 write = true;
                 clauses.push(self.parse_writing_clause()?);
             }
@@ -507,6 +511,10 @@ impl<'a> Parser<'a> {
                 self.lexer.next();
                 self.parse_create_clause()
             }
+            Token::Keyword(Keyword::Merge, _) => {
+                self.lexer.next();
+                self.parse_merge_clause()
+            }
             Token::Keyword(Keyword::Delete, _) => {
                 self.lexer.next();
                 self.parse_delete_clause()
@@ -545,12 +553,15 @@ impl<'a> Parser<'a> {
         let list = self.parse_expr()?;
         match_token!(self.lexer => As);
         let ident = self.parse_ident()?;
-
         Ok(QueryIR::Unwind(list, ident))
     }
 
     fn parse_create_clause(&mut self) -> Result<QueryIR, String> {
         Ok(QueryIR::Create(self.parse_pattern(Keyword::Create)?))
+    }
+
+    fn parse_merge_clause(&mut self) -> Result<QueryIR, String> {
+        Ok(QueryIR::Merge(self.parse_pattern(Keyword::Merge)?))
     }
 
     fn parse_delete_clause(&mut self) -> Result<QueryIR, String> {
@@ -589,7 +600,7 @@ impl<'a> Parser<'a> {
         let mut relationships = Vec::new();
         let mut paths = Vec::new();
         loop {
-            if let Ok(p) = self.parse_ident() {
+            if let Token::Ident(p) = self.lexer.current() {
                 match_token!(self.lexer, Equal);
                 let mut vars = Vec::new();
                 let left = self.parse_node_pattern()?;
@@ -630,6 +641,10 @@ impl<'a> Parser<'a> {
                         nodes.push(right);
                     }
                 }
+            }
+
+            if clause == Keyword::Merge {
+                break;
             }
 
             match self.lexer.current() {
