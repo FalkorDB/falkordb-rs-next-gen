@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747140050756,
+  "lastUpdate": 1747644986315,
   "repoUrl": "https://github.com/FalkorDB/falkordb-rs-next-gen",
   "entries": {
     "FalkorDB Benchmark": [
@@ -304,6 +304,44 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.04839856461639859",
             "extra": "mean: 4.803163741400004 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "avi.avni@gmail.com",
+            "name": "Avi Avni",
+            "username": "AviAvni"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c9522457432e34127f00e1f8011e0e9d792fbc13",
+          "message": "Merge pull request #69 from FalkorDB/crud\n\nimplement TCK Create 1-4",
+          "timestamp": "2025-05-19T11:39:22+03:00",
+          "tree_id": "b46227b99ee90e261880422449ba6707a0ad6613",
+          "url": "https://github.com/FalkorDB/falkordb-rs-next-gen/commit/c9522457432e34127f00e1f8011e0e9d792fbc13"
+        },
+        "date": 1747644985836,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/bench.py::test_return",
+            "value": 10757.79875277398,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000009355897170499418",
+            "extra": "mean: 92.95581958550233 usec\nrounds: 2461"
+          },
+          {
+            "name": "tests/bench.py::test_unwind",
+            "value": 0.20786032095661347,
+            "unit": "iter/sec",
+            "range": "stddev: 0.024779424875536443",
+            "extra": "mean: 4.810923005400002 sec\nrounds: 5"
           }
         ]
       }
