@@ -498,7 +498,6 @@ impl<'a> Parser<'a> {
                 self.lexer.next();
                 self.parse_where_clause()
             }
-            Token::Error(s) => Err(s),
             token => Err(self
                 .lexer
                 .format_error(&format!("Unexpected token {token:?}"))),
@@ -519,7 +518,6 @@ impl<'a> Parser<'a> {
                 self.lexer.next();
                 self.parse_delete_clause()
             }
-            Token::Error(s) => Err(s),
             token => Err(self
                 .lexer
                 .format_error(&format!("Unexpected token {token:?}"))),
@@ -735,7 +733,6 @@ impl<'a> Parser<'a> {
                 match_token!(self.lexer, RParen);
                 Ok(expr)
             }
-            Token::Error(s) => Err(s),
             token => Err(self
                 .lexer
                 .format_error(&format!("Unexpected token {token:?}"))),
@@ -925,7 +922,6 @@ impl<'a> Parser<'a> {
                 self.lexer.next();
                 Ok(v)
             }
-            Token::Error(s) => Err(s),
             token => Err(self
                 .lexer
                 .format_error(&format!("Unexpected token {token:?}"))),
