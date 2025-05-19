@@ -262,7 +262,7 @@ impl<'a> Lexer<'a> {
                     (Token::Ident(str[pos + 1..pos + len].to_string()), len + 1)
                 }
                 _ => (
-                    Token::Error(format!("Unexpected token at pos: {pos} at char {char}")),
+                    Token::Error(format!("Invalid input at pos: {pos} at char {char}")),
                     0,
                 ),
             };
@@ -366,7 +366,7 @@ macro_rules! match_token {
             Token::$token => {
                 $lexer.next();
             }
-            token => return Err($lexer.format_error(&format!("Unexpected token: {token:?}"))),
+            token => return Err($lexer.format_error(&format!("Invalid input {token:?}"))),
         }
     };
     ($lexer:expr => $token:ident) => {
@@ -374,7 +374,7 @@ macro_rules! match_token {
             Token::Keyword(Keyword::$token, _) => {
                 $lexer.next();
             }
-            token => return Err($lexer.format_error(&format!("Unexpected token: {token:?}"))),
+            token => return Err($lexer.format_error(&format!("Invalid input {token:?}"))),
         }
     };
     () => {};
@@ -498,9 +498,7 @@ impl<'a> Parser<'a> {
                 self.lexer.next();
                 self.parse_where_clause()
             }
-            token => Err(self
-                .lexer
-                .format_error(&format!("Unexpected token {token:?}"))),
+            token => Err(self.lexer.format_error(&format!("Invalid input {token:?}"))),
         }
     }
 
@@ -518,9 +516,7 @@ impl<'a> Parser<'a> {
                 self.lexer.next();
                 self.parse_delete_clause()
             }
-            token => Err(self
-                .lexer
-                .format_error(&format!("Unexpected token {token:?}"))),
+            token => Err(self.lexer.format_error(&format!("Invalid input {token:?}"))),
         }
     }
 
@@ -733,9 +729,7 @@ impl<'a> Parser<'a> {
                 match_token!(self.lexer, RParen);
                 Ok(expr)
             }
-            token => Err(self
-                .lexer
-                .format_error(&format!("Unexpected token {token:?}"))),
+            token => Err(self.lexer.format_error(&format!("Invalid input {token:?}"))),
         }
     }
 
@@ -922,9 +916,7 @@ impl<'a> Parser<'a> {
                 self.lexer.next();
                 Ok(v)
             }
-            token => Err(self
-                .lexer
-                .format_error(&format!("Unexpected token {token:?}"))),
+            token => Err(self.lexer.format_error(&format!("Invalid input {token:?}"))),
         }
     }
 
@@ -963,9 +955,7 @@ impl<'a> Parser<'a> {
             if self.lexer.current() == token {
                 self.lexer.next();
             } else {
-                return Err(self
-                    .lexer
-                    .format_error(&format!("Unexpected token {token:?}")));
+                return Err(self.lexer.format_error(&format!("Invalid input {token:?}")));
             }
         }
         Ok(exprs)
@@ -1071,7 +1061,7 @@ impl<'a> Parser<'a> {
                         token => {
                             return Err(self
                                 .lexer
-                                .format_error(&format!("Unexpected token {token:?}")));
+                                .format_error(&format!("Invalid input {token:?}")));
                         }
                     }
                 }
