@@ -90,9 +90,10 @@ const KEYWORDS: [(&str, Keyword); 21] = [
     ("FALSE", Keyword::False),
 ];
 
-const MIN_I64: [&str; 4] = [
+const MIN_I64: [&str; 5] = [
     "0b1000000000000000000000000000000000000000000000000000000000000000", // binary
-    "0o40000000000000000000",                                             // octal
+    "0o1000000000000000000000",                                           // octal
+    "01000000000000000000000",                                            // octal
     "9223372036854775808",                                                // decimal
     "0x8000000000000000",                                                 // hex
 ];
@@ -301,7 +302,7 @@ impl<'a> Lexer<'a> {
         if Lexer::is_str_float(str) {
             return match str.parse::<f64>() {
                 Ok(f) if f.is_finite() => Token::Float(f),
-                Ok(_) => Token::Error(format!("FloatingPointOverflow: {str}")),
+                Ok(_) => Token::Error(format!("Float overflow '{str}'")),
                 Err(_) => Token::Error(format!("Invalid float: {str}")),
             };
         }
@@ -310,6 +311,7 @@ impl<'a> Lexer<'a> {
             || str.eq_ignore_ascii_case(MIN_I64[1])
             || str.eq_ignore_ascii_case(MIN_I64[2])
             || str.eq_ignore_ascii_case(MIN_I64[3])
+            || str.eq_ignore_ascii_case(MIN_I64[4])
         {
             return Token::Integer(i64::MIN);
         }
@@ -344,7 +346,7 @@ impl<'a> Lexer<'a> {
         &self,
         err: &str,
     ) -> String {
-        format!("{}\n{}^{}", self.str, " ".repeat(self.pos), err)
+        format!("{}, errCtx: {}", err, self.str)
     }
 
     fn set_pos(
@@ -466,6 +468,11 @@ impl<'a> Parser<'a> {
             clauses.push(self.parse_return_clause(write)?);
             write = false;
         }
+        if self.lexer.current() != Token::EndOfFile {
+            return Err(self
+                .lexer
+                .format_error(&format!("Invalid input '{:?}'", self.lexer.current())));
+        }
         Ok(QueryIR::Query(clauses, write))
     }
 
@@ -487,6 +494,7 @@ impl<'a> Parser<'a> {
                 self.lexer.next();
                 self.parse_where_clause()
             }
+            Token::Error(s) => Err(s),
             token => Err(self
                 .lexer
                 .format_error(&format!("Unexpected token {token:?}"))),
@@ -503,6 +511,7 @@ impl<'a> Parser<'a> {
                 self.lexer.next();
                 self.parse_delete_clause()
             }
+            Token::Error(s) => Err(s),
             token => Err(self
                 .lexer
                 .format_error(&format!("Unexpected token {token:?}"))),
@@ -711,6 +720,7 @@ impl<'a> Parser<'a> {
                 match_token!(self.lexer, RParen);
                 Ok(expr)
             }
+            Token::Error(s) => Err(s),
             token => Err(self
                 .lexer
                 .format_error(&format!("Unexpected token {token:?}"))),
@@ -900,6 +910,7 @@ impl<'a> Parser<'a> {
                 self.lexer.next();
                 Ok(v)
             }
+            Token::Error(s) => Err(s),
             token => Err(self
                 .lexer
                 .format_error(&format!("Unexpected token {token:?}"))),
@@ -1045,6 +1056,7 @@ impl<'a> Parser<'a> {
                             self.lexer.next();
                             return Ok(tree!(ExprIR::Map ; attrs));
                         }
+                        Token::Error(s) => return Err(s),
                         token => {
                             return Err(self
                                 .lexer

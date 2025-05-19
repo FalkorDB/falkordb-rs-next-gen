@@ -1,2 +1,8 @@
 expressions/boolean
 expressions/string
+expressions/literal/Literal1.feature
+expressions/literal/Literal2.feature
+expressions/literal/Literal3.feature
+expressions/literal/Literal4.feature
+expressions/literal/Literal5.feature
+expressions/literal/Literal6.feature
