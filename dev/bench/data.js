@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747644986315,
+  "lastUpdate": 1747651285188,
   "repoUrl": "https://github.com/FalkorDB/falkordb-rs-next-gen",
   "entries": {
     "FalkorDB Benchmark": [
@@ -342,6 +342,44 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.024779424875536443",
             "extra": "mean: 4.810923005400002 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "avi.avni@gmail.com",
+            "name": "Avi Avni",
+            "username": "AviAvni"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4844b3c218dee305556bcd94e33d850dcdc2c431",
+          "message": "Merge pull request #68 from FalkorDB/fix-numeric-edge-case\n\nfix numeric edge case",
+          "timestamp": "2025-05-19T13:38:51+03:00",
+          "tree_id": "9c27a4a048f6c96f36809f7f87d30d90e11628f6",
+          "url": "https://github.com/FalkorDB/falkordb-rs-next-gen/commit/4844b3c218dee305556bcd94e33d850dcdc2c431"
+        },
+        "date": 1747651284295,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/bench.py::test_return",
+            "value": 9342.354441195903,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001690550537495136",
+            "extra": "mean: 107.03939850434439 usec\nrounds: 2542"
+          },
+          {
+            "name": "tests/bench.py::test_unwind",
+            "value": 0.2101170522192479,
+            "unit": "iter/sec",
+            "range": "stddev: 0.048428221205754074",
+            "extra": "mean: 4.7592519952000085 sec\nrounds: 5"
           }
         ]
       }
