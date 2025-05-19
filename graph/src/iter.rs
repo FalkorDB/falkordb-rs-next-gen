@@ -54,3 +54,56 @@ where
         }
     }
 }
+
+pub struct LazyReplace<I, F>
+where
+    I: Iterator,
+    F: FnOnce() -> I,
+{
+    iter: Option<I>,
+    replacement: Option<F>,
+    yielded: bool, // Tracks whether any item has been yielded
+}
+
+impl<I, F> LazyReplace<I, F>
+where
+    I: Iterator,
+    F: FnOnce() -> I,
+{
+    pub const fn new(
+        iter: I,
+        replacement: F,
+    ) -> Self {
+        Self {
+            iter: Some(iter),
+            replacement: Some(replacement),
+            yielded: false,
+        }
+    }
+}
+
+impl<I, F> Iterator for LazyReplace<I, F>
+where
+    I: Iterator,
+    F: FnOnce() -> I,
+{
+    type Item = I::Item;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(ref mut iter) = self.iter {
+            if let Some(item) = iter.next() {
+                self.yielded = true; // Mark that an item has been yielded
+                return Some(item);
+            }
+        }
+
+        if !self.yielded {
+            if let Some(replacement) = self.replacement.take() {
+                self.iter = Some(replacement());
+                return self.iter.as_mut().unwrap().next();
+            }
+        }
+
+        None
+    }
+}

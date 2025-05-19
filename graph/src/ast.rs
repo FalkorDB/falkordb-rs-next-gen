@@ -281,15 +281,21 @@ impl Display for RelationshipPattern {
         &self,
         f: &mut std::fmt::Formatter<'_>,
     ) -> std::fmt::Result {
+        let direction = if self.bidirectional { "" } else { ">" };
         if self.types.is_empty() {
-            return write!(f, "({})-[{}]->({})", self.from, self.alias, self.to);
+            return write!(
+                f,
+                "({})-[{}]-{}({})",
+                self.from, self.alias, direction, self.to
+            );
         }
         write!(
             f,
-            "({})-[{}:{}]->({})",
+            "({})-[{}:{}]-{}({})",
             self.from,
             self.alias,
             self.types.join("|"),
+            direction,
             self.to
         )
     }
@@ -377,6 +383,7 @@ pub enum QueryIR {
     Call(String, Vec<DynTree<ExprIR>>),
     Match(Pattern),
     Unwind(DynTree<ExprIR>, String),
+    Merge(Pattern),
     Where(DynTree<ExprIR>),
     Create(Pattern),
     Delete(Vec<DynTree<ExprIR>>),
@@ -403,6 +410,7 @@ impl Display for QueryIR {
                 writeln!(f, "UNWIND {v}:")?;
                 write!(f, "{l}")
             }
+            Self::Merge(p) => writeln!(f, "MERGE {p}"),
             Self::Where(expr) => {
                 writeln!(f, "WHERE:")?;
                 write!(f, "{expr}")
@@ -491,6 +499,34 @@ impl QueryIR {
                     return Err(format!("Duplicate alias {v}"));
                 }
                 env.insert((*v).to_string());
+                let first = iter.next().unwrap();
+                first.inner_validate(iter, env)
+            }
+            Self::Merge(p) => {
+                let mut remove = Vec::new();
+                for (i, node) in p.nodes.iter().enumerate() {
+                    if env.contains(&node.alias.to_string()) {
+                        if p.relationships.is_empty() {
+                            return Err(format!(
+                                "The bound variable {} can't be redeclared in a create clause",
+                                node.alias.to_string().as_str()
+                            ));
+                        }
+                        remove.push(i);
+                    }
+                    node.attrs.root().validate(env)?;
+                }
+                remove.reverse();
+                for i in remove {
+                    p.nodes.remove(i);
+                }
+                for node in &p.nodes {
+                    env.insert(node.alias.to_string());
+                }
+                for relationship in &p.relationships {
+                    relationship.attrs.root().validate(env)?;
+                    env.insert(relationship.alias.to_string());
+                }
                 let first = iter.next().unwrap();
                 first.inner_validate(iter, env)
             }

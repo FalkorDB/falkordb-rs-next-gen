@@ -15,6 +15,7 @@ pub enum IR {
     Unwind(DynTree<ExprIR>, String),
     UnwindRange(DynTree<ExprIR>, DynTree<ExprIR>, DynTree<ExprIR>, String),
     Create(Pattern),
+    Merge(Pattern),
     Delete(Vec<DynTree<ExprIR>>),
     NodeScan(NodePattern),
     RelationshipScan(RelationshipPattern),
@@ -35,6 +36,7 @@ impl Display for IR {
             Self::Unwind(_, alias) => write!(f, "Unwind({alias})"),
             Self::UnwindRange(_, _, _, alias) => write!(f, "UnwindRange({alias})"),
             Self::Create(pattern) => write!(f, "Create {pattern}"),
+            Self::Merge(pattern) => write!(f, "Merge {pattern}"),
             Self::Delete(_) => write!(f, "Delete"),
             Self::NodeScan(node) => write!(f, "NodeScan {node}"),
             Self::RelationshipScan(rel) => write!(f, "RelationshipScan {rel}"),
@@ -150,18 +152,18 @@ impl Planner {
         q: Vec<QueryIR>,
         write: bool,
     ) -> DynTree<IR> {
-        let iter = &mut q.into_iter();
+        let iter = &mut q.into_iter().rev();
         let mut res = self.plan(iter.next().unwrap());
+        let mut idx = res.root().idx();
+        if matches!(res.node(&idx).data(), IR::Commit) {
+            idx = res.node(&idx).child(0).idx();
+        }
         for e in iter {
-            let mut n = self.plan(e);
-            let mut root = n.root_mut();
-            if root.num_children() == 1 {
-                let mut child = root.child_mut(0);
-                child.push_child_tree(res);
-            } else {
-                root.push_child_tree(res);
+            let n = self.plan(e);
+            idx = res.node_mut(&idx).push_child_tree(n);
+            if matches!(res.node(&idx).data(), IR::Commit) {
+                idx = res.node(&idx).child(0).idx();
             }
-            res = n;
         }
         if write {
             res = tree!(IR::Commit, res);
@@ -178,6 +180,7 @@ impl Planner {
             QueryIR::Call(name, exprs) => tree!(IR::Call(name, exprs)),
             QueryIR::Match(pattern) => self.plan_match(pattern),
             QueryIR::Unwind(expr, alias) => self.plan_unwind(expr, alias),
+            QueryIR::Merge(pattern) => tree!(IR::Merge(pattern.clone()), self.plan_match(pattern)),
             QueryIR::Where(expr) => tree!(IR::Filter(expr)),
             QueryIR::Create(pattern) => tree!(IR::Create(pattern)),
             QueryIR::Delete(exprs) => tree!(IR::Delete(exprs)),
