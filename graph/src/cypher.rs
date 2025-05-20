@@ -32,6 +32,11 @@ enum Keyword {
     Contains,
     True,
     False,
+    Case,
+    When,
+    Then,
+    Else,
+    End,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -67,7 +72,7 @@ enum Token {
     EndOfFile,
 }
 
-const KEYWORDS: [(&str, Keyword); 22] = [
+const KEYWORDS: [(&str, Keyword); 27] = [
     ("CALL", Keyword::Call),
     ("MATCH", Keyword::Match),
     ("UNWIND", Keyword::Unwind),
@@ -90,6 +95,11 @@ const KEYWORDS: [(&str, Keyword); 22] = [
     ("CONTAINS", Keyword::Contains),
     ("TRUE", Keyword::True),
     ("FALSE", Keyword::False),
+    ("CASE", Keyword::Case),
+    ("WHEN", Keyword::When),
+    ("THEN", Keyword::Then),
+    ("ELSE", Keyword::Else),
+    ("END", Keyword::End),
 ];
 
 const MIN_I64: [&str; 5] = [

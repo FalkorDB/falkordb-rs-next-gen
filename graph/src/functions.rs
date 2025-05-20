@@ -183,6 +183,7 @@ pub fn init_functions() -> Result<(), Functions> {
     funcs.add("sign", sign, false, 1, 1, FnType::Function);
     funcs.add("sqrt", sqrt, false, 1, 1, FnType::Function);
     funcs.add("range", range, false, 1, 3, FnType::Function);
+    funcs.add("coalesce", coalesce, false, 1, usize::MAX, FnType::Function);
 
     // aggregation functions
     funcs.add("collect", collect, false, 1, 2, FnType::Aggregation);
@@ -1104,6 +1105,21 @@ fn range(
         }
         _ => Err("Range operator requires two integers".to_string()),
     }
+}
+
+fn coalesce(
+    _: &Runtime,
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    let iter = args.into_iter();
+    for arg in iter {
+        if let Value::Null = arg {
+            continue;
+        } else {
+            return Ok(arg);
+        }
+    }
+    Ok(Value::Null)
 }
 
 //
