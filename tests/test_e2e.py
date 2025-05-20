@@ -1548,13 +1548,15 @@ def test_aggregation():
 def test_case():
     res = query("RETURN CASE 1 + 2 WHEN 'a' THEN 1 END")
     assert res.result_set == [[None]]
-    res = query("RETURN CASE WHEN 'a' THEN 1 END")
+    res = query("RETURN CASE WHEN 1 = 2 THEN 1 END")
     assert res.result_set == [[None]]
+    res = query("RETURN CASE WHEN '1 = 2' THEN 1 END")
+    assert res.result_set == [[1]]
     res = query("RETURN CASE 1 + 2 WHEN 'a' THEN 1 ELSE 2 END")
     assert res.result_set == [[2]]
-    res = query("RETURN CASE WHEN 'a' THEN 1 ELSE 2 END")
+    res = query("RETURN CASE WHEN 1 = 3 THEN 1 ELSE 2 END")
     assert res.result_set == [[2]]
     res = query("RETURN CASE 1 + 2 WHEN 3 THEN 1 + 2 WHEN 2 THEN 2 ELSE 2 END")
     assert res.result_set == [[3]]
-    res = query("RETURN CASE WHEN 'a' THEN 1 WHEN 1 = 1 THEN 1 + 1 WHEN 3 = 3 THEN 3 ELSE 2 END")
+    res = query("RETURN CASE WHEN False THEN 1 WHEN 1 = 1 THEN 1 + 1 WHEN 3 = 3 THEN 3 ELSE 2 END")
     assert res.result_set == [[2]]

@@ -187,7 +187,6 @@ pub fn init_functions() -> Result<(), Functions> {
     funcs.add("coalesce", coalesce, false, 1, usize::MAX, FnType::Function);
     funcs.add("keys", keys, false, 1, 1, FnType::Function);
 
-
     // aggregation functions
     funcs.add("collect", collect, false, 1, 2, FnType::Aggregation);
     funcs.add("count", count, false, 1, 2, FnType::Aggregation);
@@ -1137,7 +1136,6 @@ fn range(
     }
 }
 
-
 fn coalesce(
     _: &Runtime,
     args: Vec<Value>,
@@ -1261,6 +1259,9 @@ fn internal_case(
         (Some(Value::List(alts)), None) => {
             for pair in alts.chunks(2) {
                 if let [Value::Bool(true), result] = pair {
+                    return Ok(result.clone());
+                }
+                if let [Value::String(_), result] = pair {
                     return Ok(result.clone());
                 }
             }
