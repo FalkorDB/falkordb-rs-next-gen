@@ -930,6 +930,17 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Parse an identifier that is possibly a keyword
+    fn parse_ident_ex(&mut self) -> Result<String, String> {
+        match self.lexer.current() {
+            Token::Ident(id) | Token::Keyword(_, id) => {
+                self.lexer.next();
+                Ok(id)
+            }
+            token => Err(self.lexer.format_error(&format!("Invalid input {token:?}"))),
+        }
+    }
+
     fn parse_named_exprs(&mut self) -> Result<Vec<DynTree<ExprIR>>, String> {
         let mut exprs = Vec::new();
         loop {
@@ -1040,7 +1051,7 @@ impl<'a> Parser<'a> {
         let mut labels = Vec::new();
         while self.lexer.current() == Token::Colon {
             self.lexer.next();
-            labels.push(self.parse_ident()?);
+            labels.push(self.parse_ident_ex()?);
         }
         Ok(labels)
     }
