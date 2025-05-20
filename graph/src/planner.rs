@@ -11,6 +11,7 @@ use crate::{
 #[derive(Clone, Debug)]
 pub enum IR {
     Empty,
+    Optional(Vec<String>),
     Call(String, Vec<DynTree<ExprIR>>),
     Unwind(DynTree<ExprIR>, String),
     UnwindRange(DynTree<ExprIR>, DynTree<ExprIR>, DynTree<ExprIR>, String),
@@ -32,6 +33,7 @@ impl Display for IR {
     ) -> std::fmt::Result {
         match self {
             Self::Empty => write!(f, "Empty"),
+            Self::Optional(_) => write!(f, "Optional"),
             Self::Call(name, _) => write!(f, "Call({name})"),
             Self::Unwind(_, alias) => write!(f, "Unwind({alias})"),
             Self::UnwindRange(_, _, _, alias) => write!(f, "UnwindRange({alias})"),
@@ -178,7 +180,16 @@ impl Planner {
     ) -> DynTree<IR> {
         match ir {
             QueryIR::Call(name, exprs) => tree!(IR::Call(name, exprs)),
-            QueryIR::Match(pattern) => self.plan_match(pattern),
+            QueryIR::Match(pattern, optional) => {
+                if optional {
+                    tree!(
+                        IR::Optional(pattern.nodes.iter().map(|n| n.alias.to_string()).collect()),
+                        self.plan_match(pattern)
+                    )
+                } else {
+                    self.plan_match(pattern)
+                }
+            }
             QueryIR::Unwind(expr, alias) => self.plan_unwind(expr, alias),
             QueryIR::Merge(pattern) => tree!(IR::Merge(pattern.clone()), self.plan_match(pattern)),
             QueryIR::Where(expr) => tree!(IR::Filter(expr)),

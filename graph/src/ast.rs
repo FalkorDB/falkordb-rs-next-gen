@@ -381,7 +381,7 @@ impl Pattern {
 #[derive(Debug)]
 pub enum QueryIR {
     Call(String, Vec<DynTree<ExprIR>>),
-    Match(Pattern),
+    Match(Pattern, bool),
     Unwind(DynTree<ExprIR>, String),
     Merge(Pattern),
     Where(DynTree<ExprIR>),
@@ -405,7 +405,7 @@ impl Display for QueryIR {
                 }
                 Ok(())
             }
-            Self::Match(p) => writeln!(f, "MATCH {p}"),
+            Self::Match(p, _) => writeln!(f, "MATCH {p}"),
             Self::Unwind(l, v) => {
                 writeln!(f, "UNWIND {v}:")?;
                 write!(f, "{l}")
@@ -469,7 +469,7 @@ impl QueryIR {
                 }
                 Ok(())
             }
-            Self::Match(p) => {
+            Self::Match(p, _) => {
                 for node in &p.nodes {
                     if env.contains(&node.alias.to_string()) {
                         return Err(format!(
