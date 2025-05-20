@@ -218,6 +218,7 @@ pub fn init_functions() -> Result<(), Functions> {
         2,
         FnType::Internal,
     );
+    funcs.add("case", internal_case, false, 1, 2, FnType::Internal);
 
     // Procedures
     funcs.add("db.labels", db_labels, false, 0, 0, FnType::Procedure);
@@ -1203,6 +1204,34 @@ fn internal_regex_matches(
             arg1.name(),
             arg2.name()
         )),
+        _ => unreachable!(),
+    }
+}
+
+fn internal_case(
+    _: &Runtime,
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    let mut iter = args.into_iter();
+    match (iter.next(), iter.next()) {
+        (Some(Value::List(alts)), None) => {
+            for pair in alts.chunks(2) {
+                if let [Value::Bool(true), result] = pair {
+                    return Ok(result.clone());
+                }
+            }
+            Ok(Value::Null)
+        }
+        (Some(value), Some(Value::List(alts))) => {
+            for pair in alts.chunks(2) {
+                if let [condition, result] = pair {
+                    if *condition == value {
+                        return Ok(result.clone());
+                    }
+                }
+            }
+            Ok(Value::Null)
+        }
         _ => unreachable!(),
     }
 }

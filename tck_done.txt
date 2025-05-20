@@ -3,6 +3,7 @@ expressions/aggregation/Aggregation2.feature
 expressions/boolean
 expressions/literals
 expressions/string
+expressions/conditional
 clauses/create/Create1.feature
 clauses/create/Create2.feature
 clauses/create/Create3.feature

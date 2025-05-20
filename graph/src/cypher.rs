@@ -669,6 +669,58 @@ impl<'a> Parser<'a> {
         Ok(Pattern::new(nodes, relationships, paths))
     }
 
+    fn parse_case(&mut self) -> Result<DynTree<ExprIR>, String> {
+        self.lexer.next();
+        let test = if let Token::Keyword(Keyword::When, _) = self.lexer.current() {
+            None
+        } else {
+            Some(self.parse_expr()?)
+        };
+        let mut params = Vec::new();
+        loop {
+            match self.lexer.current() {
+                Token::Keyword(Keyword::When, _) => {
+                    self.lexer.next();
+                    let when = self.parse_expr()?;
+                    match_token!(self.lexer => Then);
+                    let then = self.parse_expr()?;
+                    params.push(when);
+                    params.push(then);
+                }
+                Token::Keyword(Keyword::Else, _) => {
+                    self.lexer.next();
+                    let else_ = self.parse_expr()?;
+                    if let Some(test) = test.clone() {
+                        params.push(test);
+                    } else {
+                        params.push(tree!(ExprIR::Bool(true)));
+                    }
+                    params.push(else_);
+                    break;
+                }
+                Token::Keyword(Keyword::End, _) => {
+                    break;
+                }
+                _ => return Err(self.lexer.format_error("Invalid input")),
+            }
+        }
+        if params.is_empty() {
+            return Err(self.lexer.format_error("Invalid input"));
+        }
+        match_token!(self.lexer => End);
+        if let Some(test) = test {
+            Ok(tree!(
+                ExprIR::FuncInvocation(String::from("case"), FnType::Internal),
+                test,
+                tree!(ExprIR::List ; params)
+            ))
+        } else {
+            Ok(tree!(
+                ExprIR::FuncInvocation(String::from("case"), FnType::Internal),
+                tree!(ExprIR::List ; params)
+            ))
+        }
+    }
     fn parse_primary_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
         match self.lexer.current() {
             Token::Ident(ident) => {
@@ -702,6 +754,7 @@ impl<'a> Parser<'a> {
                 self.lexer.next();
                 Ok(tree!(ExprIR::Parameter(param)))
             }
+            Token::Keyword(Keyword::Case, _) => self.parse_case(),
             Token::Keyword(Keyword::Null, _) => {
                 self.lexer.next();
                 Ok(tree!(ExprIR::Null))
@@ -922,17 +975,6 @@ impl<'a> Parser<'a> {
 
     fn parse_ident(&mut self) -> Result<String, String> {
         match self.lexer.current() {
-            Token::Ident(v) => {
-                self.lexer.next();
-                Ok(v)
-            }
-            token => Err(self.lexer.format_error(&format!("Invalid input {token:?}"))),
-        }
-    }
-
-    /// Parse an identifier that is possibly a keyword
-    fn parse_ident_ex(&mut self) -> Result<String, String> {
-        match self.lexer.current() {
             Token::Ident(id) | Token::Keyword(_, id) => {
                 self.lexer.next();
                 Ok(id)
@@ -1051,7 +1093,7 @@ impl<'a> Parser<'a> {
         let mut labels = Vec::new();
         while self.lexer.current() == Token::Colon {
             self.lexer.next();
-            labels.push(self.parse_ident_ex()?);
+            labels.push(self.parse_ident()?);
         }
         Ok(labels)
     }
