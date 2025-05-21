@@ -1258,11 +1258,10 @@ fn internal_case(
     match (iter.next(), iter.next()) {
         (Some(Value::List(alts)), None) => {
             for pair in alts.chunks(2) {
-                if let [Value::Bool(true), result] = pair {
-                    return Ok(result.clone());
-                }
-                if let [Value::String(_), result] = pair {
-                    return Ok(result.clone());
+                match pair {
+                    [Value::Bool(false) | Value::Null, _] => {}
+                    [_, result] => return Ok(result.clone()),
+                    _ => unreachable!(),
                 }
             }
             Ok(Value::Null)
