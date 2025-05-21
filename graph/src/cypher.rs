@@ -691,6 +691,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_case_expression(&mut self) -> Result<DynTree<ExprIR>, String> {
+        self.lexer.next();
         let mut children = vec![];
         if let Token::Keyword(Keyword::When, _) = self.lexer.current() {
         } else {
