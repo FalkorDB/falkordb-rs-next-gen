@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747805686282,
+  "lastUpdate": 1747822142422,
   "repoUrl": "https://github.com/FalkorDB/falkordb-rs-next-gen",
   "entries": {
     "FalkorDB Benchmark": [
@@ -494,6 +494,44 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.06896615285709451",
             "extra": "mean: 4.721406691000015 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "avi.avni@gmail.com",
+            "name": "Avi Avni",
+            "username": "AviAvni"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b52538be7031decb26311231a2a12960080d295f",
+          "message": "Merge pull request #72 from FalkorDB/tck-case\n\nexpressions/conditional, fix #50",
+          "timestamp": "2025-05-21T13:06:28+03:00",
+          "tree_id": "5cf78e40e93546d2b7432861292f171336aa1445",
+          "url": "https://github.com/FalkorDB/falkordb-rs-next-gen/commit/b52538be7031decb26311231a2a12960080d295f"
+        },
+        "date": 1747822141535,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/bench.py::test_return",
+            "value": 10064.419528547622,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000016278246429727917",
+            "extra": "mean: 99.35992802799112 usec\nrounds: 1709"
+          },
+          {
+            "name": "tests/bench.py::test_unwind",
+            "value": 0.20876799979985522,
+            "unit": "iter/sec",
+            "range": "stddev: 0.05517709127635773",
+            "extra": "mean: 4.7900061358000015 sec\nrounds: 5"
           }
         ]
       }
