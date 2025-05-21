@@ -10,6 +10,8 @@ expressions/literals
 expressions/map
 expressions/mathematical
 expressions/null
+expressions/precedence/Precedence2.feature
+expressions/precedence/Precedence4.feature
 expressions/string
 expressions/conditional
 clauses/create/Create1.feature
