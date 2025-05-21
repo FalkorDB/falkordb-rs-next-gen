@@ -132,7 +132,7 @@ impl ExpressionListType {
     ) -> bool {
         match self {
             Self::OneOrMore => false,
-            Self::ZeroOrMoreClosedBy(token) => token == &current_token,
+            Self::ZeroOrMoreClosedBy(token) => *token == current_token,
         }
     }
 }
@@ -1078,7 +1078,7 @@ impl<'a> Parser<'a> {
         let dst = self.parse_node_pattern()?;
         let relationship = match (is_incoming, is_outgoing) {
             (true, true) | (false, false) => {
-                if clause == &Keyword::Create {
+                if *clause == Keyword::Create {
                     return Err(self
                         .lexer
                         .format_error("Only directed relationships are supported in CREATE"));
