@@ -11,6 +11,7 @@ use std::str::Chars;
 #[derive(Debug, PartialEq, Clone)]
 enum Keyword {
     Call,
+    Optional,
     Match,
     Unwind,
     Merge,
@@ -60,6 +61,7 @@ enum Token {
     Plus,
     Dash,
     Equal,
+    NotEqual,
     LessThan,
     GreaterThan,
     Comma,
@@ -72,8 +74,9 @@ enum Token {
     EndOfFile,
 }
 
-const KEYWORDS: [(&str, Keyword); 27] = [
+const KEYWORDS: [(&str, Keyword); 28] = [
     ("CALL", Keyword::Call),
+    ("OPTIONAL", Keyword::Optional),
     ("MATCH", Keyword::Match),
     ("UNWIND", Keyword::Unwind),
     ("MERGE", Keyword::Merge),
@@ -190,7 +193,10 @@ impl<'a> Lexer<'a> {
                     Some('~') => (Token::RegexMatches, 2),
                     _ => (Token::Equal, 1),
                 },
-                '<' => (Token::LessThan, 1),
+                '<' => match chars.next() {
+                    Some('>') => (Token::NotEqual, 2),
+                    _ => (Token::LessThan, 1),
+                },
                 '>' => (Token::GreaterThan, 1),
                 ',' => (Token::Comma, 1),
                 ':' => (Token::Colon, 1),
@@ -459,7 +465,11 @@ impl<'a> Parser<'a> {
         let mut write = false;
         loop {
             while let Token::Keyword(
-                Keyword::Match | Keyword::Unwind | Keyword::Call | Keyword::Where,
+                Keyword::Optional
+                | Keyword::Match
+                | Keyword::Unwind
+                | Keyword::Call
+                | Keyword::Where,
                 _,
             ) = self.lexer.current()
             {
@@ -491,10 +501,15 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_reading_clasue(&mut self) -> Result<QueryIR, String> {
+        if optional_match_token!(self.lexer => Optional) {
+            match_token!(self.lexer => Match);
+            return self.parse_match_clause(true);
+        }
         match self.lexer.current() {
             Token::Keyword(Keyword::Match, _) => {
                 self.lexer.next();
-                self.parse_match_clause()
+                optional_match_token!(self.lexer => Match);
+                self.parse_match_clause(false)
             }
             Token::Keyword(Keyword::Unwind, _) => {
                 self.lexer.next();
@@ -508,7 +523,7 @@ impl<'a> Parser<'a> {
                 self.lexer.next();
                 self.parse_where_clause()
             }
-            token => Err(self.lexer.format_error(&format!("Invalid input {token:?}"))),
+            _ => unreachable!(),
         }
     }
 
@@ -549,8 +564,14 @@ impl<'a> Parser<'a> {
         Ok(ident)
     }
 
-    fn parse_match_clause(&mut self) -> Result<QueryIR, String> {
-        Ok(QueryIR::Match(self.parse_pattern(Keyword::Match)?))
+    fn parse_match_clause(
+        &mut self,
+        optional: bool,
+    ) -> Result<QueryIR, String> {
+        Ok(QueryIR::Match(
+            self.parse_pattern(Keyword::Match)?,
+            optional,
+        ))
     }
 
     fn parse_unwind_clause(&mut self) -> Result<QueryIR, String> {
@@ -844,9 +865,13 @@ impl<'a> Parser<'a> {
         match self.lexer.current() {
             Token::Keyword(Keyword::Is, _) => {
                 self.lexer.next();
+                let is_not = optional_match_token!(self.lexer => Not);
                 match self.lexer.current() {
                     Token::Keyword(Keyword::Null, _) => {
                         self.lexer.next();
+                        if is_not {
+                            return Ok(tree!(ExprIR::Not, tree!(ExprIR::IsNull, expr)));
+                        }
                         Ok(tree!(ExprIR::IsNull, expr))
                     }
                     _ => Ok(expr),
@@ -937,7 +962,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_comparison_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
-        parse_binary_expr!(self.parser_string_list_null_predicate_expr()?, Token::Equal => Eq);
+        parse_binary_expr!(self.parser_string_list_null_predicate_expr()?, Token::Equal => Eq, Token::NotEqual => Neq);
     }
 
     fn parse_not_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
