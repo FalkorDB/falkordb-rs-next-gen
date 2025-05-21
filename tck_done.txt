@@ -8,6 +8,8 @@ expressions/list/List4.feature
 expressions/list/List5.feature
 expressions/literals
 expressions/map
+expressions/mathematical
+expressions/null
 expressions/string
 clauses/create/Create1.feature
 clauses/create/Create2.feature

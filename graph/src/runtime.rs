@@ -234,11 +234,7 @@ impl<'a> Runtime<'a> {
                 )),
             },
             ExprIR::Eq => all_equals(ir.children().map(|ir| self.run_expr(ir))),
-            ExprIR::Neq => ir
-                .children()
-                .flat_map(|ir| self.run_expr(ir))
-                .reduce(|a, b| Value::Bool(a != b))
-                .ok_or_else(|| String::from("Neq operator requires at least one argument")),
+            ExprIR::Neq => all_not_equals(ir.children().map(|ir| self.run_expr(ir))),
             ExprIR::Lt => match (self.run_expr(ir.child(0))?, self.run_expr(ir.child(1))?) {
                 (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a < b)),
                 _ => Err(String::from("Lt operator requires two integers")),
@@ -341,6 +337,18 @@ impl<'a> Runtime<'a> {
         let child1_idx = self.plan.node(idx).get_child(1).map(|n| n.idx());
         match self.plan.node(idx).data() {
             IR::Empty => Ok(Box::new(empty())),
+            IR::Optional(vars) => {
+                if let Some(child_idx) = child0_idx {
+                    let iter = LazyReplace::new(self.run(&child_idx).unwrap(), move || {
+                        for v in vars {
+                            self.vars.borrow_mut().insert(v.clone(), Value::Null);
+                        }
+                        Box::new(once(Ok(Value::List(vec![]))))
+                    });
+                    return Ok(Box::new(iter));
+                }
+                Ok(Box::new(empty()))
+            }
             IR::Call(name, trees) => match self.functions.get(name, &FnType::Procedure) {
                 Some(func) => {
                     let args = trees
@@ -836,6 +844,26 @@ where
                 None => return Ok(Value::Null),
                 Some(Ordering::Less | Ordering::Greater) => return Ok(Value::Bool(false)),
                 Some(Ordering::Equal) => {}
+            }
+        }
+        Ok(Value::Bool(true))
+    } else {
+        Err(String::from("Eq operator requires at least two arguments"))
+    }
+}
+
+fn all_not_equals<I>(mut iter: I) -> Result<Value, String>
+where
+    I: Iterator<Item = Result<Value, String>>,
+{
+    if let Some(first) = iter.next() {
+        let prev = first?;
+        for next in iter {
+            let next = next?;
+            match prev.partial_cmp(&next) {
+                None => return Ok(Value::Null),
+                Some(Ordering::Less | Ordering::Greater) => {}
+                Some(Ordering::Equal) => return Ok(Value::Bool(false)),
             }
         }
         Ok(Value::Bool(true))
