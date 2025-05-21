@@ -63,7 +63,9 @@ enum Token {
     Equal,
     NotEqual,
     LessThan,
+    LessThanOrEqual,
     GreaterThan,
+    GreaterThanOrEqual,
     Comma,
     Colon,
     Dot,
@@ -194,10 +196,14 @@ impl<'a> Lexer<'a> {
                     _ => (Token::Equal, 1),
                 },
                 '<' => match chars.next() {
+                    Some('=') => (Token::LessThanOrEqual, 2),
                     Some('>') => (Token::NotEqual, 2),
                     _ => (Token::LessThan, 1),
                 },
-                '>' => (Token::GreaterThan, 1),
+                '>' => match chars.next() {
+                    Some('=') => (Token::GreaterThanOrEqual, 2),
+                    _ => (Token::GreaterThan, 1),
+                },
                 ',' => (Token::Comma, 1),
                 ':' => (Token::Colon, 1),
                 '.' => match chars.next() {
@@ -944,7 +950,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_comparison_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
-        parse_binary_expr!(self.parser_string_list_null_predicate_expr()?, Token::Equal => Eq, Token::NotEqual => Neq);
+        parse_binary_expr!(self.parser_string_list_null_predicate_expr()?, Token::Equal => Eq, Token::NotEqual => Neq, Token::LessThan => Lt, Token::LessThanOrEqual => Le, Token::GreaterThan => Gt, Token::GreaterThanOrEqual => Ge);
     }
 
     fn parse_not_expr(&mut self) -> Result<DynTree<ExprIR>, String> {

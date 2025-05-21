@@ -235,21 +235,37 @@ impl<'a> Runtime<'a> {
             },
             ExprIR::Eq => all_equals(ir.children().map(|ir| self.run_expr(ir))),
             ExprIR::Neq => all_not_equals(ir.children().map(|ir| self.run_expr(ir))),
-            ExprIR::Lt => match (self.run_expr(ir.child(0))?, self.run_expr(ir.child(1))?) {
-                (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a < b)),
-                _ => Err(String::from("Lt operator requires two integers")),
+            ExprIR::Lt => match self
+                .run_expr(ir.child(0))?
+                .partial_cmp(&self.run_expr(ir.child(1))?)
+            {
+                Some(Ordering::Less) => Ok(Value::Bool(true)),
+                Some(Ordering::Greater | Ordering::Equal) => Ok(Value::Bool(false)),
+                None => Ok(Value::Null),
             },
-            ExprIR::Gt => match (self.run_expr(ir.child(0))?, self.run_expr(ir.child(1))?) {
-                (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a > b)),
-                _ => Err(String::from("Gt operator requires two integers")),
+            ExprIR::Gt => match self
+                .run_expr(ir.child(0))?
+                .partial_cmp(&self.run_expr(ir.child(1))?)
+            {
+                Some(Ordering::Greater) => Ok(Value::Bool(true)),
+                Some(Ordering::Less | Ordering::Equal) => Ok(Value::Bool(false)),
+                None => Ok(Value::Null),
             },
-            ExprIR::Le => match (self.run_expr(ir.child(0))?, self.run_expr(ir.child(1))?) {
-                (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a <= b)),
-                _ => Err(String::from("Le operator requires two integers")),
+            ExprIR::Le => match self
+                .run_expr(ir.child(0))?
+                .partial_cmp(&self.run_expr(ir.child(1))?)
+            {
+                Some(Ordering::Less | Ordering::Equal) => Ok(Value::Bool(true)),
+                Some(Ordering::Greater) => Ok(Value::Bool(false)),
+                None => Ok(Value::Null),
             },
-            ExprIR::Ge => match (self.run_expr(ir.child(0))?, self.run_expr(ir.child(1))?) {
-                (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a >= b)),
-                _ => Err(String::from("Ge operator requires two integers")),
+            ExprIR::Ge => match self
+                .run_expr(ir.child(0))?
+                .partial_cmp(&self.run_expr(ir.child(1))?)
+            {
+                Some(Ordering::Greater | Ordering::Equal) => Ok(Value::Bool(true)),
+                Some(Ordering::Less) => Ok(Value::Bool(false)),
+                None => Ok(Value::Null),
             },
             ExprIR::In => {
                 let value = self.run_expr(ir.child(0))?;
