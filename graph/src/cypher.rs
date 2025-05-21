@@ -33,6 +33,11 @@ enum Keyword {
     Contains,
     True,
     False,
+    Case,
+    When,
+    Then,
+    Else,
+    End,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -69,7 +74,7 @@ enum Token {
     EndOfFile,
 }
 
-const KEYWORDS: [(&str, Keyword); 23] = [
+const KEYWORDS: [(&str, Keyword); 28] = [
     ("CALL", Keyword::Call),
     ("OPTIONAL", Keyword::Optional),
     ("MATCH", Keyword::Match),
@@ -93,6 +98,11 @@ const KEYWORDS: [(&str, Keyword); 23] = [
     ("CONTAINS", Keyword::Contains),
     ("TRUE", Keyword::True),
     ("FALSE", Keyword::False),
+    ("CASE", Keyword::Case),
+    ("WHEN", Keyword::When),
+    ("THEN", Keyword::Then),
+    ("ELSE", Keyword::Else),
+    ("END", Keyword::End),
 ];
 
 const MIN_I64: [&str; 5] = [
@@ -122,7 +132,7 @@ impl ExpressionListType {
     ) -> bool {
         match self {
             Self::OneOrMore => false,
-            Self::ZeroOrMoreClosedBy(token) => token == &current_token,
+            Self::ZeroOrMoreClosedBy(token) => *token == current_token,
         }
     }
 }
@@ -680,6 +690,40 @@ impl<'a> Parser<'a> {
         Ok(Pattern::new(nodes, relationships, paths))
     }
 
+    fn parse_case_expression(&mut self) -> Result<DynTree<ExprIR>, String> {
+        self.lexer.next();
+        let mut children = vec![];
+        if let Token::Keyword(Keyword::When, _) = self.lexer.current() {
+        } else {
+            children.push(self.parse_expr()?);
+        }
+        let mut params = Vec::new();
+        while optional_match_token!(self.lexer => When) {
+            let when = self.parse_expr()?;
+            match_token!(self.lexer => Then);
+            let then = self.parse_expr()?;
+            params.push(when);
+            params.push(then);
+        }
+        if optional_match_token!(self.lexer => Else) {
+            let else_ = self.parse_expr()?;
+            if children.len() == 1 {
+                params.push(children[0].clone());
+            } else {
+                params.push(tree!(ExprIR::Bool(true)));
+            }
+            params.push(else_);
+        }
+        match_token!(self.lexer => End);
+        if params.is_empty() {
+            return Err(self.lexer.format_error("Invalid input"));
+        }
+        children.push(tree!(ExprIR::List ; params));
+        Ok(tree!(
+            ExprIR::FuncInvocation(String::from("case"), FnType::Internal); children
+        ))
+    }
+
     fn parse_primary_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
         match self.lexer.current() {
             Token::Ident(ident) => {
@@ -713,6 +757,7 @@ impl<'a> Parser<'a> {
                 self.lexer.next();
                 Ok(tree!(ExprIR::Parameter(param)))
             }
+            Token::Keyword(Keyword::Case, _) => self.parse_case_expression(),
             Token::Keyword(Keyword::Null, _) => {
                 self.lexer.next();
                 Ok(tree!(ExprIR::Null))
@@ -937,9 +982,9 @@ impl<'a> Parser<'a> {
 
     fn parse_ident(&mut self) -> Result<String, String> {
         match self.lexer.current() {
-            Token::Ident(v) => {
+            Token::Ident(id) | Token::Keyword(_, id) => {
                 self.lexer.next();
-                Ok(v)
+                Ok(id)
             }
             token => Err(self.lexer.format_error(&format!("Invalid input {token:?}"))),
         }
@@ -1034,7 +1079,7 @@ impl<'a> Parser<'a> {
         let dst = self.parse_node_pattern()?;
         let relationship = match (is_incoming, is_outgoing) {
             (true, true) | (false, false) => {
-                if clause == &Keyword::Create {
+                if *clause == Keyword::Create {
                     return Err(self
                         .lexer
                         .format_error("Only directed relationships are supported in CREATE"));

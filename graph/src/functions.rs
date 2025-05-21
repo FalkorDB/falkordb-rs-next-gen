@@ -184,6 +184,7 @@ pub fn init_functions() -> Result<(), Functions> {
     funcs.add("sign", sign, false, 1, 1, FnType::Function);
     funcs.add("sqrt", sqrt, false, 1, 1, FnType::Function);
     funcs.add("range", range, false, 1, 3, FnType::Function);
+    funcs.add("coalesce", coalesce, false, 1, usize::MAX, FnType::Function);
     funcs.add("keys", keys, false, 1, 1, FnType::Function);
 
     // aggregation functions
@@ -219,6 +220,7 @@ pub fn init_functions() -> Result<(), Functions> {
         2,
         FnType::Internal,
     );
+    funcs.add("case", internal_case, false, 1, 2, FnType::Internal);
 
     // Procedures
     funcs.add("db.labels", db_labels, false, 0, 0, FnType::Procedure);
@@ -1134,6 +1136,21 @@ fn range(
     }
 }
 
+fn coalesce(
+    _: &Runtime,
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    let iter = args.into_iter();
+    for arg in iter {
+        if let Value::Null = arg {
+            continue;
+        } else {
+            return Ok(arg);
+        }
+    }
+    Ok(Value::Null)
+}
+
 fn keys(
     _: &Runtime,
     args: Vec<Value>,
@@ -1229,6 +1246,36 @@ fn internal_regex_matches(
             arg1.name(),
             arg2.name()
         )),
+        _ => unreachable!(),
+    }
+}
+
+fn internal_case(
+    _: &Runtime,
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    let mut iter = args.into_iter();
+    match (iter.next(), iter.next()) {
+        (Some(Value::List(alts)), None) => {
+            for pair in alts.chunks(2) {
+                match pair {
+                    [Value::Bool(false) | Value::Null, _] => {}
+                    [_, result] => return Ok(result.clone()),
+                    _ => unreachable!(),
+                }
+            }
+            Ok(Value::Null)
+        }
+        (Some(value), Some(Value::List(alts))) => {
+            for pair in alts.chunks(2) {
+                if let [condition, result] = pair {
+                    if *condition == value {
+                        return Ok(result.clone());
+                    }
+                }
+            }
+            Ok(Value::Null)
+        }
         _ => unreachable!(),
     }
 }

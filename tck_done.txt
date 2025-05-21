@@ -11,6 +11,7 @@ expressions/map
 expressions/mathematical
 expressions/null
 expressions/string
+expressions/conditional
 clauses/create/Create1.feature
 clauses/create/Create2.feature
 clauses/create/Create3.feature
