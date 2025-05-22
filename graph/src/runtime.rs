@@ -46,6 +46,27 @@ pub struct Pending {
     pub created_relationships: BTreeMap<u64, (String, u64, u64, OrderMap<String, Value>)>,
 }
 
+trait Env {
+    fn restore(
+        &self,
+        var: &str,
+        old_value: Option<Value>,
+    );
+}
+impl Env for RefCell<BTreeMap<String, Value>> {
+    fn restore(
+        &self,
+        var: &str,
+        old_value: Option<Value>,
+    ) {
+        if let Some(old) = old_value {
+            self.borrow_mut().insert(var.to_string(), old);
+        } else {
+            self.borrow_mut().remove(var);
+        }
+    }
+}
+
 pub struct Runtime<'a> {
     functions: &'static Functions,
     parameters: BTreeMap<String, Value>,
@@ -345,13 +366,29 @@ impl<'a> Runtime<'a> {
                 let arr = self.run_expr(ir.child(0))?;
                 match arr {
                     Value::List(values) => {
-                        let values_iter = values.into_iter().map(move |value| {
+                        let mut values_iter = values.into_iter().map(move |value| {
                             self.vars.borrow_mut().insert(var.clone(), value);
                             self.run_expr(ir.child(1))
                         });
-                        let res = self.eval_quantifier(quantifier, values_iter)?;
-                        self.vars.borrow_mut().remove(var); // todo scop hiding ?
-                        Ok(res)
+
+                        let old_value = self.vars.borrow_mut().remove(var);
+
+                        let summary = values_iter.try_fold((0, 0, 0), |(t, f, n), v| match v {
+                            Ok(Value::Bool(true)) => Ok((t + 1, f, n)),
+                            Ok(Value::Bool(false)) => Ok((t, f + 1, n)),
+                            Ok(Value::Null) => Ok((t, f, n + 1)),
+                            Ok(value) => Err(format!(
+                                "Type mismatch: expected Boolean but was {}",
+                                value.name()
+                            )),
+                            Err(e) => Err(e),
+                        });
+
+                        self.vars.restore(var, old_value);
+                        match summary {
+                            Ok((t, f, n)) => Ok(self.eval_quantifier(quantifier, t, f, n)),
+                            Err(msg) => Err(msg),
+                        }
                     }
                     value => Err(format!(
                         "Type mismatch: expected List but was {}",
@@ -362,98 +399,50 @@ impl<'a> Runtime<'a> {
         }
     }
 
-    fn eval_quantifier<I: Iterator<Item = Result<Value, String>>>(
+    fn eval_quantifier(
         &self,
         quantifier_type: &QuantifierType,
-        iter: I,
-    ) -> Result<Value, String> {
+        t: usize,
+        f: usize,
+        n: usize,
+    ) -> Value {
         match quantifier_type {
             QuantifierType::All => {
-                let mut has_null = false;
-                for v in iter {
-                    match v? {
-                        Value::Bool(true) => {}
-                        Value::Bool(false) => return Ok(Value::Bool(false)),
-                        Value::Null => has_null = true,
-                        v => {
-                            return Err(format!(
-                                "Type mismatch: expected Bool but was {}",
-                                v.name()
-                            ));
-                        }
-                    }
-                }
-                if has_null {
-                    Ok(Value::Null)
+                if f > 0 {
+                    Value::Bool(false)
+                } else if n > 0 {
+                    Value::Null
                 } else {
-                    Ok(Value::Bool(true))
+                    Value::Bool(true)
                 }
             }
             QuantifierType::Any => {
-                let mut has_null = false;
-                for v in iter {
-                    match v? {
-                        Value::Bool(true) => return Ok(Value::Bool(true)),
-                        Value::Bool(false) => {}
-                        Value::Null => has_null = true,
-                        v => {
-                            return Err(format!(
-                                "Type mismatch: expected Bool but was {}",
-                                v.name()
-                            ));
-                        }
-                    }
-                }
-                if has_null {
-                    Ok(Value::Null)
+                if t > 0 {
+                    Value::Bool(true)
+                } else if n > 0 {
+                    Value::Null
                 } else {
-                    Ok(Value::Bool(false))
+                    Value::Bool(false)
                 }
             }
             QuantifierType::None => {
-                let mut has_null = false;
-                for v in iter {
-                    match v? {
-                        Value::Bool(true) => return Ok(Value::Bool(false)),
-                        Value::Bool(false) => {}
-                        Value::Null => has_null = true,
-                        v => {
-                            return Err(format!(
-                                "Type mismatch: expected Bool but was {}",
-                                v.name()
-                            ));
-                        }
-                    }
-                }
-                if has_null {
-                    Ok(Value::Null)
+                if t > 0 {
+                    Value::Bool(false)
+                } else if n > 0 {
+                    Value::Null
                 } else {
-                    Ok(Value::Bool(true))
+                    Value::Bool(true)
                 }
             }
             QuantifierType::Single => {
-                let mut found_one = false;
-                let mut has_null = false;
-
-                for v in iter {
-                    match v? {
-                        Value::Bool(true) if found_one => return Ok(Value::Bool(false)),
-                        Value::Bool(true) => found_one = true,
-                        Value::Bool(false) => {}
-                        Value::Null => has_null = true,
-                        v => {
-                            return Err(format!(
-                                "Type mismatch: expected Bool but was {}",
-                                v.name()
-                            ));
-                        }
-                    }
-                }
-
-                if has_null && !found_one {
-                    Ok(Value::Null)
+                if t == 1 && n == 0 {
+                    Value::Bool(true)
+                } else if 1 < t {
+                    Value::Bool(false)
+                } else if n > 0 {
+                    Value::Null
                 } else {
-                    Ok(Value::Bool(found_one))
+                    Value::Bool(false)
                 }
             }
         }

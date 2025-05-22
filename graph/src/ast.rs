@@ -227,6 +227,7 @@ impl Validate for DynNode<'_, ExprIR> {
                 self.child(0).validate(env)?;
                 env.insert(var_name.to_string());
                 self.child(1).validate(env)?;
+                env.remove(var_name);
                 Ok(())
             }
         }
