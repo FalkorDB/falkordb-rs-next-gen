@@ -402,44 +402,44 @@ impl<'a> Runtime<'a> {
     fn eval_quantifier(
         &self,
         quantifier_type: &QuantifierType,
-        t: usize,
-        f: usize,
-        n: usize,
+        true_count: usize,
+        false_count: usize,
+        null_count: usize,
     ) -> Value {
         match quantifier_type {
             QuantifierType::All => {
-                if f > 0 {
+                if false_count > 0 {
                     Value::Bool(false)
-                } else if n > 0 {
+                } else if null_count > 0 {
                     Value::Null
                 } else {
                     Value::Bool(true)
                 }
             }
             QuantifierType::Any => {
-                if t > 0 {
+                if true_count > 0 {
                     Value::Bool(true)
-                } else if n > 0 {
+                } else if null_count > 0 {
                     Value::Null
                 } else {
                     Value::Bool(false)
                 }
             }
             QuantifierType::None => {
-                if t > 0 {
+                if true_count > 0 {
                     Value::Bool(false)
-                } else if n > 0 {
+                } else if null_count > 0 {
                     Value::Null
                 } else {
                     Value::Bool(true)
                 }
             }
             QuantifierType::Single => {
-                if t == 1 && n == 0 {
+                if true_count == 1 && null_count == 0 {
                     Value::Bool(true)
-                } else if 1 < t {
+                } else if 1 < true_count {
                     Value::Bool(false)
-                } else if n > 0 {
+                } else if null_count > 0 {
                     Value::Null
                 } else {
                     Value::Bool(false)
