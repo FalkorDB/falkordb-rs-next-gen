@@ -41,6 +41,7 @@ pub enum ExprIR {
     FuncInvocation(String, FnType),
     Map,
     Set(String),
+    Quantifier(QuantifierType, String),
 }
 
 impl Display for ExprIR {
@@ -84,6 +85,31 @@ impl Display for ExprIR {
             Self::FuncInvocation(name, _) => write!(f, "{name}()"),
             Self::Map => write!(f, "{{}}"),
             Self::Set(id) => write!(f, "set({id})"),
+            Self::Quantifier(quantifier_type, var_name) => {
+                write!(f, "{quantifier_type} {var_name}")
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum QuantifierType {
+    All,
+    Any,
+    None,
+    Single,
+}
+
+impl Display for QuantifierType {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        match self {
+            Self::All => write!(f, "all"),
+            Self::Any => write!(f, "any"),
+            Self::None => write!(f, "none"),
+            Self::Single => write!(f, "single"),
         }
     }
 }
@@ -194,6 +220,13 @@ impl Validate for DynNode<'_, ExprIR> {
                 debug_assert_eq!(self.num_children(), 1);
                 self.child(0).validate(env)?;
                 env.insert(x.to_string());
+                Ok(())
+            }
+            ExprIR::Quantifier(quantifier_type, var_name) => {
+                debug_assert_eq!(self.num_children(), 2);
+                self.child(0).validate(env)?;
+                env.insert(var_name.to_string());
+                self.child(1).validate(env)?;
                 Ok(())
             }
         }

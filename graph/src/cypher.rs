@@ -1,4 +1,6 @@
-use crate::ast::{Alias, ExprIR, NodePattern, PathPattern, Pattern, QueryIR, RelationshipPattern};
+use crate::ast::{
+    Alias, ExprIR, NodePattern, PathPattern, Pattern, QuantifierType, QueryIR, RelationshipPattern,
+};
 use crate::cypher::Token::{RBrace, RParen};
 use crate::functions::{FnType, get_functions};
 use crate::tree;
@@ -38,6 +40,10 @@ enum Keyword {
     Then,
     Else,
     End,
+    All,
+    Any,
+    None,
+    Single,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -76,7 +82,7 @@ enum Token {
     EndOfFile,
 }
 
-const KEYWORDS: [(&str, Keyword); 28] = [
+const KEYWORDS: [(&str, Keyword); 32] = [
     ("CALL", Keyword::Call),
     ("OPTIONAL", Keyword::Optional),
     ("MATCH", Keyword::Match),
@@ -105,6 +111,10 @@ const KEYWORDS: [(&str, Keyword); 28] = [
     ("THEN", Keyword::Then),
     ("ELSE", Keyword::Else),
     ("END", Keyword::End),
+    ("ALL", Keyword::All),
+    ("ANY", Keyword::Any),
+    ("NONE", Keyword::None),
+    ("SINGLE", Keyword::Single),
 ];
 
 const MIN_I64: [&str; 5] = [
@@ -730,6 +740,41 @@ impl<'a> Parser<'a> {
         ))
     }
 
+    fn parse_quantifier_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
+        let quantifier_type = match self.lexer.current() {
+            Token::Keyword(Keyword::All, _) => {
+                self.lexer.next();
+                QuantifierType::All
+            }
+            Token::Keyword(Keyword::Any, _) => {
+                self.lexer.next();
+                QuantifierType::Any
+            }
+            Token::Keyword(Keyword::None, _) => {
+                self.lexer.next();
+                QuantifierType::None
+            }
+            Token::Keyword(Keyword::Single, _) => {
+                self.lexer.next();
+                QuantifierType::Single
+            }
+            _ => unreachable!(),
+        };
+
+        match_token!(self.lexer, LParen);
+        let var = self.parse_ident()?;
+        match_token!(self.lexer => In);
+        let expr = self.parse_expr()?;
+        match_token!(self.lexer => Where);
+        let condition = self.parse_expr()?;
+        match_token!(self.lexer, RParen);
+        Ok(tree!(
+            ExprIR::Quantifier(quantifier_type, var),
+            expr,
+            condition
+        ))
+    }
+
     fn parse_primary_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
         match self.lexer.current() {
             Token::Ident(ident) => {
@@ -764,6 +809,11 @@ impl<'a> Parser<'a> {
                 Ok(tree!(ExprIR::Parameter(param)))
             }
             Token::Keyword(Keyword::Case, _) => self.parse_case_expression(),
+            Token::Keyword(Keyword::All, _)
+            | Token::Keyword(Keyword::Any, _)
+            | Token::Keyword(Keyword::None, _)
+            | Token::Keyword(Keyword::Single, _) => self.parse_quantifier_expr(),
+
             Token::Keyword(Keyword::Null, _) => {
                 self.lexer.next();
                 Ok(tree!(ExprIR::Null))

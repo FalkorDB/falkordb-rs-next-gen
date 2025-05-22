@@ -1,4 +1,4 @@
-use crate::ast::{NodePattern, Pattern, RelationshipPattern};
+use crate::ast::{NodePattern, Pattern, QuantifierType, RelationshipPattern};
 use crate::functions::{FnType, Functions, GraphFn, get_functions};
 use crate::iter::{AggregateIter, LazyReplace};
 use crate::{ast::ExprIR, graph::Graph, planner::IR, value::Contains, value::Value};
@@ -340,6 +340,121 @@ impl<'a> Runtime<'a> {
                 let v = self.run_expr(ir.child(0))?;
                 self.vars.borrow_mut().insert(x.clone(), v.clone());
                 Ok(v)
+            }
+            ExprIR::Quantifier(quantifier, var) => {
+                let arr = self.run_expr(ir.child(0))?;
+                match arr {
+                    Value::List(values) => {
+                        let values_iter = values.into_iter().map(move |value| {
+                            self.vars.borrow_mut().insert(var.clone(), value);
+                            self.run_expr(ir.child(1))
+                        });
+                        let res = self.eval_quantifier(quantifier, values_iter)?;
+                        self.vars.borrow_mut().remove(var); // todo scop hiding ?
+                        Ok(res)
+                    }
+                    value => Err(format!(
+                        "Type mismatch: expected List but was {}",
+                        value.name()
+                    )),
+                }
+            }
+        }
+    }
+
+    fn eval_quantifier<I: Iterator<Item = Result<Value, String>>>(
+        &self,
+        quantifier_type: &QuantifierType,
+        iter: I,
+    ) -> Result<Value, String> {
+        match quantifier_type {
+            QuantifierType::All => {
+                let mut has_null = false;
+                for v in iter {
+                    match v? {
+                        Value::Bool(true) => {}
+                        Value::Bool(false) => return Ok(Value::Bool(false)),
+                        Value::Null => has_null = true,
+                        v => {
+                            return Err(format!(
+                                "Type mismatch: expected Bool but was {}",
+                                v.name()
+                            ));
+                        }
+                    }
+                }
+                if has_null {
+                    Ok(Value::Null)
+                } else {
+                    Ok(Value::Bool(true))
+                }
+            }
+            QuantifierType::Any => {
+                let mut has_null = false;
+                for v in iter {
+                    match v? {
+                        Value::Bool(true) => return Ok(Value::Bool(true)),
+                        Value::Bool(false) => {}
+                        Value::Null => has_null = true,
+                        v => {
+                            return Err(format!(
+                                "Type mismatch: expected Bool but was {}",
+                                v.name()
+                            ));
+                        }
+                    }
+                }
+                if has_null {
+                    Ok(Value::Null)
+                } else {
+                    Ok(Value::Bool(false))
+                }
+            }
+            QuantifierType::None => {
+                let mut has_null = false;
+                for v in iter {
+                    match v? {
+                        Value::Bool(true) => return Ok(Value::Bool(false)),
+                        Value::Bool(false) => {}
+                        Value::Null => has_null = true,
+                        v => {
+                            return Err(format!(
+                                "Type mismatch: expected Bool but was {}",
+                                v.name()
+                            ));
+                        }
+                    }
+                }
+                if has_null {
+                    Ok(Value::Null)
+                } else {
+                    Ok(Value::Bool(true))
+                }
+            }
+            QuantifierType::Single => {
+                let mut found_one = false;
+                let mut has_null = false;
+
+                for v in iter {
+                    match v? {
+                        Value::Bool(true) if found_one => return Ok(Value::Bool(false)),
+                        Value::Bool(true) => found_one = true,
+                        Value::Bool(false) => {}
+                        Value::Null => has_null = true,
+                        v => {
+                            return Err(format!(
+                                "Type mismatch: expected Bool but was {}",
+                                v.name()
+                            ));
+                        }
+                    }
+                }
+
+                if has_null && !found_one {
+                    Ok(Value::Null)
+                } else {
+                    Ok(Value::Bool(found_one))
+                }
             }
         }
     }
