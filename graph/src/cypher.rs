@@ -1,7 +1,7 @@
 use crate::ast::{
     Alias, ExprIR, NodePattern, PathPattern, Pattern, QuantifierType, QueryIR, RelationshipPattern,
 };
-use crate::cypher::Token::{RBrace, RParen};
+use crate::cypher::Token::RParen;
 use crate::functions::{FnType, get_functions};
 use crate::tree;
 use falkordb_macro::parse_binary_expr;
@@ -840,9 +840,7 @@ impl<'a> Parser<'a> {
             }
             Token::LBrace => {
                 self.lexer.next();
-                Ok(tree!(ExprIR::List; self.parse_expression_list(
-                    ExpressionListType::ZeroOrMoreClosedBy(RBrace),
-                )?))
+                self.parse_list_literal_or_comprehension()
             }
             Token::LBracket => self.parse_map(),
             Token::LParen => {
@@ -1085,6 +1083,83 @@ impl<'a> Parser<'a> {
             }
         }
         Ok(exprs)
+    }
+
+    fn parse_list_literal_or_comprehension(&mut self) -> Result<DynTree<ExprIR>, String> {
+        // Check if the second token is 'IN' for list comprehension
+        if let Token::Ident(var) = self.lexer.current() {
+            let pos = self.lexer.pos;
+            self.lexer.next();
+            if optional_match_token!(self.lexer => In) {
+                return self.parse_list_comprehension(var);
+            } else {
+                self.lexer.set_pos(pos); // Reset lexer position
+            }
+        }
+
+        let mut exprs = Vec::new();
+
+        while self.lexer.current() != Token::RBrace {
+            exprs.push(self.parse_expr()?);
+            match self.lexer.current() {
+                Token::Comma => self.lexer.next(),
+                _ => break,
+            }
+        }
+
+        if self.lexer.current() == Token::RBrace {
+            self.lexer.next();
+            Ok(tree!(ExprIR::List ; exprs))
+        } else {
+            Err(self
+                .lexer
+                .format_error(&format!("Invalid input {:?}", self.lexer.current())))
+        }
+    }
+
+    fn parse_list_comprehension(
+        &mut self,
+        var: String,
+    ) -> Result<DynTree<ExprIR>, String> {
+        // var and 'IN' already parsed
+        let list_expr = self.parse_expr()?;
+
+        let condition = if optional_match_token!(self.lexer => Where) {
+            Some(self.parse_expr()?)
+        } else {
+            None
+        };
+
+        let expression = if optional_match_token!(self.lexer, Pipe) {
+            Some(self.parse_expr()?)
+        } else {
+            None
+        };
+
+        match_token!(self.lexer, RBrace);
+
+        match (condition, expression) {
+            (None, None) => Ok(tree!(
+                ExprIR::ListComprehension(var, false, false),
+                list_expr
+            )),
+            (Some(cond), None) => Ok(tree!(
+                ExprIR::ListComprehension(var, true, false),
+                list_expr,
+                cond
+            )),
+            (None, Some(expr)) => Ok(tree!(
+                ExprIR::ListComprehension(var, false, true),
+                list_expr,
+                expr
+            )),
+            (Some(cond), Some(expr)) => Ok(tree!(
+                ExprIR::ListComprehension(var, true, true),
+                list_expr,
+                cond,
+                expr
+            )),
+        }
     }
 
     fn parse_node_pattern(&mut self) -> Result<NodePattern, String> {

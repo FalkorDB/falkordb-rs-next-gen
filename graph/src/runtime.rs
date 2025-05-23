@@ -363,8 +363,8 @@ impl<'a> Runtime<'a> {
                 Ok(v)
             }
             ExprIR::Quantifier(quantifier, var) => {
-                let arr = self.run_expr(ir.child(0))?;
-                match arr {
+                let list = self.run_expr(ir.child(0))?;
+                match list {
                     Value::List(values) => {
                         let mut values_iter = values.into_iter().map(move |value| {
                             self.vars.borrow_mut().insert(var.clone(), value);
@@ -389,6 +389,54 @@ impl<'a> Runtime<'a> {
                             Ok((t, f, n)) => Ok(self.eval_quantifier(quantifier, t, f, n)),
                             Err(msg) => Err(msg),
                         }
+                    }
+                    value => Err(format!(
+                        "Type mismatch: expected List but was {}",
+                        value.name()
+                    )),
+                }
+            }
+
+            ExprIR::ListComprehension(var, has_where, has_expr) => {
+                let list = self.run_expr(ir.child(0))?;
+                let expr_index: usize = if *has_where { 2 } else { 1 };
+                match list {
+                    Value::List(values) => {
+                        let mut iter = values.into_iter().filter_map(move |value| {
+                            self.vars.borrow_mut().insert(var.clone(), value.clone());
+                            if *has_where {
+                                match self.run_expr(ir.child(1)) {
+                                    Ok(Value::Bool(true)) => {}
+                                    Ok(_) => return None,
+                                    Err(e) => return Some(Err(e)),
+                                }
+                            }
+                            if *has_expr {
+                                match self.run_expr(ir.child(expr_index)) {
+                                    Ok(v) => Some(Ok(v)),
+                                    Err(e) => Some(Err(e)),
+                                }
+                            } else {
+                                Some(Ok(value))
+                            }
+                        });
+
+                        // remove and save binding to var
+                        // fold the iterator to collect the values
+                        // restore the binding to var
+                        let old_value = self.vars.borrow_mut().remove(var);
+                        let ret = iter
+                            .try_fold(vec![], |mut acc, v| match v {
+                                Ok(v) => {
+                                    acc.push(v);
+                                    Ok(acc)
+                                }
+                                Err(e) => Err(e),
+                            })
+                            .map(Value::List);
+
+                        self.vars.restore(var, old_value);
+                        ret
                     }
                     value => Err(format!(
                         "Type mismatch: expected List but was {}",

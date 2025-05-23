@@ -1614,3 +1614,51 @@ def test_quantifier():
 
     res = query("RETURN single(x IN [true, null] WHERE x) AS res")
     assert res.result_set == [[None]]
+
+
+def test_list_comprehension():
+    ## without where and without expr
+    res = query("RETURN [x IN range(1, 10)] AS result")
+    assert res.result_set == [[[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]]]
+
+    ## with where and without expr
+    res = query("RETURN [x IN range(1, 10) WHERE x % 2 = 0] AS result")
+    assert res.result_set == [[[2, 4, 6, 8, 10]]]
+
+    ## with where and with expr
+    res = query("RETURN [x IN range(1, 10) WHERE x % 2 = 0 | x + 1] AS result")
+    assert res.result_set == [[[3, 5, 7, 9, 11]]]
+
+    ## error in where
+    q = "RETURN [x IN range(1, 10) WHERE x % 'a' = 2] AS result"
+    query_exception(q, "Type mismatch: expected Integer, Float, or Null but was")
+
+    ## error in expr
+    q = "RETURN [x IN range(1, 10) WHERE x % 2 = 0 | x / 'a'] AS result"
+    query_exception(q, "Type mismatch: expected Integer, Float, or Null but was")
+
+    ## embedded
+    res = query("RETURN [y IN [x IN range(1, 10)]] AS result")
+    assert res.result_set == [[[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]]]
+
+    res = query("RETURN [x IN range(1, 10) | range(1, x)] AS result")
+    expected = [[[list(range(1, i + 1)) for i in range(1, 11)]]]
+    assert res.result_set == expected
+
+    res = query("RETURN [x IN range(1, 10) WHERE x > 5] AS result")
+    assert res.result_set == [[[6, 7, 8, 9, 10]]]
+
+    res = query("RETURN [x IN range(1, 10) WHERE x < 5] AS result")
+    assert res.result_set == [[[1, 2, 3, 4]]]
+
+    res = query("RETURN [x IN range(1, 10) WHERE x = 5] AS result")
+    assert res.result_set == [[[5]]]
+
+    res = query("RETURN [x IN range(1, 10) WHERE x < 0] AS result")
+    assert res.result_set == [[[]]]
+
+    res = query("RETURN [x IN range(1, 10) WHERE x > 0] AS result")
+    assert res.result_set == [[[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]]]
+
+    res = query("RETURN [x IN range(1, 10) WHERE x < -5] AS result")
+    assert res.result_set == [[[]]]

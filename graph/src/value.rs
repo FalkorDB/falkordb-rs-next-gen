@@ -158,7 +158,7 @@ impl Div for Value {
                 }
             }
             (a, b) => Err(format!(
-                "Unexpected types for div operator ({}, {})",
+                "Type mismatch: expected Integer, Float, or Null but was ({}, {})",
                 a.name(),
                 b.name()
             )),
@@ -204,7 +204,7 @@ impl Rem for Value {
                 }
             }
             (a, b) => Err(format!(
-                "Unexpected types for rem operator ({}, {})",
+                "Type mismatch: expected Integer, Float, or Null but was ({}, {})",
                 a.name(),
                 b.name()
             )),
