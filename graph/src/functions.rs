@@ -4,6 +4,7 @@ use crate::runtime::Runtime;
 use crate::value::Value;
 use rand::Rng;
 use std::collections::BTreeMap;
+use std::rc::Rc;
 use std::sync::OnceLock;
 
 type RuntimeFn = fn(&Runtime, Vec<Value>) -> Result<Value, String>;
@@ -322,9 +323,7 @@ fn labels(
                 .g
                 .borrow()
                 .get_node_label_ids(node_id)
-                .map(|label_id| {
-                    Value::String(runtime.g.borrow().get_label_by_id(label_id).to_string())
-                })
+                .map(|label_id| Value::String(runtime.g.borrow().get_label_by_id(label_id)))
                 .collect(),
         )),
         _ => Ok(Value::Null),
@@ -577,7 +576,7 @@ fn reverse(
             Ok(Value::List(v))
         }
         Some(Value::Null) => Ok(Value::Null),
-        Some(Value::String(s)) => Ok(Value::String(s.chars().rev().collect())),
+        Some(Value::String(s)) => Ok(Value::String(Rc::new(s.chars().rev().collect()))),
         Some(arg) => Err(format!(
             "Type mismatch: expected List, String, or Null but was {}",
             arg.name()
@@ -601,7 +600,7 @@ fn substring(
             }
             let start = start as usize;
 
-            Ok(Value::String(s[start..].to_string()))
+            Ok(Value::String(Rc::new(s[start..].to_string())))
         }
 
         // Three-argument version: (string, start, length)
@@ -616,7 +615,7 @@ fn substring(
             let length = length as usize;
 
             let end = start.saturating_add(length).min(s.len());
-            Ok(Value::String(s[start..end].to_string()))
+            Ok(Value::String(Rc::new(s[start..end].to_string())))
         }
 
         (Some(Value::String(_)), Some(t), None) => Err(format!(
@@ -648,13 +647,13 @@ fn split(
                 // split string to characters
                 let parts: Vec<Value> = string
                     .chars()
-                    .map(|c| Value::String(c.to_string()))
+                    .map(|c| Value::String(Rc::new(c.to_string())))
                     .collect();
                 Ok(Value::List(parts))
             } else {
                 let parts: Vec<Value> = string
                     .split(delimiter.as_str())
-                    .map(|s| Value::String(s.to_string()))
+                    .map(|s| Value::String(Rc::new(s.to_string())))
                     .collect();
                 Ok(Value::List(parts))
             }
@@ -674,7 +673,7 @@ fn string_to_lower(
     args: Vec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
-        Some(Value::String(s)) => Ok(Value::String(s.to_lowercase())),
+        Some(Value::String(s)) => Ok(Value::String(Rc::new(s.to_lowercase()))),
         Some(Value::Null) => Ok(Value::Null),
         Some(arg) => Err(format!(
             "Type mismatch: expected String or Null but was {}",
@@ -689,7 +688,7 @@ fn string_to_upper(
     args: Vec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
-        Some(Value::String(s)) => Ok(Value::String(s.to_uppercase())),
+        Some(Value::String(s)) => Ok(Value::String(Rc::new(s.to_uppercase()))),
         Some(Value::Null) => Ok(Value::Null),
         Some(arg) => Err(format!(
             "Type mismatch: expected String or Null but was {}",
@@ -706,9 +705,9 @@ fn string_replace(
     let mut iter = args.into_iter();
     match (iter.next(), iter.next(), iter.next()) {
         (Some(Value::String(s)), Some(Value::String(search)), Some(Value::String(replacement))) => {
-            Ok(Value::String(
+            Ok(Value::String(Rc::new(
                 s.replace(search.as_str(), replacement.as_str()),
-            ))
+            )))
         }
         (Some(Value::Null), _, _) | (_, Some(Value::Null), _) | (_, _, Some(Value::Null)) => {
             Ok(Value::Null)
@@ -733,7 +732,7 @@ fn string_left(
             if n < 0 {
                 Err("length must be a non-negative integer".to_string())
             } else {
-                Ok(Value::String(s.chars().take(n as usize).collect()))
+                Ok(Value::String(Rc::new(s.chars().take(n as usize).collect())))
             }
         }
         (Some(Value::Null), _) => Ok(Value::Null),
@@ -752,7 +751,7 @@ fn string_ltrim(
     args: Vec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
-        Some(Value::String(s)) => Ok(Value::String(s.trim_start().to_string())),
+        Some(Value::String(s)) => Ok(Value::String(Rc::new(s.trim_start().to_string()))),
         Some(Value::Null) => Ok(Value::Null),
         Some(arg) => Err(format!(
             "Type mismatch: expected String or null, but was {}",
@@ -773,7 +772,7 @@ fn string_right(
                 Err(String::from("length must be a non-negative integer"))
             } else {
                 let start = s.len().saturating_sub(n as usize);
-                Ok(Value::String(s.chars().skip(start).collect()))
+                Ok(Value::String(Rc::new(s.chars().skip(start).collect())))
             }
         }
         (Some(Value::Null), _) => Ok(Value::Null),
@@ -795,7 +794,7 @@ fn string_join(
         vec.into_iter()
             .map(|item| {
                 if let Value::String(s) = item {
-                    Ok(s)
+                    Ok((*s).clone())
                 } else {
                     Err(format!(
                         "Type mismatch: expected String but was {}",
@@ -809,11 +808,11 @@ fn string_join(
     match (iter.next(), iter.next()) {
         (Some(Value::List(vec)), Some(Value::String(s))) => {
             let result = to_string_vec(vec);
-            result.map(|strings| Value::String(strings.join(s.as_str())))
+            result.map(|strings| Value::String(Rc::new(strings.join(s.as_str()))))
         }
         (Some(Value::List(vec)), None) => {
             let result = to_string_vec(vec);
-            result.map(|strings| Value::String(strings.join("")))
+            result.map(|strings| Value::String(Rc::new(strings.join(""))))
         }
         (Some(Value::Null), _) => Ok(Value::Null),
         (Some(arg1), Some(_)) => Err(format!(
@@ -837,7 +836,7 @@ fn string_match_reg_ex(
                     for caps in re.captures_iter(text.as_str()) {
                         for i in 0..caps.len() {
                             if let Some(m) = caps.get(i) {
-                                all_matches.push(Value::String(String::from(m.as_str())));
+                                all_matches.push(Value::String(Rc::new(String::from(m.as_str()))));
                             }
                         }
                     }
@@ -871,8 +870,10 @@ fn string_replace_reg_ex(
             Some(Value::String(replacement)),
         ) => match regex::Regex::new(pattern.as_str()) {
             Ok(re) => {
-                let replaced_text = re.replace_all(text.as_str(), replacement).into_owned();
-                Ok(Value::String(replaced_text))
+                let replaced_text = re
+                    .replace_all(text.as_str(), replacement.as_str())
+                    .into_owned();
+                Ok(Value::String(Rc::new(replaced_text)))
             }
             Err(e) => Err(format!("Invalid regex, {e}")),
         },

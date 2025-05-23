@@ -1,5 +1,6 @@
 use std::{
     collections::BTreeMap,
+    rc::Rc,
     sync::Mutex,
     time::{Duration, Instant},
 };
@@ -36,10 +37,10 @@ pub struct Graph {
     relationship_matrices: BTreeMap<usize, Tensor>,
     node_properties_map: BTreeMap<u64, BTreeMap<u64, Value>>,
     relationship_properties_map: BTreeMap<u64, BTreeMap<u64, Value>>,
-    node_labels: Vec<String>,
-    relationship_types: Vec<String>,
-    node_properties: Vec<String>,
-    relationship_properties: Vec<String>,
+    node_labels: Vec<Rc<String>>,
+    relationship_types: Vec<Rc<String>>,
+    node_properties: Vec<Rc<String>>,
+    relationship_properties: Vec<Rc<String>>,
     cache: Mutex<BTreeMap<String, DynTree<IR>>>,
 }
 
@@ -80,22 +81,22 @@ impl Graph {
         self.node_labels.len()
     }
 
-    pub fn get_labels(&self) -> impl Iterator<Item = &String> {
+    pub fn get_labels(&self) -> impl Iterator<Item = &Rc<String>> {
         self.node_labels.iter()
     }
 
     pub fn get_label_by_id(
         &self,
         id: usize,
-    ) -> &String {
-        &self.node_labels[id]
+    ) -> Rc<String> {
+        self.node_labels[id].clone()
     }
 
-    pub fn get_types(&self) -> impl Iterator<Item = &String> {
+    pub fn get_types(&self) -> impl Iterator<Item = &Rc<String>> {
         self.relationship_types.iter()
     }
 
-    pub fn get_properties(&self) -> impl Iterator<Item = &String> {
+    pub fn get_properties(&self) -> impl Iterator<Item = &Rc<String>> {
         self.node_properties
             .iter()
             .chain(self.relationship_properties.iter())
@@ -107,7 +108,7 @@ impl Graph {
     ) -> Option<u64> {
         self.node_labels
             .iter()
-            .position(|l| l == label)
+            .position(|l| l.as_str() == label)
             .map(|p| p as u64)
     }
 
@@ -117,7 +118,7 @@ impl Graph {
     ) -> Option<u64> {
         self.relationship_types
             .iter()
-            .position(|t| t == relationship_type)
+            .position(|t| t.as_str() == relationship_type)
             .map(|p| p as u64)
     }
 
@@ -163,20 +164,20 @@ impl Graph {
 
     fn get_label_matrix(
         &self,
-        label: &String,
+        label: &str,
     ) -> Option<&Matrix<bool>> {
         self.node_labels
             .iter()
-            .position(|l| l == label)
+            .position(|l| l.as_str() == label)
             .map(|i| &self.labels_matices[&i])
     }
 
     fn get_label_matrix_mut(
         &mut self,
-        label: &String,
+        label: &Rc<String>,
     ) -> &mut Matrix<bool> {
         if !self.node_labels.contains(label) {
-            self.node_labels.push(label.to_string());
+            self.node_labels.push(label.clone());
 
             self.labels_matices.insert(
                 self.node_labels.len() - 1,
@@ -185,16 +186,22 @@ impl Graph {
         }
 
         self.labels_matices
-            .get_mut(&self.node_labels.iter().position(|l| l == label).unwrap())
+            .get_mut(
+                &self
+                    .node_labels
+                    .iter()
+                    .position(|l| l.as_str() == label.as_str())
+                    .unwrap(),
+            )
             .unwrap()
     }
 
     fn get_relationship_matrix_mut(
         &mut self,
-        relationship_type: &String,
+        relationship_type: &Rc<String>,
     ) -> &mut Tensor {
         if !self.relationship_types.contains(relationship_type) {
-            self.relationship_types.push(relationship_type.to_string());
+            self.relationship_types.push(relationship_type.clone());
 
             self.relationship_matrices.insert(
                 self.relationship_types.len() - 1,
@@ -207,7 +214,7 @@ impl Graph {
                 &self
                     .relationship_types
                     .iter()
-                    .position(|l| l == relationship_type)
+                    .position(|l| l.as_str() == relationship_type.as_str())
                     .unwrap(),
             )
             .unwrap()
@@ -215,7 +222,7 @@ impl Graph {
 
     fn get_relationship_matrix(
         &self,
-        relationship_type: &String,
+        relationship_type: &Rc<String>,
     ) -> Option<&Tensor> {
         if !self.relationship_types.contains(relationship_type) {
             return None;
@@ -225,32 +232,32 @@ impl Graph {
             &self
                 .relationship_types
                 .iter()
-                .position(|l| l == relationship_type)
+                .position(|l| l.as_str() == relationship_type.as_str())
                 .unwrap(),
         )
     }
 
     pub fn get_node_property_id(
         &self,
-        key: &String,
+        key: &str,
     ) -> Option<u64> {
         self.node_properties
             .iter()
-            .position(|p| p == key)
+            .position(|p| p.as_str() == key)
             .map(|property_id| property_id as u64)
     }
 
     pub fn get_or_add_node_property_id(
         &mut self,
-        key: &String,
+        key: &Rc<String>,
     ) -> u64 {
         let property_id = self
             .node_properties
             .iter()
-            .position(|p| p == key)
+            .position(|p| p.as_str() == key.as_str())
             .unwrap_or_else(|| {
                 let len = self.node_properties.len();
-                self.node_properties.push(key.to_string());
+                self.node_properties.push(key.clone());
                 len
             });
         property_id as u64
@@ -263,10 +270,10 @@ impl Graph {
         let property_id = self
             .relationship_properties
             .iter()
-            .position(|p| p == key)
+            .position(|p| p.as_str() == key)
             .unwrap_or_else(|| {
                 let len = self.relationship_properties.len();
-                self.relationship_properties.push(key.to_string());
+                self.relationship_properties.push(Rc::new(key.clone()));
                 len
             });
         property_id as u64
@@ -278,7 +285,7 @@ impl Graph {
     ) -> Option<u64> {
         self.relationship_properties
             .iter()
-            .position(|p| p == key)
+            .position(|p| p.as_str() == key)
             .map(|property_id| property_id as u64)
     }
 
@@ -295,7 +302,7 @@ impl Graph {
 
     pub fn create_nodes(
         &mut self,
-        nodes: &BTreeMap<u64, (Vec<String>, OrderMap<String, Value>)>,
+        nodes: &BTreeMap<u64, (Vec<Rc<String>>, OrderMap<Rc<String>, Value>)>,
     ) {
         self.node_count += nodes.len() as u64;
         self.reserved_node_count -= nodes.len() as u64;
@@ -359,7 +366,7 @@ impl Graph {
 
     pub fn get_nodes(
         &self,
-        labels: &[String],
+        labels: &[Rc<String>],
     ) -> matrix::Iter<bool> {
         if labels.is_empty() {
             return self.all_nodes_matrix.iter(0, u64::MAX);
@@ -405,7 +412,7 @@ impl Graph {
 
     pub fn create_relationships(
         &mut self,
-        relationships: &BTreeMap<u64, (String, u64, u64, OrderMap<String, Value>)>,
+        relationships: &BTreeMap<u64, (Rc<String>, u64, u64, OrderMap<Rc<String>, Value>)>,
     ) {
         self.relationship_count += relationships.len() as u64;
         self.reserved_relationship_count -= relationships.len() as u64;
@@ -430,7 +437,7 @@ impl Graph {
                 *id,
                 self.relationship_types
                     .iter()
-                    .position(|p| p == relationship_type)
+                    .position(|p| p.as_str() == relationship_type.as_str())
                     .unwrap() as u64,
                 true,
             );
@@ -462,7 +469,7 @@ impl Graph {
 
     pub fn get_relationships(
         &self,
-        types: &[String],
+        types: &[Rc<String>],
     ) -> tensor::Iter {
         if types.is_empty() {
             return self.adjacancy_matrix.iter(0, u64::MAX);

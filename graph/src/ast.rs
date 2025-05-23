@@ -1,4 +1,4 @@
-use std::{collections::HashSet, fmt::Display};
+use std::{collections::HashSet, fmt::Display, rc::Rc};
 
 use orx_tree::{DynNode, DynTree, NodeRef};
 
@@ -10,8 +10,8 @@ pub enum ExprIR {
     Bool(bool),
     Integer(i64),
     Float(f64),
-    String(String),
-    Var(String),
+    String(Rc<String>),
+    Var(Rc<String>),
     Parameter(String),
     List,
     Length,
@@ -110,7 +110,7 @@ impl Validate for DynNode<'_, ExprIR> {
             }
             ExprIR::Var(id) => {
                 debug_assert_eq!(self.num_children(), 0);
-                if env.contains(id) {
+                if env.contains(id.as_str()) {
                     Ok(())
                 } else {
                     Err(format!("'{id}' not defined"))
@@ -226,7 +226,7 @@ impl Display for Alias {
 #[derive(Clone, Debug)]
 pub struct NodePattern {
     pub alias: Alias,
-    pub labels: Vec<String>,
+    pub labels: Vec<Rc<String>>,
     pub attrs: DynTree<ExprIR>,
 }
 
@@ -238,7 +238,16 @@ impl Display for NodePattern {
         if self.labels.is_empty() {
             return write!(f, "({})", self.alias);
         }
-        write!(f, "({}:{})", self.alias, self.labels.join(":"))
+        write!(
+            f,
+            "({}:{})",
+            self.alias,
+            self.labels
+                .iter()
+                .map(|label| label.as_str())
+                .collect::<Vec<_>>()
+                .join(":")
+        )
     }
 }
 
@@ -246,7 +255,7 @@ impl NodePattern {
     #[must_use]
     pub const fn new(
         alias: Alias,
-        labels: Vec<String>,
+        labels: Vec<Rc<String>>,
         attrs: DynTree<ExprIR>,
     ) -> Self {
         Self {
@@ -260,7 +269,7 @@ impl NodePattern {
 #[derive(Clone, Debug)]
 pub struct RelationshipPattern {
     pub alias: Alias,
-    pub types: Vec<String>,
+    pub types: Vec<Rc<String>>,
     pub attrs: DynTree<ExprIR>,
     pub from: Alias,
     pub to: Alias,
@@ -285,7 +294,11 @@ impl Display for RelationshipPattern {
             "({})-[{}:{}]-{}({})",
             self.from,
             self.alias,
-            self.types.join("|"),
+            self.types
+                .iter()
+                .map(|label| label.as_str())
+                .collect::<Vec<_>>()
+                .join("|"),
             direction,
             self.to
         )
@@ -296,7 +309,7 @@ impl RelationshipPattern {
     #[must_use]
     pub const fn new(
         alias: Alias,
-        types: Vec<String>,
+        types: Vec<Rc<String>>,
         attrs: DynTree<ExprIR>,
         from: Alias,
         to: Alias,

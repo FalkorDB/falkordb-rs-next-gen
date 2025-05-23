@@ -6,6 +6,7 @@ use falkordb_macro::parse_binary_expr;
 use orx_tree::{DynTree, NodeRef};
 use std::collections::{BTreeMap, HashSet};
 use std::num::IntErrorKind;
+use std::rc::Rc;
 use std::str::Chars;
 
 #[derive(Debug, PartialEq, Clone)]
@@ -757,7 +758,7 @@ impl<'a> Parser<'a> {
                     ); self.parse_expression_list(ExpressionListType::ZeroOrMoreClosedBy(RParen))?));
                 }
                 self.lexer.set_pos(pos);
-                Ok(tree!(ExprIR::Var(ident)))
+                Ok(tree!(ExprIR::Var(Rc::new(ident))))
             }
             Token::Parameter(param) => {
                 self.lexer.next();
@@ -786,7 +787,7 @@ impl<'a> Parser<'a> {
             }
             Token::String(s) => {
                 self.lexer.next();
-                Ok(tree!(ExprIR::String(s)))
+                Ok(tree!(ExprIR::String(Rc::new(s))))
             }
             Token::LBrace => {
                 self.lexer.next();
@@ -814,7 +815,7 @@ impl<'a> Parser<'a> {
             expr = tree!(
                 ExprIR::FuncInvocation("property".to_string(), FnType::Internal),
                 expr,
-                tree!(ExprIR::String(ident))
+                tree!(ExprIR::String(Rc::new(ident)))
             );
         }
 
@@ -1005,7 +1006,7 @@ impl<'a> Parser<'a> {
                 self.lexer.next();
                 named_exprs.push((self.parse_ident()?, expr));
             } else if let ExprIR::Var(id) = expr.root().data() {
-                named_exprs.push((id.clone(), expr));
+                named_exprs.push((String::from(id.as_str()), expr));
             } else {
                 named_exprs.push((self.lexer.str[pos..self.lexer.pos].to_string(), expr));
             }
@@ -1072,7 +1073,7 @@ impl<'a> Parser<'a> {
             };
             let mut types = vec![];
             while optional_match_token!(self.lexer, Colon) {
-                types.push(self.parse_ident()?);
+                types.push(Rc::new(self.parse_ident()?));
                 optional_match_token!(self.lexer, Pipe);
             }
             let attrs = self.parse_map()?;
@@ -1104,11 +1105,11 @@ impl<'a> Parser<'a> {
         Ok((relationship, dst))
     }
 
-    fn parse_labels(&mut self) -> Result<Vec<String>, String> {
+    fn parse_labels(&mut self) -> Result<Vec<Rc<String>>, String> {
         let mut labels = Vec::new();
         while self.lexer.current() == Token::Colon {
             self.lexer.next();
-            labels.push(self.parse_ident()?);
+            labels.push(Rc::new(self.parse_ident()?));
         }
         Ok(labels)
     }
@@ -1127,7 +1128,7 @@ impl<'a> Parser<'a> {
                     self.lexer.next();
                     match_token!(self.lexer, Colon);
                     let value = self.parse_expr()?;
-                    attrs.push(tree!(ExprIR::Var(key), value));
+                    attrs.push(tree!(ExprIR::Var(Rc::new(key)), value));
 
                     match self.lexer.current() {
                         Token::Comma => self.lexer.next(),

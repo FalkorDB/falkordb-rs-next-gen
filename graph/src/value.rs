@@ -2,6 +2,7 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::ops::{Add, Div, Mul, Rem, Sub};
+use std::rc::Rc;
 
 use ordermap::OrderMap;
 
@@ -11,9 +12,9 @@ pub enum Value {
     Bool(bool),
     Int(i64),
     Float(f64),
-    String(String),
+    String(Rc<String>),
     List(Vec<Value>),
-    Map(OrderMap<String, Value>),
+    Map(OrderMap<Rc<String>, Value>),
     Node(u64),
     Relationship(u64, u64, u64),
 }
@@ -117,10 +118,12 @@ impl Add for Value {
                 new_list.extend(l);
                 Ok(Self::List(new_list))
             }
-            (Self::String(a), Self::String(b)) => Ok(Self::String(a + &b)),
-            (Self::String(s), Self::Int(i)) => Ok(Self::String(s + &i.to_string())),
-            (Self::String(s), Self::Float(f)) => Ok(Self::String(s + &f.to_string())),
-            (Self::String(s), Self::Bool(f)) => Ok(Self::String(s + &f.to_string().to_lowercase())),
+            (Self::String(a), Self::String(b)) => {
+                Ok(Self::String(Rc::new(String::from(format!("{}{}", a, b)))))
+            }
+            (Self::String(s), Self::Int(i)) => Ok(Self::String(Rc::new(format!("{}{}", s, i)))),
+            (Self::String(s), Self::Float(f)) => Ok(Self::String(Rc::new(format!("{}{}", s, f)))),
+            (Self::String(s), Self::Bool(f)) => Ok(Self::String(Rc::new(format!("{}{}", s, f)))),
             (a, b) => Err(format!(
                 "Unexpected types for add operator ({}, {})",
                 a.name(),
@@ -387,8 +390,8 @@ impl Value {
     }
 
     fn compare_map(
-        a: &OrderMap<String, Self>,
-        b: &OrderMap<String, Self>,
+        a: &OrderMap<Rc<String>, Self>,
+        b: &OrderMap<Rc<String>, Self>,
     ) -> (Ordering, DisjointOrNull) {
         let a_key_count = a.len();
         let b_key_count = b.len();
@@ -397,9 +400,9 @@ impl Value {
         }
 
         // sort keys
-        let mut a_keys: Vec<&String> = a.keys().collect();
+        let mut a_keys: Vec<&Rc<String>> = a.keys().collect();
         a_keys.sort();
-        let mut b_keys: Vec<&String> = b.keys().collect();
+        let mut b_keys: Vec<&Rc<String>> = b.keys().collect();
         b_keys.sort();
 
         // iterate over keys count

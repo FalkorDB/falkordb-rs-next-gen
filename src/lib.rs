@@ -47,17 +47,19 @@ static GRAPH_TYPE: RedisType = RedisType::new(
 );
 
 #[unsafe(no_mangle)]
+#[allow(clippy::missing_const_for_fn)]
 unsafe extern "C" fn graph_rdb_load(
-    rdb: *mut RedisModuleIO,
-    encver: i32,
+    _: *mut RedisModuleIO,
+    _: i32,
 ) -> *mut c_void {
     null_mut()
 }
 
 #[unsafe(no_mangle)]
+#[allow(clippy::missing_const_for_fn)]
 unsafe extern "C" fn graph_rdb_save(
-    rdb: *mut RedisModuleIO,
-    value: *mut c_void,
+    _: *mut RedisModuleIO,
+    _: *mut c_void,
 ) {
 }
 
@@ -95,9 +97,10 @@ fn inner_raw_value_to_redis_value(
             RedisValue::Integer(5),
             RedisValue::SimpleString(format!("{:.14e}", x)),
         ]),
-        Value::String(x) => {
-            RedisValue::Array(vec![RedisValue::Integer(2), RedisValue::BulkString(x)])
-        }
+        Value::String(x) => RedisValue::Array(vec![
+            RedisValue::Integer(2),
+            RedisValue::BulkString(x.to_string()),
+        ]),
         Value::List(values) => RedisValue::Array(vec![
             RedisValue::Integer(6),
             RedisValue::Array(
@@ -110,7 +113,7 @@ fn inner_raw_value_to_redis_value(
         Value::Map(map) => {
             let mut vec = vec![];
             for (key, value) in map {
-                vec.push(RedisValue::BulkString(key));
+                vec.push(RedisValue::BulkString(key.to_string()));
                 vec.push(inner_raw_value_to_redis_value(g, value));
             }
             RedisValue::Array(vec![RedisValue::Integer(10), RedisValue::Array(vec)])
@@ -226,8 +229,7 @@ fn query_mut(
     query: &str,
 ) -> Result<RedisValue, RedisError> {
     let collector = RedisValuesCollector::new();
-    let (plan, parameters, parse_duration, plan_duration) =
-        graph.borrow().get_plan(query).map_err(RedisError::String)?;
+    let (plan, parameters, _, _) = graph.borrow().get_plan(query).map_err(RedisError::String)?;
     let mut runtime = Runtime::new(graph, parameters, true, plan);
     runtime
         .query(&collector)
@@ -324,7 +326,7 @@ fn graph_ro_query(
         EMPTY_KEY_ERR,
         |graph| {
             let collector = RedisValuesCollector::new();
-            let (plan, parameters, parse_duration, plan_duration) =
+            let (plan, parameters, _, _) =
                 graph.borrow().get_plan(query).map_err(RedisError::String)?;
             let mut runtime = Runtime::new(graph, parameters, false, plan);
             match runtime.query(&collector) {
@@ -415,7 +417,7 @@ fn graph_plan(
     let mut parser = Parser::new(query);
     match parser.parse() {
         Ok(ir) => {
-            let mut planner = Planner::new();
+            let planner = Planner::new();
             let ir = planner.plan(ir);
             Ok(RedisValue::BulkString(format!("{ir}")))
         }

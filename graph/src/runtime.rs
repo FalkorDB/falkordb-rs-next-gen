@@ -9,6 +9,7 @@ use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 use std::iter::{empty, once, repeat_n};
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 pub trait ReturnCallback {
@@ -45,8 +46,8 @@ pub struct Stats {
 
 #[derive(Default)]
 pub struct Pending {
-    pub created_nodes: BTreeMap<u64, (Vec<String>, OrderMap<String, Value>)>,
-    pub created_relationships: BTreeMap<u64, (String, u64, u64, OrderMap<String, Value>)>,
+    pub created_nodes: BTreeMap<u64, (Vec<Rc<String>>, OrderMap<Rc<String>, Value>)>,
+    pub created_relationships: BTreeMap<u64, (Rc<String>, u64, u64, OrderMap<Rc<String>, Value>)>,
 }
 
 pub struct Runtime<'a> {

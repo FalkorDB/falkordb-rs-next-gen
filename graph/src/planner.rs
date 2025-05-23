@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{fmt::Display, rc::Rc};
 
 use orx_tree::{Dyn, DynTree, NodeMut, NodeRef};
 
@@ -69,12 +69,12 @@ impl Planner {
     }
 
     fn plan_aggregation(
-        agg_ctx_var: String,
+        acc_name: Rc<String>,
         expr: &mut NodeMut<Dyn<ExprIR>>,
     ) {
         match expr.data() {
             ExprIR::FuncInvocation(_, FnType::Aggregation) => {
-                expr.push_child_tree(tree!(ExprIR::Var(agg_ctx_var)));
+                expr.push_child_tree(tree!(ExprIR::Var(acc_name)));
             }
             _ => unreachable!(),
         }
@@ -127,7 +127,7 @@ impl Planner {
             for (name, mut expr) in exprs {
                 names.push(name.clone());
                 if expr.root().is_aggregation() {
-                    Self::plan_aggregation(name.clone(), &mut expr.root_mut());
+                    Self::plan_aggregation(Rc::new(name.clone()), &mut expr.root_mut());
                     aggregations.push((name, expr));
                 } else {
                     group_by_keys.push((name, expr));
