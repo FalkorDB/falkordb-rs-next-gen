@@ -1,4 +1,4 @@
-use std::{collections::HashSet, fmt::Display};
+use std::{collections::HashSet, fmt::Display, rc::Rc};
 
 use orx_tree::{DynNode, DynTree, NodeRef};
 
@@ -10,8 +10,8 @@ pub enum ExprIR {
     Bool(bool),
     Integer(i64),
     Float(f64),
-    String(String),
-    Var(String),
+    String(Rc<String>),
+    Var(Rc<String>),
     Parameter(String),
     List,
     Length,
@@ -40,7 +40,6 @@ pub enum ExprIR {
     Modulo,
     FuncInvocation(String, FnType),
     Map,
-    Set(String),
 }
 
 impl Display for ExprIR {
@@ -83,7 +82,6 @@ impl Display for ExprIR {
             Self::Modulo => write!(f, "%"),
             Self::FuncInvocation(name, _) => write!(f, "{name}()"),
             Self::Map => write!(f, "{{}}"),
-            Self::Set(id) => write!(f, "set({id})"),
         }
     }
 }
@@ -112,7 +110,7 @@ impl Validate for DynNode<'_, ExprIR> {
             }
             ExprIR::Var(id) => {
                 debug_assert_eq!(self.num_children(), 0);
-                if env.contains(id) {
+                if env.contains(id.as_str()) {
                     Ok(())
                 } else {
                     Err(format!("'{id}' not defined"))
@@ -190,12 +188,6 @@ impl Validate for DynNode<'_, ExprIR> {
                 }
                 Ok(())
             }
-            ExprIR::Set(x) => {
-                debug_assert_eq!(self.num_children(), 1);
-                self.child(0).validate(env)?;
-                env.insert(x.to_string());
-                Ok(())
-            }
         }
     }
 }
@@ -208,7 +200,6 @@ impl SupportAggregation for DynNode<'_, ExprIR> {
     fn is_aggregation(&self) -> bool {
         match self.data() {
             ExprIR::FuncInvocation(_, FnType::Aggregation) => true,
-            ExprIR::Set(_) => self.child(0).is_aggregation(),
             _ => false,
         }
     }
@@ -235,7 +226,7 @@ impl Display for Alias {
 #[derive(Clone, Debug)]
 pub struct NodePattern {
     pub alias: Alias,
-    pub labels: Vec<String>,
+    pub labels: Vec<Rc<String>>,
     pub attrs: DynTree<ExprIR>,
 }
 
@@ -247,7 +238,16 @@ impl Display for NodePattern {
         if self.labels.is_empty() {
             return write!(f, "({})", self.alias);
         }
-        write!(f, "({}:{})", self.alias, self.labels.join(":"))
+        write!(
+            f,
+            "({}:{})",
+            self.alias,
+            self.labels
+                .iter()
+                .map(|label| label.as_str())
+                .collect::<Vec<_>>()
+                .join(":")
+        )
     }
 }
 
@@ -255,7 +255,7 @@ impl NodePattern {
     #[must_use]
     pub const fn new(
         alias: Alias,
-        labels: Vec<String>,
+        labels: Vec<Rc<String>>,
         attrs: DynTree<ExprIR>,
     ) -> Self {
         Self {
@@ -269,7 +269,7 @@ impl NodePattern {
 #[derive(Clone, Debug)]
 pub struct RelationshipPattern {
     pub alias: Alias,
-    pub types: Vec<String>,
+    pub types: Vec<Rc<String>>,
     pub attrs: DynTree<ExprIR>,
     pub from: Alias,
     pub to: Alias,
@@ -294,7 +294,11 @@ impl Display for RelationshipPattern {
             "({})-[{}:{}]-{}({})",
             self.from,
             self.alias,
-            self.types.join("|"),
+            self.types
+                .iter()
+                .map(|label| label.as_str())
+                .collect::<Vec<_>>()
+                .join("|"),
             direction,
             self.to
         )
@@ -305,7 +309,7 @@ impl RelationshipPattern {
     #[must_use]
     pub const fn new(
         alias: Alias,
-        types: Vec<String>,
+        types: Vec<Rc<String>>,
         attrs: DynTree<ExprIR>,
         from: Alias,
         to: Alias,
@@ -387,8 +391,8 @@ pub enum QueryIR {
     Where(DynTree<ExprIR>),
     Create(Pattern),
     Delete(Vec<DynTree<ExprIR>>),
-    With(Vec<DynTree<ExprIR>>, bool),
-    Return(Vec<DynTree<ExprIR>>, bool),
+    With(Vec<(String, DynTree<ExprIR>)>, bool),
+    Return(Vec<(String, DynTree<ExprIR>)>, bool),
     Query(Vec<QueryIR>, bool),
 }
 
@@ -425,15 +429,15 @@ impl Display for QueryIR {
             }
             Self::With(exprs, _) => {
                 writeln!(f, "WITH:")?;
-                for expr in exprs {
-                    write!(f, "{expr}")?;
+                for (name, _) in exprs {
+                    write!(f, "{name}")?;
                 }
                 Ok(())
             }
             Self::Return(exprs, _) => {
                 writeln!(f, "RETURN:")?;
-                for expr in exprs {
-                    write!(f, "{expr}")?;
+                for (name, _) in exprs {
+                    write!(f, "{name}")?;
                 }
                 Ok(())
             }
@@ -579,9 +583,19 @@ impl QueryIR {
                 iter.next()
                     .map_or(Ok(()), |first| first.inner_validate(iter, env))
             }
-            Self::Delete(exprs) | Self::With(exprs, _) | Self::Return(exprs, _) => {
+            Self::Delete(exprs) => {
                 for expr in exprs {
                     expr.root().validate(env)?;
+                }
+                iter.next()
+                    .map_or(Ok(()), |first| first.inner_validate(iter, env))
+            }
+            Self::With(exprs, _) | Self::Return(exprs, _) => {
+                for (_, expr) in exprs.iter() {
+                    expr.root().validate(env)?;
+                }
+                for (name, _) in exprs {
+                    env.insert(name.clone());
                 }
                 iter.next()
                     .map_or(Ok(()), |first| first.inner_validate(iter, env))

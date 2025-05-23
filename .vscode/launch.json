@@ -17,6 +17,7 @@
                 // "${workspaceFolder}/target/debug/libfalkordb.so"
             ],
             "cwd": "${workspaceFolder}",
+            "sourceLanguages": ["rust"],
         }
     ]
 }
