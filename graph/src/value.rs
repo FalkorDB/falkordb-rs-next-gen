@@ -78,7 +78,9 @@ impl Hash for Env {
         &self,
         state: &mut H,
     ) {
-        for (key, value) in &self.0 {
+        let mut entries: Vec<_> = self.0.iter().collect();
+        entries.sort_by_key(|(k, _)| *k);
+        for (key, value) in entries {
             key.hash(state);
             value.hash(state);
         }
