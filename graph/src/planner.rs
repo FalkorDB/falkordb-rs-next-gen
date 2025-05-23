@@ -21,8 +21,12 @@ pub enum IR {
     NodeScan(NodePattern),
     RelationshipScan(RelationshipPattern),
     Filter(DynTree<ExprIR>),
-    Aggregate(String, Vec<DynTree<ExprIR>>, Vec<DynTree<ExprIR>>),
-    Project(Vec<DynTree<ExprIR>>),
+    Aggregate(
+        Vec<String>,
+        Vec<(String, DynTree<ExprIR>)>,
+        Vec<(String, DynTree<ExprIR>)>,
+    ),
+    Project(Vec<(String, DynTree<ExprIR>)>),
     Commit,
 }
 
@@ -50,9 +54,7 @@ impl Display for IR {
     }
 }
 
-pub struct Planner {
-    var_id: u64,
-}
+pub struct Planner {}
 
 impl Default for Planner {
     fn default() -> Self {
@@ -63,13 +65,7 @@ impl Default for Planner {
 impl Planner {
     #[must_use]
     pub const fn new() -> Self {
-        Self { var_id: 0 }
-    }
-
-    fn next_var(&mut self) -> String {
-        let id = self.var_id;
-        self.var_id += 1;
-        format!("var_{id}")
+        Self {}
     }
 
     fn plan_aggregation(
@@ -80,15 +76,12 @@ impl Planner {
             ExprIR::FuncInvocation(_, FnType::Aggregation) => {
                 expr.push_child_tree(tree!(ExprIR::Var(agg_ctx_var)));
             }
-            ExprIR::Set(_) => {
-                Self::plan_aggregation(agg_ctx_var, &mut expr.child_mut(0));
-            }
             _ => unreachable!(),
         }
     }
 
     fn plan_match(
-        &mut self,
+        &self,
         mut pattern: Pattern,
     ) -> DynTree<IR> {
         if pattern.relationships.is_empty() && !pattern.nodes.is_empty() {
@@ -106,7 +99,7 @@ impl Planner {
     }
 
     fn plan_unwind(
-        &mut self,
+        &self,
         expr: orx_tree::Tree<Dyn<ExprIR>>,
         alias: String,
     ) -> orx_tree::Tree<Dyn<IR>> {
@@ -123,23 +116,24 @@ impl Planner {
     }
 
     fn plan_project(
-        &mut self,
-        exprs: Vec<DynTree<ExprIR>>,
+        &self,
+        exprs: Vec<(String, DynTree<ExprIR>)>,
         write: bool,
     ) -> DynTree<IR> {
-        let mut res = if exprs.iter().any(|e| e.root().is_aggregation()) {
+        let mut res = if exprs.iter().any(|e| e.1.root().is_aggregation()) {
             let mut group_by_keys = Vec::new();
             let mut aggregations = Vec::new();
-            let agg_ctx_var = self.next_var();
-            for mut expr in exprs {
+            let mut names = Vec::new();
+            for (name, mut expr) in exprs {
+                names.push(name.clone());
                 if expr.root().is_aggregation() {
-                    Self::plan_aggregation(agg_ctx_var.to_string(), &mut expr.root_mut());
-                    aggregations.push(expr);
+                    Self::plan_aggregation(name.clone(), &mut expr.root_mut());
+                    aggregations.push((name, expr));
                 } else {
-                    group_by_keys.push(expr);
+                    group_by_keys.push((name, expr));
                 }
             }
-            tree!(IR::Aggregate(agg_ctx_var, group_by_keys, aggregations))
+            tree!(IR::Aggregate(names, group_by_keys, aggregations))
         } else {
             tree!(IR::Project(exprs))
         };
@@ -150,7 +144,7 @@ impl Planner {
     }
 
     fn plan_query(
-        &mut self,
+        &self,
         q: Vec<QueryIR>,
         write: bool,
     ) -> DynTree<IR> {
@@ -175,7 +169,7 @@ impl Planner {
 
     #[must_use]
     pub fn plan(
-        &mut self,
+        &self,
         ir: QueryIR,
     ) -> DynTree<IR> {
         match ir {

@@ -1,4 +1,5 @@
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::hash::Hash;
 use std::ops::{Add, Div, Mul, Rem, Sub};
 
@@ -32,6 +33,59 @@ impl Hash for Value {
             Self::Map(x) => x.hash(state),
             Self::Node(x) | Self::Relationship(x, _, _) => x.hash(state),
         }
+    }
+}
+
+pub struct Env(HashMap<String, Value>);
+
+impl Env {
+    pub fn new() -> Self {
+        Self(HashMap::new())
+    }
+
+    pub fn insert(
+        &mut self,
+        key: String,
+        value: Value,
+    ) {
+        self.0.insert(key, value);
+    }
+
+    #[must_use]
+    pub fn get(
+        &self,
+        key: &str,
+    ) -> Option<&Value> {
+        self.0.get(key)
+    }
+
+    pub fn take(
+        &mut self,
+        key: &str,
+    ) -> Option<Value> {
+        self.0.remove(key)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &Value)> {
+        self.0.iter()
+    }
+}
+
+impl Hash for Env {
+    fn hash<H: std::hash::Hasher>(
+        &self,
+        state: &mut H,
+    ) {
+        for (key, value) in &self.0 {
+            key.hash(state);
+            value.hash(state);
+        }
+    }
+}
+
+impl Clone for Env {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
     }
 }
 
@@ -131,28 +185,28 @@ impl Div for Value {
             (Self::Null, _) | (_, Self::Null) => Ok(Self::Null),
             (Self::Int(a), Self::Int(b)) => {
                 if b == 0 {
-                    Err("Division by zero".to_string())
+                    Err(String::from("Division by zero"))
                 } else {
                     Ok(Self::Int(a.wrapping_div(b)))
                 }
             }
             (Self::Float(a), Self::Float(b)) => {
                 if b == 0.0 {
-                    Err("Division by zero".to_string())
+                    Err(String::from("Division by zero"))
                 } else {
                     Ok(Self::Float(a / b))
                 }
             }
             (Self::Float(a), Self::Int(b)) => {
                 if b == 0 {
-                    Err("Division by zero".to_string())
+                    Err(String::from("Division by zero"))
                 } else {
                     Ok(Self::Float(a / b as f64))
                 }
             }
             (Self::Int(a), Self::Float(b)) => {
                 if b == 0.0 {
-                    Err("Division by zero".to_string())
+                    Err(String::from("Division by zero"))
                 } else {
                     Ok(Self::Float(a as f64 / b))
                 }
@@ -177,28 +231,28 @@ impl Rem for Value {
             (Self::Null, _) | (_, Self::Null) => Ok(Self::Null),
             (Self::Int(a), Self::Int(b)) => {
                 if b == 0 {
-                    Err("Division by zero".to_string())
+                    Err(String::from("Division by zero"))
                 } else {
                     Ok(Self::Int(a.wrapping_rem(b)))
                 }
             }
             (Self::Float(a), Self::Float(b)) => {
                 if b == 0.0 {
-                    Err("Division by zero".to_string())
+                    Err(String::from("Division by zero"))
                 } else {
                     Ok(Self::Float(a % b))
                 }
             }
             (Self::Float(a), Self::Int(b)) => {
                 if b == 0 {
-                    Err("Division by zero".to_string())
+                    Err(String::from("Division by zero"))
                 } else {
                     Ok(Self::Float(a % b as f64))
                 }
             }
             (Self::Int(a), Self::Float(b)) => {
                 if b == 0.0 {
-                    Err("Division by zero".to_string())
+                    Err(String::from("Division by zero"))
                 } else {
                     Ok(Self::Float(a as f64 % b))
                 }
@@ -243,15 +297,15 @@ enum DisjointOrNull {
 impl Value {
     pub(crate) fn name(&self) -> String {
         match self {
-            Self::Null => "Null".to_string(),
-            Self::Bool(_) => "Boolean".to_string(),
-            Self::Int(_) => "Integer".to_string(),
-            Self::Float(_) => "Float".to_string(),
-            Self::String(_) => "String".to_string(),
-            Self::List(_) => "List".to_string(),
-            Self::Map(_) => "Map".to_string(),
-            Self::Node(_) => "Node".to_string(),
-            Self::Relationship(_, _, _) => "Relationship".to_string(),
+            Self::Null => String::from("Null"),
+            Self::Bool(_) => String::from("Boolean"),
+            Self::Int(_) => String::from("Integer"),
+            Self::Float(_) => String::from("Float"),
+            Self::String(_) => String::from("String"),
+            Self::List(_) => String::from("List"),
+            Self::Map(_) => String::from("Map"),
+            Self::Node(_) => String::from("Node"),
+            Self::Relationship(_, _, _) => String::from("Relationship"),
         }
     }
 

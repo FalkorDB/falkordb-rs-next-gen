@@ -996,20 +996,22 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_named_exprs(&mut self) -> Result<Vec<DynTree<ExprIR>>, String> {
-        let mut exprs = Vec::new();
+    fn parse_named_exprs(&mut self) -> Result<Vec<(String, DynTree<ExprIR>)>, String> {
+        let mut named_exprs = Vec::new();
         loop {
+            let pos = self.lexer.pos;
             let expr = self.parse_expr()?;
             if let Token::Keyword(Keyword::As, _) = self.lexer.current() {
                 self.lexer.next();
-                let ident = self.parse_ident()?;
-                exprs.push(tree!(ExprIR::Set(ident), expr));
+                named_exprs.push((self.parse_ident()?, expr));
+            } else if let ExprIR::Var(id) = expr.root().data() {
+                named_exprs.push((id.clone(), expr));
             } else {
-                exprs.push(expr);
+                named_exprs.push((self.lexer.str[pos..self.lexer.pos].to_string(), expr));
             }
             match self.lexer.current() {
                 Token::Comma => self.lexer.next(),
-                _ => return Ok(exprs),
+                _ => return Ok(named_exprs),
             }
         }
     }
