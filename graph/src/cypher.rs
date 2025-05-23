@@ -1,5 +1,7 @@
-use crate::ast::{Alias, ExprIR, NodePattern, PathPattern, Pattern, QueryIR, RelationshipPattern};
-use crate::cypher::Token::{RBrace, RParen};
+use crate::ast::{
+    Alias, ExprIR, NodePattern, PathPattern, Pattern, QuantifierType, QueryIR, RelationshipPattern,
+};
+use crate::cypher::Token::RParen;
 use crate::functions::{FnType, get_functions};
 use crate::tree;
 use falkordb_macro::parse_binary_expr;
@@ -38,6 +40,10 @@ enum Keyword {
     Then,
     Else,
     End,
+    All,
+    Any,
+    None,
+    Single,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -76,7 +82,7 @@ enum Token {
     EndOfFile,
 }
 
-const KEYWORDS: [(&str, Keyword); 28] = [
+const KEYWORDS: [(&str, Keyword); 32] = [
     ("CALL", Keyword::Call),
     ("OPTIONAL", Keyword::Optional),
     ("MATCH", Keyword::Match),
@@ -105,6 +111,10 @@ const KEYWORDS: [(&str, Keyword); 28] = [
     ("THEN", Keyword::Then),
     ("ELSE", Keyword::Else),
     ("END", Keyword::End),
+    ("ALL", Keyword::All),
+    ("ANY", Keyword::Any),
+    ("NONE", Keyword::None),
+    ("SINGLE", Keyword::Single),
 ];
 
 const MIN_I64: [&str; 5] = [
@@ -730,6 +740,41 @@ impl<'a> Parser<'a> {
         ))
     }
 
+    fn parse_quantifier_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
+        let quantifier_type = match self.lexer.current() {
+            Token::Keyword(Keyword::All, _) => {
+                self.lexer.next();
+                QuantifierType::All
+            }
+            Token::Keyword(Keyword::Any, _) => {
+                self.lexer.next();
+                QuantifierType::Any
+            }
+            Token::Keyword(Keyword::None, _) => {
+                self.lexer.next();
+                QuantifierType::None
+            }
+            Token::Keyword(Keyword::Single, _) => {
+                self.lexer.next();
+                QuantifierType::Single
+            }
+            _ => unreachable!(),
+        };
+
+        match_token!(self.lexer, LParen);
+        let var = self.parse_ident()?;
+        match_token!(self.lexer => In);
+        let expr = self.parse_expr()?;
+        match_token!(self.lexer => Where);
+        let condition = self.parse_expr()?;
+        match_token!(self.lexer, RParen);
+        Ok(tree!(
+            ExprIR::Quantifier(quantifier_type, var),
+            expr,
+            condition
+        ))
+    }
+
     fn parse_primary_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
         match self.lexer.current() {
             Token::Ident(ident) => {
@@ -764,6 +809,11 @@ impl<'a> Parser<'a> {
                 Ok(tree!(ExprIR::Parameter(param)))
             }
             Token::Keyword(Keyword::Case, _) => self.parse_case_expression(),
+            Token::Keyword(Keyword::All, _)
+            | Token::Keyword(Keyword::Any, _)
+            | Token::Keyword(Keyword::None, _)
+            | Token::Keyword(Keyword::Single, _) => self.parse_quantifier_expr(),
+
             Token::Keyword(Keyword::Null, _) => {
                 self.lexer.next();
                 Ok(tree!(ExprIR::Null))
@@ -790,9 +840,7 @@ impl<'a> Parser<'a> {
             }
             Token::LBrace => {
                 self.lexer.next();
-                Ok(tree!(ExprIR::List; self.parse_expression_list(
-                    ExpressionListType::ZeroOrMoreClosedBy(RBrace),
-                )?))
+                self.parse_list_literal_or_comprehension()
             }
             Token::LBracket => self.parse_map(),
             Token::LParen => {
@@ -1035,6 +1083,83 @@ impl<'a> Parser<'a> {
             }
         }
         Ok(exprs)
+    }
+
+    fn parse_list_literal_or_comprehension(&mut self) -> Result<DynTree<ExprIR>, String> {
+        // Check if the second token is 'IN' for list comprehension
+        if let Token::Ident(var) = self.lexer.current() {
+            let pos = self.lexer.pos;
+            self.lexer.next();
+            if optional_match_token!(self.lexer => In) {
+                return self.parse_list_comprehension(var);
+            } else {
+                self.lexer.set_pos(pos); // Reset lexer position
+            }
+        }
+
+        let mut exprs = Vec::new();
+
+        while self.lexer.current() != Token::RBrace {
+            exprs.push(self.parse_expr()?);
+            match self.lexer.current() {
+                Token::Comma => self.lexer.next(),
+                _ => break,
+            }
+        }
+
+        if self.lexer.current() == Token::RBrace {
+            self.lexer.next();
+            Ok(tree!(ExprIR::List ; exprs))
+        } else {
+            Err(self
+                .lexer
+                .format_error(&format!("Invalid input {:?}", self.lexer.current())))
+        }
+    }
+
+    fn parse_list_comprehension(
+        &mut self,
+        var: String,
+    ) -> Result<DynTree<ExprIR>, String> {
+        // var and 'IN' already parsed
+        let list_expr = self.parse_expr()?;
+
+        let condition = if optional_match_token!(self.lexer => Where) {
+            Some(self.parse_expr()?)
+        } else {
+            None
+        };
+
+        let expression = if optional_match_token!(self.lexer, Pipe) {
+            Some(self.parse_expr()?)
+        } else {
+            None
+        };
+
+        match_token!(self.lexer, RBrace);
+
+        match (condition, expression) {
+            (None, None) => Ok(tree!(
+                ExprIR::ListComprehension(var, false, false),
+                list_expr
+            )),
+            (Some(cond), None) => Ok(tree!(
+                ExprIR::ListComprehension(var, true, false),
+                list_expr,
+                cond
+            )),
+            (None, Some(expr)) => Ok(tree!(
+                ExprIR::ListComprehension(var, false, true),
+                list_expr,
+                expr
+            )),
+            (Some(cond), Some(expr)) => Ok(tree!(
+                ExprIR::ListComprehension(var, true, true),
+                list_expr,
+                cond,
+                expr
+            )),
+        }
     }
 
     fn parse_node_pattern(&mut self) -> Result<NodePattern, String> {

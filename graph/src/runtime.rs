@@ -1,4 +1,4 @@
-use crate::ast::{NodePattern, Pattern, RelationshipPattern};
+use crate::ast::{NodePattern, Pattern, QuantifierType, RelationshipPattern};
 use crate::functions::{FnType, Functions, GraphFn, get_functions};
 use crate::iter::{AggregateIter, LazyReplace};
 use crate::{ast::ExprIR, graph::Graph, planner::IR, value::Contains, value::Value};
@@ -44,6 +44,27 @@ pub struct Stats {
 pub struct Pending {
     pub created_nodes: BTreeMap<u64, (Vec<String>, OrderMap<String, Value>)>,
     pub created_relationships: BTreeMap<u64, (String, u64, u64, OrderMap<String, Value>)>,
+}
+
+trait Env {
+    fn restore(
+        &self,
+        var: &str,
+        old_value: Option<Value>,
+    );
+}
+impl Env for RefCell<BTreeMap<String, Value>> {
+    fn restore(
+        &self,
+        var: &str,
+        old_value: Option<Value>,
+    ) {
+        if let Some(old) = old_value {
+            self.borrow_mut().insert(var.to_string(), old);
+        } else {
+            self.borrow_mut().remove(var);
+        }
+    }
 }
 
 pub struct Runtime<'a> {
@@ -340,6 +361,137 @@ impl<'a> Runtime<'a> {
                 let v = self.run_expr(ir.child(0))?;
                 self.vars.borrow_mut().insert(x.clone(), v.clone());
                 Ok(v)
+            }
+            ExprIR::Quantifier(quantifier, var) => {
+                let list = self.run_expr(ir.child(0))?;
+                match list {
+                    Value::List(values) => {
+                        let mut values_iter = values.into_iter().map(move |value| {
+                            self.vars.borrow_mut().insert(var.clone(), value);
+                            self.run_expr(ir.child(1))
+                        });
+
+                        let old_value = self.vars.borrow_mut().remove(var);
+
+                        let summary = values_iter.try_fold((0, 0, 0), |(t, f, n), v| match v {
+                            Ok(Value::Bool(true)) => Ok((t + 1, f, n)),
+                            Ok(Value::Bool(false)) => Ok((t, f + 1, n)),
+                            Ok(Value::Null) => Ok((t, f, n + 1)),
+                            Ok(value) => Err(format!(
+                                "Type mismatch: expected Boolean but was {}",
+                                value.name()
+                            )),
+                            Err(e) => Err(e),
+                        });
+
+                        self.vars.restore(var, old_value);
+                        match summary {
+                            Ok((t, f, n)) => Ok(self.eval_quantifier(quantifier, t, f, n)),
+                            Err(msg) => Err(msg),
+                        }
+                    }
+                    value => Err(format!(
+                        "Type mismatch: expected List but was {}",
+                        value.name()
+                    )),
+                }
+            }
+
+            ExprIR::ListComprehension(var, has_where, has_expr) => {
+                let list = self.run_expr(ir.child(0))?;
+                let expr_index: usize = if *has_where { 2 } else { 1 };
+                match list {
+                    Value::List(values) => {
+                        let mut iter = values.into_iter().filter_map(move |value| {
+                            self.vars.borrow_mut().insert(var.clone(), value.clone());
+                            if *has_where {
+                                match self.run_expr(ir.child(1)) {
+                                    Ok(Value::Bool(true)) => {}
+                                    Ok(_) => return None,
+                                    Err(e) => return Some(Err(e)),
+                                }
+                            }
+                            if *has_expr {
+                                match self.run_expr(ir.child(expr_index)) {
+                                    Ok(v) => Some(Ok(v)),
+                                    Err(e) => Some(Err(e)),
+                                }
+                            } else {
+                                Some(Ok(value))
+                            }
+                        });
+
+                        // remove and save binding to var
+                        // fold the iterator to collect the values
+                        // restore the binding to var
+                        let old_value = self.vars.borrow_mut().remove(var);
+                        let ret = iter
+                            .try_fold(vec![], |mut acc, v| match v {
+                                Ok(v) => {
+                                    acc.push(v);
+                                    Ok(acc)
+                                }
+                                Err(e) => Err(e),
+                            })
+                            .map(Value::List);
+
+                        self.vars.restore(var, old_value);
+                        ret
+                    }
+                    value => Err(format!(
+                        "Type mismatch: expected List but was {}",
+                        value.name()
+                    )),
+                }
+            }
+        }
+    }
+
+    fn eval_quantifier(
+        &self,
+        quantifier_type: &QuantifierType,
+        true_count: usize,
+        false_count: usize,
+        null_count: usize,
+    ) -> Value {
+        match quantifier_type {
+            QuantifierType::All => {
+                if false_count > 0 {
+                    Value::Bool(false)
+                } else if null_count > 0 {
+                    Value::Null
+                } else {
+                    Value::Bool(true)
+                }
+            }
+            QuantifierType::Any => {
+                if true_count > 0 {
+                    Value::Bool(true)
+                } else if null_count > 0 {
+                    Value::Null
+                } else {
+                    Value::Bool(false)
+                }
+            }
+            QuantifierType::None => {
+                if true_count > 0 {
+                    Value::Bool(false)
+                } else if null_count > 0 {
+                    Value::Null
+                } else {
+                    Value::Bool(true)
+                }
+            }
+            QuantifierType::Single => {
+                if true_count == 1 && null_count == 0 {
+                    Value::Bool(true)
+                } else if 1 < true_count {
+                    Value::Bool(false)
+                } else if null_count > 0 {
+                    Value::Null
+                } else {
+                    Value::Bool(false)
+                }
             }
         }
     }

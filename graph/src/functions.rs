@@ -186,6 +186,7 @@ pub fn init_functions() -> Result<(), Functions> {
     funcs.add("range", range, false, 1, 3, FnType::Function);
     funcs.add("coalesce", coalesce, false, 1, usize::MAX, FnType::Function);
     funcs.add("keys", keys, false, 1, 1, FnType::Function);
+    funcs.add("toBoolean", to_boolean, false, 1, 1, FnType::Function);
 
     // aggregation functions
     funcs.add("collect", collect, false, 1, 2, FnType::Aggregation);
@@ -1162,6 +1163,28 @@ fn keys(
         )),
         (Some(Value::Null), None) => Ok(Value::Null),
         _ => Err("Type mismatch: expected Map or Null".to_string()),
+    }
+}
+
+fn to_boolean(
+    _: &Runtime,
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    let mut iter = args.into_iter();
+    match iter.next() {
+        Some(Value::Bool(b)) => Ok(Value::Bool(b)),
+        Some(Value::String(s)) => {
+            if s.eq_ignore_ascii_case("true") {
+                Ok(Value::Bool(true))
+            } else if s.eq_ignore_ascii_case("false") {
+                Ok(Value::Bool(false))
+            } else {
+                Ok(Value::Null)
+            }
+        }
+        Some(Value::Int(n)) => Ok(Value::Bool(n != 0)),
+        Some(_) => Ok(Value::Null),
+        None => unreachable!(),
     }
 }
 
