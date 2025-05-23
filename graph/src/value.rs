@@ -1,5 +1,5 @@
+use hashbrown::HashMap;
 use std::cmp::Ordering;
-use std::collections::HashMap;
 use std::hash::Hash;
 use std::ops::{Add, Div, Mul, Rem, Sub};
 use std::rc::Rc;
@@ -40,6 +40,7 @@ impl Hash for Value {
 pub struct Env(HashMap<String, Value>);
 
 impl Env {
+    #[must_use]
     pub fn new() -> Self {
         Self(HashMap::new())
     }
