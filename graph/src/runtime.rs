@@ -396,28 +396,21 @@ impl<'a> Runtime<'a> {
                 }
             }
 
-            ExprIR::ListComprehension(var, has_where, has_expr) => {
+            ExprIR::ListComprehension(var) => {
                 let list = self.run_expr(ir.child(0), env)?;
-                let expr_index: usize = if *has_where { 2 } else { 1 };
                 match list {
                     Value::List(values) => {
                         let mut env = env.clone();
                         let mut iter = values.into_iter().filter_map(move |value| {
                             env.insert(var.clone(), value.clone());
-                            if *has_where {
-                                match self.run_expr(ir.child(1), &env) {
-                                    Ok(Value::Bool(true)) => {}
-                                    Ok(_) => return None,
-                                    Err(e) => return Some(Err(e)),
-                                }
+                            match self.run_expr(ir.child(1), &env) {
+                                Ok(Value::Bool(true)) => {}
+                                Ok(_) => return None,
+                                Err(e) => return Some(Err(e)),
                             }
-                            if *has_expr {
-                                match self.run_expr(ir.child(expr_index), &env) {
-                                    Ok(v) => Some(Ok(v)),
-                                    Err(e) => Some(Err(e)),
-                                }
-                            } else {
-                                Some(Ok(value))
+                            match self.run_expr(ir.child(2), &env) {
+                                Ok(v) => Some(Ok(v)),
+                                Err(e) => Some(Err(e)),
                             }
                         });
 

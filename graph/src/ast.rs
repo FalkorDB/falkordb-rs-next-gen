@@ -41,7 +41,7 @@ pub enum ExprIR {
     FuncInvocation(String, FnType),
     Map,
     Quantifier(QuantifierType, Rc<String>),
-    ListComprehension(Rc<String>, bool, bool), // var, has where, has expression
+    ListComprehension(Rc<String>),
 }
 
 impl Display for ExprIR {
@@ -87,7 +87,7 @@ impl Display for ExprIR {
             Self::Quantifier(quantifier_type, var_name) => {
                 write!(f, "{quantifier_type} {var_name}")
             }
-            Self::ListComprehension(var, _has_where, _has_expr) => {
+            Self::ListComprehension(var) => {
                 write!(f, "list comp({var})")
             }
         }
@@ -226,14 +226,14 @@ impl Validate for DynNode<'_, ExprIR> {
                 env.remove(var_name);
                 Ok(())
             }
-            ExprIR::ListComprehension(var_name, _has_where, _has_expr) => {
+            ExprIR::ListComprehension(var) => {
                 debug_assert!(0 < self.num_children() && self.num_children() <= 3);
                 self.child(0).validate(env)?;
-                env.insert(var_name.clone());
+                env.insert(var.clone());
                 for expr in self.children().skip(1) {
                     expr.validate(env)?;
                 }
-                env.remove(var_name);
+                env.remove(var);
                 Ok(())
             }
         }

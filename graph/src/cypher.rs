@@ -1172,28 +1172,12 @@ impl<'a> Parser<'a> {
 
         match_token!(self.lexer, RBrace);
 
-        match (condition, expression) {
-            (None, None) => Ok(tree!(
-                ExprIR::ListComprehension(var, false, false),
-                list_expr
-            )),
-            (Some(cond), None) => Ok(tree!(
-                ExprIR::ListComprehension(var, true, false),
-                list_expr,
-                cond
-            )),
-            (None, Some(expr)) => Ok(tree!(
-                ExprIR::ListComprehension(var, false, true),
-                list_expr,
-                expr
-            )),
-            (Some(cond), Some(expr)) => Ok(tree!(
-                ExprIR::ListComprehension(var, true, true),
-                list_expr,
-                cond,
-                expr
-            )),
-        }
+        Ok(tree!(
+            ExprIR::ListComprehension(var.clone()),
+            list_expr,
+            condition.unwrap_or_else(|| tree!(ExprIR::Bool(true))),
+            expression.unwrap_or_else(|| tree!(ExprIR::Var(var)))
+        ))
     }
 
     fn parse_node_pattern(&mut self) -> Result<NodePattern, String> {
