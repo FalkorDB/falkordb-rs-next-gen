@@ -1,6 +1,8 @@
+use hashbrown::HashMap;
 use std::cmp::Ordering;
 use std::hash::Hash;
 use std::ops::{Add, Div, Mul, Rem, Sub};
+use std::rc::Rc;
 
 use ordermap::OrderMap;
 
@@ -10,9 +12,9 @@ pub enum Value {
     Bool(bool),
     Int(i64),
     Float(f64),
-    String(String),
+    String(Rc<String>),
     List(Vec<Value>),
-    Map(OrderMap<String, Value>),
+    Map(OrderMap<Rc<String>, Value>),
     Node(u64),
     Relationship(u64, u64, u64),
 }
@@ -32,6 +34,62 @@ impl Hash for Value {
             Self::Map(x) => x.hash(state),
             Self::Node(x) | Self::Relationship(x, _, _) => x.hash(state),
         }
+    }
+}
+
+pub struct Env(HashMap<Rc<String>, Value>);
+
+impl Env {
+    #[must_use]
+    pub fn new() -> Self {
+        Self(HashMap::new())
+    }
+
+    pub fn insert(
+        &mut self,
+        key: Rc<String>,
+        value: Value,
+    ) {
+        self.0.insert(key, value);
+    }
+
+    #[must_use]
+    pub fn get(
+        &self,
+        key: &Rc<String>,
+    ) -> Option<&Value> {
+        self.0.get(key)
+    }
+
+    pub fn take(
+        &mut self,
+        key: &Rc<String>,
+    ) -> Option<Value> {
+        self.0.remove(key)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&Rc<String>, &Value)> {
+        self.0.iter()
+    }
+}
+
+impl Hash for Env {
+    fn hash<H: std::hash::Hasher>(
+        &self,
+        state: &mut H,
+    ) {
+        let mut entries: Vec<_> = self.0.iter().collect();
+        entries.sort_by_key(|(k, _)| *k);
+        for (key, value) in entries {
+            key.hash(state);
+            value.hash(state);
+        }
+    }
+}
+
+impl Clone for Env {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
     }
 }
 
@@ -63,10 +121,12 @@ impl Add for Value {
                 new_list.extend(l);
                 Ok(Self::List(new_list))
             }
-            (Self::String(a), Self::String(b)) => Ok(Self::String(a + &b)),
-            (Self::String(s), Self::Int(i)) => Ok(Self::String(s + &i.to_string())),
-            (Self::String(s), Self::Float(f)) => Ok(Self::String(s + &f.to_string())),
-            (Self::String(s), Self::Bool(f)) => Ok(Self::String(s + &f.to_string().to_lowercase())),
+            (Self::String(a), Self::String(b)) => {
+                Ok(Self::String(Rc::new(String::from(format!("{}{}", a, b)))))
+            }
+            (Self::String(s), Self::Int(i)) => Ok(Self::String(Rc::new(format!("{}{}", s, i)))),
+            (Self::String(s), Self::Float(f)) => Ok(Self::String(Rc::new(format!("{}{}", s, f)))),
+            (Self::String(s), Self::Bool(f)) => Ok(Self::String(Rc::new(format!("{}{}", s, f)))),
             (a, b) => Err(format!(
                 "Unexpected types for add operator ({}, {})",
                 a.name(),
@@ -131,28 +191,28 @@ impl Div for Value {
             (Self::Null, _) | (_, Self::Null) => Ok(Self::Null),
             (Self::Int(a), Self::Int(b)) => {
                 if b == 0 {
-                    Err("Division by zero".to_string())
+                    Err(String::from("Division by zero"))
                 } else {
                     Ok(Self::Int(a.wrapping_div(b)))
                 }
             }
             (Self::Float(a), Self::Float(b)) => {
                 if b == 0.0 {
-                    Err("Division by zero".to_string())
+                    Err(String::from("Division by zero"))
                 } else {
                     Ok(Self::Float(a / b))
                 }
             }
             (Self::Float(a), Self::Int(b)) => {
                 if b == 0 {
-                    Err("Division by zero".to_string())
+                    Err(String::from("Division by zero"))
                 } else {
                     Ok(Self::Float(a / b as f64))
                 }
             }
             (Self::Int(a), Self::Float(b)) => {
                 if b == 0.0 {
-                    Err("Division by zero".to_string())
+                    Err(String::from("Division by zero"))
                 } else {
                     Ok(Self::Float(a as f64 / b))
                 }
@@ -177,28 +237,28 @@ impl Rem for Value {
             (Self::Null, _) | (_, Self::Null) => Ok(Self::Null),
             (Self::Int(a), Self::Int(b)) => {
                 if b == 0 {
-                    Err("Division by zero".to_string())
+                    Err(String::from("Division by zero"))
                 } else {
                     Ok(Self::Int(a.wrapping_rem(b)))
                 }
             }
             (Self::Float(a), Self::Float(b)) => {
                 if b == 0.0 {
-                    Err("Division by zero".to_string())
+                    Err(String::from("Division by zero"))
                 } else {
                     Ok(Self::Float(a % b))
                 }
             }
             (Self::Float(a), Self::Int(b)) => {
                 if b == 0 {
-                    Err("Division by zero".to_string())
+                    Err(String::from("Division by zero"))
                 } else {
                     Ok(Self::Float(a % b as f64))
                 }
             }
             (Self::Int(a), Self::Float(b)) => {
                 if b == 0.0 {
-                    Err("Division by zero".to_string())
+                    Err(String::from("Division by zero"))
                 } else {
                     Ok(Self::Float(a as f64 % b))
                 }
@@ -243,15 +303,15 @@ enum DisjointOrNull {
 impl Value {
     pub(crate) fn name(&self) -> String {
         match self {
-            Self::Null => "Null".to_string(),
-            Self::Bool(_) => "Boolean".to_string(),
-            Self::Int(_) => "Integer".to_string(),
-            Self::Float(_) => "Float".to_string(),
-            Self::String(_) => "String".to_string(),
-            Self::List(_) => "List".to_string(),
-            Self::Map(_) => "Map".to_string(),
-            Self::Node(_) => "Node".to_string(),
-            Self::Relationship(_, _, _) => "Relationship".to_string(),
+            Self::Null => String::from("Null"),
+            Self::Bool(_) => String::from("Boolean"),
+            Self::Int(_) => String::from("Integer"),
+            Self::Float(_) => String::from("Float"),
+            Self::String(_) => String::from("String"),
+            Self::List(_) => String::from("List"),
+            Self::Map(_) => String::from("Map"),
+            Self::Node(_) => String::from("Node"),
+            Self::Relationship(_, _, _) => String::from("Relationship"),
         }
     }
 
@@ -333,8 +393,8 @@ impl Value {
     }
 
     fn compare_map(
-        a: &OrderMap<String, Self>,
-        b: &OrderMap<String, Self>,
+        a: &OrderMap<Rc<String>, Self>,
+        b: &OrderMap<Rc<String>, Self>,
     ) -> (Ordering, DisjointOrNull) {
         let a_key_count = a.len();
         let b_key_count = b.len();
@@ -343,9 +403,9 @@ impl Value {
         }
 
         // sort keys
-        let mut a_keys: Vec<&String> = a.keys().collect();
+        let mut a_keys: Vec<&Rc<String>> = a.keys().collect();
         a_keys.sort();
-        let mut b_keys: Vec<&String> = b.keys().collect();
+        let mut b_keys: Vec<&Rc<String>> = b.keys().collect();
         b_keys.sort();
 
         // iterate over keys count

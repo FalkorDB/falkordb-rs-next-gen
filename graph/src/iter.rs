@@ -55,7 +55,50 @@ where
     }
 }
 
-pub struct LazyReplace<I, F>
+pub trait Aggregate {
+    fn aggregate<K, V, F, G>(
+        self,
+        key_fn: F,
+        default_value: V,
+        agg_fn: G,
+    ) -> AggregateIter<Box<Self>, K, V, F, G>
+    where
+        Self: Iterator<Item = V>,
+        K: std::hash::Hash + Clone,
+        F: Fn(&V) -> K,
+        G: Fn(V, V) -> V,
+        V: Clone;
+}
+
+impl<I> Aggregate for I
+where
+    I: Iterator,
+{
+    fn aggregate<K, V, F, G>(
+        self,
+        key_fn: F,
+        default_value: V,
+        agg_fn: G,
+    ) -> AggregateIter<Box<I>, K, V, F, G>
+    where
+        Self: Iterator<Item = V>,
+        K: std::hash::Hash + Clone,
+        F: Fn(&V) -> K,
+        G: Fn(V, V) -> V,
+        V: Clone,
+    {
+        AggregateIter {
+            iter: Box::new(self),
+            key_fn,
+            default_value,
+            agg_fn,
+            cache: HashMap::new(),
+            finished: false,
+        }
+    }
+}
+
+pub struct LazyReplaceIter<I, F>
 where
     I: Iterator,
     F: FnOnce() -> I,
@@ -65,7 +108,7 @@ where
     yielded: bool, // Tracks whether any item has been yielded
 }
 
-impl<I, F> LazyReplace<I, F>
+impl<I, F> LazyReplaceIter<I, F>
 where
     I: Iterator,
     F: FnOnce() -> I,
@@ -82,7 +125,7 @@ where
     }
 }
 
-impl<I, F> Iterator for LazyReplace<I, F>
+impl<I, F> Iterator for LazyReplaceIter<I, F>
 where
     I: Iterator,
     F: FnOnce() -> I,
@@ -105,5 +148,183 @@ where
         }
 
         None
+    }
+}
+
+pub trait LazyReplace
+where
+    Self: Iterator,
+{
+    fn lazy_replace<F>(
+        self,
+        replacement: F,
+    ) -> LazyReplaceIter<Self, F>
+    where
+        Self: Sized,
+        F: FnOnce() -> Self;
+}
+
+impl<I> LazyReplace for I
+where
+    I: Iterator,
+{
+    fn lazy_replace<F: FnOnce() -> I>(
+        self,
+        replacement: F,
+    ) -> LazyReplaceIter<Self, F> {
+        LazyReplaceIter::new(self, replacement)
+    }
+}
+
+pub struct TryMapIter<I, T, E, F>
+where
+    I: Iterator<Item = Result<T, E>>,
+    F: Fn(T) -> Result<T, E>,
+{
+    iter: I,
+    func: F,
+    is_error: bool,
+}
+
+impl<I, T, E, F> Iterator for TryMapIter<I, T, E, F>
+where
+    I: Iterator<Item = Result<T, E>>,
+    F: Fn(T) -> Result<T, E>,
+{
+    type Item = Result<T, E>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.is_error {
+            return None; // If an error has already occurred, stop iterating
+        }
+
+        match self.iter.next() {
+            Some(Ok(value)) => Some((self.func)(value)),
+            Some(Err(err)) => {
+                self.is_error = true; // Mark that an error has occurred
+                Some(Err(err))
+            }
+            None => {
+                None // No more items to iterate
+            }
+        }
+    }
+}
+
+pub trait TryMap {
+    fn try_map<T, E, F>(
+        self,
+        func: F,
+    ) -> impl Iterator<Item = Result<T, E>>
+    where
+        Self: Iterator<Item = Result<T, E>>,
+        F: Fn(T) -> Result<T, E>;
+}
+
+impl<I> TryMap for I
+where
+    I: Iterator,
+{
+    fn try_map<T, E, F>(
+        self,
+        func: F,
+    ) -> impl Iterator<Item = Result<T, E>>
+    where
+        Self: Iterator<Item = Result<T, E>>,
+        F: Fn(T) -> Result<T, E>,
+    {
+        self.map(move |x| x.and_then(&func))
+    }
+}
+
+pub struct TryFlatMapIter<I, T, E, F, J>
+where
+    I: Iterator<Item = Result<T, E>>,
+    F: Fn(T) -> J,
+    J: Iterator<Item = Result<T, E>>,
+{
+    iter: I,
+    func: F,
+    is_error: bool,
+    flat_mapped: Option<J>,
+}
+
+impl<I, T, E, F, J> Iterator for TryFlatMapIter<I, T, E, F, J>
+where
+    I: Iterator<Item = Result<T, E>>,
+    F: Fn(T) -> J,
+    J: Iterator<Item = Result<T, E>>,
+{
+    type Item = Result<T, E>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.is_error {
+            return None; // If an error has already occurred, stop iterating
+        }
+
+        match self
+            .flat_mapped
+            .as_mut()
+            .map_or_else(|| None, std::iter::Iterator::next)
+        {
+            Some(Ok(flat_value)) => return Some(Ok(flat_value)),
+            Some(Err(err)) => {
+                self.is_error = true; // Mark that an error has occurred
+                return Some(Err(err));
+            }
+            None => {}
+        }
+
+        match self.iter.next() {
+            Some(Ok(value)) => {
+                self.flat_mapped = Some((self.func)(value));
+                match self
+                    .flat_mapped
+                    .as_mut()
+                    .map_or_else(|| None, std::iter::Iterator::next)
+                {
+                    Some(Ok(flat_value)) => Some(Ok(flat_value)),
+                    Some(Err(err)) => {
+                        self.is_error = true; // Mark that an error has occurred
+                        Some(Err(err))
+                    }
+                    None => self.next(),
+                }
+            }
+            Some(Err(err)) => {
+                self.is_error = true; // Mark that an error has occurred
+                Some(Err(err))
+            }
+            None => None, // No more items to iterate
+        }
+    }
+}
+
+pub trait TryFlatMap {
+    fn try_flat_map<T, E, F, I>(
+        self,
+        func: F,
+    ) -> impl Iterator<Item = Result<T, E>>
+    where
+        Self: Iterator<Item = Result<T, E>>,
+        F: Fn(T) -> I,
+        I: Iterator<Item = Result<T, E>>;
+}
+
+impl<I> TryFlatMap for I
+where
+    I: Iterator,
+{
+    fn try_flat_map<T, E, F, J>(
+        self,
+        func: F,
+    ) -> impl Iterator<Item = Result<T, E>>
+    where
+        Self: Iterator<Item = Result<T, E>>,
+        F: Fn(T) -> J,
+        J: Iterator<Item = Result<T, E>>,
+    {
+        self.take_while(Result::is_ok)
+            .flat_map(move |x| x.map_or_else(|_| unreachable!(), &func))
     }
 }
