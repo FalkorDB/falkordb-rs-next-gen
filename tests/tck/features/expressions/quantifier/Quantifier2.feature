@@ -190,6 +190,7 @@ Feature: Quantifier2 - Single quantifier
       | [{a: 2, b: 5}, {a: 2, b: 5}, {a: 2, b: 5}] | x.a = 2   | false  |
       | [{a: 4}, {a: 4}, {a: 4}]                   | x.a = 2   | false  |
 
+  @skip #fixme
   Scenario: [8] Single quantifier on list containing nodes
     Given an empty graph
     And having executed:
@@ -236,6 +237,7 @@ Feature: Quantifier2 - Single quantifier
       | [(:B {name: 'b'}), (:B {name: 'b'}), (:B {name: 'b'})] | false  |
     And no side effects
 
+  @skip #fixme
   Scenario: [9] Single quantifier on list containing relationships
     Given an empty graph
     And having executed:

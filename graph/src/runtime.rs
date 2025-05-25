@@ -1,4 +1,4 @@
-use crate::ast::{NodePattern, Pattern, RelationshipPattern};
+use crate::ast::{NodePattern, Pattern, QuantifierType, RelationshipPattern};
 use crate::functions::{FnType, Functions, GraphFn, get_functions};
 use crate::iter::{Aggregate, LazyReplace, TryFlatMap, TryMap};
 use crate::value::Env;
@@ -136,7 +136,7 @@ impl<'a> Runtime<'a> {
     fn run_expr(
         &self,
         ir: DynNode<ExprIR>,
-        vars: &Env,
+        env: &Env,
     ) -> Result<Value, String> {
         match ir.data() {
             ExprIR::Null => Ok(Value::Null),
@@ -144,7 +144,7 @@ impl<'a> Runtime<'a> {
             ExprIR::Integer(x) => Ok(Value::Int(*x)),
             ExprIR::Float(x) => Ok(Value::Float(*x)),
             ExprIR::String(x) => Ok(Value::String(x.clone())),
-            ExprIR::Var(x) => vars.get(x).map_or_else(
+            ExprIR::Var(x) => env.get(x).map_or_else(
                 || Err(format!("Variable {x} not found")),
                 |v| Ok(v.to_owned()),
             ),
@@ -154,16 +154,16 @@ impl<'a> Runtime<'a> {
             ),
             ExprIR::List => Ok(Value::List(
                 ir.children()
-                    .map(|ir| self.run_expr(ir, vars))
+                    .map(|ir| self.run_expr(ir, env))
                     .collect::<Result<Vec<_>, _>>()?,
             )),
-            ExprIR::Length => match self.run_expr(ir.child(0), vars)? {
+            ExprIR::Length => match self.run_expr(ir.child(0), env)? {
                 Value::List(arr) => Ok(Value::Int(arr.len() as _)),
                 _ => Err(String::from("Length operator requires a list")),
             },
             ExprIR::GetElement => {
-                let arr = self.run_expr(ir.child(0), vars)?;
-                let i = self.run_expr(ir.child(1), vars)?;
+                let arr = self.run_expr(ir.child(0), env)?;
+                let i = self.run_expr(ir.child(1), env)?;
                 match (arr, i) {
                     (Value::List(values), Value::Int(i)) => {
                         if i >= 0 && i < values.len() as _ {
@@ -183,27 +183,27 @@ impl<'a> Runtime<'a> {
                 }
             }
             ExprIR::GetElements => {
-                let arr = self.run_expr(ir.child(0), vars)?;
-                let a = self.run_expr(ir.child(1), vars)?;
-                let b = self.run_expr(ir.child(2), vars)?;
+                let arr = self.run_expr(ir.child(0), env)?;
+                let a = self.run_expr(ir.child(1), env)?;
+                let b = self.run_expr(ir.child(2), env)?;
                 get_elements(arr, a, b)
             }
-            ExprIR::IsNull => match self.run_expr(ir.child(0), vars)? {
+            ExprIR::IsNull => match self.run_expr(ir.child(0), env)? {
                 Value::Null => Ok(Value::Bool(true)),
                 _ => Ok(Value::Bool(false)),
             },
-            ExprIR::IsNode => match self.run_expr(ir.child(0), vars)? {
+            ExprIR::IsNode => match self.run_expr(ir.child(0), env)? {
                 Value::Node(_) => Ok(Value::Bool(true)),
                 _ => Ok(Value::Bool(false)),
             },
-            ExprIR::IsRelationship => match self.run_expr(ir.child(0), vars)? {
+            ExprIR::IsRelationship => match self.run_expr(ir.child(0), env)? {
                 Value::Relationship(_, _, _) => Ok(Value::Bool(true)),
                 _ => Ok(Value::Bool(false)),
             },
             ExprIR::Or => {
                 let mut is_null = false;
                 for ir in ir.children() {
-                    match self.run_expr(ir, vars)? {
+                    match self.run_expr(ir, env)? {
                         Value::Bool(true) => return Ok(Value::Bool(true)),
                         Value::Bool(false) => {}
                         Value::Null => is_null = true,
@@ -219,7 +219,7 @@ impl<'a> Runtime<'a> {
             ExprIR::Xor => {
                 let mut last = None;
                 for ir in ir.children() {
-                    match self.run_expr(ir, vars)? {
+                    match self.run_expr(ir, env)? {
                         Value::Bool(b) => last = Some(last.map_or(b, |l| logical_xor(l, b))),
                         Value::Null => return Ok(Value::Null),
                         ir => return Err(format!("Type mismatch: expected Bool but was {ir:?}")),
@@ -230,7 +230,7 @@ impl<'a> Runtime<'a> {
             ExprIR::And => {
                 let mut is_null = false;
                 for ir in ir.children() {
-                    match self.run_expr(ir, vars)? {
+                    match self.run_expr(ir, env)? {
                         Value::Bool(false) => return Ok(Value::Bool(false)),
                         Value::Bool(true) => {}
                         Value::Null => is_null = true,
@@ -243,7 +243,7 @@ impl<'a> Runtime<'a> {
 
                 Ok(Value::Bool(true))
             }
-            ExprIR::Not => match self.run_expr(ir.child(0), vars)? {
+            ExprIR::Not => match self.run_expr(ir.child(0), env)? {
                 Value::Bool(b) => Ok(Value::Bool(!b)),
                 Value::Null => Ok(Value::Null),
                 v => Err(format!(
@@ -251,7 +251,7 @@ impl<'a> Runtime<'a> {
                     v.name()
                 )),
             },
-            ExprIR::Negate => match self.run_expr(ir.child(0), vars)? {
+            ExprIR::Negate => match self.run_expr(ir.child(0), env)? {
                 Value::Int(i) => Ok(Value::Int(-i)),
                 Value::Float(f) => Ok(Value::Float(-f)),
                 Value::Null => Ok(Value::Null),
@@ -260,73 +260,73 @@ impl<'a> Runtime<'a> {
                     v.name()
                 )),
             },
-            ExprIR::Eq => all_equals(ir.children().map(|ir| self.run_expr(ir, vars))),
-            ExprIR::Neq => all_not_equals(ir.children().map(|ir| self.run_expr(ir, vars))),
+            ExprIR::Eq => all_equals(ir.children().map(|ir| self.run_expr(ir, env))),
+            ExprIR::Neq => all_not_equals(ir.children().map(|ir| self.run_expr(ir, env))),
             ExprIR::Lt => match self
-                .run_expr(ir.child(0), vars)?
-                .partial_cmp(&self.run_expr(ir.child(1), vars)?)
+                .run_expr(ir.child(0), env)?
+                .partial_cmp(&self.run_expr(ir.child(1), env)?)
             {
                 Some(Ordering::Less) => Ok(Value::Bool(true)),
                 Some(Ordering::Greater | Ordering::Equal) => Ok(Value::Bool(false)),
                 None => Ok(Value::Null),
             },
             ExprIR::Gt => match self
-                .run_expr(ir.child(0), vars)?
-                .partial_cmp(&self.run_expr(ir.child(1), vars)?)
+                .run_expr(ir.child(0), env)?
+                .partial_cmp(&self.run_expr(ir.child(1), env)?)
             {
                 Some(Ordering::Greater) => Ok(Value::Bool(true)),
                 Some(Ordering::Less | Ordering::Equal) => Ok(Value::Bool(false)),
                 None => Ok(Value::Null),
             },
             ExprIR::Le => match self
-                .run_expr(ir.child(0), vars)?
-                .partial_cmp(&self.run_expr(ir.child(1), vars)?)
+                .run_expr(ir.child(0), env)?
+                .partial_cmp(&self.run_expr(ir.child(1), env)?)
             {
                 Some(Ordering::Less | Ordering::Equal) => Ok(Value::Bool(true)),
                 Some(Ordering::Greater) => Ok(Value::Bool(false)),
                 None => Ok(Value::Null),
             },
             ExprIR::Ge => match self
-                .run_expr(ir.child(0), vars)?
-                .partial_cmp(&self.run_expr(ir.child(1), vars)?)
+                .run_expr(ir.child(0), env)?
+                .partial_cmp(&self.run_expr(ir.child(1), env)?)
             {
                 Some(Ordering::Greater | Ordering::Equal) => Ok(Value::Bool(true)),
                 Some(Ordering::Less) => Ok(Value::Bool(false)),
                 None => Ok(Value::Null),
             },
             ExprIR::In => {
-                let value = self.run_expr(ir.child(0), vars)?;
-                let list = self.run_expr(ir.child(1), vars)?;
+                let value = self.run_expr(ir.child(0), env)?;
+                let list = self.run_expr(ir.child(1), env)?;
                 list_contains(&list, &value)
             }
             ExprIR::Add => ir
                 .children()
-                .map(|ir| self.run_expr(ir, vars))
+                .map(|ir| self.run_expr(ir, env))
                 .reduce(|acc, value| acc? + value?)
                 .ok_or_else(|| String::from("Add operator requires at least one operand"))?,
             ExprIR::Sub => ir
                 .children()
-                .map(|ir| self.run_expr(ir, vars))
+                .map(|ir| self.run_expr(ir, env))
                 .reduce(|acc, value| acc? - value?)
                 .ok_or_else(|| String::from("Sub operator requires at least one argument"))?,
             ExprIR::Mul => ir
                 .children()
-                .map(|ir| self.run_expr(ir, vars))
+                .map(|ir| self.run_expr(ir, env))
                 .reduce(|acc, value| acc? * value?)
                 .ok_or_else(|| String::from("Mul operator requires at least one argument"))?,
             ExprIR::Div => ir
                 .children()
-                .map(|ir| self.run_expr(ir, vars))
+                .map(|ir| self.run_expr(ir, env))
                 .reduce(|acc, value| acc? / value?)
                 .ok_or_else(|| String::from("Div operator requires at least one argument"))?,
             ExprIR::Modulo => ir
                 .children()
-                .map(|ir| self.run_expr(ir, vars))
+                .map(|ir| self.run_expr(ir, env))
                 .reduce(|acc, value| acc? % value?)
                 .ok_or_else(|| String::from("Modulo operator requires at least one argument"))?,
             ExprIR::Pow => ir
                 .children()
-                .flat_map(|ir| self.run_expr(ir, vars))
+                .flat_map(|ir| self.run_expr(ir, env))
                 .reduce(|a, b| match (a, b) {
                     (Value::Int(a), Value::Int(b)) => Value::Float((a as f64).powf(b as _)),
                     _ => Value::Null,
@@ -335,7 +335,7 @@ impl<'a> Runtime<'a> {
             ExprIR::FuncInvocation(name, fn_type) => {
                 let args = ir
                     .children()
-                    .map(|ir| self.run_expr(ir, vars))
+                    .map(|ir| self.run_expr(ir, env))
                     .collect::<Result<Vec<_>, _>>()?;
                 match self.functions.get(name, fn_type) {
                     Some(GraphFn { func, write, .. }) => {
@@ -358,11 +358,121 @@ impl<'a> Runtime<'a> {
                             } else {
                                 todo!();
                             },
-                            self.run_expr(child.child(0), vars)?,
+                            self.run_expr(child.child(0), env)?,
                         ))
                     })
                     .collect::<Result<_, String>>()?,
             )),
+            ExprIR::Quantifier(quantifier, var) => {
+                let list = self.run_expr(ir.child(0), env)?;
+                match list {
+                    Value::List(values) => {
+                        let mut env = env.clone();
+                        let mut t = 0;
+                        let mut f = 0;
+                        let mut n = 0;
+                        for value in values {
+                            env.insert(var.clone(), value);
+
+                            match self.run_expr(ir.child(1), &env) {
+                                Ok(Value::Bool(true)) => t += 1,
+                                Ok(Value::Bool(false)) => f += 1,
+                                Ok(Value::Null) => n += 1,
+                                Ok(value) => {
+                                    return Err(format!(
+                                        "Type mismatch: expected Boolean but was {}",
+                                        value.name()
+                                    ));
+                                }
+                                Err(e) => return Err(e),
+                            }
+                        }
+
+                        Ok(self.eval_quantifier(quantifier, t, f, n))
+                    }
+                    value => Err(format!(
+                        "Type mismatch: expected List but was {}",
+                        value.name()
+                    )),
+                }
+            }
+
+            ExprIR::ListComprehension(var) => {
+                let list = self.run_expr(ir.child(0), env)?;
+                match list {
+                    Value::List(values) => {
+                        let mut env = env.clone();
+                        let mut acc = vec![];
+                        for value in values {
+                            env.insert(var.clone(), value);
+                            match self.run_expr(ir.child(1), &env) {
+                                Ok(Value::Bool(true)) => {}
+                                Ok(_) => continue,
+                                Err(e) => return Err(e),
+                            }
+                            match self.run_expr(ir.child(2), &env) {
+                                Ok(v) => acc.push(v),
+                                Err(e) => return Err(e),
+                            }
+                        }
+
+                        Ok(Value::List(acc))
+                    }
+                    value => Err(format!(
+                        "Type mismatch: expected List but was {}",
+                        value.name()
+                    )),
+                }
+            }
+        }
+    }
+
+    const fn eval_quantifier(
+        &self,
+        quantifier_type: &QuantifierType,
+        true_count: usize,
+        false_count: usize,
+        null_count: usize,
+    ) -> Value {
+        match quantifier_type {
+            QuantifierType::All => {
+                if false_count > 0 {
+                    Value::Bool(false)
+                } else if null_count > 0 {
+                    Value::Null
+                } else {
+                    Value::Bool(true)
+                }
+            }
+            QuantifierType::Any => {
+                if true_count > 0 {
+                    Value::Bool(true)
+                } else if null_count > 0 {
+                    Value::Null
+                } else {
+                    Value::Bool(false)
+                }
+            }
+            QuantifierType::None => {
+                if true_count > 0 {
+                    Value::Bool(false)
+                } else if null_count > 0 {
+                    Value::Null
+                } else {
+                    Value::Bool(true)
+                }
+            }
+            QuantifierType::Single => {
+                if true_count == 1 && null_count == 0 {
+                    Value::Bool(true)
+                } else if true_count > 1 {
+                    Value::Bool(false)
+                } else if null_count > 0 {
+                    Value::Null
+                } else {
+                    Value::Bool(false)
+                }
+            }
         }
     }
 
@@ -573,6 +683,29 @@ impl<'a> Runtime<'a> {
                     })));
                 }
                 Ok(self.relationship_scan(relationship_pattern, Env::new()))
+            }
+            IR::PathBuilder(paths) => {
+                if let Some(child_idx) = child0_idx {
+                    return Ok(Box::new(self.run(&child_idx)?.try_map(move |vars| {
+                        let mut paths = paths.clone();
+                        let mut vars = vars.clone();
+                        for path in &mut paths {
+                            let p = path
+                                .vars
+                                .iter()
+                                .map(|v| {
+                                    vars.get(&v.to_string()).map_or_else(
+                                        || Err(format!("Variable {} not found", v.to_string())),
+                                        |value| Ok(value.clone()),
+                                    )
+                                })
+                                .collect::<Result<_, String>>()?;
+                            vars.insert(path.name.clone(), Value::Path(p));
+                        }
+                        Ok(vars)
+                    })));
+                }
+                Err(String::from("PathBuilder operator requires a child node"))
             }
             IR::Filter(tree) => {
                 if let Some(child_idx) = child0_idx {

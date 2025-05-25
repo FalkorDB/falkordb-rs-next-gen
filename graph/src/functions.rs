@@ -140,6 +140,7 @@ pub fn init_functions() -> Result<(), Functions> {
     funcs.add("property", property, false, 2, 2, FnType::Internal);
 
     funcs.add("toInteger", value_to_integer, false, 1, 1, FnType::Function);
+    funcs.add("toFloat", value_to_float, false, 1, 1, FnType::Function);
     funcs.add("toString", value_to_string, false, 1, 1, FnType::Function);
     funcs.add("labels", labels, false, 1, 1, FnType::Function);
     funcs.add("startnode", start_node, false, 1, 1, FnType::Function);
@@ -189,10 +190,11 @@ pub fn init_functions() -> Result<(), Functions> {
     funcs.add("range", range, false, 1, 3, FnType::Function);
     funcs.add("coalesce", coalesce, false, 1, usize::MAX, FnType::Function);
     funcs.add("keys", keys, false, 1, 1, FnType::Function);
+    funcs.add("toBoolean", to_boolean, false, 1, 1, FnType::Function);
 
     // aggregation functions
     funcs.add("collect", collect, false, 1, 2, FnType::Aggregation);
-    funcs.add("count", count, false, 1, 2, FnType::Aggregation);
+    funcs.add("count", count, false, 0, 2, FnType::Aggregation);
     funcs.add("sum", sum, false, 1, 2, FnType::Aggregation);
     funcs.add("max", max, false, 1, 2, FnType::Aggregation);
     funcs.add("min", min, false, 1, 2, FnType::Aggregation);
@@ -361,6 +363,9 @@ fn collect(
         (Some(a), Some(Value::Null), None) => {
             return Ok(Value::List(vec![a]));
         }
+        (Some(Value::Null), Some(Value::List(a)), None) => {
+            return Ok(Value::List(a));
+        }
         (Some(a), Some(Value::List(mut l)), None) => {
             l.push(a);
             return Ok(Value::List(l));
@@ -385,7 +390,12 @@ fn count(
         (Some(_), Some(Value::Int(a)), None) => {
             return Ok(Value::Int(a + 1));
         }
-
+        (Some(Value::Null), None, None) => {
+            return Ok(Value::Int(1));
+        }
+        (Some(Value::Int(a)), None, None) => {
+            return Ok(Value::Int(a + 1));
+        }
         _ => (),
     }
     Ok(Value::Null)
@@ -476,17 +486,46 @@ fn value_to_integer(
     }
 }
 
+fn value_to_float(
+    _runtime: &Runtime,
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    let len = args.len();
+    match args.into_iter().next() {
+        Some(Value::String(s)) => s.parse::<f64>().map(Value::Float).or(Ok(Value::Null)),
+        Some(v @ Value::Float(_)) => Ok(v),
+        Some(Value::Int(i)) => Ok(Value::Float(i as f64)),
+        Some(Value::Null) => Ok(Value::Null),
+        Some(arg) => Err(format!(
+            "Type mismatch: expected String, Boolean, Integer, Float, or Null but was {}",
+            arg.name()
+        )),
+        _ => Err(format!(
+            "Expected one argument for value_to_integer, instead {len}"
+        )),
+    }
+}
+
+fn value_string(value: &Value) -> Result<Rc<String>, String> {
+    match value {
+        Value::String(s) => Ok(s.clone()),
+        Value::Int(i) => Ok(Rc::new(i.to_string())),
+        Value::Bool(b) => Ok(Rc::new(String::from(if *b { "true" } else { "false" }))),
+        arg => Err(format!(
+            "Type mismatch: expected String, Boolean, Integer, Float, or Null but was {}",
+            arg.name()
+        )),
+    }
+}
+
 fn value_to_string(
     _runtime: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
     let len = args.len();
     match args.into_iter().next() {
-        Some(Value::String(s)) => Ok(Value::String(s)),
-        Some(arg) => Err(format!(
-            "Type mismatch: expected String, Boolean, Integer, Float, or Null but was {}",
-            arg.name()
-        )),
+        Some(Value::Null) => Ok(Value::Null),
+        Some(v) => Ok(Value::String(value_string(&v)?)),
         _ => Err(format!(
             "Expected one argument for value_to_integer, instead {len}"
         )),
@@ -1154,6 +1193,32 @@ fn keys(
         )),
         (Some(Value::Null), None) => Ok(Value::Null),
         _ => Err(String::from("Type mismatch: expected Map or Null")),
+    }
+}
+
+fn to_boolean(
+    _: &Runtime,
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    let mut iter = args.into_iter();
+    match iter.next() {
+        Some(Value::Bool(b)) => Ok(Value::Bool(b)),
+        Some(Value::String(s)) => {
+            if s.eq_ignore_ascii_case("true") {
+                Ok(Value::Bool(true))
+            } else if s.eq_ignore_ascii_case("false") {
+                Ok(Value::Bool(false))
+            } else {
+                Ok(Value::Null)
+            }
+        }
+        Some(Value::Int(n)) => Ok(Value::Bool(n != 0)),
+        Some(Value::Null) => Ok(Value::Null),
+        Some(v) => Err(format!(
+            "Type mismatch: expected Boolean, String, or Integer or Null but was {}",
+            v.name()
+        )),
+        None => unreachable!(),
     }
 }
 

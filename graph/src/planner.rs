@@ -3,7 +3,9 @@ use std::{fmt::Display, rc::Rc};
 use orx_tree::{Dyn, DynTree, NodeMut, NodeRef};
 
 use crate::{
-    ast::{ExprIR, NodePattern, Pattern, QueryIR, RelationshipPattern, SupportAggregation},
+    ast::{
+        ExprIR, NodePattern, PathPattern, Pattern, QueryIR, RelationshipPattern, SupportAggregation,
+    },
     functions::FnType,
     tree,
 };
@@ -25,6 +27,7 @@ pub enum IR {
     Delete(Vec<DynTree<ExprIR>>),
     NodeScan(NodePattern),
     RelationshipScan(RelationshipPattern),
+    PathBuilder(Vec<PathPattern>),
     Filter(DynTree<ExprIR>),
     Aggregate(
         Vec<Rc<String>>,
@@ -51,6 +54,7 @@ impl Display for IR {
             Self::Delete(_) => write!(f, "Delete"),
             Self::NodeScan(node) => write!(f, "NodeScan {node}"),
             Self::RelationshipScan(rel) => write!(f, "RelationshipScan {rel}"),
+            Self::PathBuilder(_) => write!(f, "PathBuilder"),
             Self::Filter(_) => write!(f, "Filter"),
             Self::Aggregate(_, _, _) => write!(f, "Aggregate"),
             Self::Project(_) => write!(f, "Project"),
@@ -91,14 +95,21 @@ impl Planner {
     ) -> DynTree<IR> {
         if pattern.relationships.is_empty() && !pattern.nodes.is_empty() {
             let mut iter = pattern.nodes.into_iter().rev();
-            let mut body = tree!(IR::NodeScan(iter.next().unwrap()));
+            let mut res = tree!(IR::NodeScan(iter.next().unwrap()));
             for node in iter {
-                body = tree!(IR::NodeScan(node), body);
+                res = tree!(IR::NodeScan(node), res);
             }
-            return body;
+            if !pattern.paths.is_empty() {
+                res = tree!(IR::PathBuilder(pattern.paths), res);
+            }
+            return res;
         }
         if pattern.relationships.len() == 1 {
-            return tree!(IR::RelationshipScan(pattern.relationships.pop().unwrap()));
+            let mut res = tree!(IR::RelationshipScan(pattern.relationships.pop().unwrap()));
+            if !pattern.paths.is_empty() {
+                res = tree!(IR::PathBuilder(pattern.paths), res);
+            }
+            return res;
         }
         tree!(IR::Empty)
     }

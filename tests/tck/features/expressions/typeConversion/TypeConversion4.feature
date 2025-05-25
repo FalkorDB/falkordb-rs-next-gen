@@ -53,7 +53,6 @@ Feature: TypeConversion4 - To String
       | 'true' |
     And no side effects
 
-  @skip
   Scenario: [3] `toString()` handling inlined boolean
     Given any graph
     When executing query:
@@ -65,7 +64,6 @@ Feature: TypeConversion4 - To String
       | 'false' |
     And no side effects
 
-  @skip
   Scenario: [4] `toString()` handling boolean properties
     Given an empty graph
     And having executed:

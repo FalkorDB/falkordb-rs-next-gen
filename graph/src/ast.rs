@@ -40,6 +40,8 @@ pub enum ExprIR {
     Modulo,
     FuncInvocation(String, FnType),
     Map,
+    Quantifier(QuantifierType, Rc<String>),
+    ListComprehension(Rc<String>),
 }
 
 impl Display for ExprIR {
@@ -82,6 +84,34 @@ impl Display for ExprIR {
             Self::Modulo => write!(f, "%"),
             Self::FuncInvocation(name, _) => write!(f, "{name}()"),
             Self::Map => write!(f, "{{}}"),
+            Self::Quantifier(quantifier_type, var_name) => {
+                write!(f, "{quantifier_type} {var_name}")
+            }
+            Self::ListComprehension(var) => {
+                write!(f, "list comp({var})")
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum QuantifierType {
+    All,
+    Any,
+    None,
+    Single,
+}
+
+impl Display for QuantifierType {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        match self {
+            Self::All => write!(f, "all"),
+            Self::Any => write!(f, "any"),
+            Self::None => write!(f, "none"),
+            Self::Single => write!(f, "single"),
         }
     }
 }
@@ -186,6 +216,24 @@ impl Validate for DynNode<'_, ExprIR> {
                 for expr in self.children() {
                     expr.validate(env)?;
                 }
+                Ok(())
+            }
+            ExprIR::Quantifier(_quantifier_type, var_name) => {
+                debug_assert_eq!(self.num_children(), 2);
+                self.child(0).validate(env)?;
+                env.insert(var_name.clone());
+                self.child(1).validate(env)?;
+                env.remove(var_name);
+                Ok(())
+            }
+            ExprIR::ListComprehension(var) => {
+                debug_assert!(0 < self.num_children() && self.num_children() <= 3);
+                self.child(0).validate(env)?;
+                env.insert(var.clone());
+                for expr in self.children().skip(1) {
+                    expr.validate(env)?;
+                }
+                env.remove(var);
                 Ok(())
             }
         }
@@ -494,6 +542,12 @@ impl QueryIR {
                     relationship.attrs.root().validate(env)?;
                     env.insert(relationship.alias.to_string());
                 }
+                for path in &p.paths {
+                    if env.contains(&path.name) {
+                        return Err(format!("Duplicate alias {}", path.name.as_str()));
+                    }
+                    env.insert(path.name.clone());
+                }
                 let first = iter.next().unwrap();
                 first.inner_validate(iter, env)
             }
@@ -594,8 +648,11 @@ impl QueryIR {
                 for (_, expr) in exprs.iter() {
                     expr.root().validate(env)?;
                 }
-                for (name, _) in exprs {
-                    env.insert(name.clone());
+                if !exprs.is_empty() {
+                    env.clear();
+                    for (name, _) in exprs {
+                        env.insert(name.clone());
+                    }
                 }
                 iter.next()
                     .map_or(Ok(()), |first| first.inner_validate(iter, env))

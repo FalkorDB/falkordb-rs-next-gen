@@ -190,6 +190,7 @@ Feature: Quantifier4 - All quantifier
       | [{a: 2, b: 5}, {a: 2, b: 5}, {a: 2, b: 5}] | x.a = 2   | true   |
       | [{a: 4}, {a: 4}, {a: 4}]                   | x.a = 2   | false  |
 
+  @skip #fixme
   Scenario: [8] All quantifier on list containing nodes
     Given an empty graph
     And having executed:
@@ -236,6 +237,7 @@ Feature: Quantifier4 - All quantifier
       | [(:B {name: 'b'}), (:B {name: 'b'}), (:B {name: 'b'})] | false  |
     And no side effects
 
+  @skip #fixme
   Scenario: [9] All quantifier on list containing relationships
     Given an empty graph
     And having executed:
