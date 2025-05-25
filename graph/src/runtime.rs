@@ -607,14 +607,13 @@ impl<'a> Runtime<'a> {
                             move |x, acc| {
                                 let mut x = x?;
                                 let mut acc = acc?;
-                                let mut tmp = trees1.iter();
                                 for (name, _) in trees1 {
                                     let value = acc.get(name).unwrap().clone();
                                     x.insert(name.clone(), value);
                                 }
-                                if let Some(tree) = tmp.next() {
-                                    let v = self.run_expr(tree.1.root(), &x)?;
-                                    acc.insert(tree.0.clone(), v);
+                                for (name, tree) in trees1 {
+                                    let v = self.run_expr(tree.root(), &x)?;
+                                    acc.insert(name.clone(), v);
                                 }
                                 Ok(acc)
                             },
