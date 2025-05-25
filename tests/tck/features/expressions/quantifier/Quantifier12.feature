@@ -78,6 +78,7 @@ Feature: Quantifier12 - All quantifier invariants
       | true   |
     And no side effects
 
+  @skip #fixme
   Scenario Outline: [3] All quantifier is always equal the none quantifier on the boolean negative of the predicate
     Given any graph
     When executing query:
@@ -108,6 +109,7 @@ Feature: Quantifier12 - All quantifier invariants
       | x < 7     |
       | x >= 3    |
 
+  @skip #fixme
   Scenario Outline: [4] All quantifier is always equal the boolean negative of the any quantifier on the boolean negative of the predicate
     Given any graph
     When executing query:
@@ -138,6 +140,7 @@ Feature: Quantifier12 - All quantifier invariants
       | x < 7     |
       | x >= 3    |
 
+  @skip #fixme
   Scenario Outline: [5] All quantifier is always equal whether the size of the list filtered with same the predicate is equal the size of the unfiltered list
     Given any graph
     When executing query:

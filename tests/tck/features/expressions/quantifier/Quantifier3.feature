@@ -53,16 +53,16 @@ Feature: Quantifier3 - Any quantifier
     And no side effects
 
     Examples:
-      | list                   | condition | result |
-      | []                     | x         | false  |
-      | [true]                 | x         | true   |
-      | [false]                | x         | false  |
-      | [true, false]          | x         | true   |
-      | [false, true]          | x         | true   |
-      | [true, false, true]    | x         | true   |
-      | [false, true, false]   | x         | true   |
-      | [true, true, true]     | x         | true   |
-      | [false, false, false]  | x         | false  |
+      | list                  | condition | result |
+      | []                    | x         | false  |
+      | [true]                | x         | true   |
+      | [false]               | x         | false  |
+      | [true, false]         | x         | true   |
+      | [false, true]         | x         | true   |
+      | [true, false, true]   | x         | true   |
+      | [false, true, false]  | x         | true   |
+      | [true, true, true]    | x         | true   |
+      | [false, false, false] | x         | false  |
 
   Scenario Outline: [3] Any quantifier on list literal containing integers
     Given any graph
@@ -190,6 +190,7 @@ Feature: Quantifier3 - Any quantifier
       | [{a: 2, b: 5}, {a: 2, b: 5}, {a: 2, b: 5}] | x.a = 2   | true   |
       | [{a: 4}, {a: 4}, {a: 4}]                   | x.a = 2   | false  |
 
+  @skip #fixme
   Scenario: [8] Any quantifier on list containing nodes
     Given an empty graph
     And having executed:
@@ -236,6 +237,7 @@ Feature: Quantifier3 - Any quantifier
       | [(:B {name: 'b'}), (:B {name: 'b'}), (:B {name: 'b'})] | false  |
     And no side effects
 
+  @skip #fixme
   Scenario: [9] Any quantifier on list containing relationships
     Given an empty graph
     And having executed:

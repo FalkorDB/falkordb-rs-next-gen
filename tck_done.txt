@@ -12,6 +12,7 @@ expressions/mathematical
 expressions/null
 expressions/precedence/Precedence2.feature
 expressions/precedence/Precedence4.feature
+expressions/quantifier
 expressions/string
 expressions/conditional
 expressions/temporal

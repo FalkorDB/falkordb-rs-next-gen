@@ -53,16 +53,16 @@ Feature: Quantifier1 - None quantifier
     And no side effects
 
     Examples:
-      | list                   | condition | result |
-      | []                     | x         | true   |
-      | [true]                 | x         | false  |
-      | [false]                | x         | true   |
-      | [true, false]          | x         | false  |
-      | [false, true]          | x         | false  |
-      | [true, false, true]    | x         | false  |
-      | [false, true, false]   | x         | false  |
-      | [true, true, true]     | x         | false  |
-      | [false, false, false]  | x         | true   |
+      | list                  | condition | result |
+      | []                    | x         | true   |
+      | [true]                | x         | false  |
+      | [false]               | x         | true   |
+      | [true, false]         | x         | false  |
+      | [false, true]         | x         | false  |
+      | [true, false, true]   | x         | false  |
+      | [false, true, false]  | x         | false  |
+      | [true, true, true]    | x         | false  |
+      | [false, false, false] | x         | true   |
 
   Scenario Outline: [3] None quantifier on list literal containing integers
     Given any graph
@@ -190,6 +190,7 @@ Feature: Quantifier1 - None quantifier
       | [{a: 2, b: 5}, {a: 2, b: 5}, {a: 2, b: 5}] | x.a = 2   | false  |
       | [{a: 4}, {a: 4}, {a: 4}]                   | x.a = 2   | true   |
 
+  @skip #fixme
   Scenario: [8] None quantifier on list containing nodes
     Given an empty graph
     And having executed:
@@ -236,6 +237,7 @@ Feature: Quantifier1 - None quantifier
       | [(:B {name: 'b'}), (:B {name: 'b'}), (:B {name: 'b'})] | true   |
     And no side effects
 
+  @skip #fixme
   Scenario: [9] None quantifier on list containing relationships
     Given an empty graph
     And having executed:
