@@ -176,6 +176,41 @@ where
     }
 }
 
+pub struct TryMapIter<I, T, E, F>
+where
+    I: Iterator<Item = Result<T, E>>,
+    F: Fn(T) -> Result<T, E>,
+{
+    iter: I,
+    func: F,
+    is_error: bool,
+}
+
+impl<I, T, E, F> Iterator for TryMapIter<I, T, E, F>
+where
+    I: Iterator<Item = Result<T, E>>,
+    F: Fn(T) -> Result<T, E>,
+{
+    type Item = Result<T, E>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.is_error {
+            return None; // If an error has already occurred, stop iterating
+        }
+
+        match self.iter.next() {
+            Some(Ok(value)) => Some((self.func)(value)),
+            Some(Err(err)) => {
+                self.is_error = true; // Mark that an error has occurred
+                Some(Err(err))
+            }
+            None => {
+                None // No more items to iterate
+            }
+        }
+    }
+}
+
 pub trait TryMap {
     fn try_map<T, E, F>(
         self,
@@ -198,8 +233,70 @@ where
         Self: Iterator<Item = Result<T, E>>,
         F: Fn(T) -> Result<T, E>,
     {
-        self.take_while(Result::is_ok)
-            .map(move |x| x.map_or_else(|_| unreachable!(), &func))
+        self.map(move |x| x.and_then(&func))
+    }
+}
+
+pub struct TryFlatMapIter<I, T, E, F, J>
+where
+    I: Iterator<Item = Result<T, E>>,
+    F: Fn(T) -> J,
+    J: Iterator<Item = Result<T, E>>,
+{
+    iter: I,
+    func: F,
+    is_error: bool,
+    flat_mapped: Option<J>,
+}
+
+impl<I, T, E, F, J> Iterator for TryFlatMapIter<I, T, E, F, J>
+where
+    I: Iterator<Item = Result<T, E>>,
+    F: Fn(T) -> J,
+    J: Iterator<Item = Result<T, E>>,
+{
+    type Item = Result<T, E>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.is_error {
+            return None; // If an error has already occurred, stop iterating
+        }
+
+        match self
+            .flat_mapped
+            .as_mut()
+            .map_or_else(|| None, std::iter::Iterator::next)
+        {
+            Some(Ok(flat_value)) => return Some(Ok(flat_value)),
+            Some(Err(err)) => {
+                self.is_error = true; // Mark that an error has occurred
+                return Some(Err(err));
+            }
+            None => {}
+        }
+
+        match self.iter.next() {
+            Some(Ok(value)) => {
+                self.flat_mapped = Some((self.func)(value));
+                match self
+                    .flat_mapped
+                    .as_mut()
+                    .map_or_else(|| None, std::iter::Iterator::next)
+                {
+                    Some(Ok(flat_value)) => Some(Ok(flat_value)),
+                    Some(Err(err)) => {
+                        self.is_error = true; // Mark that an error has occurred
+                        Some(Err(err))
+                    }
+                    None => self.next(),
+                }
+            }
+            Some(Err(err)) => {
+                self.is_error = true; // Mark that an error has occurred
+                Some(Err(err))
+            }
+            None => None, // No more items to iterate
+        }
     }
 }
 
