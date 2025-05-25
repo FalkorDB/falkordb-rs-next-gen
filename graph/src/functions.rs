@@ -653,7 +653,7 @@ fn split(
             } else {
                 let parts: Vec<Value> = string
                     .split(delimiter.as_str())
-                    .map(|s| Value::String(Rc::new(s.to_string())))
+                    .map(|s| Value::String(Rc::new(String::from(s))))
                     .collect();
                 Ok(Value::List(parts))
             }

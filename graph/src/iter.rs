@@ -55,7 +55,50 @@ where
     }
 }
 
-pub struct LazyReplace<I, F>
+pub trait Aggregate {
+    fn aggregate<K, V, F, G>(
+        self,
+        key_fn: F,
+        default_value: V,
+        agg_fn: G,
+    ) -> AggregateIter<Box<Self>, K, V, F, G>
+    where
+        Self: Iterator<Item = V>,
+        K: std::hash::Hash + Clone,
+        F: Fn(&V) -> K,
+        G: Fn(V, V) -> V,
+        V: Clone;
+}
+
+impl<I> Aggregate for I
+where
+    I: Iterator,
+{
+    fn aggregate<K, V, F, G>(
+        self,
+        key_fn: F,
+        default_value: V,
+        agg_fn: G,
+    ) -> AggregateIter<Box<I>, K, V, F, G>
+    where
+        Self: Iterator<Item = V>,
+        K: std::hash::Hash + Clone,
+        F: Fn(&V) -> K,
+        G: Fn(V, V) -> V,
+        V: Clone,
+    {
+        AggregateIter {
+            iter: Box::new(self),
+            key_fn,
+            default_value,
+            agg_fn,
+            cache: HashMap::new(),
+            finished: false,
+        }
+    }
+}
+
+pub struct LazyReplaceIter<I, F>
 where
     I: Iterator,
     F: FnOnce() -> I,
@@ -65,7 +108,7 @@ where
     yielded: bool, // Tracks whether any item has been yielded
 }
 
-impl<I, F> LazyReplace<I, F>
+impl<I, F> LazyReplaceIter<I, F>
 where
     I: Iterator,
     F: FnOnce() -> I,
@@ -82,7 +125,7 @@ where
     }
 }
 
-impl<I, F> Iterator for LazyReplace<I, F>
+impl<I, F> Iterator for LazyReplaceIter<I, F>
 where
     I: Iterator,
     F: FnOnce() -> I,
@@ -105,6 +148,31 @@ where
         }
 
         None
+    }
+}
+
+pub trait LazyReplace
+where
+    Self: Iterator,
+{
+    fn lazy_replace<F>(
+        self,
+        replacement: F,
+    ) -> LazyReplaceIter<Self, F>
+    where
+        Self: Sized,
+        F: FnOnce() -> Self;
+}
+
+impl<I> LazyReplace for I
+where
+    I: Iterator,
+{
+    fn lazy_replace<F: FnOnce() -> I>(
+        self,
+        replacement: F,
+    ) -> LazyReplaceIter<Self, F> {
+        LazyReplaceIter::new(self, replacement)
     }
 }
 

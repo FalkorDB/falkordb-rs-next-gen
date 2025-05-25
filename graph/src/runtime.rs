@@ -1,13 +1,13 @@
 use crate::ast::{NodePattern, Pattern, RelationshipPattern};
 use crate::functions::{FnType, Functions, GraphFn, get_functions};
-use crate::iter::{AggregateIter, LazyReplace, TryFlatMap, TryMap};
+use crate::iter::{Aggregate, LazyReplace, LazyReplaceIter, TryFlatMap, TryMap};
 use crate::value::Env;
 use crate::{ast::ExprIR, graph::Graph, planner::IR, value::Contains, value::Value};
 use ordermap::OrderMap;
 use orx_tree::{Dyn, DynNode, DynTree, NodeIdx, NodeRef};
 use std::cell::RefCell;
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::iter::{empty, once, repeat_n};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -374,7 +374,7 @@ impl<'a> Runtime<'a> {
             IR::Empty => Ok(Box::new(empty())),
             IR::Optional(vars) => {
                 if let Some(child_idx) = child0_idx {
-                    let iter = LazyReplace::new(self.run(&child_idx)?, move || {
+                    let iter = self.run(&child_idx)?.lazy_replace(move || {
                         let mut env = Env::new();
                         for v in vars {
                             env.insert(v.clone(), Value::Null);
@@ -536,8 +536,8 @@ impl<'a> Runtime<'a> {
                     return Ok(Box::new(self.run(&child_idx)?.try_flat_map(
                         move |vars| {
                             let cvars = vars.clone();
-                            let iter = LazyReplace::new(
-                                Box::new(self.run(child0_idx.as_ref().unwrap()).unwrap().try_map(
+                            let iter =
+                                (Box::new(self.run(child0_idx.as_ref().unwrap()).unwrap().try_map(
                                     move |v| {
                                         let mut vars = vars.clone();
                                         for (k, v) in v.iter() {
@@ -546,19 +546,18 @@ impl<'a> Runtime<'a> {
                                         Ok(vars)
                                     },
                                 ))
-                                    as Box<dyn Iterator<Item = Result<Env, String>>>,
-                                move || {
-                                    let mut vars = cvars.clone();
-                                    self.create(pattern, &mut vars);
-                                    Box::new(vec![Ok(vars)].into_iter())
-                                },
-                            );
+                                    as Box<dyn Iterator<Item = Result<Env, String>>>)
+                                    .lazy_replace(move || {
+                                        let mut vars = cvars.clone();
+                                        self.create(pattern, &mut vars);
+                                        Box::new(vec![Ok(vars)].into_iter())
+                                    });
                             Box::new(iter) as Box<dyn Iterator<Item = Result<Env, String>>>
                         },
                         |e| Box::new(once(Err(e))) as Box<dyn Iterator<Item = Result<Env, String>>>,
                     )));
                 }
-                let iter = LazyReplace::new(self.run(child0_idx.as_ref().unwrap())?, || {
+                let iter = self.run(child0_idx.as_ref().unwrap())?.lazy_replace(|| {
                     let mut vars = Env::new();
                     match self.create(pattern, &mut vars) {
                         Ok(()) => Box::new(vec![Ok(vars)].into_iter()),
@@ -611,45 +610,44 @@ impl<'a> Runtime<'a> {
                     for (name, _) in trees1 {
                         default_value.insert(name.clone(), Value::Null);
                     }
-                    let aggregator = AggregateIter {
-                        iter: self.run(&child_idx)?,
-                        key_fn: move |vars| {
-                            let vars = vars.clone()?;
-                            let mut return_vars = Env::new();
-                            for (name, tree) in trees {
-                                let value = self.run_expr(tree.root(), &vars)?;
-                                return_vars.insert(name.clone(), value);
+                    let aggregator = self
+                        .run(&child_idx)?
+                        .aggregate(
+                            move |vars| {
+                                let vars = vars.clone()?;
+                                let mut return_vars = Env::new();
+                                for (name, tree) in trees {
+                                    let value = self.run_expr(tree.root(), &vars)?;
+                                    return_vars.insert(name.clone(), value);
+                                }
+                                Ok::<Env, String>(return_vars)
+                            },
+                            Ok(default_value),
+                            move |x, acc| {
+                                let mut x = x?;
+                                let mut acc = acc?;
+                                let mut tmp = trees1.iter();
+                                for (name, _) in trees1 {
+                                    let value = acc.get(name).unwrap().clone();
+                                    x.insert(name.clone(), value);
+                                }
+                                if let Some(tree) = tmp.next() {
+                                    let v = self.run_expr(tree.1.root(), &x)?;
+                                    acc.insert(tree.0.clone(), v);
+                                }
+                                Ok(acc)
+                            },
+                        )
+                        .map(move |(key, v)| {
+                            let mut vars = v?;
+                            for (k, v) in key?.iter() {
+                                vars.insert(k.clone(), v.clone());
                             }
-                            Ok::<Env, String>(return_vars)
-                        },
-                        default_value: Ok(default_value),
-                        agg_fn: move |x, acc| {
-                            let mut x = x?;
-                            let mut acc = acc?;
-                            let mut tmp = trees1.iter();
                             for (name, _) in trees1 {
-                                let value = acc.get(name).unwrap().clone();
-                                x.insert(name.clone(), value);
+                                vars.insert(name.clone(), vars.get(name).unwrap().clone());
                             }
-                            if let Some(tree) = tmp.next() {
-                                let v = self.run_expr(tree.1.root(), &x)?;
-                                acc.insert(tree.0.clone(), v);
-                            }
-                            Ok(acc)
-                        },
-                        cache: HashMap::new(),
-                        finished: false,
-                    }
-                    .map(move |(key, v)| {
-                        let mut vars = v?;
-                        for (k, v) in key?.iter() {
-                            vars.insert(k.clone(), v.clone());
-                        }
-                        for (name, _) in trees1 {
-                            vars.insert(name.clone(), vars.get(name).unwrap().clone());
-                        }
-                        Ok(vars)
-                    });
+                            Ok(vars)
+                        });
                     return Ok(Box::new(aggregator));
                 }
                 Ok(Box::new(empty()))
