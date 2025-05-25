@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1747824763109,
+  "lastUpdate": 1748167946360,
   "repoUrl": "https://github.com/FalkorDB/falkordb-rs-next-gen",
   "entries": {
     "FalkorDB Benchmark": [
@@ -570,6 +570,44 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.05419247063841905",
             "extra": "mean: 4.807127541199998 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "avi.avni@gmail.com",
+            "name": "Avi Avni",
+            "username": "AviAvni"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0513b06b4e5fe5589a34b147bb309ee9cdc439d9",
+          "message": "refactor runtime to return the environment each time (#76)\n\n* refactor runtime to return the environment each time\n\n* rc string\n\n* use hashbrown map\n\n* fix hash for env\n\n* address review\n\n* use Rc for strings\n\n* use take while\n\n* remove to string\n\n* allow multiple aggregation\n\n* fix short circuit map and flatmap",
+          "timestamp": "2025-05-25T13:09:51+03:00",
+          "tree_id": "8091fcdd1f4ab0926b5235e5de72e8c673f44ae5",
+          "url": "https://github.com/FalkorDB/falkordb-rs-next-gen/commit/0513b06b4e5fe5589a34b147bb309ee9cdc439d9"
+        },
+        "date": 1748167945879,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/bench.py::test_return",
+            "value": 10764.309655497113,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000009248119235279944",
+            "extra": "mean: 92.89959430787282 usec\nrounds: 2354"
+          },
+          {
+            "name": "tests/bench.py::test_unwind",
+            "value": 0.20933593323672167,
+            "unit": "iter/sec",
+            "range": "stddev: 0.021076769486507555",
+            "extra": "mean: 4.7770107336000365 sec\nrounds: 5"
           }
         ]
       }
