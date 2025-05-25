@@ -137,6 +137,7 @@ pub fn init_functions() -> Result<(), Functions> {
     funcs.add("property", property, false, 2, 2, FnType::Internal);
 
     funcs.add("toInteger", value_to_integer, false, 1, 1, FnType::Function);
+    funcs.add("toFloat", value_to_float, false, 1, 1, FnType::Function);
     funcs.add("toString", value_to_string, false, 1, 1, FnType::Function);
     funcs.add("labels", labels, false, 1, 1, FnType::Function);
     funcs.add("startnode", start_node, false, 1, 1, FnType::Function);
@@ -484,6 +485,26 @@ fn value_to_integer(
     }
 }
 
+fn value_to_float(
+    _runtime: &Runtime,
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    let len = args.len();
+    match args.into_iter().next() {
+        Some(Value::String(s)) => s.parse::<f64>().map(Value::Float).or(Ok(Value::Null)),
+        Some(v @ Value::Float(_)) => Ok(v),
+        Some(Value::Int(i)) => Ok(Value::Float(i as f64)),
+        Some(Value::Null) => Ok(Value::Null),
+        Some(arg) => Err(format!(
+            "Type mismatch: expected String, Boolean, Integer, Float, or Null but was {}",
+            arg.name()
+        )),
+        _ => Err(format!(
+            "Expected one argument for value_to_integer, instead {len}"
+        )),
+    }
+}
+
 fn value_to_string(
     _runtime: &Runtime,
     args: Vec<Value>,
@@ -491,6 +512,8 @@ fn value_to_string(
     let len = args.len();
     match args.into_iter().next() {
         Some(Value::String(s)) => Ok(Value::String(s)),
+        Some(Value::Int(i)) => Ok(Value::String(i.to_string())),
+        Some(Value::Null) => Ok(Value::Null),
         Some(arg) => Err(format!(
             "Type mismatch: expected String, Boolean, Integer, Float, or Null but was {}",
             arg.name()

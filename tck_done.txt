@@ -14,6 +14,8 @@ expressions/precedence/Precedence2.feature
 expressions/precedence/Precedence4.feature
 expressions/string
 expressions/conditional
+expressions/temporal
+expressions/typeConversion
 clauses/create/Create1.feature
 clauses/create/Create2.feature
 clauses/create/Create3.feature
