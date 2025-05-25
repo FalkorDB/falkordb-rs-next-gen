@@ -57,7 +57,7 @@ pub struct Runtime<'a> {
     write: bool,
     pub pending: RefCell<Pending>,
     pub stats: RefCell<Stats>,
-    pub plan: DynTree<IR>,
+    pub plan: Rc<DynTree<IR>>,
 }
 
 trait ReturnNames {
@@ -84,7 +84,7 @@ impl<'a> Runtime<'a> {
         g: &'a RefCell<Graph>,
         parameters: BTreeMap<String, DynTree<ExprIR>>,
         write: bool,
-        plan: DynTree<IR>,
+        plan: Rc<DynTree<IR>>,
     ) -> Self {
         Self {
             functions: get_functions(),
