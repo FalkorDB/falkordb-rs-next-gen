@@ -11,10 +11,15 @@ use crate::{
 #[derive(Clone, Debug)]
 pub enum IR {
     Empty,
-    Optional(Vec<String>),
-    Call(String, Vec<DynTree<ExprIR>>),
-    Unwind(DynTree<ExprIR>, String),
-    UnwindRange(DynTree<ExprIR>, DynTree<ExprIR>, DynTree<ExprIR>, String),
+    Optional(Vec<Rc<String>>),
+    Call(Rc<String>, Vec<DynTree<ExprIR>>),
+    Unwind(DynTree<ExprIR>, Rc<String>),
+    UnwindRange(
+        DynTree<ExprIR>,
+        DynTree<ExprIR>,
+        DynTree<ExprIR>,
+        Rc<String>,
+    ),
     Create(Pattern),
     Merge(Pattern),
     Delete(Vec<DynTree<ExprIR>>),
@@ -22,11 +27,11 @@ pub enum IR {
     RelationshipScan(RelationshipPattern),
     Filter(DynTree<ExprIR>),
     Aggregate(
-        Vec<String>,
-        Vec<(String, DynTree<ExprIR>)>,
-        Vec<(String, DynTree<ExprIR>)>,
+        Vec<Rc<String>>,
+        Vec<(Rc<String>, DynTree<ExprIR>)>,
+        Vec<(Rc<String>, DynTree<ExprIR>)>,
     ),
-    Project(Vec<(String, DynTree<ExprIR>)>),
+    Project(Vec<(Rc<String>, DynTree<ExprIR>)>),
     Commit,
 }
 
@@ -101,7 +106,7 @@ impl Planner {
     fn plan_unwind(
         &self,
         expr: orx_tree::Tree<Dyn<ExprIR>>,
-        alias: String,
+        alias: Rc<String>,
     ) -> orx_tree::Tree<Dyn<IR>> {
         let root = expr.root();
         if matches!(root.data(), ExprIR::FuncInvocation(name, _) if name == "range") {
@@ -117,7 +122,7 @@ impl Planner {
 
     fn plan_project(
         &self,
-        exprs: Vec<(String, DynTree<ExprIR>)>,
+        exprs: Vec<(Rc<String>, DynTree<ExprIR>)>,
         write: bool,
     ) -> DynTree<IR> {
         let mut res = if exprs.iter().any(|e| e.1.root().is_aggregation()) {
@@ -127,7 +132,7 @@ impl Planner {
             for (name, mut expr) in exprs {
                 names.push(name.clone());
                 if expr.root().is_aggregation() {
-                    Self::plan_aggregation(Rc::new(name.clone()), &mut expr.root_mut());
+                    Self::plan_aggregation(name.clone(), &mut expr.root_mut());
                     aggregations.push((name, expr));
                 } else {
                     group_by_keys.push((name, expr));

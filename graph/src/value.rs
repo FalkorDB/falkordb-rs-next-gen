@@ -37,7 +37,7 @@ impl Hash for Value {
     }
 }
 
-pub struct Env(HashMap<String, Value>);
+pub struct Env(HashMap<Rc<String>, Value>);
 
 impl Env {
     #[must_use]
@@ -47,7 +47,7 @@ impl Env {
 
     pub fn insert(
         &mut self,
-        key: String,
+        key: Rc<String>,
         value: Value,
     ) {
         self.0.insert(key, value);
@@ -56,19 +56,19 @@ impl Env {
     #[must_use]
     pub fn get(
         &self,
-        key: &str,
+        key: &Rc<String>,
     ) -> Option<&Value> {
         self.0.get(key)
     }
 
     pub fn take(
         &mut self,
-        key: &str,
+        key: &Rc<String>,
     ) -> Option<Value> {
         self.0.remove(key)
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (&String, &Value)> {
+    pub fn iter(&self) -> impl Iterator<Item = (&Rc<String>, &Value)> {
         self.0.iter()
     }
 }

@@ -1,6 +1,6 @@
 use crate::ast::{NodePattern, Pattern, RelationshipPattern};
 use crate::functions::{FnType, Functions, GraphFn, get_functions};
-use crate::iter::{Aggregate, LazyReplace, LazyReplaceIter, TryFlatMap, TryMap};
+use crate::iter::{Aggregate, LazyReplace, TryFlatMap, TryMap};
 use crate::value::Env;
 use crate::{ast::ExprIR, graph::Graph, planner::IR, value::Contains, value::Value};
 use ordermap::OrderMap;
@@ -17,7 +17,7 @@ pub trait ReturnCallback {
         &self,
         graph: &RefCell<Graph>,
         env: Env,
-        return_names: &Vec<String>,
+        return_names: &Vec<Rc<String>>,
     );
 }
 
@@ -61,18 +61,18 @@ pub struct Runtime<'a> {
 }
 
 trait ReturnNames {
-    fn get_return_names(&self) -> Vec<String>;
+    fn get_return_names(&self) -> Vec<Rc<String>>;
 }
 
 impl ReturnNames for DynNode<'_, IR> {
-    fn get_return_names(&self) -> Vec<String> {
+    fn get_return_names(&self) -> Vec<Rc<String>> {
         match self.data() {
             IR::Project(trees) => trees.iter().map(|v| v.0.clone()).collect(),
             IR::Commit => self
                 .get_child(0)
                 .map_or(vec![], |child| child.get_return_names()),
             IR::Call(name, _) => vec![name.clone()],
-            IR::Aggregate(name, _, _) => name.clone(),
+            IR::Aggregate(names, _, _) => names.clone(),
             _ => vec![],
         }
     }
@@ -125,7 +125,10 @@ impl<'a> Runtime<'a> {
             relationships_deleted: stats.relationships_deleted,
             properties_set: stats.properties_set,
             properties_removed: stats.properties_removed,
-            return_names,
+            return_names: return_names
+                .into_iter()
+                .map(|v| String::from(v.as_str()))
+                .collect(),
         })
     }
 
@@ -772,14 +775,14 @@ impl<'a> Runtime<'a> {
             let (from_id, to_id) = {
                 let from_id = vars
                     .get(&rel.from.to_string())
-                    .ok_or_else(|| format!("Variable {} not found", rel.from))?;
+                    .ok_or_else(|| format!("Variable {} not found", rel.from.to_string()))?;
                 let from_id = match from_id {
                     Value::Node(id) => *id,
                     _ => return Err(String::from("Invalid node id")),
                 };
                 let to_id = vars
                     .get(&rel.to.to_string())
-                    .ok_or_else(|| format!("Variable {} not found", rel.to))?;
+                    .ok_or_else(|| format!("Variable {} not found", rel.to.to_string()))?;
                 let to_id = match to_id {
                     Value::Node(id) => *id,
                     _ => return Err(String::from("Invalid node id")),

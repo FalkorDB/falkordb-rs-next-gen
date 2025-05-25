@@ -89,14 +89,14 @@ impl Display for ExprIR {
 pub trait Validate {
     fn validate(
         self,
-        env: &mut HashSet<String>,
+        env: &mut HashSet<Rc<String>>,
     ) -> Result<(), String>;
 }
 
 impl Validate for DynNode<'_, ExprIR> {
     fn validate(
         self,
-        env: &mut HashSet<String>,
+        env: &mut HashSet<Rc<String>>,
     ) -> Result<(), String> {
         match self.data() {
             ExprIR::Null
@@ -110,7 +110,7 @@ impl Validate for DynNode<'_, ExprIR> {
             }
             ExprIR::Var(id) => {
                 debug_assert_eq!(self.num_children(), 0);
-                if env.contains(id.as_str()) {
+                if env.contains(id) {
                     Ok(())
                 } else {
                     Err(format!("'{id}' not defined"))
@@ -207,18 +207,15 @@ impl SupportAggregation for DynNode<'_, ExprIR> {
 
 #[derive(Debug, Clone)]
 pub enum Alias {
-    String(String),
+    String(Rc<String>),
     Anon(i32),
 }
 
-impl Display for Alias {
-    fn fmt(
-        &self,
-        f: &mut std::fmt::Formatter<'_>,
-    ) -> std::fmt::Result {
+impl Alias {
+    pub fn to_string(&self) -> Rc<String> {
         match self {
-            Self::String(s) => write!(f, "{s}"),
-            Self::Anon(id) => write!(f, "@anon{id}"),
+            Alias::String(s) => s.clone(),
+            Alias::Anon(i) => Rc::new(format!("${i}")),
         }
     }
 }
@@ -236,12 +233,12 @@ impl Display for NodePattern {
         f: &mut std::fmt::Formatter<'_>,
     ) -> std::fmt::Result {
         if self.labels.is_empty() {
-            return write!(f, "({})", self.alias);
+            return write!(f, "({})", self.alias.to_string());
         }
         write!(
             f,
             "({}:{})",
-            self.alias,
+            self.alias.to_string(),
             self.labels
                 .iter()
                 .map(|label| label.as_str())
@@ -286,21 +283,24 @@ impl Display for RelationshipPattern {
             return write!(
                 f,
                 "({})-[{}]-{}({})",
-                self.from, self.alias, direction, self.to
+                self.from.to_string(),
+                self.alias.to_string(),
+                direction,
+                self.to.to_string()
             );
         }
         write!(
             f,
             "({})-[{}:{}]-{}({})",
-            self.from,
-            self.alias,
+            self.from.to_string(),
+            self.alias.to_string(),
             self.types
                 .iter()
                 .map(|label| label.as_str())
                 .collect::<Vec<_>>()
                 .join("|"),
             direction,
-            self.to
+            self.to.to_string()
         )
     }
 }
@@ -329,14 +329,14 @@ impl RelationshipPattern {
 #[derive(Clone, Debug)]
 pub struct PathPattern {
     pub vars: Vec<Alias>,
-    pub name: String,
+    pub name: Rc<String>,
 }
 
 impl PathPattern {
     #[must_use]
     pub const fn new(
         vars: Vec<Alias>,
-        name: String,
+        name: Rc<String>,
     ) -> Self {
         Self { vars, name }
     }
@@ -384,15 +384,15 @@ impl Pattern {
 
 #[derive(Debug)]
 pub enum QueryIR {
-    Call(String, Vec<DynTree<ExprIR>>),
+    Call(Rc<String>, Vec<DynTree<ExprIR>>),
     Match(Pattern, bool),
-    Unwind(DynTree<ExprIR>, String),
+    Unwind(DynTree<ExprIR>, Rc<String>),
     Merge(Pattern),
     Where(DynTree<ExprIR>),
     Create(Pattern),
     Delete(Vec<DynTree<ExprIR>>),
-    With(Vec<(String, DynTree<ExprIR>)>, bool),
-    Return(Vec<(String, DynTree<ExprIR>)>, bool),
+    With(Vec<(Rc<String>, DynTree<ExprIR>)>, bool),
+    Return(Vec<(Rc<String>, DynTree<ExprIR>)>, bool),
     Query(Vec<QueryIR>, bool),
 }
 
@@ -461,7 +461,7 @@ impl QueryIR {
     fn inner_validate<'a, T>(
         &mut self,
         mut iter: T,
-        env: &mut HashSet<String>,
+        env: &mut HashSet<Rc<String>>,
     ) -> Result<(), String>
     where
         T: Iterator<Item = &'a mut Self>,
@@ -502,7 +502,7 @@ impl QueryIR {
                 if env.contains(v) {
                     return Err(format!("Duplicate alias {v}"));
                 }
-                env.insert((*v).to_string());
+                env.insert(v.clone());
                 let first = iter.next().unwrap();
                 first.inner_validate(iter, env)
             }
@@ -543,7 +543,7 @@ impl QueryIR {
                             path.name
                         ));
                     }
-                    env.insert(path.name.to_string());
+                    env.insert(path.name.clone());
                 }
                 let mut remove = Vec::new();
                 for (i, node) in p.nodes.iter().enumerate() {

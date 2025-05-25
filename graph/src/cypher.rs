@@ -43,12 +43,12 @@ enum Keyword {
 
 #[derive(Debug, PartialEq, Clone)]
 enum Token {
-    Ident(String),
-    Keyword(Keyword, String),
+    Ident(Rc<String>),
+    Keyword(Keyword, Rc<String>),
     Parameter(String),
     Integer(i64),
     Float(f64),
-    String(String),
+    String(Rc<String>),
     LBrace,
     RBrace,
     LBracket,
@@ -226,9 +226,15 @@ impl<'a> Lexer<'a> {
                         len += c.len_utf8();
                     }
                     if !end {
-                        return (Token::Error(str[pos + 1..pos + len].to_string()), len + 1);
+                        return (
+                            Token::Error(String::from(&str[pos + 1..pos + len])),
+                            len + 1,
+                        );
                     }
-                    (Token::String(str[pos + 1..pos + len].to_string()), len + 1)
+                    (
+                        Token::String(Rc::new(String::from(&str[pos + 1..pos + len]))),
+                        len + 1,
+                    )
                 }
                 '\"' => {
                     let mut len = 1;
@@ -241,9 +247,15 @@ impl<'a> Lexer<'a> {
                         len += c.len_utf8();
                     }
                     if !end {
-                        return (Token::Error(str[pos + 1..pos + len].to_string()), len + 1);
+                        return (
+                            Token::Error(String::from(&str[pos + 1..pos + len])),
+                            len + 1,
+                        );
                     }
-                    (Token::String(str[pos + 1..pos + len].to_string()), len + 1)
+                    (
+                        Token::String(Rc::new(String::from(&str[pos + 1..pos + len]))),
+                        len + 1,
+                    )
                 }
                 '0'..='9' => Self::lex_numeric(str, chars, pos, 1),
                 '$' => {
@@ -251,7 +263,7 @@ impl<'a> Lexer<'a> {
                     while let Some('a'..='z' | 'A'..='Z' | '0'..='9') = chars.next() {
                         len += 1;
                     }
-                    let token = Token::Parameter(str[pos + 1..pos + len].to_string());
+                    let token = Token::Parameter(String::from(&str[pos + 1..pos + len]));
                     (token, len)
                 }
                 'a'..='z' | 'A'..='Z' | '_' => {
@@ -264,8 +276,13 @@ impl<'a> Lexer<'a> {
                         .iter()
                         .find(|&other| str[pos..pos + len].eq_ignore_ascii_case(other.0))
                         .map_or_else(
-                            || Token::Ident(str[pos..pos + len].to_string()),
-                            |o| Token::Keyword(o.1.clone(), str[pos..pos + len].to_string()),
+                            || Token::Ident(Rc::new(String::from(&str[pos..pos + len]))),
+                            |o| {
+                                Token::Keyword(
+                                    o.1.clone(),
+                                    Rc::new(String::from(&str[pos..pos + len])),
+                                )
+                            },
                         );
                     (token, len)
                 }
@@ -280,9 +297,15 @@ impl<'a> Lexer<'a> {
                         len += c.len_utf8();
                     }
                     if !end {
-                        return (Token::Error(str[pos + 1..pos + len].to_string()), len + 1);
+                        return (
+                            Token::Error(String::from(&str[pos + 1..pos + len])),
+                            len + 1,
+                        );
                     }
-                    (Token::Ident(str[pos + 1..pos + len].to_string()), len + 1)
+                    (
+                        Token::Ident(Rc::new(String::from(&str[pos + 1..pos + len]))),
+                        len + 1,
+                    )
                 }
                 _ => (
                     Token::Error(format!("Invalid input at pos: {pos} at char {char}")),
@@ -310,7 +333,7 @@ impl<'a> Lexer<'a> {
                 break;
             }
         }
-        let str = str[pos..pos + len].to_string();
+        let str = String::from(&str[pos..pos + len]);
         let token = Lexer::str2number_token(&str);
         (token, len)
     }
@@ -444,13 +467,13 @@ impl<'a> Parser<'a> {
     ) -> Result<(BTreeMap<String, DynTree<ExprIR>>, &'a str), String> {
         match self.lexer.current() {
             Token::Ident(id) => {
-                if id == "CYPHER" {
+                if id.as_str() == "CYPHER" {
                     self.lexer.next();
                     let mut params = BTreeMap::new();
                     while let Token::Ident(id) = self.lexer.current() {
                         self.lexer.next();
                         match_token!(self.lexer, Equal);
-                        params.insert(id, self.parse_expr()?);
+                        params.insert(String::from(id.as_str()), self.parse_expr()?);
                     }
                     Ok((params, &self.lexer.str[self.lexer.pos..]))
                 } else {
@@ -561,14 +584,19 @@ impl<'a> Parser<'a> {
         ))
     }
 
-    fn parse_dotted_ident(&mut self) -> Result<String, String> {
-        let mut ident = self.parse_ident()?;
+    fn parse_dotted_ident(&mut self) -> Result<Rc<String>, String> {
+        let mut idents = vec![self.parse_ident()?];
         while self.lexer.current() == Token::Dot {
             self.lexer.next();
-            ident.push('.');
-            ident.push_str(&self.parse_ident()?);
+            idents.push(self.parse_ident()?);
         }
-        Ok(ident)
+        Ok(Rc::new(
+            idents
+                .iter()
+                .map(|label| label.as_str())
+                .collect::<Vec<_>>()
+                .join("."),
+        ))
     }
 
     fn parse_match_clause(
@@ -758,7 +786,7 @@ impl<'a> Parser<'a> {
                     ); self.parse_expression_list(ExpressionListType::ZeroOrMoreClosedBy(RParen))?));
                 }
                 self.lexer.set_pos(pos);
-                Ok(tree!(ExprIR::Var(Rc::new(ident))))
+                Ok(tree!(ExprIR::Var(ident)))
             }
             Token::Parameter(param) => {
                 self.lexer.next();
@@ -787,7 +815,7 @@ impl<'a> Parser<'a> {
             }
             Token::String(s) => {
                 self.lexer.next();
-                Ok(tree!(ExprIR::String(Rc::new(s))))
+                Ok(tree!(ExprIR::String(s)))
             }
             Token::LBrace => {
                 self.lexer.next();
@@ -813,9 +841,9 @@ impl<'a> Parser<'a> {
             self.lexer.next();
             let ident = self.parse_ident()?;
             expr = tree!(
-                ExprIR::FuncInvocation("property".to_string(), FnType::Internal),
+                ExprIR::FuncInvocation(String::from("property"), FnType::Internal),
                 expr,
-                tree!(ExprIR::String(Rc::new(ident)))
+                tree!(ExprIR::String(ident))
             );
         }
 
@@ -913,7 +941,7 @@ impl<'a> Parser<'a> {
                 match_token!(self.lexer => With);
                 let rhs = self.parse_add_sub_expr()?;
                 Ok(tree!(
-                    ExprIR::FuncInvocation("starts_with".to_string(), FnType::Internal),
+                    ExprIR::FuncInvocation(String::from("starts_with"), FnType::Internal),
                     lhs,
                     rhs
                 ))
@@ -923,7 +951,7 @@ impl<'a> Parser<'a> {
                 match_token!(self.lexer => With);
                 let rhs = self.parse_add_sub_expr()?;
                 Ok(tree!(
-                    ExprIR::FuncInvocation("ends_with".to_string(), FnType::Internal),
+                    ExprIR::FuncInvocation(String::from("ends_with"), FnType::Internal),
                     lhs,
                     rhs
                 ))
@@ -932,7 +960,7 @@ impl<'a> Parser<'a> {
                 self.lexer.next();
                 let rhs = self.parse_add_sub_expr()?;
                 Ok(tree!(
-                    ExprIR::FuncInvocation("contains".to_string(), FnType::Internal),
+                    ExprIR::FuncInvocation(String::from("contains"), FnType::Internal),
                     lhs,
                     rhs
                 ))
@@ -941,7 +969,7 @@ impl<'a> Parser<'a> {
                 self.lexer.next();
                 let rhs = self.parse_add_sub_expr()?;
                 Ok(tree!(
-                    ExprIR::FuncInvocation("regex_matches".to_string(), FnType::Internal),
+                    ExprIR::FuncInvocation(String::from("regex_matches"), FnType::Internal),
                     lhs,
                     rhs
                 ))
@@ -987,7 +1015,7 @@ impl<'a> Parser<'a> {
         self.parse_or_expr()
     }
 
-    fn parse_ident(&mut self) -> Result<String, String> {
+    fn parse_ident(&mut self) -> Result<Rc<String>, String> {
         match self.lexer.current() {
             Token::Ident(id) | Token::Keyword(_, id) => {
                 self.lexer.next();
@@ -997,7 +1025,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_named_exprs(&mut self) -> Result<Vec<(String, DynTree<ExprIR>)>, String> {
+    fn parse_named_exprs(&mut self) -> Result<Vec<(Rc<String>, DynTree<ExprIR>)>, String> {
         let mut named_exprs = Vec::new();
         loop {
             let pos = self.lexer.pos;
@@ -1006,9 +1034,12 @@ impl<'a> Parser<'a> {
                 self.lexer.next();
                 named_exprs.push((self.parse_ident()?, expr));
             } else if let ExprIR::Var(id) = expr.root().data() {
-                named_exprs.push((String::from(id.as_str()), expr));
+                named_exprs.push((id.clone(), expr));
             } else {
-                named_exprs.push((self.lexer.str[pos..self.lexer.pos].to_string(), expr));
+                named_exprs.push((
+                    Rc::new(String::from(&self.lexer.str[pos..self.lexer.pos])),
+                    expr,
+                ));
             }
             match self.lexer.current() {
                 Token::Comma => self.lexer.next(),
@@ -1073,7 +1104,7 @@ impl<'a> Parser<'a> {
             };
             let mut types = vec![];
             while optional_match_token!(self.lexer, Colon) {
-                types.push(Rc::new(self.parse_ident()?));
+                types.push(self.parse_ident()?);
                 optional_match_token!(self.lexer, Pipe);
             }
             let attrs = self.parse_map()?;
@@ -1109,7 +1140,7 @@ impl<'a> Parser<'a> {
         let mut labels = Vec::new();
         while self.lexer.current() == Token::Colon {
             self.lexer.next();
-            labels.push(Rc::new(self.parse_ident()?));
+            labels.push(self.parse_ident()?);
         }
         Ok(labels)
     }
@@ -1128,7 +1159,7 @@ impl<'a> Parser<'a> {
                     self.lexer.next();
                     match_token!(self.lexer, Colon);
                     let value = self.parse_expr()?;
-                    attrs.push(tree!(ExprIR::Var(Rc::new(key)), value));
+                    attrs.push(tree!(ExprIR::Var(key), value));
 
                     match self.lexer.current() {
                         Token::Comma => self.lexer.next(),

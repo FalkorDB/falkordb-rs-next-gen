@@ -11,6 +11,7 @@ use redis_module::{
 use std::cell::RefCell;
 use std::os::raw::c_void;
 use std::ptr::null_mut;
+use std::rc::Rc;
 
 const EMPTY_KEY_ERR: RedisResult = Err(RedisError::Str("ERR Invalid graph operation on empty key"));
 
@@ -73,7 +74,7 @@ unsafe extern "C" fn my_free(value: *mut c_void) {
 fn raw_value_to_redis_value(
     g: &RefCell<Graph>,
     mut env: Env,
-    return_names: &Vec<String>,
+    return_names: &Vec<Rc<String>>,
 ) -> RedisValue {
     return_names
         .iter()
@@ -187,7 +188,7 @@ impl ReturnCallback for RedisValuesCollector {
         &self,
         graph: &RefCell<Graph>,
         env: Env,
-        return_names: &Vec<String>,
+        return_names: &Vec<Rc<String>>,
     ) {
         self.res
             .borrow_mut()
