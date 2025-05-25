@@ -296,7 +296,7 @@ impl OrderedEnum for Value {
 }
 
 #[derive(Debug, PartialEq)]
-enum DisjointOrNull {
+pub enum DisjointOrNull {
     Disjoint,
     ComparedNull,
     NaN,
@@ -319,7 +319,7 @@ impl Value {
         }
     }
 
-    fn compare_value(
+    pub fn compare_value(
         &self,
         b: &Self,
     ) -> (Ordering, DisjointOrNull) {

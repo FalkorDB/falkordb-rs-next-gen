@@ -11,9 +11,7 @@ expressions/literals
 expressions/map
 expressions/mathematical
 expressions/null
-expressions/precedence/Precedence1.feature
-expressions/precedence/Precedence2.feature
-expressions/precedence/Precedence4.feature
+expressions/precedence
 expressions/quantifier
 expressions/string
 expressions/temporal

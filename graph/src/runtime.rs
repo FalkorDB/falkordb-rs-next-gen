@@ -1,7 +1,7 @@
 use crate::ast::{NodePattern, Pattern, QuantifierType, RelationshipPattern};
 use crate::functions::{FnType, Functions, GraphFn, get_functions};
 use crate::iter::{Aggregate, LazyReplace, TryFlatMap, TryMap};
-use crate::value::Env;
+use crate::value::{DisjointOrNull, Env};
 use crate::{ast::ExprIR, graph::Graph, planner::IR, value::Contains, value::Value};
 use ordermap::OrderMap;
 use orx_tree::{Dyn, DynNode, DynTree, NodeIdx, NodeRef};
@@ -264,35 +264,39 @@ impl<'a> Runtime<'a> {
             ExprIR::Neq => all_not_equals(ir.children().map(|ir| self.run_expr(ir, env))),
             ExprIR::Lt => match self
                 .run_expr(ir.child(0), env)?
-                .partial_cmp(&self.run_expr(ir.child(1), env)?)
+                .compare_value(&self.run_expr(ir.child(1), env)?)
             {
-                Some(Ordering::Less) => Ok(Value::Bool(true)),
-                Some(Ordering::Greater | Ordering::Equal) => Ok(Value::Bool(false)),
-                None => Ok(Value::Null),
+                (_, DisjointOrNull::ComparedNull | DisjointOrNull::Disjoint) => Ok(Value::Null),
+                (_, DisjointOrNull::NaN) => Ok(Value::Bool(false)),
+                (Ordering::Less, _) => Ok(Value::Bool(true)),
+                _ => Ok(Value::Bool(false)),
             },
             ExprIR::Gt => match self
                 .run_expr(ir.child(0), env)?
-                .partial_cmp(&self.run_expr(ir.child(1), env)?)
+                .compare_value(&self.run_expr(ir.child(1), env)?)
             {
-                Some(Ordering::Greater) => Ok(Value::Bool(true)),
-                Some(Ordering::Less | Ordering::Equal) => Ok(Value::Bool(false)),
-                None => Ok(Value::Null),
+                (_, DisjointOrNull::ComparedNull | DisjointOrNull::Disjoint) => Ok(Value::Null),
+                (_, DisjointOrNull::NaN) => Ok(Value::Bool(false)),
+                (Ordering::Greater, _) => Ok(Value::Bool(true)),
+                _ => Ok(Value::Bool(false)),
             },
             ExprIR::Le => match self
                 .run_expr(ir.child(0), env)?
-                .partial_cmp(&self.run_expr(ir.child(1), env)?)
+                .compare_value(&self.run_expr(ir.child(1), env)?)
             {
-                Some(Ordering::Less | Ordering::Equal) => Ok(Value::Bool(true)),
-                Some(Ordering::Greater) => Ok(Value::Bool(false)),
-                None => Ok(Value::Null),
+                (_, DisjointOrNull::ComparedNull | DisjointOrNull::Disjoint) => Ok(Value::Null),
+                (_, DisjointOrNull::NaN) => Ok(Value::Bool(false)),
+                (Ordering::Less | Ordering::Equal, _) => Ok(Value::Bool(true)),
+                _ => Ok(Value::Bool(false)),
             },
             ExprIR::Ge => match self
                 .run_expr(ir.child(0), env)?
-                .partial_cmp(&self.run_expr(ir.child(1), env)?)
+                .compare_value(&self.run_expr(ir.child(1), env)?)
             {
-                Some(Ordering::Greater | Ordering::Equal) => Ok(Value::Bool(true)),
-                Some(Ordering::Less) => Ok(Value::Bool(false)),
-                None => Ok(Value::Null),
+                (_, DisjointOrNull::ComparedNull | DisjointOrNull::Disjoint) => Ok(Value::Null),
+                (_, DisjointOrNull::NaN) => Ok(Value::Bool(false)),
+                (Ordering::Greater | Ordering::Equal, _) => Ok(Value::Bool(true)),
+                _ => Ok(Value::Bool(false)),
             },
             ExprIR::In => {
                 let value = self.run_expr(ir.child(0), env)?;
