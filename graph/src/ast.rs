@@ -1,4 +1,4 @@
-use std::{collections::HashSet, fmt::Display};
+use std::{collections::HashSet, fmt::Display, rc::Rc};
 
 use orx_tree::{DynNode, DynTree, NodeRef};
 
@@ -10,8 +10,8 @@ pub enum ExprIR {
     Bool(bool),
     Integer(i64),
     Float(f64),
-    String(String),
-    Var(String),
+    String(Rc<String>),
+    Var(Rc<String>),
     Parameter(String),
     List,
     Length,
@@ -40,9 +40,8 @@ pub enum ExprIR {
     Modulo,
     FuncInvocation(String, FnType),
     Map,
-    Set(String),
-    Quantifier(QuantifierType, String),
-    ListComprehension(String, bool, bool), // var, has where, has expression
+    Quantifier(QuantifierType, Rc<String>),
+    ListComprehension(Rc<String>, bool, bool), // var, has where, has expression
 }
 
 impl Display for ExprIR {
@@ -85,7 +84,6 @@ impl Display for ExprIR {
             Self::Modulo => write!(f, "%"),
             Self::FuncInvocation(name, _) => write!(f, "{name}()"),
             Self::Map => write!(f, "{{}}"),
-            Self::Set(id) => write!(f, "set({id})"),
             Self::Quantifier(quantifier_type, var_name) => {
                 write!(f, "{quantifier_type} {var_name}")
             }
@@ -121,14 +119,14 @@ impl Display for QuantifierType {
 pub trait Validate {
     fn validate(
         self,
-        env: &mut HashSet<String>,
+        env: &mut HashSet<Rc<String>>,
     ) -> Result<(), String>;
 }
 
 impl Validate for DynNode<'_, ExprIR> {
     fn validate(
         self,
-        env: &mut HashSet<String>,
+        env: &mut HashSet<Rc<String>>,
     ) -> Result<(), String> {
         match self.data() {
             ExprIR::Null
@@ -220,28 +218,22 @@ impl Validate for DynNode<'_, ExprIR> {
                 }
                 Ok(())
             }
-            ExprIR::Set(x) => {
-                debug_assert_eq!(self.num_children(), 1);
-                self.child(0).validate(env)?;
-                env.insert(x.to_string());
-                Ok(())
-            }
             ExprIR::Quantifier(_quantifier_type, var_name) => {
                 debug_assert_eq!(self.num_children(), 2);
                 self.child(0).validate(env)?;
-                env.insert(var_name.to_string());
+                env.insert(var_name.clone());
                 self.child(1).validate(env)?;
                 env.remove(var_name);
                 Ok(())
             }
-            ExprIR::ListComprehension(var, _has_where, _has_expr) => {
+            ExprIR::ListComprehension(var_name, _has_where, _has_expr) => {
                 debug_assert!(0 < self.num_children() && self.num_children() <= 3);
                 self.child(0).validate(env)?;
-                env.insert(var.to_string());
+                env.insert(var_name.clone());
                 for expr in self.children().skip(1) {
                     expr.validate(env)?;
                 }
-                env.remove(var);
+                env.remove(var_name);
                 Ok(())
             }
         }
@@ -256,7 +248,6 @@ impl SupportAggregation for DynNode<'_, ExprIR> {
     fn is_aggregation(&self) -> bool {
         match self.data() {
             ExprIR::FuncInvocation(_, FnType::Aggregation) => true,
-            ExprIR::Set(_) => self.child(0).is_aggregation(),
             _ => false,
         }
     }
@@ -264,18 +255,15 @@ impl SupportAggregation for DynNode<'_, ExprIR> {
 
 #[derive(Debug, Clone)]
 pub enum Alias {
-    String(String),
+    String(Rc<String>),
     Anon(i32),
 }
 
-impl Display for Alias {
-    fn fmt(
-        &self,
-        f: &mut std::fmt::Formatter<'_>,
-    ) -> std::fmt::Result {
+impl Alias {
+    pub fn to_string(&self) -> Rc<String> {
         match self {
-            Self::String(s) => write!(f, "{s}"),
-            Self::Anon(id) => write!(f, "@anon{id}"),
+            Alias::String(s) => s.clone(),
+            Alias::Anon(i) => Rc::new(format!("${i}")),
         }
     }
 }
@@ -283,7 +271,7 @@ impl Display for Alias {
 #[derive(Clone, Debug)]
 pub struct NodePattern {
     pub alias: Alias,
-    pub labels: Vec<String>,
+    pub labels: Vec<Rc<String>>,
     pub attrs: DynTree<ExprIR>,
 }
 
@@ -293,9 +281,18 @@ impl Display for NodePattern {
         f: &mut std::fmt::Formatter<'_>,
     ) -> std::fmt::Result {
         if self.labels.is_empty() {
-            return write!(f, "({})", self.alias);
+            return write!(f, "({})", self.alias.to_string());
         }
-        write!(f, "({}:{})", self.alias, self.labels.join(":"))
+        write!(
+            f,
+            "({}:{})",
+            self.alias.to_string(),
+            self.labels
+                .iter()
+                .map(|label| label.as_str())
+                .collect::<Vec<_>>()
+                .join(":")
+        )
     }
 }
 
@@ -303,7 +300,7 @@ impl NodePattern {
     #[must_use]
     pub const fn new(
         alias: Alias,
-        labels: Vec<String>,
+        labels: Vec<Rc<String>>,
         attrs: DynTree<ExprIR>,
     ) -> Self {
         Self {
@@ -317,7 +314,7 @@ impl NodePattern {
 #[derive(Clone, Debug)]
 pub struct RelationshipPattern {
     pub alias: Alias,
-    pub types: Vec<String>,
+    pub types: Vec<Rc<String>>,
     pub attrs: DynTree<ExprIR>,
     pub from: Alias,
     pub to: Alias,
@@ -334,17 +331,24 @@ impl Display for RelationshipPattern {
             return write!(
                 f,
                 "({})-[{}]-{}({})",
-                self.from, self.alias, direction, self.to
+                self.from.to_string(),
+                self.alias.to_string(),
+                direction,
+                self.to.to_string()
             );
         }
         write!(
             f,
             "({})-[{}:{}]-{}({})",
-            self.from,
-            self.alias,
-            self.types.join("|"),
+            self.from.to_string(),
+            self.alias.to_string(),
+            self.types
+                .iter()
+                .map(|label| label.as_str())
+                .collect::<Vec<_>>()
+                .join("|"),
             direction,
-            self.to
+            self.to.to_string()
         )
     }
 }
@@ -353,7 +357,7 @@ impl RelationshipPattern {
     #[must_use]
     pub const fn new(
         alias: Alias,
-        types: Vec<String>,
+        types: Vec<Rc<String>>,
         attrs: DynTree<ExprIR>,
         from: Alias,
         to: Alias,
@@ -373,14 +377,14 @@ impl RelationshipPattern {
 #[derive(Clone, Debug)]
 pub struct PathPattern {
     pub vars: Vec<Alias>,
-    pub name: String,
+    pub name: Rc<String>,
 }
 
 impl PathPattern {
     #[must_use]
     pub const fn new(
         vars: Vec<Alias>,
-        name: String,
+        name: Rc<String>,
     ) -> Self {
         Self { vars, name }
     }
@@ -428,15 +432,15 @@ impl Pattern {
 
 #[derive(Debug)]
 pub enum QueryIR {
-    Call(String, Vec<DynTree<ExprIR>>),
+    Call(Rc<String>, Vec<DynTree<ExprIR>>),
     Match(Pattern, bool),
-    Unwind(DynTree<ExprIR>, String),
+    Unwind(DynTree<ExprIR>, Rc<String>),
     Merge(Pattern),
     Where(DynTree<ExprIR>),
     Create(Pattern),
     Delete(Vec<DynTree<ExprIR>>),
-    With(Vec<DynTree<ExprIR>>, bool),
-    Return(Vec<DynTree<ExprIR>>, bool),
+    With(Vec<(Rc<String>, DynTree<ExprIR>)>, bool),
+    Return(Vec<(Rc<String>, DynTree<ExprIR>)>, bool),
     Query(Vec<QueryIR>, bool),
 }
 
@@ -473,15 +477,15 @@ impl Display for QueryIR {
             }
             Self::With(exprs, _) => {
                 writeln!(f, "WITH:")?;
-                for expr in exprs {
-                    write!(f, "{expr}")?;
+                for (name, _) in exprs {
+                    write!(f, "{name}")?;
                 }
                 Ok(())
             }
             Self::Return(exprs, _) => {
                 writeln!(f, "RETURN:")?;
-                for expr in exprs {
-                    write!(f, "{expr}")?;
+                for (name, _) in exprs {
+                    write!(f, "{name}")?;
                 }
                 Ok(())
             }
@@ -505,7 +509,7 @@ impl QueryIR {
     fn inner_validate<'a, T>(
         &mut self,
         mut iter: T,
-        env: &mut HashSet<String>,
+        env: &mut HashSet<Rc<String>>,
     ) -> Result<(), String>
     where
         T: Iterator<Item = &'a mut Self>,
@@ -546,7 +550,7 @@ impl QueryIR {
                 if env.contains(v) {
                     return Err(format!("Duplicate alias {v}"));
                 }
-                env.insert((*v).to_string());
+                env.insert(v.clone());
                 let first = iter.next().unwrap();
                 first.inner_validate(iter, env)
             }
@@ -587,7 +591,7 @@ impl QueryIR {
                             path.name
                         ));
                     }
-                    env.insert(path.name.to_string());
+                    env.insert(path.name.clone());
                 }
                 let mut remove = Vec::new();
                 for (i, node) in p.nodes.iter().enumerate() {
@@ -627,9 +631,19 @@ impl QueryIR {
                 iter.next()
                     .map_or(Ok(()), |first| first.inner_validate(iter, env))
             }
-            Self::Delete(exprs) | Self::With(exprs, _) | Self::Return(exprs, _) => {
+            Self::Delete(exprs) => {
                 for expr in exprs {
                     expr.root().validate(env)?;
+                }
+                iter.next()
+                    .map_or(Ok(()), |first| first.inner_validate(iter, env))
+            }
+            Self::With(exprs, _) | Self::Return(exprs, _) => {
+                for (_, expr) in exprs.iter() {
+                    expr.root().validate(env)?;
+                }
+                for (name, _) in exprs {
+                    env.insert(name.clone());
                 }
                 iter.next()
                     .map_or(Ok(()), |first| first.inner_validate(iter, env))

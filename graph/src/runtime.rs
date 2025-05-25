@@ -1,20 +1,23 @@
 use crate::ast::{NodePattern, Pattern, QuantifierType, RelationshipPattern};
 use crate::functions::{FnType, Functions, GraphFn, get_functions};
-use crate::iter::{AggregateIter, LazyReplace};
+use crate::iter::{Aggregate, LazyReplace, TryFlatMap, TryMap};
+use crate::value::Env;
 use crate::{ast::ExprIR, graph::Graph, planner::IR, value::Contains, value::Value};
 use ordermap::OrderMap;
 use orx_tree::{Dyn, DynNode, DynTree, NodeIdx, NodeRef};
 use std::cell::RefCell;
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashMap};
-use std::iter::{empty, once};
+use std::collections::BTreeMap;
+use std::iter::{empty, once, repeat_n};
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 pub trait ReturnCallback {
     fn return_value(
         &self,
         graph: &RefCell<Graph>,
-        value: Value,
+        env: Env,
+        return_names: &Vec<Rc<String>>,
     );
 }
 
@@ -28,6 +31,7 @@ pub struct ResultSummary {
     pub relationships_deleted: usize,
     pub properties_set: usize,
     pub properties_removed: usize,
+    pub return_names: Vec<String>,
 }
 
 #[derive(Default)]
@@ -42,40 +46,36 @@ pub struct Stats {
 
 #[derive(Default)]
 pub struct Pending {
-    pub created_nodes: BTreeMap<u64, (Vec<String>, OrderMap<String, Value>)>,
-    pub created_relationships: BTreeMap<u64, (String, u64, u64, OrderMap<String, Value>)>,
-}
-
-trait Env {
-    fn restore(
-        &self,
-        var: &str,
-        old_value: Option<Value>,
-    );
-}
-impl Env for RefCell<BTreeMap<String, Value>> {
-    fn restore(
-        &self,
-        var: &str,
-        old_value: Option<Value>,
-    ) {
-        if let Some(old) = old_value {
-            self.borrow_mut().insert(var.to_string(), old);
-        } else {
-            self.borrow_mut().remove(var);
-        }
-    }
+    pub created_nodes: BTreeMap<u64, (Vec<Rc<String>>, OrderMap<Rc<String>, Value>)>,
+    pub created_relationships: BTreeMap<u64, (Rc<String>, u64, u64, OrderMap<Rc<String>, Value>)>,
 }
 
 pub struct Runtime<'a> {
     functions: &'static Functions,
     parameters: BTreeMap<String, Value>,
-    vars: RefCell<BTreeMap<String, Value>>,
     pub g: &'a RefCell<Graph>,
     write: bool,
     pub pending: RefCell<Pending>,
     pub stats: RefCell<Stats>,
     pub plan: DynTree<IR>,
+}
+
+trait ReturnNames {
+    fn get_return_names(&self) -> Vec<Rc<String>>;
+}
+
+impl ReturnNames for DynNode<'_, IR> {
+    fn get_return_names(&self) -> Vec<Rc<String>> {
+        match self.data() {
+            IR::Project(trees) => trees.iter().map(|v| v.0.clone()).collect(),
+            IR::Commit => self
+                .get_child(0)
+                .map_or(vec![], |child| child.get_return_names()),
+            IR::Call(name, _) => vec![name.clone()],
+            IR::Aggregate(names, _, _) => names.clone(),
+            _ => vec![],
+        }
+    }
 }
 
 impl<'a> Runtime<'a> {
@@ -92,7 +92,6 @@ impl<'a> Runtime<'a> {
                 .into_iter()
                 .map(|(k, v)| (k, evaluate_param(v.root())))
                 .collect(),
-            vars: RefCell::new(BTreeMap::new()),
             g,
             write,
             pending: RefCell::new(Pending::default()),
@@ -108,8 +107,10 @@ impl<'a> Runtime<'a> {
         let labels_count = self.g.borrow().get_labels_count();
         let start = Instant::now();
         let idx = self.plan.root().idx();
+        let return_names = self.plan.root().get_return_names();
         for v in self.run(&idx)? {
-            callback.return_value(self.g, v?);
+            let v = v?;
+            callback.return_value(self.g, v, &return_names);
         }
         let run_duration = start.elapsed();
 
@@ -124,6 +125,10 @@ impl<'a> Runtime<'a> {
             relationships_deleted: stats.relationships_deleted,
             properties_set: stats.properties_set,
             properties_removed: stats.properties_removed,
+            return_names: return_names
+                .into_iter()
+                .map(|v| String::from(v.as_str()))
+                .collect(),
         })
     }
 
@@ -131,6 +136,7 @@ impl<'a> Runtime<'a> {
     fn run_expr(
         &self,
         ir: DynNode<ExprIR>,
+        env: &Env,
     ) -> Result<Value, String> {
         match ir.data() {
             ExprIR::Null => Ok(Value::Null),
@@ -138,7 +144,7 @@ impl<'a> Runtime<'a> {
             ExprIR::Integer(x) => Ok(Value::Int(*x)),
             ExprIR::Float(x) => Ok(Value::Float(*x)),
             ExprIR::String(x) => Ok(Value::String(x.clone())),
-            ExprIR::Var(x) => self.vars.borrow().get(x).map_or_else(
+            ExprIR::Var(x) => env.get(x).map_or_else(
                 || Err(format!("Variable {x} not found")),
                 |v| Ok(v.to_owned()),
             ),
@@ -148,16 +154,16 @@ impl<'a> Runtime<'a> {
             ),
             ExprIR::List => Ok(Value::List(
                 ir.children()
-                    .map(|ir| self.run_expr(ir))
+                    .map(|ir| self.run_expr(ir, env))
                     .collect::<Result<Vec<_>, _>>()?,
             )),
-            ExprIR::Length => match self.run_expr(ir.child(0))? {
+            ExprIR::Length => match self.run_expr(ir.child(0), env)? {
                 Value::List(arr) => Ok(Value::Int(arr.len() as _)),
                 _ => Err(String::from("Length operator requires a list")),
             },
             ExprIR::GetElement => {
-                let arr = self.run_expr(ir.child(0))?;
-                let i = self.run_expr(ir.child(1))?;
+                let arr = self.run_expr(ir.child(0), env)?;
+                let i = self.run_expr(ir.child(1), env)?;
                 match (arr, i) {
                     (Value::List(values), Value::Int(i)) => {
                         if i >= 0 && i < values.len() as _ {
@@ -177,27 +183,27 @@ impl<'a> Runtime<'a> {
                 }
             }
             ExprIR::GetElements => {
-                let arr = self.run_expr(ir.child(0))?;
-                let a = self.run_expr(ir.child(1))?;
-                let b = self.run_expr(ir.child(2))?;
+                let arr = self.run_expr(ir.child(0), env)?;
+                let a = self.run_expr(ir.child(1), env)?;
+                let b = self.run_expr(ir.child(2), env)?;
                 get_elements(arr, a, b)
             }
-            ExprIR::IsNull => match self.run_expr(ir.child(0))? {
+            ExprIR::IsNull => match self.run_expr(ir.child(0), env)? {
                 Value::Null => Ok(Value::Bool(true)),
                 _ => Ok(Value::Bool(false)),
             },
-            ExprIR::IsNode => match self.run_expr(ir.child(0))? {
+            ExprIR::IsNode => match self.run_expr(ir.child(0), env)? {
                 Value::Node(_) => Ok(Value::Bool(true)),
                 _ => Ok(Value::Bool(false)),
             },
-            ExprIR::IsRelationship => match self.run_expr(ir.child(0))? {
+            ExprIR::IsRelationship => match self.run_expr(ir.child(0), env)? {
                 Value::Relationship(_, _, _) => Ok(Value::Bool(true)),
                 _ => Ok(Value::Bool(false)),
             },
             ExprIR::Or => {
                 let mut is_null = false;
                 for ir in ir.children() {
-                    match self.run_expr(ir)? {
+                    match self.run_expr(ir, env)? {
                         Value::Bool(true) => return Ok(Value::Bool(true)),
                         Value::Bool(false) => {}
                         Value::Null => is_null = true,
@@ -213,7 +219,7 @@ impl<'a> Runtime<'a> {
             ExprIR::Xor => {
                 let mut last = None;
                 for ir in ir.children() {
-                    match self.run_expr(ir)? {
+                    match self.run_expr(ir, env)? {
                         Value::Bool(b) => last = Some(last.map_or(b, |l| logical_xor(l, b))),
                         Value::Null => return Ok(Value::Null),
                         ir => return Err(format!("Type mismatch: expected Bool but was {ir:?}")),
@@ -224,7 +230,7 @@ impl<'a> Runtime<'a> {
             ExprIR::And => {
                 let mut is_null = false;
                 for ir in ir.children() {
-                    match self.run_expr(ir)? {
+                    match self.run_expr(ir, env)? {
                         Value::Bool(false) => return Ok(Value::Bool(false)),
                         Value::Bool(true) => {}
                         Value::Null => is_null = true,
@@ -237,7 +243,7 @@ impl<'a> Runtime<'a> {
 
                 Ok(Value::Bool(true))
             }
-            ExprIR::Not => match self.run_expr(ir.child(0))? {
+            ExprIR::Not => match self.run_expr(ir.child(0), env)? {
                 Value::Bool(b) => Ok(Value::Bool(!b)),
                 Value::Null => Ok(Value::Null),
                 v => Err(format!(
@@ -245,7 +251,7 @@ impl<'a> Runtime<'a> {
                     v.name()
                 )),
             },
-            ExprIR::Negate => match self.run_expr(ir.child(0))? {
+            ExprIR::Negate => match self.run_expr(ir.child(0), env)? {
                 Value::Int(i) => Ok(Value::Int(-i)),
                 Value::Float(f) => Ok(Value::Float(-f)),
                 Value::Null => Ok(Value::Null),
@@ -254,73 +260,73 @@ impl<'a> Runtime<'a> {
                     v.name()
                 )),
             },
-            ExprIR::Eq => all_equals(ir.children().map(|ir| self.run_expr(ir))),
-            ExprIR::Neq => all_not_equals(ir.children().map(|ir| self.run_expr(ir))),
+            ExprIR::Eq => all_equals(ir.children().map(|ir| self.run_expr(ir, env))),
+            ExprIR::Neq => all_not_equals(ir.children().map(|ir| self.run_expr(ir, env))),
             ExprIR::Lt => match self
-                .run_expr(ir.child(0))?
-                .partial_cmp(&self.run_expr(ir.child(1))?)
+                .run_expr(ir.child(0), env)?
+                .partial_cmp(&self.run_expr(ir.child(1), env)?)
             {
                 Some(Ordering::Less) => Ok(Value::Bool(true)),
                 Some(Ordering::Greater | Ordering::Equal) => Ok(Value::Bool(false)),
                 None => Ok(Value::Null),
             },
             ExprIR::Gt => match self
-                .run_expr(ir.child(0))?
-                .partial_cmp(&self.run_expr(ir.child(1))?)
+                .run_expr(ir.child(0), env)?
+                .partial_cmp(&self.run_expr(ir.child(1), env)?)
             {
                 Some(Ordering::Greater) => Ok(Value::Bool(true)),
                 Some(Ordering::Less | Ordering::Equal) => Ok(Value::Bool(false)),
                 None => Ok(Value::Null),
             },
             ExprIR::Le => match self
-                .run_expr(ir.child(0))?
-                .partial_cmp(&self.run_expr(ir.child(1))?)
+                .run_expr(ir.child(0), env)?
+                .partial_cmp(&self.run_expr(ir.child(1), env)?)
             {
                 Some(Ordering::Less | Ordering::Equal) => Ok(Value::Bool(true)),
                 Some(Ordering::Greater) => Ok(Value::Bool(false)),
                 None => Ok(Value::Null),
             },
             ExprIR::Ge => match self
-                .run_expr(ir.child(0))?
-                .partial_cmp(&self.run_expr(ir.child(1))?)
+                .run_expr(ir.child(0), env)?
+                .partial_cmp(&self.run_expr(ir.child(1), env)?)
             {
                 Some(Ordering::Greater | Ordering::Equal) => Ok(Value::Bool(true)),
                 Some(Ordering::Less) => Ok(Value::Bool(false)),
                 None => Ok(Value::Null),
             },
             ExprIR::In => {
-                let value = self.run_expr(ir.child(0))?;
-                let list = self.run_expr(ir.child(1))?;
+                let value = self.run_expr(ir.child(0), env)?;
+                let list = self.run_expr(ir.child(1), env)?;
                 list_contains(&list, &value)
             }
             ExprIR::Add => ir
                 .children()
-                .map(|ir| self.run_expr(ir))
+                .map(|ir| self.run_expr(ir, env))
                 .reduce(|acc, value| acc? + value?)
                 .ok_or_else(|| String::from("Add operator requires at least one operand"))?,
             ExprIR::Sub => ir
                 .children()
-                .map(|ir| self.run_expr(ir))
+                .map(|ir| self.run_expr(ir, env))
                 .reduce(|acc, value| acc? - value?)
                 .ok_or_else(|| String::from("Sub operator requires at least one argument"))?,
             ExprIR::Mul => ir
                 .children()
-                .map(|ir| self.run_expr(ir))
+                .map(|ir| self.run_expr(ir, env))
                 .reduce(|acc, value| acc? * value?)
                 .ok_or_else(|| String::from("Mul operator requires at least one argument"))?,
             ExprIR::Div => ir
                 .children()
-                .map(|ir| self.run_expr(ir))
+                .map(|ir| self.run_expr(ir, env))
                 .reduce(|acc, value| acc? / value?)
                 .ok_or_else(|| String::from("Div operator requires at least one argument"))?,
             ExprIR::Modulo => ir
                 .children()
-                .map(|ir| self.run_expr(ir))
+                .map(|ir| self.run_expr(ir, env))
                 .reduce(|acc, value| acc? % value?)
                 .ok_or_else(|| String::from("Modulo operator requires at least one argument"))?,
             ExprIR::Pow => ir
                 .children()
-                .flat_map(|ir| self.run_expr(ir))
+                .flat_map(|ir| self.run_expr(ir, env))
                 .reduce(|a, b| match (a, b) {
                     (Value::Int(a), Value::Int(b)) => Value::Float((a as f64).powf(b as _)),
                     _ => Value::Null,
@@ -329,7 +335,7 @@ impl<'a> Runtime<'a> {
             ExprIR::FuncInvocation(name, fn_type) => {
                 let args = ir
                     .children()
-                    .map(|ir| self.run_expr(ir))
+                    .map(|ir| self.run_expr(ir, env))
                     .collect::<Result<Vec<_>, _>>()?;
                 match self.functions.get(name, fn_type) {
                     Some(GraphFn { func, write, .. }) => {
@@ -346,32 +352,26 @@ impl<'a> Runtime<'a> {
             ExprIR::Map => Ok(Value::Map(
                 ir.children()
                     .map(|child| {
-                        (
+                        Ok((
                             if let ExprIR::Var(key) = child.data() {
                                 key.clone()
                             } else {
                                 todo!();
                             },
-                            self.run_expr(child.child(0)).unwrap_or(Value::Null),
-                        )
+                            self.run_expr(child.child(0), env)?,
+                        ))
                     })
-                    .collect(),
+                    .collect::<Result<_, String>>()?,
             )),
-            ExprIR::Set(x) => {
-                let v = self.run_expr(ir.child(0))?;
-                self.vars.borrow_mut().insert(x.clone(), v.clone());
-                Ok(v)
-            }
             ExprIR::Quantifier(quantifier, var) => {
-                let list = self.run_expr(ir.child(0))?;
+                let list = self.run_expr(ir.child(0), env)?;
                 match list {
                     Value::List(values) => {
+                        let mut env = env.clone();
                         let mut values_iter = values.into_iter().map(move |value| {
-                            self.vars.borrow_mut().insert(var.clone(), value);
-                            self.run_expr(ir.child(1))
+                            env.insert(var.clone(), value);
+                            self.run_expr(ir.child(1), &env)
                         });
-
-                        let old_value = self.vars.borrow_mut().remove(var);
 
                         let summary = values_iter.try_fold((0, 0, 0), |(t, f, n), v| match v {
                             Ok(Value::Bool(true)) => Ok((t + 1, f, n)),
@@ -384,7 +384,6 @@ impl<'a> Runtime<'a> {
                             Err(e) => Err(e),
                         });
 
-                        self.vars.restore(var, old_value);
                         match summary {
                             Ok((t, f, n)) => Ok(self.eval_quantifier(quantifier, t, f, n)),
                             Err(msg) => Err(msg),
@@ -398,21 +397,22 @@ impl<'a> Runtime<'a> {
             }
 
             ExprIR::ListComprehension(var, has_where, has_expr) => {
-                let list = self.run_expr(ir.child(0))?;
+                let list = self.run_expr(ir.child(0), env)?;
                 let expr_index: usize = if *has_where { 2 } else { 1 };
                 match list {
                     Value::List(values) => {
+                        let mut env = env.clone();
                         let mut iter = values.into_iter().filter_map(move |value| {
-                            self.vars.borrow_mut().insert(var.clone(), value.clone());
+                            env.insert(var.clone(), value.clone());
                             if *has_where {
-                                match self.run_expr(ir.child(1)) {
+                                match self.run_expr(ir.child(1), &env) {
                                     Ok(Value::Bool(true)) => {}
                                     Ok(_) => return None,
                                     Err(e) => return Some(Err(e)),
                                 }
                             }
                             if *has_expr {
-                                match self.run_expr(ir.child(expr_index)) {
+                                match self.run_expr(ir.child(expr_index), &env) {
                                     Ok(v) => Some(Ok(v)),
                                     Err(e) => Some(Err(e)),
                                 }
@@ -421,10 +421,7 @@ impl<'a> Runtime<'a> {
                             }
                         });
 
-                        // remove and save binding to var
                         // fold the iterator to collect the values
-                        // restore the binding to var
-                        let old_value = self.vars.borrow_mut().remove(var);
                         let ret = iter
                             .try_fold(vec![], |mut acc, v| match v {
                                 Ok(v) => {
@@ -435,7 +432,6 @@ impl<'a> Runtime<'a> {
                             })
                             .map(Value::List);
 
-                        self.vars.restore(var, old_value);
                         ret
                     }
                     value => Err(format!(
@@ -500,18 +496,19 @@ impl<'a> Runtime<'a> {
     fn run(
         &self,
         idx: &NodeIdx<Dyn<IR>>,
-    ) -> Result<Box<dyn Iterator<Item = Result<Value, String>> + '_>, String> {
+    ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + '_>, String> {
         let child0_idx = self.plan.node(idx).get_child(0).map(|n| n.idx());
         let child1_idx = self.plan.node(idx).get_child(1).map(|n| n.idx());
         match self.plan.node(idx).data() {
             IR::Empty => Ok(Box::new(empty())),
             IR::Optional(vars) => {
                 if let Some(child_idx) = child0_idx {
-                    let iter = LazyReplace::new(self.run(&child_idx).unwrap(), move || {
+                    let iter = self.run(&child_idx)?.lazy_replace(move || {
+                        let mut env = Env::new();
                         for v in vars {
-                            self.vars.borrow_mut().insert(v.clone(), Value::Null);
+                            env.insert(v.clone(), Value::Null);
                         }
-                        Box::new(once(Ok(Value::List(vec![]))))
+                        Box::new(once(Ok(env)))
                     });
                     return Ok(Box::new(iter));
                 }
@@ -521,7 +518,7 @@ impl<'a> Runtime<'a> {
                 Some(func) => {
                     let args = trees
                         .iter()
-                        .map(|ir| self.run_expr(ir.root()))
+                        .map(|ir| self.run_expr(ir.root(), &Env::new()))
                         .collect::<Result<Vec<_>, _>>()?;
                     if !self.write && func.write {
                         return Err(String::from(
@@ -530,9 +527,11 @@ impl<'a> Runtime<'a> {
                     }
                     let res = (func.func)(self, args)?;
                     match res {
-                        Value::List(arr) => {
-                            Ok(Box::new(arr.into_iter().map(|v| Ok(Value::List(vec![v])))))
-                        }
+                        Value::List(arr) => Ok(Box::new(arr.into_iter().map(|v| {
+                            let mut env = Env::new();
+                            env.insert(name.clone(), v);
+                            Ok(env)
+                        }))),
                         _ => Err(format!("Function '{name}' must return a list")),
                     }
                 }
@@ -540,31 +539,31 @@ impl<'a> Runtime<'a> {
             },
             IR::Unwind(tree, name) => {
                 if let Some(child_idx) = child0_idx {
-                    return Ok(Box::new(self.run(&child_idx)?.flat_map(move |_| {
-                        let value = self.run_expr(tree.root());
-                        let arr = match value {
-                            Ok(Value::List(arr)) => arr.into_iter().map(Ok).collect(),
-                            Ok(_) => {
-                                vec![Err(String::from("Unwind operator requires a list"))]
-                            }
-                            Err(e) => {
-                                vec![Err(e)]
-                            }
-                        };
-                        arr.into_iter().map(move |v| match v {
-                            Ok(v) => {
-                                self.vars.borrow_mut().insert(name.clone(), v.clone());
-                                Ok(v)
-                            }
-                            Err(e) => Err(e),
-                        })
+                    return Ok(Box::new(self.run(&child_idx)?.try_flat_map(move |vars| {
+                        let value = self.run_expr(tree.root(), &vars);
+                        match value {
+                            Ok(Value::List(arr)) => arr
+                                .into_iter()
+                                .map(|v| {
+                                    let mut vars = vars.clone();
+                                    vars.insert(name.clone(), v);
+                                    Ok(vars)
+                                })
+                                .collect::<Vec<_>>()
+                                .into_iter(),
+                            Ok(_) => vec![Err(String::from("Unwind operator requires a list"))]
+                                .into_iter(),
+                            Err(e) => vec![Err(e)].into_iter(),
+                        }
                     })));
                 }
-                let value = self.run_expr(tree.root())?;
+                let vars = Env::new();
+                let value = self.run_expr(tree.root(), &vars)?;
                 if let Value::List(arr) = value {
                     return Ok(Box::new(arr.into_iter().map(move |v| {
-                        self.vars.borrow_mut().insert(name.clone(), v.clone());
-                        Ok(v)
+                        let mut vars = Env::new();
+                        vars.insert(name.clone(), v);
+                        Ok(vars)
                     })));
                 }
                 Ok(Box::new(once(Err(String::from(
@@ -573,20 +572,19 @@ impl<'a> Runtime<'a> {
             }
             IR::UnwindRange(start, stop, step, name) => {
                 if let Some(child_idx) = child0_idx {
-                    return Ok(Box::new(self.run(&child_idx)?.flat_map(move |_| {
-                        let start = self.run_expr(start.root());
-                        let stop = self.run_expr(stop.root());
-                        let step = self.run_expr(step.root());
+                    return Ok(Box::new(self.run(&child_idx)?.try_flat_map(move |vars| {
+                        let start = self.run_expr(start.root(), &vars);
+                        let stop = self.run_expr(stop.root(), &vars);
+                        let step = self.run_expr(step.root(), &vars);
                         match (start, stop, step) {
                             (Ok(Value::Int(start)), Ok(Value::Int(stop)), Ok(Value::Int(step))) => {
-                                let iter =
-                                    std::iter::repeat_n(start, ((stop - start) / step + 1) as _)
-                                        .enumerate()
-                                        .map(move |(i, v)| v + i as i64 * step);
-                                iter.map(move |v| {
-                                    self.vars.borrow_mut().insert(name.clone(), Value::Int(v));
-                                    Ok(Value::Int(v))
-                                })
+                                repeat_n(start, ((stop - start) / step + 1) as _)
+                                    .enumerate()
+                                    .map(move |(i, v)| {
+                                        let mut vars = vars.clone();
+                                        vars.insert(name.clone(), Value::Int(v + i as i64 * step));
+                                        Ok(vars)
+                                    })
                             }
                             _ => {
                                 todo!();
@@ -594,9 +592,10 @@ impl<'a> Runtime<'a> {
                         }
                     })));
                 }
-                let start = self.run_expr(start.root())?;
-                let stop = self.run_expr(stop.root())?;
-                let step = self.run_expr(step.root())?;
+                let vars = Env::new();
+                let start = self.run_expr(start.root(), &vars)?;
+                let stop = self.run_expr(stop.root(), &vars)?;
+                let step = self.run_expr(step.root(), &vars)?;
                 match (start, stop, step) {
                     (Value::Int(start), Value::Int(stop), Value::Int(step)) => {
                         if step == 0 {
@@ -606,8 +605,9 @@ impl<'a> Runtime<'a> {
                             .enumerate()
                             .map(move |(i, v)| v + i as i64 * step);
                         Ok(Box::new(iter.map(move |v| {
-                            self.vars.borrow_mut().insert(name.clone(), Value::Int(v));
-                            Ok(Value::Int(v))
+                            let mut vars = Env::new();
+                            vars.insert(name.clone(), Value::Int(v));
+                            Ok(vars)
                         })))
                     }
                     _ => Err(String::from("UnwindRange operator requires three integers")),
@@ -621,132 +621,165 @@ impl<'a> Runtime<'a> {
                     }
                 }
                 if let Some(child_idx) = child0_idx {
-                    return Ok(Box::new(self.run(&child_idx)?.flat_map(move |_| {
-                        if let Err(e) = self.create(pattern) {
-                            return vec![Err(e)].into_iter();
-                        }
+                    return Ok(Box::new(self.run(&child_idx)?.try_flat_map(
+                        move |mut vars| {
+                            if let Err(e) = self.create(pattern, &mut vars) {
+                                return vec![Err(e)].into_iter();
+                            }
 
-                        if parent_commit {
-                            return vec![].into_iter();
-                        }
+                            if parent_commit {
+                                return vec![].into_iter();
+                            }
 
-                        vec![Ok(Value::List(vec![]))].into_iter()
-                    })));
+                            vec![Ok(vars)].into_iter()
+                        },
+                    )));
                 }
-                self.create(pattern)?;
+                let mut vars = Env::new();
+                self.create(pattern, &mut vars)?;
                 if parent_commit {
                     return Ok(Box::new(empty()));
                 }
-                Ok(Box::new(once(Ok(Value::List(vec![])))))
+                Ok(Box::new(once(Ok(vars))))
             }
             IR::Merge(pattern) => {
                 if let Some(child_idx) = child1_idx {
-                    return Ok(Box::new(self.run(&child_idx)?.flat_map(move |_| {
-                        let iter = LazyReplace::new(
-                            self.run(child0_idx.as_ref().unwrap()).unwrap(),
-                            || {
-                                self.create(pattern);
-                                Box::new(vec![Ok(Value::List(vec![]))].into_iter())
-                            },
-                        );
-                        Box::new(iter)
+                    return Ok(Box::new(self.run(&child_idx)?.try_flat_map(move |vars| {
+                        let cvars = vars.clone();
+                        let iter =
+                            (Box::new(self.run(child0_idx.as_ref().unwrap()).unwrap().try_map(
+                                move |v| {
+                                    let mut vars = vars.clone();
+                                    for (k, v) in v.iter() {
+                                        vars.insert(k.clone(), v.clone());
+                                    }
+                                    Ok(vars)
+                                },
+                            ))
+                                as Box<dyn Iterator<Item = Result<Env, String>>>)
+                                .lazy_replace(move || {
+                                    let mut vars = cvars.clone();
+                                    self.create(pattern, &mut vars);
+                                    Box::new(vec![Ok(vars)].into_iter())
+                                });
+                        Box::new(iter) as Box<dyn Iterator<Item = Result<Env, String>>>
                     })));
                 }
-                let iter =
-                    LazyReplace::new(self.run(child0_idx.as_ref().unwrap()).unwrap(), || {
-                        self.create(pattern);
-                        Box::new(vec![Ok(Value::List(vec![]))].into_iter())
-                    });
+                let iter = self.run(child0_idx.as_ref().unwrap())?.lazy_replace(|| {
+                    let mut vars = Env::new();
+                    match self.create(pattern, &mut vars) {
+                        Ok(()) => Box::new(vec![Ok(vars)].into_iter()),
+                        Err(e) => Box::new(once(Err(e))),
+                    }
+                });
                 Ok(Box::new(iter))
             }
             IR::Delete(trees) => {
                 if let Some(child_idx) = child0_idx {
-                    return Ok(Box::new(self.run(&child_idx)?.map(move |_| {
-                        self.delete(trees)?;
-                        Ok(Value::List(vec![]))
+                    return Ok(Box::new(self.run(&child_idx)?.try_map(move |vars| {
+                        self.delete(trees, &vars)?;
+                        Ok(vars)
                     })));
                 }
-                self.delete(trees)?;
                 Ok(Box::new(empty()))
             }
             IR::NodeScan(node_pattern) => {
                 if let Some(child_idx) = child0_idx {
                     return Ok(Box::new(
                         self.run(&child_idx)?
-                            .flat_map(move |_| self.node_scan(node_pattern)),
+                            .try_flat_map(move |vars| self.node_scan(node_pattern, vars)),
                     ));
                 }
-                Ok(Box::new(self.node_scan(node_pattern)))
+                Ok(self.node_scan(node_pattern, Env::new()))
             }
             IR::RelationshipScan(relationship_pattern) => {
                 if let Some(child_idx) = child0_idx {
-                    return Ok(Box::new(
-                        self.run(&child_idx)?
-                            .flat_map(move |_| self.relationship_scan(relationship_pattern)),
-                    ));
+                    return Ok(Box::new(self.run(&child_idx)?.try_flat_map(move |vars| {
+                        self.relationship_scan(relationship_pattern, vars)
+                    })));
                 }
-                Ok(Box::new(self.relationship_scan(relationship_pattern)))
+                Ok(self.relationship_scan(relationship_pattern, Env::new()))
             }
             IR::Filter(tree) => {
                 if let Some(child_idx) = child0_idx {
-                    return Ok(Box::new(self.run(&child_idx)?.filter(move |_| {
-                        self.run_expr(tree.root()) == Ok(Value::Bool(true))
+                    return Ok(Box::new(self.run(&child_idx)?.filter(move |vars| {
+                        let vars = vars.clone().unwrap();
+                        self.run_expr(tree.root(), &vars) == Ok(Value::Bool(true))
                     })));
                 }
                 Err(String::from(
                     "Filter operator requires a boolean expression",
                 ))
             }
-            IR::Aggregate(name, trees, trees1) => {
+            IR::Aggregate(_, trees, trees1) => {
                 if let Some(child_idx) = child0_idx {
-                    let aggregator = AggregateIter {
-                        iter: self.run(&child_idx)?,
-                        key_fn: move |_| {
-                            let mut vec = Vec::new();
-                            for tree in trees {
-                                vec.push(self.run_expr(tree.root()).unwrap());
-                            }
-                            vec
-                        },
-                        default_value: Ok(Value::Null),
-                        agg_fn: move |x, acc| {
-                            self.vars.borrow_mut().insert(name.clone(), acc.unwrap());
-                            let mut tmp = trees1.iter();
-                            if let Some(tree) = tmp.next() {
-                                return self.run_expr(tree.root());
-                            }
-                            Ok(Value::Null)
-                        },
-                        cache: HashMap::new(),
-                        finished: false,
+                    let mut default_value = Env::new();
+                    for (name, _) in trees1 {
+                        default_value.insert(name.clone(), Value::Null);
                     }
-                    .map(|(mut key, v)| {
-                        key.push(v.unwrap());
-                        Ok(Value::List(key))
-                    });
+                    let aggregator = self
+                        .run(&child_idx)?
+                        .aggregate(
+                            move |vars| {
+                                let vars = vars.clone()?;
+                                let mut return_vars = Env::new();
+                                for (name, tree) in trees {
+                                    let value = self.run_expr(tree.root(), &vars)?;
+                                    return_vars.insert(name.clone(), value);
+                                }
+                                Ok::<Env, String>(return_vars)
+                            },
+                            Ok(default_value),
+                            move |x, acc| {
+                                let mut x = x?;
+                                let mut acc = acc?;
+                                for (name, _) in trees1 {
+                                    let value = acc.get(name).unwrap().clone();
+                                    x.insert(name.clone(), value);
+                                }
+                                for (name, tree) in trees1 {
+                                    let v = self.run_expr(tree.root(), &x)?;
+                                    acc.insert(name.clone(), v);
+                                }
+                                Ok(acc)
+                            },
+                        )
+                        .map(move |(key, v)| {
+                            let mut vars = v?;
+                            for (k, v) in key?.iter() {
+                                vars.insert(k.clone(), v.clone());
+                            }
+                            for (name, _) in trees1 {
+                                vars.insert(name.clone(), vars.get(name).unwrap().clone());
+                            }
+                            Ok(vars)
+                        });
                     return Ok(Box::new(aggregator));
                 }
                 Ok(Box::new(empty()))
             }
             IR::Project(trees) => {
                 if let Some(child_idx) = child0_idx {
-                    Ok(Box::new(self.run(&child_idx)?.map(move |v| {
-                        v?;
-                        Ok(Value::List(
-                            trees
-                                .iter()
-                                .map(|tree| self.run_expr(tree.root()))
-                                .collect::<Result<Vec<Value>, String>>()?,
-                        ))
+                    Ok(Box::new(self.run(&child_idx)?.try_map(move |vars| {
+                        if trees.is_empty() {
+                            return Ok(vars);
+                        }
+                        let mut return_vars = Env::new();
+                        for (name, tree) in trees {
+                            let value = self.run_expr(tree.root(), &vars)?;
+                            return_vars.insert(name.clone(), value);
+                        }
+                        Ok(return_vars)
                     })))
                 } else {
-                    Ok(Box::new(once(()).map(|()| {
-                        Ok(Value::List(
-                            trees
-                                .iter()
-                                .map(|tree| self.run_expr(tree.root()))
-                                .collect::<Result<Vec<Value>, String>>()?,
-                        ))
+                    Ok(Box::new(once(()).map(move |()| {
+                        let vars = Env::new();
+                        let mut return_vars = Env::new();
+                        for (name, tree) in trees {
+                            let value = self.run_expr(tree.root(), &vars)?;
+                            return_vars.insert(name.clone(), value);
+                        }
+                        Ok(return_vars)
                     })))
                 }
             }
@@ -757,8 +790,8 @@ impl<'a> Runtime<'a> {
                     ));
                 }
                 let iter = self
-                    .run(&child0_idx.unwrap())?
-                    .collect::<Result<Vec<Value>, String>>()?
+                    .run(&child0_idx.ok_or("nothing to commit")?)?
+                    .collect::<Result<Vec<_>, String>>()?
                     .into_iter()
                     .map(Ok);
                 self.commit();
@@ -769,50 +802,47 @@ impl<'a> Runtime<'a> {
 
     fn relationship_scan(
         &self,
-        relationship_pattern: &RelationshipPattern,
-    ) -> std::iter::Map<crate::tensor::Iter, impl FnMut((u64, u64, u64)) -> Result<Value, String>>
-    {
+        relationship_pattern: &'a RelationshipPattern,
+        vars: Env,
+    ) -> Box<dyn Iterator<Item = Result<Env, String>> + '_> {
         let iter = self
             .g
             .borrow()
             .get_relationships(&relationship_pattern.types);
-        iter.map(move |(src, dst, id)| {
-            self.vars.borrow_mut().insert(
+        Box::new(iter.map(move |(src, dst, id)| {
+            let mut vars = vars.clone();
+            vars.insert(
                 relationship_pattern.alias.to_string(),
                 Value::Relationship(id, src, dst),
             );
-            self.vars
-                .borrow_mut()
-                .insert(relationship_pattern.from.to_string(), Value::Node(src));
-            self.vars
-                .borrow_mut()
-                .insert(relationship_pattern.to.to_string(), Value::Node(dst));
-            Ok(Value::Relationship(id, src, dst))
-        })
+            vars.insert(relationship_pattern.from.to_string(), Value::Node(src));
+            vars.insert(relationship_pattern.to.to_string(), Value::Node(dst));
+            Ok(vars)
+        }))
     }
 
     fn node_scan(
         &self,
-        node_pattern: &NodePattern,
-    ) -> std::iter::Map<crate::matrix::Iter<bool>, impl FnMut((u64, u64)) -> Result<Value, String>>
-    {
+        node_pattern: &'a NodePattern,
+        vars: Env,
+    ) -> Box<dyn Iterator<Item = Result<Env, String>> + '_> {
         let iter = self.g.borrow().get_nodes(&node_pattern.labels);
-        iter.map(move |(v, _)| {
-            self.vars
-                .borrow_mut()
-                .insert(node_pattern.alias.to_string(), Value::Node(v));
-            Ok(Value::Node(v))
-        })
+        Box::new(iter.map(move |(v, _)| {
+            let mut vars = vars.clone();
+            vars.insert(node_pattern.alias.to_string(), Value::Node(v));
+            Ok(vars)
+        }))
     }
 
     fn delete(
         &self,
         trees: &Vec<orx_tree::Tree<Dyn<ExprIR>>>,
+        vars: &Env,
     ) -> Result<(), String> {
         for tree in trees {
-            let value = self.run_expr(tree.root());
+            let value = self.run_expr(tree.root(), &vars)?;
             match value {
-                Ok(Value::Node(id)) => {
+                Value::Node(id) => {
                     self.stats.borrow_mut().nodes_deleted += 1;
                     self.g.borrow_mut().delete_node(id);
                     // self.pending.borrow_mut().nodes_deleted.push(id);
@@ -828,9 +858,10 @@ impl<'a> Runtime<'a> {
     fn create(
         &self,
         pattern: &Pattern,
+        vars: &mut Env,
     ) -> Result<(), String> {
         for node in &pattern.nodes {
-            let properties = self.run_expr(node.attrs.root())?;
+            let properties = self.run_expr(node.attrs.root(), vars)?;
             match properties {
                 Value::Map(properties) => {
                     let id = self.g.borrow_mut().reserve_node();
@@ -838,33 +869,30 @@ impl<'a> Runtime<'a> {
                         .borrow_mut()
                         .created_nodes
                         .insert(id, (node.labels.clone(), properties));
-                    self.vars
-                        .borrow_mut()
-                        .insert(node.alias.to_string(), Value::Node(id));
+                    vars.insert(node.alias.to_string(), Value::Node(id));
                 }
                 _ => return Err(String::from("Invalid node properties")),
             }
         }
         for rel in &pattern.relationships {
             let (from_id, to_id) = {
-                let vars = self.vars.borrow();
                 let from_id = vars
                     .get(&rel.from.to_string())
-                    .ok_or_else(|| format!("Variable {} not found", rel.from))?;
+                    .ok_or_else(|| format!("Variable {} not found", rel.from.to_string()))?;
                 let from_id = match from_id {
                     Value::Node(id) => *id,
                     _ => return Err(String::from("Invalid node id")),
                 };
                 let to_id = vars
                     .get(&rel.to.to_string())
-                    .ok_or_else(|| format!("Variable {} not found", rel.to))?;
+                    .ok_or_else(|| format!("Variable {} not found", rel.to.to_string()))?;
                 let to_id = match to_id {
                     Value::Node(id) => *id,
                     _ => return Err(String::from("Invalid node id")),
                 };
                 (from_id, to_id)
             };
-            let properties = self.run_expr(rel.attrs.root())?;
+            let properties = self.run_expr(rel.attrs.root(), vars)?;
             match properties {
                 Value::Map(properties) => {
                     let id = self.g.borrow_mut().reserve_relationship();
@@ -877,7 +905,7 @@ impl<'a> Runtime<'a> {
                             properties,
                         ),
                     );
-                    self.vars.borrow_mut().insert(
+                    vars.insert(
                         rel.alias.to_string(),
                         Value::Relationship(id, from_id, to_id),
                     );
