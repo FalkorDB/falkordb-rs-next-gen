@@ -363,6 +363,9 @@ fn collect(
         (Some(a), Some(Value::Null), None) => {
             return Ok(Value::List(vec![a]));
         }
+        (Some(Value::Null), Some(Value::List(a)), None) => {
+            return Ok(Value::List(a));
+        }
         (Some(a), Some(Value::List(mut l)), None) => {
             l.push(a);
             return Ok(Value::List(l));

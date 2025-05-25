@@ -1,6 +1,7 @@
 expressions/aggregation/Aggregation1.feature
 expressions/aggregation/Aggregation2.feature
 expressions/boolean
+expressions/conditional
 expressions/list/List1.feature
 expressions/list/List2.feature
 expressions/list/List3.feature
@@ -10,11 +11,11 @@ expressions/literals
 expressions/map
 expressions/mathematical
 expressions/null
+expressions/precedence/Precedence1.feature
 expressions/precedence/Precedence2.feature
 expressions/precedence/Precedence4.feature
 expressions/quantifier
 expressions/string
-expressions/conditional
 expressions/temporal
 expressions/typeConversion
 clauses/create/Create1.feature
