@@ -198,23 +198,19 @@ where
         Self: Iterator<Item = Result<T, E>>,
         F: Fn(T) -> Result<T, E>,
     {
-        self.map(move |x| match x {
-            Ok(x) => func(x),
-            Err(e) => Err(e),
-        })
+        self.take_while(Result::is_ok)
+            .map(move |x| x.map_or_else(|_| unreachable!(), &func))
     }
 }
 
 pub trait TryFlatMap {
-    fn try_flat_map<T, E, F, FE, I>(
+    fn try_flat_map<T, E, F, I>(
         self,
         func: F,
-        err: FE,
     ) -> impl Iterator<Item = Result<T, E>>
     where
         Self: Iterator<Item = Result<T, E>>,
         F: Fn(T) -> I,
-        FE: Fn(E) -> I,
         I: Iterator<Item = Result<T, E>>;
 }
 
@@ -222,20 +218,16 @@ impl<I> TryFlatMap for I
 where
     I: Iterator,
 {
-    fn try_flat_map<T, E, F, FE, J>(
+    fn try_flat_map<T, E, F, J>(
         self,
         func: F,
-        err: FE,
     ) -> impl Iterator<Item = Result<T, E>>
     where
         Self: Iterator<Item = Result<T, E>>,
         F: Fn(T) -> J,
-        FE: Fn(E) -> J,
         J: Iterator<Item = Result<T, E>>,
     {
-        self.flat_map(move |x| match x {
-            Ok(x) => func(x),
-            Err(e) => err(e),
-        })
+        self.take_while(Result::is_ok)
+            .flat_map(move |x| x.map_or_else(|_| unreachable!(), &func))
     }
 }

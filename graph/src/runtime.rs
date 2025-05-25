@@ -413,26 +413,23 @@ impl<'a> Runtime<'a> {
             },
             IR::Unwind(tree, name) => {
                 if let Some(child_idx) = child0_idx {
-                    return Ok(Box::new(self.run(&child_idx)?.try_flat_map(
-                        move |vars| {
-                            let value = self.run_expr(tree.root(), &vars);
-                            match value {
-                                Ok(Value::List(arr)) => arr
-                                    .into_iter()
-                                    .map(|v| {
-                                        let mut vars = vars.clone();
-                                        vars.insert(name.clone(), v);
-                                        Ok(vars)
-                                    })
-                                    .collect::<Vec<_>>()
-                                    .into_iter(),
-                                Ok(_) => vec![Err(String::from("Unwind operator requires a list"))]
-                                    .into_iter(),
-                                Err(e) => vec![Err(e)].into_iter(),
-                            }
-                        },
-                        |e| vec![Err(e)].into_iter(),
-                    )));
+                    return Ok(Box::new(self.run(&child_idx)?.try_flat_map(move |vars| {
+                        let value = self.run_expr(tree.root(), &vars);
+                        match value {
+                            Ok(Value::List(arr)) => arr
+                                .into_iter()
+                                .map(|v| {
+                                    let mut vars = vars.clone();
+                                    vars.insert(name.clone(), v);
+                                    Ok(vars)
+                                })
+                                .collect::<Vec<_>>()
+                                .into_iter(),
+                            Ok(_) => vec![Err(String::from("Unwind operator requires a list"))]
+                                .into_iter(),
+                            Err(e) => vec![Err(e)].into_iter(),
+                        }
+                    })));
                 }
                 let vars = Env::new();
                 let value = self.run_expr(tree.root(), &vars)?;
@@ -449,39 +446,25 @@ impl<'a> Runtime<'a> {
             }
             IR::UnwindRange(start, stop, step, name) => {
                 if let Some(child_idx) = child0_idx {
-                    return Ok(Box::new(self.run(&child_idx)?.try_flat_map(
-                        move |vars| {
-                            let start = self.run_expr(start.root(), &vars);
-                            let stop = self.run_expr(stop.root(), &vars);
-                            let step = self.run_expr(step.root(), &vars);
-                            match (start, stop, step) {
-                                (
-                                    Ok(Value::Int(start)),
-                                    Ok(Value::Int(stop)),
-                                    Ok(Value::Int(step)),
-                                ) => Box::new(
-                                    repeat_n(start, ((stop - start) / step + 1) as _)
-                                        .enumerate()
-                                        .map(move |(i, v)| {
-                                            let mut vars = vars.clone();
-                                            vars.insert(
-                                                name.clone(),
-                                                Value::Int(v + i as i64 * step),
-                                            );
-                                            Ok(vars)
-                                        }),
-                                )
-                                    as Box<dyn Iterator<Item = Result<Env, String>>>,
-                                _ => {
-                                    todo!();
-                                }
+                    return Ok(Box::new(self.run(&child_idx)?.try_flat_map(move |vars| {
+                        let start = self.run_expr(start.root(), &vars);
+                        let stop = self.run_expr(stop.root(), &vars);
+                        let step = self.run_expr(step.root(), &vars);
+                        match (start, stop, step) {
+                            (Ok(Value::Int(start)), Ok(Value::Int(stop)), Ok(Value::Int(step))) => {
+                                repeat_n(start, ((stop - start) / step + 1) as _)
+                                    .enumerate()
+                                    .map(move |(i, v)| {
+                                        let mut vars = vars.clone();
+                                        vars.insert(name.clone(), Value::Int(v + i as i64 * step));
+                                        Ok(vars)
+                                    })
                             }
-                        },
-                        |e| {
-                            Box::new(repeat_n(0, 1).enumerate().map(move |_| Err(e.clone())))
-                                as Box<dyn Iterator<Item = Result<Env, String>>>
-                        },
-                    )));
+                            _ => {
+                                todo!();
+                            }
+                        }
+                    })));
                 }
                 let vars = Env::new();
                 let start = self.run_expr(start.root(), &vars)?;
@@ -524,7 +507,6 @@ impl<'a> Runtime<'a> {
 
                             vec![Ok(vars)].into_iter()
                         },
-                        |e| vec![Err(e)].into_iter(),
                     )));
                 }
                 let mut vars = Env::new();
@@ -536,29 +518,26 @@ impl<'a> Runtime<'a> {
             }
             IR::Merge(pattern) => {
                 if let Some(child_idx) = child1_idx {
-                    return Ok(Box::new(self.run(&child_idx)?.try_flat_map(
-                        move |vars| {
-                            let cvars = vars.clone();
-                            let iter =
-                                (Box::new(self.run(child0_idx.as_ref().unwrap()).unwrap().try_map(
-                                    move |v| {
-                                        let mut vars = vars.clone();
-                                        for (k, v) in v.iter() {
-                                            vars.insert(k.clone(), v.clone());
-                                        }
-                                        Ok(vars)
-                                    },
-                                ))
-                                    as Box<dyn Iterator<Item = Result<Env, String>>>)
-                                    .lazy_replace(move || {
-                                        let mut vars = cvars.clone();
-                                        self.create(pattern, &mut vars);
-                                        Box::new(vec![Ok(vars)].into_iter())
-                                    });
-                            Box::new(iter) as Box<dyn Iterator<Item = Result<Env, String>>>
-                        },
-                        |e| Box::new(once(Err(e))) as Box<dyn Iterator<Item = Result<Env, String>>>,
-                    )));
+                    return Ok(Box::new(self.run(&child_idx)?.try_flat_map(move |vars| {
+                        let cvars = vars.clone();
+                        let iter =
+                            (Box::new(self.run(child0_idx.as_ref().unwrap()).unwrap().try_map(
+                                move |v| {
+                                    let mut vars = vars.clone();
+                                    for (k, v) in v.iter() {
+                                        vars.insert(k.clone(), v.clone());
+                                    }
+                                    Ok(vars)
+                                },
+                            ))
+                                as Box<dyn Iterator<Item = Result<Env, String>>>)
+                                .lazy_replace(move || {
+                                    let mut vars = cvars.clone();
+                                    self.create(pattern, &mut vars);
+                                    Box::new(vec![Ok(vars)].into_iter())
+                                });
+                        Box::new(iter) as Box<dyn Iterator<Item = Result<Env, String>>>
+                    })));
                 }
                 let iter = self.run(child0_idx.as_ref().unwrap())?.lazy_replace(|| {
                     let mut vars = Env::new();
@@ -580,19 +559,18 @@ impl<'a> Runtime<'a> {
             }
             IR::NodeScan(node_pattern) => {
                 if let Some(child_idx) = child0_idx {
-                    return Ok(Box::new(self.run(&child_idx)?.try_flat_map(
-                        move |vars| self.node_scan(node_pattern, vars),
-                        |e| Box::new(once(Err(e))),
-                    )));
+                    return Ok(Box::new(
+                        self.run(&child_idx)?
+                            .try_flat_map(move |vars| self.node_scan(node_pattern, vars)),
+                    ));
                 }
                 Ok(self.node_scan(node_pattern, Env::new()))
             }
             IR::RelationshipScan(relationship_pattern) => {
                 if let Some(child_idx) = child0_idx {
-                    return Ok(Box::new(self.run(&child_idx)?.try_flat_map(
-                        move |vars| self.relationship_scan(relationship_pattern, vars),
-                        |e| Box::new(once(Err(e))),
-                    )));
+                    return Ok(Box::new(self.run(&child_idx)?.try_flat_map(move |vars| {
+                        self.relationship_scan(relationship_pattern, vars)
+                    })));
                 }
                 Ok(self.relationship_scan(relationship_pattern, Env::new()))
             }
