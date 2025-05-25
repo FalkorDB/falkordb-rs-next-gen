@@ -642,8 +642,11 @@ impl QueryIR {
                 for (_, expr) in exprs.iter() {
                     expr.root().validate(env)?;
                 }
-                for (name, _) in exprs {
-                    env.insert(name.clone());
+                if !exprs.is_empty() {
+                    env.clear();
+                    for (name, _) in exprs {
+                        env.insert(name.clone());
+                    }
                 }
                 iter.next()
                     .map_or(Ok(()), |first| first.inner_validate(iter, env))

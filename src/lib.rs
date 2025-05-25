@@ -164,6 +164,27 @@ fn inner_raw_value_to_redis_value(
                 ]),
             ])
         }
+        Value::Path(path) => {
+            let mut nodes = Vec::new();
+            let mut rels = Vec::new();
+            for node in path {
+                match node {
+                    Value::Node(id) => nodes.push(RedisValue::Integer(id as _)),
+                    Value::Relationship(id, from, to) => {
+                        rels.push(RedisValue::Array(vec![
+                            RedisValue::Integer(id as _),
+                            RedisValue::Integer(from as _),
+                            RedisValue::Integer(to as _),
+                        ]));
+                    }
+                    _ => unreachable!("Path should only contain nodes and relationships"),
+                }
+            }
+            RedisValue::Array(vec![
+                RedisValue::Integer(9),
+                RedisValue::Array(vec![RedisValue::Array(nodes), RedisValue::Array(rels)]),
+            ])
+        }
     }
 }
 

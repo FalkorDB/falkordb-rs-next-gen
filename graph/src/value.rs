@@ -17,6 +17,7 @@ pub enum Value {
     Map(OrderMap<Rc<String>, Value>),
     Node(u64),
     Relationship(u64, u64, u64),
+    Path(Vec<Value>),
 }
 
 impl Hash for Value {
@@ -33,6 +34,7 @@ impl Hash for Value {
             Self::List(x) => x.hash(state),
             Self::Map(x) => x.hash(state),
             Self::Node(x) | Self::Relationship(x, _, _) => x.hash(state),
+            Self::Path(x) => x.hash(state),
         }
     }
 }
@@ -288,6 +290,7 @@ impl OrderedEnum for Value {
             Self::Map(_) => 1 << 0,
             Self::Node(_) => 1 << 1,
             Self::Relationship(_, _, _) => 1 << 2,
+            Self::Path(_) => 1 << 4,
         }
     }
 }
@@ -312,6 +315,7 @@ impl Value {
             Self::Map(_) => String::from("Map"),
             Self::Node(_) => String::from("Node"),
             Self::Relationship(_, _, _) => String::from("Relationship"),
+            Self::Path(_) => String::from("Path"),
         }
     }
 

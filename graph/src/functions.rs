@@ -194,7 +194,7 @@ pub fn init_functions() -> Result<(), Functions> {
 
     // aggregation functions
     funcs.add("collect", collect, false, 1, 2, FnType::Aggregation);
-    funcs.add("count", count, false, 1, 2, FnType::Aggregation);
+    funcs.add("count", count, false, 0, 2, FnType::Aggregation);
     funcs.add("sum", sum, false, 1, 2, FnType::Aggregation);
     funcs.add("max", max, false, 1, 2, FnType::Aggregation);
     funcs.add("min", min, false, 1, 2, FnType::Aggregation);
@@ -390,7 +390,12 @@ fn count(
         (Some(_), Some(Value::Int(a)), None) => {
             return Ok(Value::Int(a + 1));
         }
-
+        (Some(Value::Null), None, None) => {
+            return Ok(Value::Int(1));
+        }
+        (Some(Value::Int(a)), None, None) => {
+            return Ok(Value::Int(a + 1));
+        }
         _ => (),
     }
     Ok(Value::Null)

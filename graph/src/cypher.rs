@@ -825,6 +825,13 @@ impl<'a> Parser<'a> {
                     self.lexer.next();
 
                     let is_aggregate = get_functions().is_aggregate(&namespace_and_function);
+                    if is_aggregate && optional_match_token!(self.lexer, Star) {
+                        match_token!(self.lexer, RParen);
+                        return Ok(tree!(ExprIR::FuncInvocation(
+                            namespace_and_function,
+                            FnType::Aggregation
+                        )));
+                    }
                     return Ok(tree!(ExprIR::FuncInvocation(
                         namespace_and_function,
                         if is_aggregate { FnType::Aggregation } else { FnType::Function },

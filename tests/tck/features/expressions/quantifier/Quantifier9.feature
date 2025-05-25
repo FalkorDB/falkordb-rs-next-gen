@@ -78,7 +78,6 @@ Feature: Quantifier9 - None quantifier invariants
       | false  |
     And no side effects
 
-  @skip #fixme
   Scenario Outline: [3] None quantifier is always equal the boolean negative of the any quantifier
     Given any graph
     When executing query:
@@ -109,7 +108,6 @@ Feature: Quantifier9 - None quantifier invariants
       | x < 7     |
       | x >= 3    |
 
-  @skip #fixme
   Scenario Outline: [4] None quantifier is always equal the all quantifier on the boolean negative of the predicate
     Given any graph
     When executing query:
@@ -140,7 +138,6 @@ Feature: Quantifier9 - None quantifier invariants
       | x < 7     |
       | x >= 3    |
 
-  @skip #fixme
   Scenario Outline: [5] None quantifier is always equal whether the size of the list filtered with same the predicate is zero
     Given any graph
     When executing query:

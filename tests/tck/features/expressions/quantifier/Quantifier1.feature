@@ -53,16 +53,16 @@ Feature: Quantifier1 - None quantifier
     And no side effects
 
     Examples:
-      | list                  | condition | result |
-      | []                    | x         | true   |
-      | [true]                | x         | false  |
-      | [false]               | x         | true   |
-      | [true, false]         | x         | false  |
-      | [false, true]         | x         | false  |
-      | [true, false, true]   | x         | false  |
-      | [false, true, false]  | x         | false  |
-      | [true, true, true]    | x         | false  |
-      | [false, false, false] | x         | true   |
+      | list                   | condition | result |
+      | []                     | x         | true   |
+      | [true]                 | x         | false  |
+      | [false]                | x         | true   |
+      | [true, false]          | x         | false  |
+      | [false, true]          | x         | false  |
+      | [true, false, true]    | x         | false  |
+      | [false, true, false]   | x         | false  |
+      | [true, true, true]     | x         | false  |
+      | [false, false, false]  | x         | true   |
 
   Scenario Outline: [3] None quantifier on list literal containing integers
     Given any graph

@@ -684,6 +684,29 @@ impl<'a> Runtime<'a> {
                 }
                 Ok(self.relationship_scan(relationship_pattern, Env::new()))
             }
+            IR::PathBuilder(paths) => {
+                if let Some(child_idx) = child0_idx {
+                    return Ok(Box::new(self.run(&child_idx)?.try_map(move |vars| {
+                        let mut paths = paths.clone();
+                        let mut vars = vars.clone();
+                        for path in &mut paths {
+                            let p = path
+                                .vars
+                                .iter()
+                                .map(|v| {
+                                    vars.get(&v.to_string()).map_or_else(
+                                        || Err(format!("Variable {} not found", v.to_string())),
+                                        |value| Ok(value.clone()),
+                                    )
+                                })
+                                .collect::<Result<_, String>>()?;
+                            vars.insert(path.name.clone(), Value::Path(p));
+                        }
+                        Ok(vars)
+                    })));
+                }
+                Err(String::from("PathBuilder operator requires a child node"))
+            }
             IR::Filter(tree) => {
                 if let Some(child_idx) = child0_idx {
                     return Ok(Box::new(self.run(&child_idx)?.filter(move |vars| {
