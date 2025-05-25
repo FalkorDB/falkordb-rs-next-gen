@@ -41,7 +41,7 @@ pub struct Graph {
     relationship_types: Vec<Rc<String>>,
     node_properties: Vec<Rc<String>>,
     relationship_properties: Vec<Rc<String>>,
-    cache: Mutex<BTreeMap<String, DynTree<IR>>>,
+    cache: Mutex<BTreeMap<String, Rc<DynTree<IR>>>>,
 }
 
 impl Graph {
@@ -127,7 +127,7 @@ impl Graph {
         query: &str,
     ) -> Result<
         (
-            DynTree<IR>,
+            Rc<DynTree<IR>>,
             BTreeMap<String, DynTree<ExprIR>>,
             Duration,
             Duration,
@@ -151,7 +151,7 @@ impl Graph {
 
                     let mut planner = Planner::new();
                     let start = Instant::now();
-                    let value = planner.plan(ir);
+                    let value = Rc::new(planner.plan(ir));
                     plan_duration = start.elapsed();
 
                     cache.insert(query.to_string(), value.clone());

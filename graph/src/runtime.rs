@@ -57,7 +57,25 @@ pub struct Runtime<'a> {
     write: bool,
     pub pending: RefCell<Pending>,
     pub stats: RefCell<Stats>,
-    pub plan: DynTree<IR>,
+    pub plan: Rc<DynTree<IR>>,
+}
+
+trait ReturnNames {
+    fn get_return_names(&self) -> Vec<Rc<String>>;
+}
+
+impl ReturnNames for DynNode<'_, IR> {
+    fn get_return_names(&self) -> Vec<Rc<String>> {
+        match self.data() {
+            IR::Project(trees) => trees.iter().map(|v| v.0.clone()).collect(),
+            IR::Commit => self
+                .get_child(0)
+                .map_or(vec![], |child| child.get_return_names()),
+            IR::Call(name, _) => vec![name.clone()],
+            IR::Aggregate(names, _, _) => names.clone(),
+            _ => vec![],
+        }
+    }
 }
 
 trait ReturnNames {
@@ -84,7 +102,7 @@ impl<'a> Runtime<'a> {
         g: &'a RefCell<Graph>,
         parameters: BTreeMap<String, DynTree<ExprIR>>,
         write: bool,
-        plan: DynTree<IR>,
+        plan: Rc<DynTree<IR>>,
     ) -> Self {
         Self {
             functions: get_functions(),
