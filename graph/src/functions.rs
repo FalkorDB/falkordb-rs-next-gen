@@ -38,7 +38,7 @@ impl GraphFn {
         fn_type: FnType,
     ) -> Self {
         Self {
-            name: name.to_string(),
+            name: String::from(name),
             func,
             write,
             min_args,
@@ -600,7 +600,7 @@ fn substring(
             }
             let start = start as usize;
 
-            Ok(Value::String(Rc::new(s[start..].to_string())))
+            Ok(Value::String(Rc::new(String::from(&s[start..]))))
         }
 
         // Three-argument version: (string, start, length)
@@ -615,7 +615,7 @@ fn substring(
             let length = length as usize;
 
             let end = start.saturating_add(length).min(s.len());
-            Ok(Value::String(Rc::new(s[start..end].to_string())))
+            Ok(Value::String(Rc::new(String::from(&s[start..end]))))
         }
 
         (Some(Value::String(_)), Some(t), None) => Err(format!(
@@ -647,7 +647,7 @@ fn split(
                 // split string to characters
                 let parts: Vec<Value> = string
                     .chars()
-                    .map(|c| Value::String(Rc::new(c.to_string())))
+                    .map(|c| Value::String(Rc::new(String::from(c))))
                     .collect();
                 Ok(Value::List(parts))
             } else {
@@ -730,13 +730,13 @@ fn string_left(
     match (iter.next(), iter.next()) {
         (Some(Value::String(s)), Some(Value::Int(n))) => {
             if n < 0 {
-                Err("length must be a non-negative integer".to_string())
+                Err(String::from("length must be a non-negative integer"))
             } else {
                 Ok(Value::String(Rc::new(s.chars().take(n as usize).collect())))
             }
         }
         (Some(Value::Null), _) => Ok(Value::Null),
-        (_, Some(Value::Null)) => Err("length must be a non-negative integer".to_string()),
+        (_, Some(Value::Null)) => Err(String::from("length must be a non-negative integer")),
         (Some(arg1), Some(arg2)) => Err(format!(
             "Type mismatch: expected (String, Integer) or null, but was: ({}, {})",
             arg1.name(),
@@ -751,7 +751,7 @@ fn string_ltrim(
     args: Vec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
-        Some(Value::String(s)) => Ok(Value::String(Rc::new(s.trim_start().to_string()))),
+        Some(Value::String(s)) => Ok(Value::String(Rc::new(String::from(s.trim_start())))),
         Some(Value::Null) => Ok(Value::Null),
         Some(arg) => Err(format!(
             "Type mismatch: expected String or null, but was {}",
