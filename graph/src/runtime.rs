@@ -401,31 +401,21 @@ impl<'a> Runtime<'a> {
                 match list {
                     Value::List(values) => {
                         let mut env = env.clone();
-                        let mut iter = values.into_iter().filter_map(move |value| {
-                            env.insert(var.clone(), value.clone());
+                        let mut acc = vec![];
+                        for value in values {
+                            env.insert(var.clone(), value);
                             match self.run_expr(ir.child(1), &env) {
                                 Ok(Value::Bool(true)) => {}
-                                Ok(_) => return None,
-                                Err(e) => return Some(Err(e)),
+                                Ok(_) => continue,
+                                Err(e) => return Err(e),
                             }
                             match self.run_expr(ir.child(2), &env) {
-                                Ok(v) => Some(Ok(v)),
-                                Err(e) => Some(Err(e)),
+                                Ok(v) => acc.push(v),
+                                Err(e) => return Err(e),
                             }
-                        });
+                        }
 
-                        // fold the iterator to collect the values
-                        let ret = iter
-                            .try_fold(vec![], |mut acc, v| match v {
-                                Ok(v) => {
-                                    acc.push(v);
-                                    Ok(acc)
-                                }
-                                Err(e) => Err(e),
-                            })
-                            .map(Value::List);
-
-                        ret
+                        Ok(Value::List(acc))
                     }
                     value => Err(format!(
                         "Type mismatch: expected List but was {}",
