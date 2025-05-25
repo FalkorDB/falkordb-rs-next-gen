@@ -506,19 +506,26 @@ fn value_to_float(
     }
 }
 
+fn value_string(value: &Value) -> Result<Rc<String>, String> {
+    match value {
+        Value::String(s) => Ok(s.clone()),
+        Value::Int(i) => Ok(Rc::new(i.to_string())),
+        Value::Bool(b) => Ok(Rc::new(String::from(if *b { "true" } else { "false" }))),
+        arg => Err(format!(
+            "Type mismatch: expected String, Boolean, Integer, Float, or Null but was {}",
+            arg.name()
+        )),
+    }
+}
+
 fn value_to_string(
     _runtime: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
     let len = args.len();
     match args.into_iter().next() {
-        Some(Value::String(s)) => Ok(Value::String(s)),
-        Some(Value::Int(i)) => Ok(Value::String(Rc::new(i.to_string()))),
         Some(Value::Null) => Ok(Value::Null),
-        Some(arg) => Err(format!(
-            "Type mismatch: expected String, Boolean, Integer, Float, or Null but was {}",
-            arg.name()
-        )),
+        Some(v) => Ok(Value::String(value_string(&v)?)),
         _ => Err(format!(
             "Expected one argument for value_to_integer, instead {len}"
         )),
@@ -1206,7 +1213,11 @@ fn to_boolean(
             }
         }
         Some(Value::Int(n)) => Ok(Value::Bool(n != 0)),
-        Some(_) => Ok(Value::Null),
+        Some(Value::Null) => Ok(Value::Null),
+        Some(v) => Err(format!(
+            "Type mismatch: expected Boolean, String, or Integer or Null but was {}",
+            v.name()
+        )),
         None => unreachable!(),
     }
 }

@@ -542,6 +542,12 @@ impl QueryIR {
                     relationship.attrs.root().validate(env)?;
                     env.insert(relationship.alias.to_string());
                 }
+                for path in &p.paths {
+                    if env.contains(&path.name) {
+                        return Err(format!("Duplicate alias {}", path.name.as_str()));
+                    }
+                    env.insert(path.name.clone());
+                }
                 let first = iter.next().unwrap();
                 first.inner_validate(iter, env)
             }

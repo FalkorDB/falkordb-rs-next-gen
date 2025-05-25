@@ -96,7 +96,6 @@ Feature: TypeConversion3 - To Float
       | 4.0   |
     And no side effects
 
-  @skip
   Scenario Outline: [6] Fail `toFloat()` on invalid types #Example: <exampleName>
     Given an empty graph
     And having executed:

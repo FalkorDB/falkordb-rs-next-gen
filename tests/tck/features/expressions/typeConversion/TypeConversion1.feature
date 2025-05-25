@@ -82,7 +82,6 @@ Feature: TypeConversion1 - To Boolean
       | null |
     And no side effects
 
-  @skip
   Scenario Outline: [5] Fail `toBoolean()` on invalid types #Example: <exampleName>
     Given an empty graph
     And having executed:

@@ -671,6 +671,7 @@ impl<'a> Parser<'a> {
         let mut paths = Vec::new();
         loop {
             if let Token::Ident(p) = self.lexer.current() {
+                self.lexer.next();
                 match_token!(self.lexer, Equal);
                 let mut vars = Vec::new();
                 let left = self.parse_node_pattern()?;

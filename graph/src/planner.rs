@@ -95,14 +95,21 @@ impl Planner {
     ) -> DynTree<IR> {
         if pattern.relationships.is_empty() && !pattern.nodes.is_empty() {
             let mut iter = pattern.nodes.into_iter().rev();
-            let mut body = tree!(IR::NodeScan(iter.next().unwrap()));
+            let mut res = tree!(IR::NodeScan(iter.next().unwrap()));
             for node in iter {
-                body = tree!(IR::NodeScan(node), body);
+                res = tree!(IR::NodeScan(node), res);
             }
-            return body;
+            if !pattern.paths.is_empty() {
+                res = tree!(IR::PathBuilder(pattern.paths), res);
+            }
+            return res;
         }
         if pattern.relationships.len() == 1 {
-            return tree!(IR::RelationshipScan(pattern.relationships.pop().unwrap()));
+            let mut res = tree!(IR::RelationshipScan(pattern.relationships.pop().unwrap()));
+            if !pattern.paths.is_empty() {
+                res = tree!(IR::PathBuilder(pattern.paths), res);
+            }
+            return res;
         }
         tree!(IR::Empty)
     }

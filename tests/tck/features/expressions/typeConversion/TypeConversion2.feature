@@ -121,7 +121,6 @@ Feature: TypeConversion2 - To Integer
       | 42   |
     And no side effects
 
-  @skip
   Scenario Outline: [8] Fail `toInteger()` on invalid types #Example: <exampleName>
     Given an empty graph
     And having executed:
