@@ -368,26 +368,27 @@ impl<'a> Runtime<'a> {
                 match list {
                     Value::List(values) => {
                         let mut env = env.clone();
-                        let mut values_iter = values.into_iter().map(move |value| {
+                        let mut t = 0;
+                        let mut f = 0;
+                        let mut n = 0;
+                        for value in values {
                             env.insert(var.clone(), value);
-                            self.run_expr(ir.child(1), &env)
-                        });
 
-                        let summary = values_iter.try_fold((0, 0, 0), |(t, f, n), v| match v {
-                            Ok(Value::Bool(true)) => Ok((t + 1, f, n)),
-                            Ok(Value::Bool(false)) => Ok((t, f + 1, n)),
-                            Ok(Value::Null) => Ok((t, f, n + 1)),
-                            Ok(value) => Err(format!(
-                                "Type mismatch: expected Boolean but was {}",
-                                value.name()
-                            )),
-                            Err(e) => Err(e),
-                        });
-
-                        match summary {
-                            Ok((t, f, n)) => Ok(self.eval_quantifier(quantifier, t, f, n)),
-                            Err(msg) => Err(msg),
+                            match self.run_expr(ir.child(1), &env) {
+                                Ok(Value::Bool(true)) => t += 1,
+                                Ok(Value::Bool(false)) => f += 1,
+                                Ok(Value::Null) => n += 1,
+                                Ok(value) => {
+                                    return Err(format!(
+                                        "Type mismatch: expected Boolean but was {}",
+                                        value.name()
+                                    ));
+                                }
+                                Err(e) => return Err(e),
+                            }
                         }
+
+                        Ok(self.eval_quantifier(quantifier, t, f, n))
                     }
                     value => Err(format!(
                         "Type mismatch: expected List but was {}",
@@ -426,7 +427,7 @@ impl<'a> Runtime<'a> {
         }
     }
 
-    fn eval_quantifier(
+    const fn eval_quantifier(
         &self,
         quantifier_type: &QuantifierType,
         true_count: usize,
@@ -464,7 +465,7 @@ impl<'a> Runtime<'a> {
             QuantifierType::Single => {
                 if true_count == 1 && null_count == 0 {
                     Value::Bool(true)
-                } else if 1 < true_count {
+                } else if true_count > 1 {
                     Value::Bool(false)
                 } else if null_count > 0 {
                     Value::Null
