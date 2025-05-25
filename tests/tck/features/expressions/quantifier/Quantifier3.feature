@@ -53,16 +53,16 @@ Feature: Quantifier3 - Any quantifier
     And no side effects
 
     Examples:
-      | list                  | condition | result |
-      | []                    | x         | false  |
-      | [true]                | x         | true   |
-      | [false]               | x         | false  |
-      | [true, false]         | x         | true   |
-      | [false, true]         | x         | true   |
-      | [true, false, true]   | x         | true   |
-      | [false, true, false]  | x         | true   |
-      | [true, true, true]    | x         | true   |
-      | [false, false, false] | x         | false  |
+      | list                   | condition | result |
+      | []                     | x         | false  |
+      | [true]                 | x         | true   |
+      | [false]                | x         | false  |
+      | [true, false]          | x         | true   |
+      | [false, true]          | x         | true   |
+      | [true, false, true]    | x         | true   |
+      | [false, true, false]   | x         | true   |
+      | [true, true, true]     | x         | true   |
+      | [false, false, false]  | x         | false  |
 
   Scenario Outline: [3] Any quantifier on list literal containing integers
     Given any graph
