@@ -3,7 +3,7 @@
 use crate::runtime::Runtime;
 use crate::value::Value;
 use rand::Rng;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 use std::sync::OnceLock;
 
@@ -217,6 +217,15 @@ pub fn init_functions() -> Result<(), Functions> {
         FnType::Internal,
     );
     funcs.add("contains", internal_contains, false, 2, 2, FnType::Internal);
+    funcs.add("is_null", internal_is_null, false, 2, 2, FnType::Internal);
+    funcs.add(
+        "node_has_labels",
+        internal_node_has_labels,
+        false,
+        2,
+        2,
+        FnType::Internal,
+    );
     funcs.add(
         "regex_matches",
         internal_regex_matches,
@@ -1279,6 +1288,49 @@ fn internal_contains(
             "Type mismatch: expected String or Null but was ({}, {})",
             arg1.name(),
             arg2.name()
+        )),
+        _ => unreachable!(),
+    }
+}
+
+fn internal_is_null(
+    _: &Runtime,
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    let mut iter = args.into_iter();
+    match (iter.next(), iter.next()) {
+        (Some(Value::Bool(is_not)), Some(Value::Null)) => Ok(Value::Bool(!is_not)),
+        (Some(Value::Bool(is_not)), Some(_)) => Ok(Value::Bool(is_not)),
+        _ => unreachable!(),
+    }
+}
+
+fn internal_node_has_labels(
+    runtime: &Runtime,
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    let mut iter = args.into_iter();
+    match (iter.next(), iter.next()) {
+        (Some(Value::Node(node_id)), Some(Value::List(required_labels))) => {
+            let actual_labels = runtime
+                .g
+                .borrow()
+                .get_node_labels(node_id)
+                .collect::<BTreeSet<_>>();
+            let all_labels_present = required_labels.iter().all(|label| {
+                if let Value::String(label) = label {
+                    actual_labels.contains(label)
+                } else {
+                    false
+                }
+            });
+
+            Ok(Value::Bool(all_labels_present))
+        }
+        (Some(n), Some(l)) => Err(format!(
+            "Type mismatch: expected Node and Labels Null but was ({}, {})",
+            n.name(),
+            l.name()
         )),
         _ => unreachable!(),
     }
