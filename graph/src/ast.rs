@@ -17,7 +17,6 @@ pub enum ExprIR {
     Length,
     GetElement,
     GetElements,
-    IsNull,
     IsNode,
     IsRelationship,
     Or,
@@ -61,7 +60,6 @@ impl Display for ExprIR {
             Self::Length => write!(f, "length()"),
             Self::GetElement => write!(f, "get_element()"),
             Self::GetElements => write!(f, "get_elements()"),
-            Self::IsNull => write!(f, "is_null()"),
             Self::IsNode => write!(f, "is_node()"),
             Self::IsRelationship => write!(f, "is_relationship()"),
             Self::Or => write!(f, "or()"),
@@ -203,7 +201,6 @@ impl Validate for DynNode<'_, ExprIR> {
                 Ok(())
             }
             ExprIR::Not
-            | ExprIR::IsNull
             | ExprIR::Negate
             | ExprIR::Length
             | ExprIR::IsNode
