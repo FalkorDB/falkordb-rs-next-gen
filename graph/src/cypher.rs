@@ -19,6 +19,7 @@ enum Keyword {
     Unwind,
     Merge,
     Create,
+    Detach,
     Delete,
     Where,
     With,
@@ -83,13 +84,14 @@ enum Token {
     EndOfFile,
 }
 
-const KEYWORDS: [(&str, Keyword); 32] = [
+const KEYWORDS: [(&str, Keyword); 33] = [
     ("CALL", Keyword::Call),
     ("OPTIONAL", Keyword::Optional),
     ("MATCH", Keyword::Match),
     ("UNWIND", Keyword::Unwind),
     ("MERGE", Keyword::Merge),
     ("CREATE", Keyword::Create),
+    ("DETACH", Keyword::Detach),
     ("DELETE", Keyword::Delete),
     ("WHERE", Keyword::Where),
     ("WITH", Keyword::With),
@@ -515,8 +517,10 @@ impl<'a> Parser<'a> {
             {
                 clauses.push(self.parse_reading_clasue()?);
             }
-            while let Token::Keyword(Keyword::Create | Keyword::Merge | Keyword::Delete, _) =
-                self.lexer.current()
+            while let Token::Keyword(
+                Keyword::Create | Keyword::Merge | Keyword::Delete | Keyword::Detach,
+                _,
+            ) = self.lexer.current()
             {
                 write = true;
                 clauses.push(self.parse_writing_clause()?);
@@ -577,9 +581,10 @@ impl<'a> Parser<'a> {
                 self.lexer.next();
                 self.parse_merge_clause()
             }
-            Token::Keyword(Keyword::Delete, _) => {
-                self.lexer.next();
-                self.parse_delete_clause()
+            Token::Keyword(Keyword::Detach | Keyword::Delete, _) => {
+                let is_detach = optional_match_token!(self.lexer => Detach);
+                match_token!(self.lexer => Delete);
+                self.parse_delete_clause(is_detach)
             }
             token => Err(self.lexer.format_error(&format!("Invalid input {token:?}"))),
         }
@@ -634,9 +639,13 @@ impl<'a> Parser<'a> {
         Ok(QueryIR::Merge(self.parse_pattern(Keyword::Merge)?))
     }
 
-    fn parse_delete_clause(&mut self) -> Result<QueryIR, String> {
+    fn parse_delete_clause(
+        &mut self,
+        is_detach: bool,
+    ) -> Result<QueryIR, String> {
         Ok(QueryIR::Delete(
             self.parse_expression_list(ExpressionListType::OneOrMore)?,
+            is_detach,
         ))
     }
 

@@ -320,14 +320,37 @@ fn labels(
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
     match (iter.next(), iter.next()) {
-        (Some(Value::Node(node_id)), None) => Ok(Value::List(
-            runtime
-                .g
+        (Some(Value::Node(node_id)), None) => {
+            if runtime
+                .pending
                 .borrow()
-                .get_node_label_ids(node_id)
-                .map(|label_id| Value::String(runtime.g.borrow().get_label_by_id(label_id)))
-                .collect(),
-        )),
+                .created_nodes
+                .contains_key(&node_id)
+            {
+                return Ok(Value::List(
+                    runtime
+                        .pending
+                        .borrow()
+                        .created_nodes
+                        .get(&node_id)
+                        .unwrap()
+                        .0
+                        .iter()
+                        .map(|label| Value::String(label.clone()))
+                        .collect(),
+                ));
+            }
+            Ok(Value::List(
+                runtime
+                    .g
+                    .borrow()
+                    .get_node_label_ids(node_id)
+                    .map(|label_id| Value::String(runtime.g.borrow().get_label_by_id(label_id)))
+                    .collect(),
+            ))
+        }
+        (Some(Value::Null), None) => Ok(Value::Null),
+        (Some(v), None) => Err(format!("Type mismatch: expected Node but was {}", v.name())),
         _ => Ok(Value::Null),
     }
 }

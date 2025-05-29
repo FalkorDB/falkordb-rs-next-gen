@@ -1,6 +1,6 @@
 use std::{collections::HashSet, fmt::Display, rc::Rc};
 
-use orx_tree::{DynNode, DynTree, NodeRef};
+use orx_tree::{Dfs, DynNode, DynTree, NodeRef};
 
 use crate::functions::{FnType, get_functions};
 
@@ -244,12 +244,14 @@ pub trait SupportAggregation {
     fn is_aggregation(&self) -> bool;
 }
 
-impl SupportAggregation for DynNode<'_, ExprIR> {
+impl SupportAggregation for DynTree<ExprIR> {
     fn is_aggregation(&self) -> bool {
-        match self.data() {
-            ExprIR::FuncInvocation(_, FnType::Aggregation) => true,
-            _ => false,
-        }
+        self.root().indices::<Dfs>().any(|idx| {
+            matches!(
+                self.node(&idx).data(),
+                ExprIR::FuncInvocation(_, FnType::Aggregation)
+            )
+        })
     }
 }
 
@@ -260,10 +262,11 @@ pub enum Alias {
 }
 
 impl Alias {
+    #[must_use]
     pub fn to_string(&self) -> Rc<String> {
         match self {
-            Alias::String(s) => s.clone(),
-            Alias::Anon(i) => Rc::new(format!("${i}")),
+            Self::String(s) => s.clone(),
+            Self::Anon(i) => Rc::new(format!("${i}")),
         }
     }
 }
@@ -438,7 +441,7 @@ pub enum QueryIR {
     Merge(Pattern),
     Where(DynTree<ExprIR>),
     Create(Pattern),
-    Delete(Vec<DynTree<ExprIR>>),
+    Delete(Vec<DynTree<ExprIR>>, bool),
     With(Vec<(Rc<String>, DynTree<ExprIR>)>, bool),
     Return(Vec<(Rc<String>, DynTree<ExprIR>)>, bool),
     Query(Vec<QueryIR>, bool),
@@ -468,7 +471,7 @@ impl Display for QueryIR {
                 write!(f, "{expr}")
             }
             Self::Create(p) => write!(f, "CREATE {p}"),
-            Self::Delete(exprs) => {
+            Self::Delete(exprs, _) => {
                 writeln!(f, "DELETE:")?;
                 for expr in exprs {
                     write!(f, "{expr}")?;
@@ -522,15 +525,23 @@ impl QueryIR {
                 Ok(())
             }
             Self::Match(p, _) => {
-                for node in &p.nodes {
+                let mut remove = Vec::new();
+                for (i, node) in p.nodes.iter().enumerate() {
                     if env.contains(&node.alias.to_string()) {
-                        return Err(format!(
-                            "Duplicate alias {}",
-                            node.alias.to_string().as_str()
-                        ));
+                        if p.relationships.is_empty() {
+                            return Err(format!(
+                                "Duplicate alias {}",
+                                node.alias.to_string().as_str()
+                            ));
+                        }
+                        remove.push(i);
                     }
                     node.attrs.root().validate(env)?;
                     env.insert(node.alias.to_string());
+                }
+                remove.reverse();
+                for i in remove {
+                    p.nodes.remove(i);
                 }
                 for relationship in &p.relationships {
                     if env.contains(&relationship.alias.to_string()) {
@@ -637,7 +648,7 @@ impl QueryIR {
                 iter.next()
                     .map_or(Ok(()), |first| first.inner_validate(iter, env))
             }
-            Self::Delete(exprs) => {
+            Self::Delete(exprs, _) => {
                 for expr in exprs {
                     expr.root().validate(env)?;
                 }

@@ -12,7 +12,7 @@ use roaring::RoaringTreemap;
 use crate::{
     ast::ExprIR,
     cypher::Parser,
-    matrix::{self, Matrix, Remove, Set, Size},
+    matrix::{self, Matrix, New, Remove, Set, Size},
     planner::{IR, Planner},
     tensor::{self, Tensor},
     value::Value,
@@ -361,7 +361,7 @@ impl Graph {
     ) -> impl Iterator<Item = (u64, u64, u64)> + '_ {
         self.relationship_matrices
             .values()
-            .flat_map(move |m| m.iter(id, id))
+            .flat_map(move |m| m.iter(id, id).chain(m.transpose().iter(id, id)))
     }
 
     pub fn get_nodes(
