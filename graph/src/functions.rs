@@ -322,9 +322,9 @@ fn exists(
     if args.len() != 1 {
         return Err("exists() function expects exactly 1 argument".to_string());
     }
-    
+
     let value = &args[0];
-    
+
     // exists() returns false if the value is null, true otherwise
     match value {
         Value::Null => Ok(Value::Bool(false)),
