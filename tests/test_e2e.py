@@ -1665,3 +1665,38 @@ def test_list_comprehension():
 
     res = query("RETURN [x IN range(1, 10) WHERE x < -5] AS result")
     assert res.result_set == [[[]]]
+
+
+def test_exists_function():
+    # Test exists function with nodes
+    query("CREATE (n:Person {name: 'Alice', age: 30})", write=True)
+    
+    # Test exists on existing property
+    res = query("MATCH (n:Person) RETURN exists(n.name) AS has_name")
+    assert res.result_set == [[1]]  # True
+    
+    # Test exists on non-existing property
+    res = query("MATCH (n:Person) RETURN exists(n.email) AS has_email")
+    assert res.result_set == [[0]]  # False
+    
+    # Test exists with relationships
+    query("CREATE (a:Person {name: 'Bob'})-[r:KNOWS {since: 2020}]->(b:Person {name: 'Carol'})", write=True)
+    
+    # Test exists on existing relationship property
+    res = query("MATCH ()-[r:KNOWS]->() RETURN exists(r.since) AS has_since")
+    assert res.result_set == [[1]]  # True
+    
+    # Test exists on non-existing relationship property
+    res = query("MATCH ()-[r:KNOWS]->() RETURN exists(r.strength) AS has_strength")
+    assert res.result_set == [[0]]  # False
+    
+    # Test exists with maps
+    res = query("WITH {name: 'David', age: 25} AS person RETURN exists(person.name) AS has_name")
+    assert res.result_set == [[1]]  # True
+    
+    res = query("WITH {name: 'David', age: 25} AS person RETURN exists(person.city) AS has_city")
+    assert res.result_set == [[0]]  # False
+    
+    # Test exists with null values
+    res = query("WITH null AS n RETURN exists(n.anything) AS has_anything")
+    assert res.result_set == [[0]]  # False

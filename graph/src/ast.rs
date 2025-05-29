@@ -42,6 +42,7 @@ pub enum ExprIR {
     Map,
     Quantifier(QuantifierType, Rc<String>),
     ListComprehension(Rc<String>),
+    ExistsPattern(Pattern),
 }
 
 impl Display for ExprIR {
@@ -89,6 +90,9 @@ impl Display for ExprIR {
             }
             Self::ListComprehension(var) => {
                 write!(f, "list comp({var})")
+            }
+            Self::ExistsPattern(pattern) => {
+                write!(f, "exists({})", pattern)
             }
         }
     }
@@ -234,6 +238,12 @@ impl Validate for DynNode<'_, ExprIR> {
                     expr.validate(env)?;
                 }
                 env.remove(var);
+                Ok(())
+            }
+            ExprIR::ExistsPattern(_pattern) => {
+                debug_assert_eq!(self.num_children(), 0);
+                // ExistsPattern validation would typically involve checking
+                // that the pattern itself is valid, but for now we accept it
                 Ok(())
             }
         }
