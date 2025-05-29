@@ -1547,6 +1547,9 @@ def test_aggregation():
     res = query("UNWIND range(1, 100) AS x RETURN min(x), max(x)")
     assert_result_set_equal_no_order(res, [[1, 100]])
 
+    res = query("UNWIND range(1, 100) AS x RETURN {min: min(x), max: max(x)}")
+    assert_result_set_equal_no_order(res, [[{"min": 1,  "max": 100}]])
+
 
 def test_case():
     res = query("RETURN CASE 1 + 2 WHEN 'a' THEN 1 END")

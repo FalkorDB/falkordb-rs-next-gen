@@ -26,10 +26,10 @@ redis-module = { git = "https://github.com/RedisLabsModules/redismodule-rs", tag
 redis-module-macros = { git = "https://github.com/RedisLabsModules/redismodule-rs", tag = "v2.1.2" }
 tracing = "0.1"
 tracing-subscriber = "0.3"
-opentelemetry = "0"
-opentelemetry-zipkin = "0"
-opentelemetry_sdk = "0"
-tracing-opentelemetry = {git = 'https://github.com/BSteffaniak/tracing-opentelemetry.git', branch = 'upgrade-otel-to-0.30' }
+opentelemetry = { version = "0", optional = true }
+opentelemetry-zipkin = { version = "0", optional = true }
+opentelemetry_sdk = { version = "0", optional = true }
+tracing-opentelemetry = { git = 'https://github.com/BSteffaniak/tracing-opentelemetry.git', branch = 'upgrade-otel-to-0.30', optional = true }
 
 [profile.release]
 codegen-units = 1
@@ -38,4 +38,4 @@ lto = true
 # strip = false
 
 [features]
-zipkin = []
+zipkin = ["opentelemetry", "opentelemetry-zipkin", "opentelemetry_sdk", "tracing-opentelemetry"]

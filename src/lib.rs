@@ -2,10 +2,15 @@ use graph::functions::init_functions;
 use graph::runtime::{ReturnCallback, Runtime};
 use graph::value::Env;
 use graph::{cypher::Parser, graph::Graph, matrix::init, planner::Planner, value::Value};
+#[cfg(feature = "zipkin")]
 use opentelemetry::global;
+#[cfg(feature = "zipkin")]
 use opentelemetry::trace::TracerProvider;
+#[cfg(feature = "zipkin")]
 use opentelemetry_sdk::trace::{BatchConfigBuilder, BatchSpanProcessor};
+#[cfg(feature = "zipkin")]
 use opentelemetry_sdk::{Resource, trace::SdkTracerProvider};
+#[cfg(feature = "zipkin")]
 use opentelemetry_zipkin::ZipkinExporter;
 use redis_module::RedisModuleIO;
 use redis_module::{
@@ -17,8 +22,11 @@ use std::cell::RefCell;
 use std::os::raw::c_void;
 use std::ptr::null_mut;
 use std::rc::Rc;
+#[cfg(feature = "zipkin")]
 use tracing_opentelemetry::OpenTelemetryLayer;
+#[cfg(feature = "zipkin")]
 use tracing_subscriber::layer::SubscriberExt;
+#[cfg(feature = "zipkin")]
 use tracing_subscriber::util::SubscriberInitExt;
 
 const EMPTY_KEY_ERR: RedisResult = Err(RedisError::Str("ERR Invalid graph operation on empty key"));
@@ -459,7 +467,7 @@ fn graph_plan(
     }
 }
 
-#[cfg(zipkin)]
+#[cfg(feature = "zipkin")]
 fn init_zipkin() {
     global::set_text_map_propagator(opentelemetry_zipkin::Propagator::new());
 
@@ -493,7 +501,7 @@ fn graph_init(
     _: &Context,
     _: &Vec<RedisString>,
 ) -> Status {
-    #[cfg(zipkin)]
+    #[cfg(feature = "zipkin")]
     init_zipkin();
 
     unsafe {
