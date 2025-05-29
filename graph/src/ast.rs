@@ -42,6 +42,7 @@ pub enum ExprIR {
     Map,
     Quantifier(QuantifierType, Rc<String>),
     ListComprehension(Rc<String>),
+    ExistsPattern(Pattern),
 }
 
 impl Display for ExprIR {

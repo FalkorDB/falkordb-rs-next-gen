@@ -191,6 +191,7 @@ pub fn init_functions() -> Result<(), Functions> {
     funcs.add("coalesce", coalesce, false, 1, usize::MAX, FnType::Function);
     funcs.add("keys", keys, false, 1, 1, FnType::Function);
     funcs.add("toBoolean", to_boolean, false, 1, 1, FnType::Function);
+    funcs.add("exists", exists, false, 1, 1, FnType::Function);
 
     // aggregation functions
     funcs.add("collect", collect, false, 1, 2, FnType::Aggregation);
@@ -311,6 +312,23 @@ fn property(
             m.name()
         )),
         _ => Ok(Value::Null),
+    }
+}
+
+fn exists(
+    _runtime: &Runtime,
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    if args.len() != 1 {
+        return Err("exists() function expects exactly 1 argument".to_string());
+    }
+    
+    let value = &args[0];
+    
+    // exists() returns false if the value is null, true otherwise
+    match value {
+        Value::Null => Ok(Value::Bool(false)),
+        _ => Ok(Value::Bool(true)),
     }
 }
 
