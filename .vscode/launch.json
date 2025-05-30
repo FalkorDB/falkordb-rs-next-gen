@@ -5,6 +5,14 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "type": "antlr-debug",
+            "request": "launch",
+            "name": "Debug Current Grammar",
+            "input": "input.txt",
+            "visualParseTree": true,
+            "grammar": "${workspaceFolder}/graph/src/Cypher.g4"
+        },
+        {
             "type": "lldb",
             "request": "launch",
             "name": "Launch",

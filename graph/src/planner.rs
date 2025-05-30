@@ -1,6 +1,6 @@
 use std::{fmt::Display, rc::Rc};
 
-use orx_tree::{Dyn, DynTree, NodeMut, NodeRef};
+use orx_tree::{Dyn, DynTree, NodeIdx, NodeRef};
 
 use crate::{
     ast::{
@@ -24,7 +24,7 @@ pub enum IR {
     ),
     Create(Pattern),
     Merge(Pattern),
-    Delete(Vec<DynTree<ExprIR>>),
+    Delete(Vec<DynTree<ExprIR>>, bool),
     NodeScan(NodePattern),
     RelationshipScan(RelationshipPattern),
     PathBuilder(Vec<PathPattern>),
@@ -51,7 +51,7 @@ impl Display for IR {
             Self::UnwindRange(_, _, _, alias) => write!(f, "UnwindRange({alias})"),
             Self::Create(pattern) => write!(f, "Create {pattern}"),
             Self::Merge(pattern) => write!(f, "Merge {pattern}"),
-            Self::Delete(_) => write!(f, "Delete"),
+            Self::Delete(_, _) => write!(f, "Delete"),
             Self::NodeScan(node) => write!(f, "NodeScan {node}"),
             Self::RelationshipScan(rel) => write!(f, "RelationshipScan {rel}"),
             Self::PathBuilder(_) => write!(f, "PathBuilder"),
@@ -78,14 +78,20 @@ impl Planner {
     }
 
     fn plan_aggregation(
-        acc_name: Rc<String>,
-        expr: &mut NodeMut<Dyn<ExprIR>>,
+        expr: &mut DynTree<ExprIR>,
+        idx: NodeIdx<Dyn<ExprIR>>,
     ) {
-        match expr.data() {
+        match expr.node(&idx).data() {
             ExprIR::FuncInvocation(_, FnType::Aggregation) => {
-                expr.push_child_tree(tree!(ExprIR::Var(acc_name)));
+                let name = Rc::new(expr.node(&idx).to_string());
+                expr.node_mut(&idx)
+                    .push_child_tree(tree!(ExprIR::Var(name)));
             }
-            _ => unreachable!(),
+            _ => {
+                for c in 0..expr.node(&idx).num_children() {
+                    Self::plan_aggregation(expr, expr.node(&idx).child(c).idx());
+                }
+            }
         }
     }
 
@@ -136,14 +142,15 @@ impl Planner {
         exprs: Vec<(Rc<String>, DynTree<ExprIR>)>,
         write: bool,
     ) -> DynTree<IR> {
-        let mut res = if exprs.iter().any(|e| e.1.root().is_aggregation()) {
+        let mut res = if exprs.iter().any(|e| e.1.is_aggregation()) {
             let mut group_by_keys = Vec::new();
             let mut aggregations = Vec::new();
             let mut names = Vec::new();
             for (name, mut expr) in exprs {
                 names.push(name.clone());
-                if expr.root().is_aggregation() {
-                    Self::plan_aggregation(name.clone(), &mut expr.root_mut());
+                if expr.is_aggregation() {
+                    let idx = expr.root().idx();
+                    Self::plan_aggregation(&mut expr, idx);
                     aggregations.push((name, expr));
                 } else {
                     group_by_keys.push((name, expr));
@@ -193,7 +200,14 @@ impl Planner {
             QueryIR::Match(pattern, optional) => {
                 if optional {
                     tree!(
-                        IR::Optional(pattern.nodes.iter().map(|n| n.alias.to_string()).collect()),
+                        IR::Optional(
+                            pattern
+                                .nodes
+                                .iter()
+                                .map(|n| n.alias.to_string())
+                                .chain(pattern.relationships.iter().map(|r| r.alias.to_string()))
+                                .collect()
+                        ),
                         self.plan_match(pattern)
                     )
                 } else {
@@ -204,7 +218,7 @@ impl Planner {
             QueryIR::Merge(pattern) => tree!(IR::Merge(pattern.clone()), self.plan_match(pattern)),
             QueryIR::Where(expr) => tree!(IR::Filter(expr)),
             QueryIR::Create(pattern) => tree!(IR::Create(pattern)),
-            QueryIR::Delete(exprs) => tree!(IR::Delete(exprs)),
+            QueryIR::Delete(exprs, is_detach) => tree!(IR::Delete(exprs, is_detach)),
             QueryIR::With(exprs, write) | QueryIR::Return(exprs, write) => {
                 self.plan_project(exprs, write)
             }

@@ -1,9 +1,4 @@
-use std::{
-    marker::PhantomData,
-    mem::MaybeUninit,
-    os::raw::c_void,
-    ptr::{addr_of_mut, null_mut},
-};
+use std::{marker::PhantomData, mem::MaybeUninit, os::raw::c_void, ptr::null_mut};
 
 use crate::GraphBLAS::{
     GrB_BOOL, GrB_Info, GrB_Matrix, GrB_Matrix_apply, GrB_Matrix_extractElement_BOOL,
@@ -11,9 +6,9 @@ use crate::GraphBLAS::{
     GrB_Matrix_nrows, GrB_Matrix_nvals, GrB_Matrix_removeElement, GrB_Matrix_resize,
     GrB_Matrix_setElement_BOOL, GrB_Matrix_setElement_UINT64, GrB_Matrix_wait, GrB_Mode,
     GrB_UINT64, GrB_UnaryOp, GrB_UnaryOp_free, GrB_UnaryOp_new, GrB_WaitMode, GrB_finalize,
-    GxB_Iterator, GxB_Iterator_free, GxB_Iterator_get_UINT64, GxB_Iterator_new,
-    GxB_Matrix_Iterator_attach, GxB_Matrix_Iterator_getIndex, GxB_Matrix_Iterator_next,
-    GxB_Matrix_Iterator_seek, GxB_init, GxB_unary_function,
+    GrB_transpose, GxB_Iterator, GxB_Iterator_free, GxB_Iterator_get_UINT64, GxB_Iterator_new,
+    GxB_Matrix_Iterator_attach, GxB_Matrix_Iterator_getIndex, GxB_Matrix_Iterator_next, GxB_init,
+    GxB_rowIterator_seekRow, GxB_unary_function,
 };
 
 /// Initializes the GraphBLAS library in non-blocking mode.
@@ -116,6 +111,12 @@ pub trait Remove<T> {
     );
 }
 
+pub trait Transpose<T> {
+    /// Transposes the matrix.
+    #[must_use]
+    fn transpose(&self) -> Self;
+}
+
 /// A wrapper around a GraphBLAS matrix with type safety for elements.
 pub struct Matrix<T> {
     /// The underlying GraphBLAS matrix.
@@ -127,7 +128,7 @@ pub struct Matrix<T> {
 impl<T> Drop for Matrix<T> {
     fn drop(&mut self) {
         unsafe {
-            let info = GrB_Matrix_free(addr_of_mut!(self.m));
+            let info = GrB_Matrix_free(&mut self.m);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }
@@ -146,7 +147,7 @@ impl<T> Size<T> for Matrix<T> {
     fn nrows(&self) -> u64 {
         unsafe {
             let mut nrows = 0u64;
-            let info = GrB_Matrix_nrows(addr_of_mut!(nrows), self.m);
+            let info = GrB_Matrix_nrows(&mut nrows, self.m);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             nrows
         }
@@ -155,7 +156,7 @@ impl<T> Size<T> for Matrix<T> {
     fn ncols(&self) -> u64 {
         unsafe {
             let mut ncols = 0u64;
-            let info = GrB_Matrix_ncols(addr_of_mut!(ncols), self.m);
+            let info = GrB_Matrix_ncols(&mut ncols, self.m);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             ncols
         }
@@ -175,15 +176,22 @@ impl<T> Size<T> for Matrix<T> {
     fn nvals(&self) -> u64 {
         unsafe {
             let mut nvals = 0u64;
-            let info = GrB_Matrix_nvals(addr_of_mut!(nvals), self.m);
+            let info = GrB_Matrix_nvals(&mut nvals, self.m);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             nvals
         }
     }
 }
 
-impl Matrix<bool> {
-    pub fn new(
+pub trait New {
+    fn new(
+        nrows: u64,
+        ncols: u64,
+    ) -> Self;
+}
+
+impl New for Matrix<bool> {
+    fn new(
         nrows: u64,
         ncols: u64,
     ) -> Self {
@@ -196,7 +204,25 @@ impl Matrix<bool> {
             }
         }
     }
+}
 
+impl New for Matrix<u64> {
+    fn new(
+        nrows: u64,
+        ncols: u64,
+    ) -> Self {
+        unsafe {
+            let mut m: MaybeUninit<GrB_Matrix> = MaybeUninit::uninit();
+            GrB_Matrix_new(m.as_mut_ptr(), GrB_UINT64, nrows, ncols);
+            Self {
+                m: m.assume_init(),
+                phantom: PhantomData,
+            }
+        }
+    }
+}
+
+impl Matrix<bool> {
     #[must_use]
     #[allow(clippy::iter_without_into_iter)]
     pub fn iter(
@@ -218,7 +244,7 @@ unsafe impl<T> Sync for UnaryOp<T> {}
 impl<T> Drop for UnaryOp<T> {
     fn drop(&mut self) {
         unsafe {
-            GrB_UnaryOp_free(addr_of_mut!(self.op));
+            GrB_UnaryOp_free(&mut self.op);
         }
     }
 }
@@ -247,20 +273,6 @@ impl UnaryOp<u64> {
 }
 
 impl Matrix<u64> {
-    pub fn new(
-        nrows: u64,
-        ncols: u64,
-    ) -> Self {
-        unsafe {
-            let mut m: MaybeUninit<GrB_Matrix> = MaybeUninit::uninit();
-            GrB_Matrix_new(m.as_mut_ptr(), GrB_UINT64, nrows, ncols);
-            Self {
-                m: m.assume_init(),
-                phantom: PhantomData,
-            }
-        }
-    }
-
     pub fn apply(
         &mut self,
         op: &UnaryOp<u64>,
@@ -370,6 +382,25 @@ impl Set<u64> for Matrix<u64> {
     }
 }
 
+impl<T> Transpose<T> for Matrix<T>
+where
+    Self: New,
+{
+    /// Transposes the matrix.
+    ///
+    /// # Returns
+    /// A new matrix that is the transpose of the original.
+    #[must_use]
+    fn transpose(&self) -> Self {
+        let transpose = Self::new(self.ncols(), self.nrows());
+        unsafe {
+            let info = GrB_transpose(transpose.m, null_mut(), null_mut(), self.m, null_mut());
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+        transpose
+    }
+}
+
 pub struct Iter<T> {
     /// The underlying GraphBLAS iterator.
     iter: GxB_Iterator,
@@ -385,7 +416,7 @@ impl<T> Drop for Iter<T> {
     /// Frees the GraphBLAS iterator when the `Iter` is dropped.
     fn drop(&mut self) {
         unsafe {
-            GxB_Iterator_free(addr_of_mut!(self.iter));
+            GxB_Iterator_free(&mut self.iter);
         }
     }
 }
@@ -408,7 +439,7 @@ impl<T> Iter<T> {
             GxB_Iterator_new(iter.as_mut_ptr());
             let iter = iter.assume_init();
             GxB_Matrix_Iterator_attach(iter, m.m, null_mut());
-            let info = GxB_Matrix_Iterator_seek(iter, min_row);
+            let info = GxB_rowIterator_seekRow(iter, min_row);
             Self {
                 iter,
                 depleted: info == GrB_Info::GxB_EXHAUSTED,
@@ -434,7 +465,7 @@ impl Iterator for Iter<bool> {
         unsafe {
             let mut row = 0u64;
             let mut col = 0u64;
-            GxB_Matrix_Iterator_getIndex(self.iter, addr_of_mut!(row), addr_of_mut!(col));
+            GxB_Matrix_Iterator_getIndex(self.iter, &mut row, &mut col);
             if row > self.max_row {
                 self.depleted = true;
                 return None;
@@ -456,7 +487,7 @@ impl Iterator for Iter<u64> {
             let mut row = 0u64;
             let mut col = 0u64;
             let value = GxB_Iterator_get_UINT64(self.iter);
-            GxB_Matrix_Iterator_getIndex(self.iter, addr_of_mut!(row), addr_of_mut!(col));
+            GxB_Matrix_Iterator_getIndex(self.iter, &mut row, &mut col);
             if row > self.max_row {
                 self.depleted = true;
                 return None;
