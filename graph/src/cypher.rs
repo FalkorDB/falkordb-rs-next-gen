@@ -5,8 +5,9 @@ use crate::cypher::Token::RParen;
 use crate::functions::{FnType, get_functions};
 use crate::tree;
 use falkordb_macro::parse_binary_expr;
+use hashbrown::HashMap;
 use orx_tree::{DynTree, NodeRef};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 use std::num::IntErrorKind;
 use std::rc::Rc;
 use std::str::Chars;
@@ -476,12 +477,12 @@ impl<'a> Parser<'a> {
 
     pub fn parse_parameters(
         &mut self
-    ) -> Result<(BTreeMap<String, DynTree<ExprIR>>, &'a str), String> {
+    ) -> Result<(HashMap<String, DynTree<ExprIR>>, &'a str), String> {
         match self.lexer.current() {
             Token::Ident(id) => {
                 if id.as_str() == "CYPHER" {
                     self.lexer.next();
-                    let mut params = BTreeMap::new();
+                    let mut params = HashMap::new();
                     while let Token::Ident(id) = self.lexer.current() {
                         self.lexer.next();
                         match_token!(self.lexer, Equal);
@@ -489,10 +490,10 @@ impl<'a> Parser<'a> {
                     }
                     Ok((params, &self.lexer.str[self.lexer.pos..]))
                 } else {
-                    Ok((BTreeMap::new(), self.lexer.str))
+                    Ok((HashMap::new(), self.lexer.str))
                 }
             }
-            _ => Ok((BTreeMap::new(), self.lexer.str)),
+            _ => Ok((HashMap::new(), self.lexer.str)),
         }
     }
 

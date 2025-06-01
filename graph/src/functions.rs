@@ -2,8 +2,8 @@
 
 use crate::runtime::Runtime;
 use crate::value::Value;
+use hashbrown::HashMap;
 use rand::Rng;
-use std::collections::BTreeMap;
 use std::fmt::Display;
 use std::rc::Rc;
 use std::sync::OnceLock;
@@ -133,7 +133,7 @@ impl GraphFn {
                     }
                 }
             }
-            FnArguments::VarLength(arg) => {}
+            FnArguments::VarLength(_) => {}
         }
         Ok(())
     }
@@ -141,7 +141,7 @@ impl GraphFn {
 
 #[derive(Default, Debug)]
 pub struct Functions {
-    functions: BTreeMap<String, GraphFn>,
+    functions: HashMap<String, GraphFn>,
 }
 
 impl Functions {
@@ -219,7 +219,7 @@ impl Functions {
                             ));
                         }
                     }
-                    FnArguments::VarLength(arg) => {}
+                    FnArguments::VarLength(_) => {}
                 }
                 Ok(())
             },
@@ -906,7 +906,6 @@ fn value_to_integer(
     _runtime: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
-    let len = args.len();
     match args.into_iter().next() {
         Some(Value::String(s)) => s.parse::<i64>().map(Value::Int).or_else(|_| {
             s.parse::<f64>()
@@ -925,7 +924,6 @@ fn value_to_float(
     _runtime: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
-    let len = args.len();
     match args.into_iter().next() {
         Some(Value::String(s)) => s.parse::<f64>().map(Value::Float).or(Ok(Value::Null)),
         Some(v @ Value::Float(_)) => Ok(v),

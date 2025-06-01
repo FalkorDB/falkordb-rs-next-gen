@@ -3,12 +3,11 @@ use crate::functions::{FnType, Functions, GraphFn, get_functions};
 use crate::iter::{Aggregate, LazyReplace, TryFlatMap, TryMap};
 use crate::value::{DisjointOrNull, Env};
 use crate::{ast::ExprIR, graph::Graph, planner::IR, value::Contains, value::Value};
-use hashbrown::HashSet;
+use hashbrown::{HashMap, HashSet};
 use ordermap::OrderMap;
 use orx_tree::{Dyn, DynNode, DynTree, NodeIdx, NodeRef};
 use std::cell::RefCell;
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::iter::{empty, once, repeat_with};
 use std::rc::Rc;
@@ -49,15 +48,15 @@ pub struct Stats {
 
 #[derive(Default)]
 pub struct Pending {
-    pub created_nodes: BTreeMap<u64, (Vec<Rc<String>>, OrderMap<Rc<String>, Value>)>,
-    pub created_relationships: BTreeMap<u64, (Rc<String>, u64, u64, OrderMap<Rc<String>, Value>)>,
+    pub created_nodes: HashMap<u64, (Vec<Rc<String>>, OrderMap<Rc<String>, Value>)>,
+    pub created_relationships: HashMap<u64, (Rc<String>, u64, u64, OrderMap<Rc<String>, Value>)>,
     pub deleted_nodes: HashSet<u64>,
     pub deleted_relationships: HashSet<(u64, u64, u64)>,
 }
 
 pub struct Runtime<'a> {
     functions: &'static Functions,
-    parameters: BTreeMap<String, Value>,
+    parameters: HashMap<String, Value>,
     pub g: &'a RefCell<Graph>,
     write: bool,
     pub pending: RefCell<Pending>,
@@ -98,7 +97,7 @@ impl<'a> Runtime<'a> {
     #[must_use]
     pub fn new(
         g: &'a RefCell<Graph>,
-        parameters: BTreeMap<String, DynTree<ExprIR>>,
+        parameters: HashMap<String, DynTree<ExprIR>>,
         write: bool,
         plan: Rc<DynTree<IR>>,
     ) -> Self {
