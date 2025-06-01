@@ -393,6 +393,7 @@ version = "0.1.0"
 dependencies = [
  "falkordb-macro",
  "hashbrown",
+ "once_cell",
  "ordermap",
  "orx-tree",
  "rand",

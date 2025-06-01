@@ -4,6 +4,7 @@ use crate::iter::{Aggregate, LazyReplace, TryFlatMap, TryMap};
 use crate::value::{DisjointOrNull, Env};
 use crate::{ast::ExprIR, graph::Graph, planner::IR, value::Contains, value::Value};
 use hashbrown::{HashMap, HashSet};
+use once_cell::unsync::Lazy;
 use ordermap::OrderMap;
 use orx_tree::{Dyn, DynNode, DynTree, NodeIdx, NodeRef};
 use std::cell::RefCell;
@@ -59,7 +60,7 @@ pub struct Runtime<'a> {
     parameters: HashMap<String, Value>,
     pub g: &'a RefCell<Graph>,
     write: bool,
-    pub pending: RefCell<Pending>,
+    pub pending: Lazy<RefCell<Pending>>,
     pub stats: RefCell<Stats>,
     pub plan: Rc<DynTree<IR>>,
 }
@@ -109,7 +110,7 @@ impl<'a> Runtime<'a> {
                 .collect(),
             g,
             write,
-            pending: RefCell::new(Pending::default()),
+            pending: Lazy::new(|| RefCell::new(Pending::default())),
             stats: RefCell::new(Stats::default()),
             plan,
         }
