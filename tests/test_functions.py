@@ -117,8 +117,6 @@ def test_functions():
     validate_function("ltrim", [Type.STRING | Type.NULL])
     validate_function("right", [Type.STRING | Type.NULL, Type.INT | Type.NULL])
     validate_function("string.join", [Type.LIST | Type.NULL, Optional[Type.STRING | Type.NULL]])
-    validate_function("string.matchRegEx", [Type.STRING | Type.NULL, Type.STRING | Type.NULL])
-    validate_function("string.replaceRegEx", [Type.STRING | Type.NULL, Type.STRING | Type.NULL, Type.STRING | Type.NULL])
     validate_function("abs", [Type.INT | Type.FLOAT | Type.NULL])
     validate_function("ceil", [Type.INT | Type.FLOAT | Type.NULL])
     validate_function("exp", [Type.INT | Type.FLOAT | Type.NULL])
@@ -133,4 +131,7 @@ def test_functions():
     validate_function("keys", [Type.MAP | Type.NULL])
     validate_function("toBoolean", [Type.BOOL | Type.STRING | Type.INT | Type.NULL])
 
-    
+@pytest.mark.extra
+def test_extra_functions():
+    validate_function("string.matchRegEx", [Type.STRING | Type.NULL, Type.STRING | Type.NULL])
+    validate_function("string.replaceRegEx", [Type.STRING | Type.NULL, Type.STRING | Type.NULL, Type.STRING | Type.NULL])
