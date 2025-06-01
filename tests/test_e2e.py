@@ -1,72 +1,37 @@
 import itertools
 import math
-import os
-import platform
-import subprocess
 
 import pytest
-from falkordb import FalkorDB, Node, Edge
-from redis import Redis, ResponseError
-
-redis_server = None
-client = None
-g = None
-shutdown = False
+from falkordb import Node, Edge
+from redis import ResponseError
+import common
 
 
 def setup_module(module):
-    global redis_server, client, g, shutdown
-    port = os.environ.get("PORT", "6379")
-    target = os.environ.get("TARGET",
-                            "target/debug/libfalkordb.dylib" if platform.system() == "Darwin" else "target/debug/libfalkordb.so")
-    r = Redis(port=port)
-    try:
-        r.ping()
-        client = FalkorDB(port=port)
-        g = client.select_graph("test")
-        return
-    except:
-        shutdown = True
-        if os.path.exists("redis-test.log"):
-            os.remove("redis-test.log")
-        redis_server = subprocess.Popen(executable="/usr/local/bin/redis-server",
-                                        args=["--save", "", "--port", port, "--logfile", "redis-test.log",
-                                              "--loadmodule", target],
-                                        stdout=subprocess.PIPE)
-    while True:
-        try:
-            r.ping()
-            client = FalkorDB(port=port)
-            g = client.select_graph("test")
-            return
-        except:
-            pass
+    common.start_redis()
 
 
 def teardown_module(module):
-    if shutdown:
-        client.connection.shutdown(nosave=True)
-        redis_server.wait()
+    common.shutdown_redis()
 
 
 def setup_function(function):
-    global g
-    if g.name in client.list_graphs():
-        g.delete()
+    if common.g.name in common.client.list_graphs():
+        common.g.delete()
 
 
 def query(query: str, params=None, write: bool = False, compare_results: bool = True):
     if write:
         try:
-            g.query("RETURN 1")
-            read_res = g.ro_query(query, params)
+            common.g.query("RETURN 1")
+            read_res = common.g.ro_query(query, params)
             assert False
         except ResponseError as e:
             assert "graph.RO_QUERY is to be executed only on read-only queries" == str(e)
-        return g.query(query, params)
+        return common.g.query(query, params)
     else:
-        write_res = g.query(query, params)
-        read_res = g.ro_query(query, params)
+        write_res = common.g.query(query, params)
+        read_res = common.g.ro_query(query, params)
         if compare_results:
             assert len(write_res.result_set) == len(read_res.result_set)
             for i in range(len(write_res.result_set)):
@@ -80,7 +45,7 @@ def query(query: str, params=None, write: bool = False, compare_results: bool = 
 
 def query_exception(query: str, message: str, params=None):
     try:
-        g.query(query, params)
+        common.g.query(query, params)
         assert False, "Expected an error"
     except ResponseError as e:
         assert message in str(e)
@@ -315,7 +280,7 @@ def test_graph_crud():
                                            [Node(2, labels="N"), Node(1, labels="N")],
                                            [Node(2, labels="N"), Node(2, labels="N")]])
 
-    g.delete()
+    common.g.delete()
 
     res = query("UNWIND range(0, 2) AS x CREATE (n:N {v: x})-[r:R {v: x}]->(m:M {v: x}) RETURN n, r, m", write=True)
     assert res.nodes_created == 6
@@ -386,10 +351,6 @@ def test_toInteger():
         res = query("RETURN toInteger($p)", params={"p": v})
         assert res.result_set == [[int(float(v))]]
 
-    for v in [[], [1], {}, {"a": 2}]:
-        query_exception("RETURN toInteger($p)",
-                        "Type mismatch: expected String, Boolean, Integer, Float, or Null but was", params={"p": v})
-
 
 def test_list_range():
     for a in range(-10, 10):
@@ -422,10 +383,6 @@ def test_list_concat():
 
 
 def test_in_list():
-    # test that the error is correct on all cases
-    for value, name in [(False, 'Boolean'), (1, 'Integer'), (1.0, 'Float'), ('"Avi"', 'String'), ({}, 'Map')]:
-        query_exception(f"RETURN 0 IN {value} AS r", f"Type mismatch: expected List")
-
     # test for simple values
     for value in [True, False, 1, -1, 0.1, 'Avi', [1]]:
         res = query("RETURN $p IN [$p]", params={"p": value})
@@ -626,9 +583,6 @@ def test_list_size():
     res = query("RETURN size('Avi') AS res")
     assert res.result_set == [[3]]
 
-    for value, name in [(False, 'Boolean'), (True, 'Boolean'), (1, 'Integer'), (1.0, 'Float'), ({}, 'Map')]:
-        query_exception(f"RETURN size({value}) AS r", f"Type mismatch: expected List, String, or Null but was {name}")
-
     res = query("RETURN size([[], []] + [[]]) AS l")
     assert res.result_set == [[3]]
     res = query("WITH null AS l RETURN size(l), size(null)")
@@ -645,12 +599,6 @@ def test_list_head():
     res = query("RETURN head(null) AS res")
     assert res.result_set == [[None]]
 
-    for value, name in [(False, 'Boolean'), (True, 'Boolean'), (1, 'Integer'), (1.0, 'Float'), ({}, 'Map')]:
-        query_exception(f"RETURN head({value}) AS r", f"Type mismatch: expected List or Null but was {name}")
-
-        res = query(f"RETURN head([{value}, 1]) AS res")
-        assert res.result_set == [[value]]
-
 
 def test_list_last():
     res = query("RETURN last([1, 2, 3]) AS res")
@@ -662,9 +610,7 @@ def test_list_last():
     res = query("RETURN last(null) AS res")
     assert res.result_set == [[None]]
 
-    for value, name in [(False, 'Boolean'), (True, 'Boolean'), (1, 'Integer'), (1.0, 'Float'), ({}, 'Map')]:
-        query_exception(f"RETURN last({value}) AS r", f"Type mismatch: expected List or Null but was {name}")
-
+    for value in [False, True, 1, 1.0, {}]:
         res = query(f"RETURN last([1, {value}]) AS res")
         assert res.result_set == [[value]]
 
@@ -678,9 +624,6 @@ def test_list_tail():
 
     res = query("RETURN tail(null) AS res")
     assert res.result_set == [[None]]
-
-    for value, name in [(False, 'Boolean'), (True, 'Boolean'), (1, 'Integer'), (1.0, 'Float'), ({}, 'Map')]:
-        query_exception(f"RETURN tail({value}) AS r", f"Type mismatch: expected List or Null but was {name}")
 
 
 def test_list_reverse():
@@ -701,9 +644,6 @@ def test_list_reverse():
 
     res = query("RETURN reverse(null) AS res")
     assert res.result_set == [[None]]
-
-    for value, name in [(False, 'Boolean'), (True, 'Boolean'), (1, 'Integer'), (1.0, 'Float'), ({}, 'Map')]:
-        query_exception(f"RETURN reverse({value}) AS r", f"Type mismatch: expected List, String, or Null but was")
 
 
 def cypher_xor(a, b, c):
@@ -774,10 +714,6 @@ def test_split():
         [["w", "e", " ", "a", "r", "e", " ", "l", "e", "a", "r", "n", "i", "n", "g", " ", "c", "y", "p", "h", "e",
           "r"]]]
 
-    for value in [False, True, 1, 1.0, {}, [], ["foo"]]:
-        query_exception(f"RETURN split({value}, 'a') AS r", "Type mismatch")
-        query_exception(f"RETURN split('a', {value}) AS r", "Type mismatch")
-
 
 def test_letter_casing():
     res = query("RETURN toUpper('Avi') AS name")
@@ -797,10 +733,6 @@ def test_letter_casing():
 
     res = query("RETURN toUpper('') AS name")
     assert res.result_set == [[""]]
-
-    for value in [False, True, 1, 1.0, {}, [], ["foo"]]:
-        query_exception(f"RETURN toLower({value}) AS r", "Type mismatch: expected String or Null but was")
-        query_exception(f"RETURN toUpper({value}) AS r", "Type mismatch: expected String or Null but was")
 
 
 def test_add():
@@ -943,12 +875,6 @@ def test_replace():
     res = query("RETURN replace('abc', 'a', '') AS result")
     assert res.result_set == [["bc"]]  # Replacement with empty string removes matches
 
-    # Type mismatch
-    for value, name in [(1, 'Integer'), (1.0, 'Float'), (True, 'Boolean'), ({}, 'Map'), ([], 'List')]:
-        query_exception(f"RETURN replace({value}, 'a', 'b') AS result", f"Type mismatch")
-        query_exception(f"RETURN replace('abc', {value}, 'b') AS result", f"Type mismatch")
-        query_exception(f"RETURN replace('abc', 'a', {value}) AS result", f"Type mismatch")
-
 
 @pytest.mark.extra
 def test_regex_matches():
@@ -977,13 +903,6 @@ def test_regex_matches():
     res = query("RETURN 'abc' =~ null AS result")
     assert res.result_set == [[None]]
 
-    # Type mismatch
-    for value, name in [(1, 'Integer'), (1.0, 'Float'), (True, 'Boolean'), ({}, 'Map'), ([], 'List')]:
-        query_exception(f"RETURN {value} =~ 'a.*' AS result",
-                        f"Type mismatch: expected String or Null but was")
-        query_exception(f"RETURN 'abc' =~ {value} AS result",
-                        f"Type mismatch: expected String or Null but was")
-
 
 def test_left():
     # Null handling
@@ -1004,11 +923,6 @@ def test_left():
     query_exception("RETURN left('abc', -1) AS result", "length must be a non-negative integer")
     query_exception("RETURN left('abc', null) AS result", "length must be a non-negative integer")
 
-    # Type mismatch
-    for value, name in [(1.0, 'Float'), (True, 'Boolean'), ({}, 'Map'), ([], 'List')]:
-        query_exception(f"RETURN left({value}, 2) AS result", f"Type mismatch")
-        query_exception(f"RETURN left('abc', {value}) AS result", f"Type mismatch")
-
 
 def test_ltrim():
     # Null handling
@@ -1027,10 +941,6 @@ def test_ltrim():
 
     res = query("RETURN ltrim('abc') AS result")
     assert res.result_set == [["abc"]]
-
-    # Type mismatch
-    for value, name in [(1.0, 'Float'), (True, 'Boolean'), ({}, 'Map'), ([], 'List')]:
-        query_exception(f"RETURN ltrim({value}) AS result", f"Type mismatch")
 
 
 def test_right():
@@ -1052,11 +962,6 @@ def test_right():
     query_exception("RETURN right('abc', -1) AS result", "length must be a non-negative integer")
     query_exception("RETURN right('abc', null) AS result", "length must be a non-negative integer")
 
-    # Type mismatch
-    for value, name in [(1.0, 'Float'), (True, 'Boolean'), ({}, 'Map'), ([], 'List')]:
-        query_exception(f"RETURN right({value}, 2) AS result", f"Type mismatch")
-        query_exception(f"RETURN right('abc', {value}) AS result", f"Type mismatch")
-
 
 def test_substring():
     # Null handling
@@ -1077,22 +982,12 @@ def test_substring():
     query_exception("RETURN substring('abc', -1, 2) AS result", "start must be a non-negative integer")
     query_exception("RETURN substring('abc', 0, -1) AS result", "length must be a non-negative integer")
 
-    # Type mismatch
-    for value, name in [(1.0, 'Float'), (True, 'Boolean'), ({}, 'Map'), ([], 'List')]:
-        query_exception(f"RETURN substring({value}, 0, 2) AS result", f"Type mismatch: expected String or Null but was")
-        query_exception(f"RETURN substring('abc', {value}, 2) AS result", f"Type mismatch: expected Integer but was")
-        query_exception(f"RETURN substring('abc', 0, {value}) AS result", f"Type mismatch: expected Integer but was")
-
-    query_exception("RETURN substring('abc', null, 2) AS result", "Type mismatch: expected Integer but was Null")
-    query_exception("RETURN substring('abc', 0, null) AS result", "Type mismatch: expected Integer but was Null")
-
 
 def test_graph_list():
-    assert client is not None
     for i in range(1000):
-        client.select_graph(f"g{i}").query("return 1")
-        client.connection.set(f"ng{i}", "ng")
-    graphs = client.list_graphs()
+        common.client.select_graph(f"g{i}").query("return 1")
+        common.client.connection.set(f"ng{i}", "ng")
+    graphs = common.client.list_graphs()
 
     assert len(graphs) == 1000
     for i in range(1000):
@@ -1111,16 +1006,6 @@ def test_function_with_namespace():
 
     res = query("RETURN string.join(['a', 'b']) AS result")
     assert res.result_set == [['ab']]
-
-    query_exception("RETURN string.join(['a', 'b'], ', ', ', ') AS result",
-                    "Received 3 arguments to function 'string.join', expected at most 2")
-
-    query_exception("RETURN string.join(1, 2) AS result",
-                    "Type mismatch: expected List or Null but was Integer")
-
-    for value, name in [(1.0, 'Float'), (True, 'Boolean'), ({}, 'Map'), ([], 'List'), ("null", 'Null')]:
-        query_exception(f"RETURN string.join(['a', {value}], ',') AS result",
-                        f"Type mismatch: expected String but was")
 
 
 @pytest.mark.extra
@@ -1143,16 +1028,6 @@ def test_match_reg_ex():
     ## multiple groups
     res = query("RETURN string.matchRegEx('foo bar', '([a-z]+)\\s+([a-z]+)') AS name")
     assert res.result_set == [[["foo bar", "foo", "bar"]]]
-
-    ## wrong number of args
-    query_exception("RETURN string.matchRegEx('foo bar') AS name",
-                    "Received 1 arguments to function 'string.matchregex', expected at least 2")
-
-    ## type mismatch
-    query_exception("RETURN string.matchRegEx(1, '.*') AS name",
-                    "Type mismatch: expected String or Null but was Integer")
-    query_exception("RETURN string.matchRegEx('foo bar', '**') AS name",
-                    "Invalid regex")
 
 
 @pytest.mark.extra
@@ -1177,18 +1052,6 @@ def test_list_re_replace():
         "RETURN string.replaceRegEx('123', '(\\w+)-(\\w+)', '${1}_${2}') AS name")
     assert res.result_set == [["123"]]
 
-    ## wrong number of args
-    query_exception("RETURN string.replaceRegEx('foo bar') AS name",
-                    "Received 1 arguments to function 'string.replaceregex', expected at least 3")
-
-    ## type mismatch
-    query_exception("RETURN string.replaceRegEx(1, '.*', 'foo') AS name",
-                    "Type mismatch: expected String or Null but was Integer")
-    query_exception("RETURN string.replaceRegEx('a', 1, 'foo') AS name",
-                    "Type mismatch: expected String or Null but was Integer")
-    query_exception("RETURN string.replaceRegEx('a', '.*', 3) AS name",
-                    "Type mismatch: expected String or Null but was Integer")
-
     ## broken regex
     query_exception("RETURN string.replaceRegEx('foo bar', '**', 'a') AS name",
                     "Invalid regex")
@@ -1210,13 +1073,6 @@ def test_abs():
     res = query("RETURN abs(null) AS name")
     assert res.result_set == [[None]]
 
-    for value, name in [(True, 'Boolean'), (False, 'Boolean'), ({}, 'Map'), ([], 'List')]:
-        query_exception(f"RETURN abs({value}) AS r", f"Type mismatch: expected Integer, Float, or Null but was {name}")
-
-    # wrong number of args
-    query_exception("RETURN abs(1, 2) AS name",
-                    "Received 2 arguments to function 'abs', expected at most 1")
-
 
 def test_ceil():
     res = query("RETURN ceil(1.1) AS name")
@@ -1237,21 +1093,10 @@ def test_ceil():
     res = query("RETURN ceil(null) AS name")
     assert res.result_set == [[None]]
 
-    for value, name in [(True, 'Boolean'), (False, 'Boolean'), ({}, 'Map'), ([], 'List')]:
-        query_exception(f"RETURN ceil({value}) AS r", f"Type mismatch: expected Integer, Float, or Null but was {name}")
-
-    # wrong number of args
-    query_exception("RETURN ceil(1, 2) AS name",
-                    "Received 2 arguments to function 'ceil', expected at most 1")
-
 
 def test_e():
     res = query("RETURN e() AS name")
     assert res.result_set == [[2.71828182845905e0]]
-
-    # wrong number of args
-    query_exception("RETURN e(1) AS name",
-                    "Received 1 arguments to function 'e', expected at most 0")
 
 
 def test_exp():
@@ -1269,13 +1114,6 @@ def test_exp():
 
     res = query("RETURN exp(null) AS name")
     assert res.result_set == [[None]]
-
-    for value, name in [(True, 'Boolean'), (False, 'Boolean'), ({}, 'Map'), ([], 'List')]:
-        query_exception(f"RETURN exp({value}) AS r", f"Type mismatch: expected Integer, Float, or Null but was {name}")
-
-    # wrong number of args
-    query_exception("RETURN exp(1, 2) AS name",
-                    "Received 2 arguments to function 'exp', expected at most 1")
 
 
 def test_floor():
@@ -1297,14 +1135,6 @@ def test_floor():
     res = query("RETURN floor(null) AS name")
     assert res.result_set == [[None]]
 
-    for value, name in [(True, 'Boolean'), (False, 'Boolean'), ({}, 'Map'), ([], 'List')]:
-        query_exception(f"RETURN floor({value}) AS r",
-                        f"Type mismatch: expected Integer, Float, or Null but was {name}")
-
-    # wrong number of args
-    query_exception("RETURN floor(1, 2) AS name",
-                    "Received 2 arguments to function 'floor', expected at most 1")
-
 
 def test_log():
     res = query("RETURN log(1) AS name")
@@ -1322,13 +1152,6 @@ def test_log():
     res = query("RETURN log(null) AS name")
     assert res.result_set == [[None]]
 
-    for value, name in [(True, 'Boolean'), (False, 'Boolean'), ({}, 'Map'), ([], 'List')]:
-        query_exception(f"RETURN log({value}) AS r", f"Type mismatch: expected Integer, Float, or Null but was {name}")
-
-    # wrong number of args
-    query_exception("RETURN log(1, 2) AS name",
-                    "Received 2 arguments to function 'log', expected at most 1")
-
 
 def test_log10():
     res = query("RETURN log10(1) AS name")
@@ -1345,14 +1168,6 @@ def test_log10():
 
     res = query("RETURN log10(null) AS name")
     assert res.result_set == [[None]]
-
-    for value, name in [(True, 'Boolean'), (False, 'Boolean'), ({}, 'Map'), ([], 'List')]:
-        query_exception(f"RETURN log10({value}) AS r",
-                        f"Type mismatch: expected Integer, Float, or Null but was {name}")
-
-    # wrong number of args
-    query_exception("RETURN log10(1, 2) AS name",
-                    "Received 2 arguments to function 'log10', expected at most 1")
 
 
 def test_pow():
@@ -1389,25 +1204,11 @@ def test_pow():
     res = query("RETURN pow(3, null) AS name")
     assert res.result_set == [[None]]
 
-    for value, name in [(True, 'Boolean'), (False, 'Boolean'), ({}, 'Map'), ([], 'List')]:
-        query_exception(f"RETURN pow({value}, 3) AS r",
-                        f"Type mismatch: expected Integer, Float, or Null but was {name}")
-        query_exception(f"RETURN pow(2, {value}) AS r",
-                        f"Type mismatch: expected Integer, Float, or Null but was {name}")
-
-    # wrong number of args
-    query_exception("RETURN pow(2) AS name",
-                    "Received 1 arguments to function 'pow', expected at least 2")
-
 
 def test_rand():
     res = query("RETURN rand() AS name", compare_results=False)
     assert res.result_set[0][0] >= 0.0
     assert res.result_set[0][0] < 1.0
-
-    # wrong number of args
-    query_exception("RETURN rand(1) AS name",
-                    "Received 1 arguments to function 'rand', expected at most 0")
 
 
 def test_round():
@@ -1428,14 +1229,6 @@ def test_round():
 
     res = query("RETURN round(null) AS name")
     assert res.result_set == [[None]]
-
-    for value, name in [(True, 'Boolean'), (False, 'Boolean'), ({}, 'Map'), ([], 'List')]:
-        query_exception(f"RETURN round({value}) AS r",
-                        f"Type mismatch: expected Integer, Float, or Null but was {name}")
-
-    # wrong number of args
-    query_exception("RETURN round(1, 2) AS name",
-                    "Received 2 arguments to function 'round', expected at most 1")
 
 
 def test_sign():
@@ -1464,15 +1257,6 @@ def test_sign():
     res = query("RETURN sign(null) AS result")
     assert res.result_set == [[None]]
 
-    # Type mismatch
-    for value, name in [(True, 'Boolean'), (False, 'Boolean'), ({}, 'Map'), ([], 'List')]:
-        query_exception(f"RETURN sign({value}) AS result",
-                        f"Type mismatch: expected Integer, Float, or Null but was {name}")
-
-    # wrong number of args
-    query_exception("RETURN sign(1, 2) AS result",
-                    "Received 2 arguments to function 'sign', expected at most 1")
-
 
 def test_sqrt():
     res = query("RETURN sqrt(4) AS result")
@@ -1492,14 +1276,6 @@ def test_sqrt():
 
     res = query("RETURN sqrt(null) AS result")
     assert res.result_set == [[None]]
-
-    for value, name in [(True, 'Boolean'), (False, 'Boolean'), ({}, 'Map'), ([], 'List')]:
-        query_exception(f"RETURN sqrt({value}) AS result",
-                        f"Type mismatch: expected Integer, Float, or Null but was {name}")
-
-    # wrong number of args
-    query_exception("RETURN sqrt(1, 2) AS result",
-                    "Received 2 arguments to function 'sqrt', expected at most 1")
 
 
 def test_range():

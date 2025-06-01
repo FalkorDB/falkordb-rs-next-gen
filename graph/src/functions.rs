@@ -128,8 +128,7 @@ impl GraphFn {
                         }
                     } else if let Some((actual, expected)) = args[i].validate_of_type(arg_type) {
                         return Err(format!(
-                            "Type mismatch: expected {} but was {}",
-                            expected, actual
+                            "Type mismatch: expected {expected} but was {actual}"
                         ));
                     }
                 }
@@ -202,17 +201,13 @@ impl Functions {
             |graph_fn| {
                 match &graph_fn.args_type {
                     FnArguments::Fixed(args_type) => {
-                        if args
-                            < args_type
-                                .iter()
-                                .filter(|x| !matches!(x, Type::Optional(_)))
-                                .count()
-                        {
+                        let least = args_type
+                            .iter()
+                            .filter(|x| !matches!(x, Type::Optional(_)))
+                            .count();
+                        if args < least {
                             return Err(format!(
-                                "Received {} arguments to function '{}', expected at least {}",
-                                args,
-                                name,
-                                args_type.len()
+                                "Received {args} arguments to function '{name}', expected at least {least}"
                             ));
                         }
                         if args_type.len() < args {
@@ -577,7 +572,7 @@ pub fn init_functions() -> Result<(), Functions> {
         "keys",
         keys,
         false,
-        vec![Type::Union(vec![Type::Int, Type::Null])],
+        vec![Type::Union(vec![Type::Map, Type::Null])],
         FnType::Function,
     );
     funcs.add(

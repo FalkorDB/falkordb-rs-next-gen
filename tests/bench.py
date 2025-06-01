@@ -1,57 +1,20 @@
-import pytest
-import os
-import platform
-import subprocess
-import pytest
-from falkordb import FalkorDB, Node, Edge
-from redis import Redis, ResponseError
-
-redis_server = None
-client = None
-g = None
-shutdown = False
+import common
 
 
 def setup_module(module):
-    global redis_server, client, g, shutdown
-    target = os.environ.get("TARGET",
-                            "target/release/libfalkordb.dylib" if platform.system() == "Darwin" else "target/release/libfalkordb.so")
-    r = Redis()
-    try:
-        r.ping()
-        client = FalkorDB()
-        g = client.select_graph("test")
-        return
-    except:
-        shutdown = True
-        if os.path.exists("redis-test.log"):
-            os.remove("redis-test.log")
-        redis_server = subprocess.Popen(executable="/usr/local/bin/redis-server",
-                                        args=["--save", "", "--logfile", "redis-test.log", "--loadmodule", target],
-                                        stdout=subprocess.PIPE)
-    while True:
-        try:
-            r.ping()
-            client = FalkorDB()
-            g = client.select_graph("test")
-            return
-        except:
-            pass
+    common.start_redis()
 
 
 def teardown_module(module):
-    if shutdown:
-        client.connection.shutdown(nosave=True)
-        redis_server.wait()
+    common.shutdown_redis()
 
 
 def setup_function(function):
-    global g
-    if g.name in client.list_graphs():
-        g.delete()
+    if common.g.name in common.client.list_graphs():
+        common.g.delete()
 
 def query(query: str, params=None):
-    g.query(query, params)
+    common.g.query(query, params)
 
 def test_return(benchmark):
     benchmark(query, "RETURN 1")
