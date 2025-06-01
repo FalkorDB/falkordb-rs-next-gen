@@ -980,9 +980,9 @@ def test_regex_matches():
     # Type mismatch
     for value, name in [(1, 'Integer'), (1.0, 'Float'), (True, 'Boolean'), ({}, 'Map'), ([], 'List')]:
         query_exception(f"RETURN {value} =~ 'a.*' AS result",
-                        f"Type mismatch: expected (String, String) or null, but was")
+                        f"Type mismatch: expected String or Null but was")
         query_exception(f"RETURN 'abc' =~ {value} AS result",
-                        f"Type mismatch: expected (String, String) or null, but was")
+                        f"Type mismatch: expected String or Null but was")
 
 
 def test_left():

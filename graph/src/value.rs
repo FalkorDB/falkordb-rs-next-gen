@@ -6,6 +6,8 @@ use std::rc::Rc;
 
 use ordermap::OrderMap;
 
+use crate::functions::Type;
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
     Null,
@@ -433,6 +435,57 @@ impl Value {
             }
         }
         (Ordering::Equal, DisjointOrNull::None)
+    }
+
+    #[must_use]
+    pub fn get_type(&self) -> Type {
+        match self {
+            Self::Null => Type::Null,
+            Self::Bool(_) => Type::Bool,
+            Self::Int(_) => Type::Int,
+            Self::Float(_) => Type::Float,
+            Self::String(_) => Type::String,
+            Self::List(_) => Type::List(Box::new(Type::Any)),
+            Self::Map(_) => Type::Map,
+            Self::Node(_) => Type::Node,
+            Self::Relationship(_, _, _) => Type::Relationship,
+            Self::Path(_) => Type::Path,
+        }
+    }
+
+    #[must_use]
+    pub fn validate_of_type(
+        &self,
+        arg_type: &Type,
+    ) -> Option<(Type, Type)> {
+        match (self, arg_type) {
+            (Self::List(vs), Type::List(ty)) => {
+                for v in vs {
+                    if let Some(res) = v.validate_of_type(ty) {
+                        return Some(res);
+                    }
+                }
+                None
+            }
+            (Self::Null, Type::Null)
+            | (Self::Bool(_), Type::Bool)
+            | (Self::Int(_), Type::Int)
+            | (Self::Float(_), Type::Float)
+            | (Self::String(_), Type::String)
+            | (Self::Map(_), Type::Map)
+            | (Self::Node(_), Type::Node)
+            | (Self::Relationship(_, _, _), Type::Relationship)
+            | (Self::Path(_), Type::Path)
+            | (_, Type::Any) => None,
+            (v, Type::Optional(ty)) => v.validate_of_type(ty),
+            (v, Type::Union(tys)) => {
+                for ty in tys {
+                    v.validate_of_type(ty)?;
+                }
+                Some((v.get_type(), Type::Union(tys.clone())))
+            }
+            (v, e) => Some((v.get_type(), e.clone())),
+        }
     }
 }
 

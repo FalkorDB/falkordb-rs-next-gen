@@ -4,6 +4,7 @@ use crate::runtime::Runtime;
 use crate::value::Value;
 use rand::Rng;
 use std::collections::BTreeMap;
+use std::fmt::Display;
 use std::rc::Rc;
 use std::sync::OnceLock;
 
@@ -17,13 +18,75 @@ pub enum FnType {
     Aggregation,
 }
 
+#[derive(Clone, Debug)]
+pub enum Type {
+    Null,
+    Bool,
+    Int,
+    Float,
+    String,
+    List(Box<Type>),
+    Map,
+    Node,
+    Relationship,
+    Path,
+    Any,
+    Union(Vec<Type>),
+    Optional(Box<Type>),
+}
+
+impl Display for Type {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        match self {
+            Self::Null => write!(f, "Null"),
+            Self::Bool => write!(f, "Boolean"),
+            Self::Int => write!(f, "Integer"),
+            Self::Float => write!(f, "Float"),
+            Self::String => write!(f, "String"),
+            Self::List(_) => write!(f, "List"),
+            Self::Map => write!(f, "Map"),
+            Self::Node => write!(f, "Node"),
+            Self::Relationship => write!(f, "Relationship"),
+            Self::Path => write!(f, "Path"),
+            Self::Any => write!(f, "Any"),
+            Self::Union(types) => {
+                let mut iter = types.iter();
+                if let Some(first) = iter.next() {
+                    write!(f, "{first}")?;
+                }
+                for _ in 0..types.len() - 2 {
+                    if let Some(next) = iter.next() {
+                        write!(f, ", {next}")?;
+                    }
+                }
+                if let Some(last) = iter.next() {
+                    if types.len() > 2 {
+                        write!(f, ",")?;
+                    }
+                    write!(f, " or {last}")?;
+                }
+                Ok(())
+            }
+            Self::Optional(inner) => write!(f, "{inner}"),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum FnArguments {
+    Fixed(Vec<Type>),
+    VarLength(Type),
+}
+
 #[derive(Debug)]
 pub struct GraphFn {
     pub name: String,
     pub func: RuntimeFn,
     pub write: bool,
-    pub min_args: usize,
-    pub max_args: usize,
+    pub args_type: FnArguments,
     pub fn_type: FnType,
 }
 
@@ -33,18 +96,47 @@ impl GraphFn {
         name: &str,
         func: RuntimeFn,
         write: bool,
-        min_args: usize,
-        max_args: usize,
+        args_type: FnArguments,
         fn_type: FnType,
     ) -> Self {
         Self {
             name: String::from(name),
             func,
             write,
-            min_args,
-            max_args,
+            args_type,
             fn_type,
         }
+    }
+}
+
+impl GraphFn {
+    pub fn validate_args_type(
+        &self,
+        args: &Vec<Value>,
+    ) -> Result<(), String> {
+        match &self.args_type {
+            FnArguments::Fixed(args_type) => {
+                for (i, arg_type) in args_type.iter().enumerate() {
+                    if i >= args.len() {
+                        if !matches!(arg_type, Type::Optional(_)) {
+                            return Err(format!(
+                                "Missing argument {} for function '{}', expected type {:?}",
+                                i + 1,
+                                self.name,
+                                arg_type
+                            ));
+                        }
+                    } else if let Some((actual, expected)) = args[i].validate_of_type(arg_type) {
+                        return Err(format!(
+                            "Type mismatch: expected {} but was {}",
+                            expected, actual
+                        ));
+                    }
+                }
+            }
+            FnArguments::VarLength(arg) => {}
+        }
+        Ok(())
     }
 }
 
@@ -64,8 +156,7 @@ impl Functions {
         name: &str,
         func: RuntimeFn,
         write: bool,
-        min_args: usize,
-        max_args: usize,
+        args_type: Vec<Type>,
         fn_type: FnType,
     ) {
         let name = name.to_lowercase();
@@ -73,7 +164,30 @@ impl Functions {
             !self.functions.contains_key(&name),
             "Function '{name}' already exists"
         );
-        let graph_fn = GraphFn::new(&name, func, write, min_args, max_args, fn_type);
+        let graph_fn = GraphFn::new(&name, func, write, FnArguments::Fixed(args_type), fn_type);
+        self.functions.insert(name, graph_fn);
+    }
+
+    pub fn add_var_len(
+        &mut self,
+        name: &str,
+        func: RuntimeFn,
+        write: bool,
+        arg_type: Type,
+        fn_type: FnType,
+    ) {
+        let name = name.to_lowercase();
+        assert!(
+            !self.functions.contains_key(&name),
+            "Function '{name}' already exists"
+        );
+        let graph_fn = GraphFn::new(
+            &name,
+            func,
+            write,
+            FnArguments::VarLength(arg_type),
+            fn_type,
+        );
         self.functions.insert(name, graph_fn);
     }
 
@@ -86,19 +200,33 @@ impl Functions {
         self.get(name, fn_type).map_or_else(
             || Err(format!("Function {name} not found")),
             |graph_fn| {
-                if args < graph_fn.min_args {
-                    Err(format!(
-                        "Received {} arguments to function '{}', expected at least {}",
-                        args, name, graph_fn.min_args
-                    ))
-                } else if graph_fn.max_args < args {
-                    Err(format!(
-                        "Received {} arguments to function '{}', expected at most {}",
-                        args, name, graph_fn.max_args
-                    ))
-                } else {
-                    Ok(())
+                match &graph_fn.args_type {
+                    FnArguments::Fixed(args_type) => {
+                        if args
+                            < args_type
+                                .iter()
+                                .filter(|x| !matches!(x, Type::Optional(_)))
+                                .count()
+                        {
+                            return Err(format!(
+                                "Received {} arguments to function '{}', expected at least {}",
+                                args,
+                                name,
+                                args_type.len()
+                            ));
+                        }
+                        if args_type.len() < args {
+                            return Err(format!(
+                                "Received {} arguments to function '{}', expected at most {}",
+                                args,
+                                name,
+                                args_type.len()
+                            ));
+                        }
+                    }
+                    FnArguments::VarLength(arg) => {}
                 }
+                Ok(())
             },
         )
     }
@@ -137,112 +265,416 @@ static FUNCTIONS: OnceLock<Functions> = OnceLock::new();
 pub fn init_functions() -> Result<(), Functions> {
     let mut funcs = Functions::new();
 
-    funcs.add("property", property, false, 2, 2, FnType::Internal);
+    funcs.add(
+        "property",
+        property,
+        false,
+        vec![
+            Type::Union(vec![Type::Node, Type::Relationship, Type::Map, Type::Null]),
+            Type::String,
+        ],
+        FnType::Internal,
+    );
 
-    funcs.add("toInteger", value_to_integer, false, 1, 1, FnType::Function);
-    funcs.add("toFloat", value_to_float, false, 1, 1, FnType::Function);
-    funcs.add("toString", value_to_string, false, 1, 1, FnType::Function);
-    funcs.add("labels", labels, false, 1, 1, FnType::Function);
-    funcs.add("startnode", start_node, false, 1, 1, FnType::Function);
-    funcs.add("endnode", end_node, false, 1, 1, FnType::Function);
-    funcs.add("size", size, false, 1, 1, FnType::Function);
-    funcs.add("head", head, false, 1, 1, FnType::Function);
-    funcs.add("last", last, false, 1, 1, FnType::Function);
-    funcs.add("tail", tail, false, 1, 1, FnType::Function);
-    funcs.add("reverse", reverse, false, 1, 1, FnType::Function);
-    funcs.add("substring", substring, false, 2, 3, FnType::Function);
-    funcs.add("split", split, false, 2, 2, FnType::Function);
-    funcs.add("toLower", string_to_lower, false, 1, 1, FnType::Function);
-    funcs.add("toUpper", string_to_upper, false, 1, 1, FnType::Function);
-    funcs.add("replace", string_replace, false, 3, 3, FnType::Function);
-    funcs.add("left", string_left, false, 2, 2, FnType::Function);
-    funcs.add("ltrim", string_ltrim, false, 1, 1, FnType::Function);
-    funcs.add("right", string_right, false, 2, 2, FnType::Function);
-    funcs.add("string.join", string_join, false, 1, 2, FnType::Function);
+    funcs.add(
+        "labels",
+        labels,
+        false,
+        vec![Type::Union(vec![Type::Node, Type::Null])],
+        FnType::Function,
+    );
+    funcs.add(
+        "startnode",
+        start_node,
+        false,
+        vec![Type::Relationship],
+        FnType::Function,
+    );
+    funcs.add(
+        "endnode",
+        end_node,
+        false,
+        vec![Type::Relationship],
+        FnType::Function,
+    );
+    funcs.add(
+        "toInteger",
+        value_to_integer,
+        false,
+        vec![Type::Union(vec![
+            Type::String,
+            Type::Bool,
+            Type::Int,
+            Type::Float,
+            Type::Null,
+        ])],
+        FnType::Function,
+    );
+    funcs.add(
+        "toFloat",
+        value_to_float,
+        false,
+        vec![Type::Union(vec![
+            Type::String,
+            Type::Float,
+            Type::Int,
+            Type::Null,
+        ])],
+        FnType::Function,
+    );
+    funcs.add(
+        "toString",
+        value_to_string,
+        false,
+        vec![Type::Union(vec![
+            Type::String,
+            Type::Int,
+            Type::Bool,
+            Type::Null,
+        ])],
+        FnType::Function,
+    );
+    funcs.add(
+        "size",
+        size,
+        false,
+        vec![Type::Union(vec![
+            Type::List(Box::new(Type::Any)),
+            Type::String,
+            Type::Null,
+        ])],
+        FnType::Function,
+    );
+    funcs.add(
+        "head",
+        head,
+        false,
+        vec![Type::Union(vec![
+            Type::List(Box::new(Type::Any)),
+            Type::Null,
+        ])],
+        FnType::Function,
+    );
+    funcs.add(
+        "last",
+        last,
+        false,
+        vec![Type::Union(vec![
+            Type::List(Box::new(Type::Any)),
+            Type::Null,
+        ])],
+        FnType::Function,
+    );
+    funcs.add(
+        "tail",
+        tail,
+        false,
+        vec![Type::Union(vec![
+            Type::List(Box::new(Type::Any)),
+            Type::Null,
+        ])],
+        FnType::Function,
+    );
+    funcs.add(
+        "reverse",
+        reverse,
+        false,
+        vec![Type::Union(vec![
+            Type::List(Box::new(Type::Any)),
+            Type::String,
+            Type::Null,
+        ])],
+        FnType::Function,
+    );
+    funcs.add(
+        "substring",
+        substring,
+        false,
+        vec![
+            Type::Union(vec![Type::String, Type::Null]),
+            Type::Int,
+            Type::Optional(Box::new(Type::Int)),
+        ],
+        FnType::Function,
+    );
+    funcs.add(
+        "split",
+        split,
+        false,
+        vec![
+            Type::Union(vec![Type::String, Type::Null]),
+            Type::Union(vec![Type::String, Type::Null]),
+        ],
+        FnType::Function,
+    );
+    funcs.add(
+        "toLower",
+        string_to_lower,
+        false,
+        vec![Type::Union(vec![Type::String, Type::Null])],
+        FnType::Function,
+    );
+    funcs.add(
+        "toUpper",
+        string_to_upper,
+        false,
+        vec![Type::Union(vec![Type::String, Type::Null])],
+        FnType::Function,
+    );
+    funcs.add(
+        "replace",
+        string_replace,
+        false,
+        vec![
+            Type::Union(vec![Type::String, Type::Null]),
+            Type::Union(vec![Type::String, Type::Null]),
+            Type::Union(vec![Type::String, Type::Null]),
+        ],
+        FnType::Function,
+    );
+    funcs.add(
+        "left",
+        string_left,
+        false,
+        vec![
+            Type::Union(vec![Type::String, Type::Null]),
+            Type::Union(vec![Type::Int, Type::Null]),
+        ],
+        FnType::Function,
+    );
+    funcs.add(
+        "ltrim",
+        string_ltrim,
+        false,
+        vec![Type::Union(vec![Type::String, Type::Null])],
+        FnType::Function,
+    );
+    funcs.add(
+        "right",
+        string_right,
+        false,
+        vec![
+            Type::Union(vec![Type::String, Type::Null]),
+            Type::Union(vec![Type::Int, Type::Null]),
+        ],
+        FnType::Function,
+    );
+    funcs.add(
+        "string.join",
+        string_join,
+        false,
+        vec![
+            Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null]),
+            Type::Optional(Box::new(Type::Union(vec![Type::String, Type::Null]))),
+        ],
+        FnType::Function,
+    );
     funcs.add(
         "string.matchRegEx",
         string_match_reg_ex,
         false,
-        2,
-        2,
+        vec![
+            Type::Union(vec![Type::String, Type::Null]),
+            Type::Union(vec![Type::String, Type::Null]),
+        ],
         FnType::Function,
     );
     funcs.add(
         "string.replaceRegEx",
         string_replace_reg_ex,
         false,
-        3,
-        3,
+        vec![
+            Type::Union(vec![Type::String, Type::Null]),
+            Type::Union(vec![Type::String, Type::Null]),
+            Type::Union(vec![Type::String, Type::Null]),
+        ],
         FnType::Function,
     );
-    funcs.add("abs", abs, false, 1, 1, FnType::Function);
-    funcs.add("ceil", ceil, false, 1, 1, FnType::Function);
-    funcs.add("e", e, false, 0, 0, FnType::Function);
-    funcs.add("exp", exp, false, 1, 1, FnType::Function);
-    funcs.add("floor", floor, false, 1, 1, FnType::Function);
-    funcs.add("log", log, false, 1, 1, FnType::Function);
-    funcs.add("log10", log10, false, 1, 1, FnType::Function);
-    funcs.add("pow", pow, false, 2, 2, FnType::Function);
-    funcs.add("rand", rand, false, 0, 0, FnType::Function);
-    funcs.add("round", round, false, 1, 1, FnType::Function);
-    funcs.add("sign", sign, false, 1, 1, FnType::Function);
-    funcs.add("sqrt", sqrt, false, 1, 1, FnType::Function);
-    funcs.add("range", range, false, 1, 3, FnType::Function);
-    funcs.add("coalesce", coalesce, false, 1, usize::MAX, FnType::Function);
-    funcs.add("keys", keys, false, 1, 1, FnType::Function);
-    funcs.add("toBoolean", to_boolean, false, 1, 1, FnType::Function);
+    funcs.add(
+        "abs",
+        abs,
+        false,
+        vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
+        FnType::Function,
+    );
+    funcs.add(
+        "ceil",
+        ceil,
+        false,
+        vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
+        FnType::Function,
+    );
+    funcs.add("e", e, false, vec![], FnType::Function);
+    funcs.add(
+        "exp",
+        exp,
+        false,
+        vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
+        FnType::Function,
+    );
+    funcs.add(
+        "floor",
+        floor,
+        false,
+        vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
+        FnType::Function,
+    );
+    funcs.add(
+        "log",
+        log,
+        false,
+        vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
+        FnType::Function,
+    );
+    funcs.add(
+        "log10",
+        log10,
+        false,
+        vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
+        FnType::Function,
+    );
+    funcs.add(
+        "pow",
+        pow,
+        false,
+        vec![
+            Type::Union(vec![Type::Int, Type::Float, Type::Null]),
+            Type::Union(vec![Type::Int, Type::Float, Type::Null]),
+        ],
+        FnType::Function,
+    );
+    funcs.add("rand", rand, false, vec![], FnType::Function);
+    funcs.add(
+        "round",
+        round,
+        false,
+        vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
+        FnType::Function,
+    );
+    funcs.add(
+        "sign",
+        sign,
+        false,
+        vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
+        FnType::Function,
+    );
+    funcs.add(
+        "sqrt",
+        sqrt,
+        false,
+        vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
+        FnType::Function,
+    );
+    funcs.add(
+        "range",
+        range,
+        false,
+        vec![Type::Int, Type::Int, Type::Optional(Box::new(Type::Int))],
+        FnType::Function,
+    );
+    funcs.add_var_len("coalesce", coalesce, false, Type::Any, FnType::Function);
+    funcs.add(
+        "keys",
+        keys,
+        false,
+        vec![Type::Union(vec![Type::Int, Type::Null])],
+        FnType::Function,
+    );
+    funcs.add(
+        "toBoolean",
+        to_boolean,
+        false,
+        vec![Type::Union(vec![
+            Type::Bool,
+            Type::String,
+            Type::Int,
+            Type::Null,
+        ])],
+        FnType::Function,
+    );
 
     // aggregation functions
-    funcs.add("collect", collect, false, 1, 2, FnType::Aggregation);
-    funcs.add("count", count, false, 0, 2, FnType::Aggregation);
-    funcs.add("sum", sum, false, 1, 2, FnType::Aggregation);
-    funcs.add("max", max, false, 1, 2, FnType::Aggregation);
-    funcs.add("min", min, false, 1, 2, FnType::Aggregation);
+    funcs.add(
+        "collect",
+        collect,
+        false,
+        vec![Type::Any],
+        FnType::Aggregation,
+    );
+    funcs.add(
+        "count",
+        count,
+        false,
+        vec![Type::Optional(Box::new(Type::Any))],
+        FnType::Aggregation,
+    );
+    funcs.add("sum", sum, false, vec![Type::Any], FnType::Aggregation);
+    funcs.add("max", max, false, vec![Type::Any], FnType::Aggregation);
+    funcs.add("min", min, false, vec![Type::Any], FnType::Aggregation);
 
     // Internal functions
     funcs.add(
         "starts_with",
         internal_starts_with,
         false,
-        2,
-        2,
+        vec![
+            Type::Union(vec![Type::String, Type::Null]),
+            Type::Union(vec![Type::String, Type::Null]),
+        ],
         FnType::Internal,
     );
     funcs.add(
         "ends_with",
         internal_ends_with,
         false,
-        2,
-        2,
+        vec![
+            Type::Union(vec![Type::String, Type::Null]),
+            Type::Union(vec![Type::String, Type::Null]),
+        ],
         FnType::Internal,
     );
-    funcs.add("contains", internal_contains, false, 2, 2, FnType::Internal);
+    funcs.add(
+        "contains",
+        internal_contains,
+        false,
+        vec![
+            Type::Union(vec![Type::String, Type::Null]),
+            Type::Union(vec![Type::String, Type::Null]),
+        ],
+        FnType::Internal,
+    );
     funcs.add(
         "regex_matches",
         internal_regex_matches,
         false,
-        2,
-        2,
+        vec![
+            Type::Union(vec![Type::String, Type::Null]),
+            Type::Union(vec![Type::String, Type::Null]),
+        ],
         FnType::Internal,
     );
-    funcs.add("case", internal_case, false, 1, 2, FnType::Internal);
+    funcs.add(
+        "case",
+        internal_case,
+        false,
+        vec![Type::Any, Type::Optional(Box::new(Type::Any))],
+        FnType::Internal,
+    );
 
     // Procedures
-    funcs.add("db.labels", db_labels, false, 0, 0, FnType::Procedure);
+    funcs.add("db.labels", db_labels, false, vec![], FnType::Procedure);
     funcs.add(
         "db.relationshiptypes",
         db_types,
         false,
-        0,
-        0,
+        vec![],
         FnType::Procedure,
     );
     funcs.add(
         "db.propertykeys",
         db_properties,
         false,
-        0,
-        0,
+        vec![],
         FnType::Procedure,
     );
 
@@ -302,15 +734,7 @@ fn property(
             Ok(map.get(&property).unwrap_or(&Value::Null).clone())
         }
         (Some(Value::Null), Some(Value::String(_)), None) => Ok(Value::Null),
-        (Some(Value::Map(_)), Some(p), None) => Err(format!(
-            "Type mismatch: expected String but was {}",
-            p.name()
-        )),
-        (Some(m), Some(_), None) => Err(format!(
-            "Type mismatch: expected Node, Relationship, or Map but was {}",
-            m.name()
-        )),
-        _ => Ok(Value::Null),
+        _ => unreachable!(),
     }
 }
 
@@ -350,8 +774,7 @@ fn labels(
             ))
         }
         (Some(Value::Null), None) => Ok(Value::Null),
-        (Some(v), None) => Err(format!("Type mismatch: expected Node but was {}", v.name())),
-        _ => Ok(Value::Null),
+        _ => unreachable!(),
     }
 }
 
@@ -362,7 +785,7 @@ fn start_node(
     let mut iter = args.into_iter();
     match (iter.next(), iter.next()) {
         (Some(Value::Relationship(_, src, _)), None) => Ok(Value::Node(src)),
-        _ => Ok(Value::Null),
+        _ => unreachable!(),
     }
 }
 
@@ -373,7 +796,7 @@ fn end_node(
     let mut iter = args.into_iter();
     match (iter.next(), iter.next()) {
         (Some(Value::Relationship(_, _, dest)), None) => Ok(Value::Node(dest)),
-        _ => Ok(Value::Null),
+        _ => unreachable!(),
     }
 }
 
@@ -497,15 +920,9 @@ fn value_to_integer(
         }),
         Some(v @ Value::Int(_)) => Ok(v),
         Some(Value::Float(f)) => Ok(Value::Int(f as i64)),
-        Some(Value::Null) => Ok(Value::Null),
         Some(Value::Bool(b)) => Ok(Value::Int(i64::from(b))),
-        Some(arg) => Err(format!(
-            "Type mismatch: expected String, Boolean, Integer, Float, or Null but was {}",
-            arg.name()
-        )),
-        _ => Err(format!(
-            "Expected one argument for value_to_integer, instead {len}"
-        )),
+        Some(Value::Null) => Ok(Value::Null),
+        _ => unreachable!(),
     }
 }
 
@@ -519,13 +936,7 @@ fn value_to_float(
         Some(v @ Value::Float(_)) => Ok(v),
         Some(Value::Int(i)) => Ok(Value::Float(i as f64)),
         Some(Value::Null) => Ok(Value::Null),
-        Some(arg) => Err(format!(
-            "Type mismatch: expected String, Boolean, Integer, Float, or Null but was {}",
-            arg.name()
-        )),
-        _ => Err(format!(
-            "Expected one argument for value_to_integer, instead {len}"
-        )),
+        _ => unreachable!(),
     }
 }
 
@@ -534,10 +945,7 @@ fn value_string(value: &Value) -> Result<Rc<String>, String> {
         Value::String(s) => Ok(s.clone()),
         Value::Int(i) => Ok(Rc::new(i.to_string())),
         Value::Bool(b) => Ok(Rc::new(String::from(if *b { "true" } else { "false" }))),
-        arg => Err(format!(
-            "Type mismatch: expected String, Boolean, Integer, Float, or Null but was {}",
-            arg.name()
-        )),
+        _ => unreachable!(),
     }
 }
 
@@ -549,9 +957,7 @@ fn value_to_string(
     match args.into_iter().next() {
         Some(Value::Null) => Ok(Value::Null),
         Some(v) => Ok(Value::String(value_string(&v)?)),
-        _ => Err(format!(
-            "Expected one argument for value_to_integer, instead {len}"
-        )),
+        _ => unreachable!(),
     }
 }
 
@@ -563,10 +969,6 @@ fn size(
         Some(Value::String(s)) => Ok(Value::Int(s.len() as i64)),
         Some(Value::List(v)) => Ok(Value::Int(v.len() as i64)),
         Some(Value::Null) => Ok(Value::Null),
-        Some(arg) => Err(format!(
-            "Type mismatch: expected List, String, or Null but was {}",
-            arg.name()
-        )),
         _ => unreachable!(),
     }
 }
@@ -584,10 +986,6 @@ fn head(
             }
         }
         Some(Value::Null) => Ok(Value::Null),
-        Some(arg) => Err(format!(
-            "Type mismatch: expected List or Null but was {}",
-            arg.name()
-        )),
         _ => unreachable!(),
     }
 }
@@ -599,10 +997,6 @@ fn last(
     match args.into_iter().next() {
         Some(Value::List(v)) => Ok(v.last().unwrap_or(&Value::Null).clone()),
         Some(Value::Null) => Ok(Value::Null),
-        Some(arg) => Err(format!(
-            "Type mismatch: expected List or Null but was {}",
-            arg.name()
-        )),
         _ => unreachable!(),
     }
 }
@@ -620,10 +1014,6 @@ fn tail(
             }
         }
         Some(Value::Null) => Ok(Value::Null),
-        Some(arg) => Err(format!(
-            "Type mismatch: expected List or Null but was {}",
-            arg.name()
-        )),
         _ => unreachable!(),
     }
 }
@@ -637,12 +1027,8 @@ fn reverse(
             v.reverse();
             Ok(Value::List(v))
         }
-        Some(Value::Null) => Ok(Value::Null),
         Some(Value::String(s)) => Ok(Value::String(Rc::new(s.chars().rev().collect()))),
-        Some(arg) => Err(format!(
-            "Type mismatch: expected List, String, or Null but was {}",
-            arg.name()
-        )),
+        Some(Value::Null) => Ok(Value::Null),
         _ => unreachable!(),
     }
 }
@@ -679,21 +1065,6 @@ fn substring(
             let end = start.saturating_add(length).min(s.len());
             Ok(Value::String(Rc::new(String::from(&s[start..end]))))
         }
-
-        (Some(Value::String(_)), Some(t), None) => Err(format!(
-            "Type mismatch: expected Integer but was {}",
-            t.name()
-        )),
-        (Some(t), Some(Value::Int(_)), None | Some(Value::Int(_))) => Err(format!(
-            "Type mismatch: expected String or Null but was {}",
-            t.name()
-        )),
-        (Some(Value::String(_)), Some(t), Some(Value::Int(_)))
-        | (Some(Value::String(_)), Some(Value::Int(_)), Some(t)) => Err(format!(
-            "Type mismatch: expected Integer but was {}",
-            t.name()
-        )),
-
         _ => unreachable!(),
     }
 }
@@ -721,11 +1092,6 @@ fn split(
             }
         }
         (Some(Value::Null), Some(_)) | (Some(_), Some(Value::Null)) => Ok(Value::Null),
-        (Some(arg1), Some(arg2)) => Err(format!(
-            "Type mismatch: expected 2 String or null arguments, but was {} {}",
-            arg1.name(),
-            arg2.name()
-        )),
         _ => unreachable!(),
     }
 }
@@ -737,10 +1103,6 @@ fn string_to_lower(
     match args.into_iter().next() {
         Some(Value::String(s)) => Ok(Value::String(Rc::new(s.to_lowercase()))),
         Some(Value::Null) => Ok(Value::Null),
-        Some(arg) => Err(format!(
-            "Type mismatch: expected String or Null but was {}",
-            arg.name()
-        )),
         _ => unreachable!(),
     }
 }
@@ -752,10 +1114,6 @@ fn string_to_upper(
     match args.into_iter().next() {
         Some(Value::String(s)) => Ok(Value::String(Rc::new(s.to_uppercase()))),
         Some(Value::Null) => Ok(Value::Null),
-        Some(arg) => Err(format!(
-            "Type mismatch: expected String or Null but was {}",
-            arg.name()
-        )),
         _ => unreachable!(),
     }
 }
@@ -774,12 +1132,6 @@ fn string_replace(
         (Some(Value::Null), _, _) | (_, Some(Value::Null), _) | (_, _, Some(Value::Null)) => {
             Ok(Value::Null)
         }
-        (Some(arg1), Some(arg2), Some(arg3)) => Err(format!(
-            "Type mismatch: expected (String, String, String) or null, but was: ({}, {}, {})",
-            arg1.name(),
-            arg2.name(),
-            arg3.name()
-        )),
         _ => unreachable!(),
     }
 }
@@ -799,11 +1151,6 @@ fn string_left(
         }
         (Some(Value::Null), _) => Ok(Value::Null),
         (_, Some(Value::Null)) => Err(String::from("length must be a non-negative integer")),
-        (Some(arg1), Some(arg2)) => Err(format!(
-            "Type mismatch: expected (String, Integer) or null, but was: ({}, {})",
-            arg1.name(),
-            arg2.name()
-        )),
         _ => unreachable!(),
     }
 }
@@ -815,10 +1162,6 @@ fn string_ltrim(
     match args.into_iter().next() {
         Some(Value::String(s)) => Ok(Value::String(Rc::new(String::from(s.trim_start())))),
         Some(Value::Null) => Ok(Value::Null),
-        Some(arg) => Err(format!(
-            "Type mismatch: expected String or null, but was {}",
-            arg.name()
-        )),
         _ => unreachable!(),
     }
 }
@@ -839,11 +1182,6 @@ fn string_right(
         }
         (Some(Value::Null), _) => Ok(Value::Null),
         (_, Some(Value::Null)) => Err(String::from("length must be a non-negative integer")),
-        (Some(arg1), Some(arg2)) => Err(format!(
-            "Type mismatch: expected (String, Integer) or null, but was: ({}, {})",
-            arg1.name(),
-            arg2.name()
-        )),
         _ => unreachable!(),
     }
 }
@@ -877,10 +1215,6 @@ fn string_join(
             result.map(|strings| Value::String(Rc::new(strings.join(""))))
         }
         (Some(Value::Null), _) => Ok(Value::Null),
-        (Some(arg1), Some(_)) => Err(format!(
-            "Type mismatch: expected List or Null but was {}",
-            arg1.name()
-        )),
         _ => unreachable!(),
     }
 }
@@ -908,14 +1242,6 @@ fn string_match_reg_ex(
             }
         }
         (Some(Value::Null), Some(_)) | (Some(_), Some(Value::Null)) => Ok(Value::List(vec![])),
-        (Some(Value::String(_)), Some(arg2)) => Err(format!(
-            "Type mismatch: expected String or Null but was {}",
-            arg2.name(),
-        )),
-        (Some(arg1), Some(_)) => Err(format!(
-            "Type mismatch: expected String or Null but was {}",
-            arg1.name(),
-        )),
         _ => unreachable!(),
     }
 }
@@ -942,18 +1268,6 @@ fn string_replace_reg_ex(
         (Some(Value::Null), Some(_), Some(_))
         | (Some(_), Some(Value::Null), Some(_))
         | (Some(_), Some(_), Some(Value::Null)) => Ok(Value::Null),
-        (Some(Value::String(_)), Some(arg2), Some(Value::String(_))) => Err(format!(
-            "Type mismatch: expected String or Null but was {}",
-            arg2.name(),
-        )),
-        (Some(Value::String(_)), Some(Value::String(_)), Some(arg3)) => Err(format!(
-            "Type mismatch: expected String or Null but was {}",
-            arg3.name(),
-        )),
-        (Some(arg1), Some(_), Some(_)) => Err(format!(
-            "Type mismatch: expected String or Null but was {}",
-            arg1.name(),
-        )),
         _ => unreachable!(),
     }
 }
@@ -966,10 +1280,6 @@ fn abs(
         Some(Value::Int(n)) => Ok(Value::Int(n.abs())),
         Some(Value::Float(f)) => Ok(Value::Float(f.abs())),
         Some(Value::Null) => Ok(Value::Null),
-        Some(v) => Err(format!(
-            "Type mismatch: expected Integer, Float, or Null but was {}",
-            v.name()
-        )),
         _ => unreachable!(),
     }
 }
@@ -982,10 +1292,6 @@ fn ceil(
         Some(Value::Int(n)) => Ok(Value::Int(n)),
         Some(Value::Float(f)) => Ok(Value::Float(f.ceil())),
         Some(Value::Null) => Ok(Value::Null),
-        Some(v) => Err(format!(
-            "Type mismatch: expected Integer, Float, or Null but was {}",
-            v.name()
-        )),
         _ => unreachable!(),
     }
 }
@@ -1008,10 +1314,6 @@ fn exp(
         Some(Value::Int(n)) => Ok(Value::Float((n as f64).exp())),
         Some(Value::Float(f)) => Ok(Value::Float(f.exp())),
         Some(Value::Null) => Ok(Value::Null),
-        Some(v) => Err(format!(
-            "Type mismatch: expected Integer, Float, or Null but was {}",
-            v.name()
-        )),
         _ => unreachable!(),
     }
 }
@@ -1024,10 +1326,6 @@ fn floor(
         Some(Value::Int(n)) => Ok(Value::Int(n)),
         Some(Value::Float(f)) => Ok(Value::Float(f.floor())),
         Some(Value::Null) => Ok(Value::Null),
-        Some(v) => Err(format!(
-            "Type mismatch: expected Integer, Float, or Null but was {}",
-            v.name()
-        )),
         _ => unreachable!(),
     }
 }
@@ -1040,10 +1338,6 @@ fn log(
         Some(Value::Int(n)) => Ok(Value::Float((n as f64).ln())),
         Some(Value::Float(f)) => Ok(Value::Float(f.ln())),
         Some(Value::Null) => Ok(Value::Null),
-        Some(v) => Err(format!(
-            "Type mismatch: expected Integer, Float, or Null but was {}",
-            v.name()
-        )),
         _ => unreachable!(),
     }
 }
@@ -1056,10 +1350,6 @@ fn log10(
         Some(Value::Int(n)) => Ok(Value::Float((n as f64).log10())),
         Some(Value::Float(f)) => Ok(Value::Float(f.log10())),
         Some(Value::Null) => Ok(Value::Null),
-        Some(v) => Err(format!(
-            "Type mismatch: expected Integer, Float, or Null but was {}",
-            v.name()
-        )),
         _ => unreachable!(),
     }
 }
@@ -1077,11 +1367,6 @@ fn pow(
         (Some(Value::Int(i1)), Some(Value::Float(f1))) => Ok(Value::Float((i1 as f64).powf(f1))),
         (Some(Value::Float(f1)), Some(Value::Int(i1))) => Ok(Value::Float(f1.powi(i1 as i32))),
         (Some(Value::Null), Some(_)) | (Some(_), Some(Value::Null)) => Ok(Value::Null),
-        (Some(Value::Int(_) | Value::Float(_)), Some(v))
-        | (Some(v), Some(Value::Int(_) | Value::Float(_))) => Err(format!(
-            "Type mismatch: expected Integer, Float, or Null but was {}",
-            v.name()
-        )),
         _ => unreachable!(),
     }
 }
@@ -1103,10 +1388,6 @@ fn round(
         Some(Value::Int(n)) => Ok(Value::Int(n)),
         Some(Value::Float(f)) => Ok(Value::Float(f.round())),
         Some(Value::Null) => Ok(Value::Null),
-        Some(v) => Err(format!(
-            "Type mismatch: expected Integer, Float, or Null but was {}",
-            v.name()
-        )),
         _ => unreachable!(),
     }
 }
@@ -1123,10 +1404,6 @@ fn sign(
             Value::Float(f.signum().round())
         }),
         Some(Value::Null) => Ok(Value::Null),
-        Some(v) => Err(format!(
-            "Type mismatch: expected Integer, Float, or Null but was {}",
-            v.name()
-        )),
         _ => unreachable!(),
     }
 }
@@ -1151,10 +1428,6 @@ fn sqrt(
             }
         }
         Some(Value::Null) => Ok(Value::Null),
-        Some(v) => Err(format!(
-            "Type mismatch: expected Integer, Float, or Null but was {}",
-            v.name()
-        )),
         _ => unreachable!(),
     }
 }
@@ -1188,7 +1461,7 @@ fn range(
                 ))
             }
         }
-        _ => Err(String::from("Range operator requires two integers")),
+        _ => unreachable!(),
     }
 }
 fn coalesce(
@@ -1215,7 +1488,7 @@ fn keys(
             map.keys().map(|k| Value::String(k.clone())).collect(),
         )),
         (Some(Value::Null), None) => Ok(Value::Null),
-        _ => Err(String::from("Type mismatch: expected Map or Null")),
+        _ => unreachable!(),
     }
 }
 
@@ -1237,11 +1510,7 @@ fn to_boolean(
         }
         Some(Value::Int(n)) => Ok(Value::Bool(n != 0)),
         Some(Value::Null) => Ok(Value::Null),
-        Some(v) => Err(format!(
-            "Type mismatch: expected Boolean, String, or Integer or Null but was {}",
-            v.name()
-        )),
-        None => unreachable!(),
+        _ => unreachable!(),
     }
 }
 
@@ -1260,11 +1529,6 @@ fn internal_starts_with(
         }
 
         (_, Some(Value::Null)) | (Some(Value::Null), _) => Ok(Value::Null),
-        (Some(arg1), Some(arg2)) => Err(format!(
-            "Type mismatch: expected String or Null but was ({}, {})",
-            arg1.name(),
-            arg2.name()
-        )),
         _ => unreachable!(),
     }
 }
@@ -1279,11 +1543,6 @@ fn internal_ends_with(
             Ok(Value::Bool(s.ends_with(suffix.as_str())))
         }
         (_, Some(Value::Null)) | (Some(Value::Null), _) => Ok(Value::Null),
-        (Some(arg1), Some(arg2)) => Err(format!(
-            "Type mismatch: Type mismatch: expected String or Null but was ({}, {})",
-            arg1.name(),
-            arg2.name()
-        )),
         _ => unreachable!(),
     }
 }
@@ -1298,11 +1557,6 @@ fn internal_contains(
             Ok(Value::Bool(s.contains(substring.as_str())))
         }
         (_, Some(Value::Null)) | (Some(Value::Null), _) => Ok(Value::Null),
-        (Some(arg1), Some(arg2)) => Err(format!(
-            "Type mismatch: expected String or Null but was ({}, {})",
-            arg1.name(),
-            arg2.name()
-        )),
         _ => unreachable!(),
     }
 }
@@ -1321,11 +1575,6 @@ fn internal_regex_matches(
             }
         }
         (Some(Value::Null), _) | (_, Some(Value::Null)) => Ok(Value::Null),
-        (Some(arg1), Some(arg2)) => Err(format!(
-            "Type mismatch: expected (String, String) or null, but was: ({}, {})",
-            arg1.name(),
-            arg2.name()
-        )),
         _ => unreachable!(),
     }
 }

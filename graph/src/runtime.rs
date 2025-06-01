@@ -399,7 +399,8 @@ impl<'a> Runtime<'a> {
                     .map(|ir| self.run_expr(ir, env, finalize_agg))
                     .collect::<Result<Vec<_>, _>>()?;
                 match self.functions.get(name, fn_type) {
-                    Some(GraphFn { func, write, .. }) => {
+                    Some(gfn @ GraphFn { func, write, .. }) => {
+                        gfn.validate_args_type(&args)?;
                         if !self.write && *write {
                             return Err(String::from(
                                 "graph.RO_QUERY is to be executed only on read-only queries",

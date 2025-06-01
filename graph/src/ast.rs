@@ -124,6 +124,7 @@ pub trait Validate {
 }
 
 impl Validate for DynNode<'_, ExprIR> {
+    #[allow(clippy::too_many_lines)]
     fn validate(
         self,
         env: &mut HashSet<Rc<String>>,
