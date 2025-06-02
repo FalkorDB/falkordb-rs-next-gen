@@ -63,7 +63,7 @@ jobs:
     runs-on: ubuntu-latest
     container: aviavni/falkordb-build:latest
     needs: docker
-    if: always()
+    if: ${{ !cancelled() }}
     steps:
       - uses: actions/checkout@v4
       - name: Format
@@ -91,7 +91,7 @@ jobs:
     runs-on: ubuntu-latest
     container: aviavni/falkordb-build:latest
     needs: docker
-    if: always()
+    if: ${{ !cancelled() }}
     steps:
       - uses: actions/checkout@v4
       - name: Run code coverage
@@ -115,7 +115,7 @@ jobs:
     runs-on: ubuntu-latest
     container: aviavni/falkordb-build:latest
     needs: docker
-    if: always()
+    if: ${{ !cancelled() }}
     steps:
       - uses: actions/checkout@v4
       - name: Run benchmark
