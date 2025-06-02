@@ -1,9 +1,10 @@
-from itertools import permutations, product
+from itertools import product
 from random import choice
 import string
 from typing import Optional
 import common
-from enum import Enum, IntFlag
+from enum import IntFlag
+import pytest
 
 def setup_module(module):
     common.start_redis()
