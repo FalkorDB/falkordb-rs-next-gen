@@ -11,11 +11,15 @@ g = None
 shutdown = False
 
 
-def start_redis():
+def start_redis(release=False):
     global redis_server, client, g, shutdown
     port = os.environ.get("PORT", "6379")
-    target = os.environ.get("TARGET",
-                            "target/debug/libfalkordb.dylib" if platform.system() == "Darwin" else "target/debug/libfalkordb.so")
+    default_target = "target/debug/libfalkordb.so"
+    if platform.system() == "Darwin":
+        default_target = default_target.replace(".so", ".dylib")
+    if release:
+        default_target = default_target.replace("debug", "release")
+    target = os.environ.get("TARGET", default_target)
     r = Redis(port=port)
     try:
         r.ping()

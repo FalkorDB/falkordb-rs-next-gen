@@ -2,7 +2,7 @@ import common
 
 
 def setup_module(module):
-    common.start_redis()
+    common.start_redis(release=True)
 
 
 def teardown_module(module):
