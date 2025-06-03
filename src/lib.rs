@@ -1,3 +1,4 @@
+use graph::ast::VarId;
 use graph::functions::init_functions;
 use graph::runtime::{ReturnCallback, Runtime};
 use graph::value::Env;
@@ -21,7 +22,6 @@ use redis_module::{
 use std::cell::RefCell;
 use std::os::raw::c_void;
 use std::ptr::null_mut;
-use std::rc::Rc;
 #[cfg(feature = "zipkin")]
 use tracing_opentelemetry::OpenTelemetryLayer;
 #[cfg(feature = "zipkin")]
@@ -90,13 +90,14 @@ unsafe extern "C" fn my_free(value: *mut c_void) {
 fn raw_value_to_redis_value(
     g: &RefCell<Graph>,
     mut env: Env,
-    return_names: &Vec<Rc<String>>,
+    return_names: &Vec<VarId>,
 ) -> RedisValue {
-    return_names
-        .iter()
-        .map(|v| inner_raw_value_to_redis_value(g, env.take(v).unwrap()))
-        .collect::<Vec<RedisValue>>()
-        .into()
+    RedisValue::Array(
+        return_names
+            .iter()
+            .map(|v| inner_raw_value_to_redis_value(g, env.take(v).unwrap()))
+            .collect(),
+    )
 }
 
 fn inner_raw_value_to_redis_value(
@@ -225,7 +226,7 @@ impl ReturnCallback for RedisValuesCollector {
         &self,
         graph: &RefCell<Graph>,
         env: Env,
-        return_names: &Vec<Rc<String>>,
+        return_names: &Vec<VarId>,
     ) {
         self.res
             .borrow_mut()
@@ -312,12 +313,23 @@ fn query_mut(
                         summary.relationships_deleted
                     )));
                 }
-                let columns = summary
-                    .return_names
-                    .into_iter()
-                    .map(|n| vec![RedisValue::Integer(1), RedisValue::BulkString(n)].into())
-                    .collect();
-                vec![columns, collector.take(), stats].into()
+                let columns = RedisValue::Array(
+                    summary
+                        .return_names
+                        .into_iter()
+                        .map(|n| {
+                            RedisValue::Array(vec![
+                                RedisValue::Integer(1),
+                                RedisValue::BulkString(n),
+                            ])
+                        })
+                        .collect(),
+                );
+                RedisValue::Array(vec![
+                    columns,
+                    RedisValue::Array(collector.take()),
+                    RedisValue::Array(stats),
+                ])
             })
             .map_err(RedisError::String)
     })
@@ -372,16 +384,22 @@ fn graph_ro_query(
                 graph.borrow().get_plan(query).map_err(RedisError::String)?;
             let mut runtime = Runtime::new(graph, parameters, false, plan);
             match runtime.query(&collector) {
-                Ok(summary) => Ok(vec![
-                    summary
-                        .return_names
-                        .into_iter()
-                        .map(|n| vec![RedisValue::Integer(1), RedisValue::BulkString(n)].into())
-                        .collect(),
-                    collector.take(),
-                    vec![],
-                ]
-                .into()),
+                Ok(summary) => Ok(RedisValue::Array(vec![
+                    RedisValue::Array(
+                        summary
+                            .return_names
+                            .into_iter()
+                            .map(|n| {
+                                RedisValue::Array(vec![
+                                    RedisValue::Integer(1),
+                                    RedisValue::BulkString(n),
+                                ])
+                            })
+                            .collect(),
+                    ),
+                    RedisValue::Array(collector.take()),
+                    RedisValue::Array(vec![]),
+                ])),
                 Err(err) => Err(RedisError::String(err)),
             }
         },

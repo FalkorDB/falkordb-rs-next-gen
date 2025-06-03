@@ -1,27 +1,22 @@
 use std::{fmt::Display, rc::Rc};
 
-use orx_tree::{Dyn, DynTree, NodeIdx, NodeRef};
+use orx_tree::{Dyn, DynTree, NodeRef};
 
 use crate::{
     ast::{
-        ExprIR, NodePattern, PathPattern, Pattern, QueryIR, RelationshipPattern, SupportAggregation,
+        ExprIR, NodePattern, PathPattern, Pattern, QueryIR, RelationshipPattern,
+        SupportAggregation, VarId,
     },
-    functions::FnType,
     tree,
 };
 
 #[derive(Clone, Debug)]
 pub enum IR {
     Empty,
-    Optional(Vec<Rc<String>>),
+    Optional(Vec<VarId>),
     Call(Rc<String>, Vec<DynTree<ExprIR>>),
-    Unwind(DynTree<ExprIR>, Rc<String>),
-    UnwindRange(
-        DynTree<ExprIR>,
-        DynTree<ExprIR>,
-        DynTree<ExprIR>,
-        Rc<String>,
-    ),
+    Unwind(DynTree<ExprIR>, VarId),
+    UnwindRange(DynTree<ExprIR>, DynTree<ExprIR>, DynTree<ExprIR>, VarId),
     Create(Pattern),
     Merge(Pattern),
     Delete(Vec<DynTree<ExprIR>>, bool),
@@ -30,11 +25,11 @@ pub enum IR {
     PathBuilder(Vec<PathPattern>),
     Filter(DynTree<ExprIR>),
     Aggregate(
-        Vec<Rc<String>>,
-        Vec<(Rc<String>, DynTree<ExprIR>)>,
-        Vec<(Rc<String>, DynTree<ExprIR>)>,
+        Vec<VarId>,
+        Vec<(VarId, DynTree<ExprIR>)>,
+        Vec<(VarId, DynTree<ExprIR>)>,
     ),
-    Project(Vec<(Rc<String>, DynTree<ExprIR>)>),
+    Project(Vec<(VarId, DynTree<ExprIR>)>),
     Commit,
 }
 
@@ -47,8 +42,12 @@ impl Display for IR {
             Self::Empty => write!(f, "Empty"),
             Self::Optional(_) => write!(f, "Optional"),
             Self::Call(name, _) => write!(f, "Call({name})"),
-            Self::Unwind(_, alias) => write!(f, "Unwind({alias})"),
-            Self::UnwindRange(_, _, _, alias) => write!(f, "UnwindRange({alias})"),
+            Self::Unwind(_, alias) => {
+                write!(f, "Unwind({})", alias.as_str())
+            }
+            Self::UnwindRange(_, _, _, alias) => {
+                write!(f, "UnwindRange({})", alias.as_str())
+            }
             Self::Create(pattern) => write!(f, "Create {pattern}"),
             Self::Merge(pattern) => write!(f, "Merge {pattern}"),
             Self::Delete(_, _) => write!(f, "Delete"),
@@ -75,24 +74,6 @@ impl Planner {
     #[must_use]
     pub const fn new() -> Self {
         Self {}
-    }
-
-    fn plan_aggregation(
-        expr: &mut DynTree<ExprIR>,
-        idx: NodeIdx<Dyn<ExprIR>>,
-    ) {
-        match expr.node(&idx).data() {
-            ExprIR::FuncInvocation(_, FnType::Aggregation) => {
-                let name = Rc::new(expr.node(&idx).to_string());
-                expr.node_mut(&idx)
-                    .push_child_tree(tree!(ExprIR::Var(name)));
-            }
-            _ => {
-                for c in 0..expr.node(&idx).num_children() {
-                    Self::plan_aggregation(expr, expr.node(&idx).child(c).idx());
-                }
-            }
-        }
     }
 
     fn plan_match(
@@ -123,7 +104,7 @@ impl Planner {
     fn plan_unwind(
         &self,
         expr: orx_tree::Tree<Dyn<ExprIR>>,
-        alias: Rc<String>,
+        alias: VarId,
     ) -> orx_tree::Tree<Dyn<IR>> {
         let root = expr.root();
         if matches!(root.data(), ExprIR::FuncInvocation(name, _) if name == "range") {
@@ -139,18 +120,16 @@ impl Planner {
 
     fn plan_project(
         &self,
-        exprs: Vec<(Rc<String>, DynTree<ExprIR>)>,
+        exprs: Vec<(VarId, DynTree<ExprIR>)>,
         write: bool,
     ) -> DynTree<IR> {
         let mut res = if exprs.iter().any(|e| e.1.is_aggregation()) {
             let mut group_by_keys = Vec::new();
             let mut aggregations = Vec::new();
             let mut names = Vec::new();
-            for (name, mut expr) in exprs {
+            for (name, expr) in exprs {
                 names.push(name.clone());
                 if expr.is_aggregation() {
-                    let idx = expr.root().idx();
-                    Self::plan_aggregation(&mut expr, idx);
                     aggregations.push((name, expr));
                 } else {
                     group_by_keys.push((name, expr));
@@ -204,8 +183,8 @@ impl Planner {
                             pattern
                                 .nodes
                                 .iter()
-                                .map(|n| n.alias.to_string())
-                                .chain(pattern.relationships.iter().map(|r| r.alias.to_string()))
+                                .map(|n| n.alias.clone())
+                                .chain(pattern.relationships.iter().map(|r| r.alias.clone()))
                                 .collect()
                         ),
                         self.plan_match(pattern)
