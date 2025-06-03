@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1748585190675,
+  "lastUpdate": 1748928203074,
   "repoUrl": "https://github.com/FalkorDB/falkordb-rs-next-gen",
   "entries": {
     "FalkorDB Benchmark": [
@@ -760,6 +760,44 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.09274264639105237",
             "extra": "mean: 4.793074340000004 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49699333+dependabot[bot]@users.noreply.github.com",
+            "name": "dependabot[bot]",
+            "username": "dependabot[bot]"
+          },
+          "committer": {
+            "email": "barak.bar@gmail.com",
+            "name": "Barak Bar Orion",
+            "username": "barakb"
+          },
+          "distinct": true,
+          "id": "1cd5f27b2dfbc71e00a99e30e2e9679b909095f5",
+          "message": "Bump orx-tree from 1.5.0 to 1.6.0\n\nBumps [orx-tree](https://github.com/orxfun/orx-tree) from 1.5.0 to 1.6.0.\n- [Release notes](https://github.com/orxfun/orx-tree/releases)\n- [Commits](https://github.com/orxfun/orx-tree/compare/1.5.0...1.6.0)\n\n---\nupdated-dependencies:\n- dependency-name: orx-tree\n  dependency-version: 1.6.0\n  dependency-type: direct:production\n  update-type: version-update:semver-minor\n...\n\nSigned-off-by: dependabot[bot] <support@github.com>",
+          "timestamp": "2025-06-03T08:20:44+03:00",
+          "tree_id": "aa33a819be2217d2e2656626a4747c4ab086e516",
+          "url": "https://github.com/FalkorDB/falkordb-rs-next-gen/commit/1cd5f27b2dfbc71e00a99e30e2e9679b909095f5"
+        },
+        "date": 1748928202718,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/bench.py::test_return",
+            "value": 10178.662794755704,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001616772812742006",
+            "extra": "mean: 98.244732158258 usec\nrounds: 2270"
+          },
+          {
+            "name": "tests/bench.py::test_unwind",
+            "value": 0.2036503412538119,
+            "unit": "iter/sec",
+            "range": "stddev: 0.030966556418318324",
+            "extra": "mean: 4.9103772370000005 sec\nrounds: 5"
           }
         ]
       }
