@@ -12,7 +12,7 @@ use roaring::RoaringTreemap;
 use crate::{
     ast::ExprIR,
     cypher::Parser,
-    matrix::{self, Matrix, New, Remove, Set, Size},
+    matrix::{self, Dup, ElementWiseAdd, ElementWiseMultiply, Matrix, New, Remove, Set, Size},
     planner::{IR, Planner},
     tensor::{self, Tensor},
     value::Value,
@@ -371,10 +371,20 @@ impl Graph {
         if labels.is_empty() {
             return self.all_nodes_matrix.iter(0, u64::MAX);
         }
-        self.get_label_matrix(&labels[0]).map_or_else(
-            || self.zero_matrix.iter(0, u64::MAX),
-            |m| m.iter(0, u64::MAX),
-        )
+        let mut iter = labels.iter();
+        let mut m = if let Some(label_matrix) = self.get_label_matrix(iter.next().unwrap()) {
+            label_matrix.dup()
+        } else {
+            return self.zero_matrix.iter(0, u64::MAX);
+        };
+        for label in iter {
+            if let Some(label_matrix) = self.get_label_matrix(label) {
+                m.element_wise_multiply(label_matrix);
+            } else {
+                return self.zero_matrix.iter(0, u64::MAX);
+            }
+        }
+        m.iter(0, u64::MAX)
     }
 
     #[allow(clippy::cast_possible_truncation)]
@@ -470,17 +480,44 @@ impl Graph {
     pub fn get_relationships(
         &self,
         types: &[Rc<String>],
+        src_lables: &[Rc<String>],
+        dest_labels: &[Rc<String>],
     ) -> tensor::Iter {
         if types.is_empty() {
             return self.adjacancy_matrix.iter(0, u64::MAX);
         }
-        self.get_relationship_matrix(&types[0]).map_or_else(
-            || self.zero_tensor.iter(0, u64::MAX),
-            |m| {
-                m.wait();
-                m.iter(0, u64::MAX)
-            },
-        )
+        let mut iter = types.iter();
+        let mut m: Tensor =
+            if let Some(relationship_matrix) = self.get_relationship_matrix(iter.next().unwrap()) {
+                relationship_matrix.dup()
+            } else {
+                return self.zero_tensor.iter(0, u64::MAX);
+            };
+        for relationship_type in iter {
+            if let Some(relationship_matrix) = self.get_relationship_matrix(relationship_type) {
+                m.element_wise_add(relationship_matrix);
+            } else {
+                return self.zero_tensor.iter(0, u64::MAX);
+            }
+        }
+        // if !src_lables.is_empty() {
+        //     let mut iter = src_lables.iter();
+        //     let mut src_matrix =
+        //         if let Some(label_matrix) = self.get_label_matrix(iter.next().unwrap()) {
+        //             label_matrix.dup()
+        //         } else {
+        //             return self.zero_tensor.iter(0, u64::MAX);
+        //         };
+        //     for label in iter {
+        //         if let Some(label_matrix) = self.get_label_matrix(label) {
+        //             src_matrix.element_wise_multiply(label_matrix);
+        //         } else {
+        //             return self.zero_tensor.iter(0, u64::MAX);
+        //         }
+        //     }
+        //     // m.element_wise_multiply(&src_matrix);
+        // }
+        m.iter(0, u64::MAX)
     }
 
     pub fn get_relationship_type_id(

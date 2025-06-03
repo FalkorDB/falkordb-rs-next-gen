@@ -24,7 +24,8 @@ pub trait ReturnCallback {
     );
 }
 
-pub struct ResultSummary {
+pub struct ResultSummary<CB: ReturnCallback> {
+    pub callback: CB,
     pub run_duration: Duration,
     pub labels_added: usize,
     pub labels_removed: usize,
@@ -119,8 +120,8 @@ impl<'a> Runtime<'a> {
 
     pub fn query<CB: ReturnCallback>(
         &mut self,
-        callback: &CB,
-    ) -> Result<ResultSummary, String> {
+        callback: CB,
+    ) -> Result<ResultSummary<CB>, String> {
         let labels_count = self.g.borrow().get_labels_count();
         let start = Instant::now();
         let idx = self.plan.root().idx();
@@ -133,6 +134,7 @@ impl<'a> Runtime<'a> {
 
         let stats = self.stats.borrow();
         Ok(ResultSummary {
+            callback,
             run_duration,
             labels_added: self.g.borrow().get_labels_count() - labels_count,
             labels_removed: 0,
@@ -927,7 +929,7 @@ impl<'a> Runtime<'a> {
         let iter = self
             .g
             .borrow()
-            .get_relationships(&relationship_pattern.types);
+            .get_relationships(&relationship_pattern.types, &vec![], &vec![]);
         Box::new(iter.map(move |(src, dst, id)| {
             let mut vars = vars.clone();
             vars.insert(
@@ -946,10 +948,29 @@ impl<'a> Runtime<'a> {
         vars: Env,
     ) -> Box<dyn Iterator<Item = Result<Env, String>> + '_> {
         let iter = self.g.borrow().get_nodes(&node_pattern.labels);
-        Box::new(iter.map(move |(v, _)| {
+        Box::new(iter.filter_map(move |(v, _)| {
             let mut vars = vars.clone();
+            let attrs = self
+                .run_expr(node_pattern.attrs.root(), &vars, false)
+                .unwrap();
+            if let Value::Map(attrs) = attrs {
+                if !attrs.is_empty() {
+                    let g = self.g.borrow();
+                    let properties = g.get_node_properties(v);
+                    for (key, avalue) in attrs {
+                        if let Some(pvalue) = properties.get(&g.get_node_property_id(&key).unwrap())
+                        {
+                            if avalue == *pvalue {
+                                continue;
+                            }
+                            return None;
+                        }
+                        return None;
+                    }
+                }
+            }
             vars.insert(&node_pattern.alias, Value::Node(v));
-            Ok(vars)
+            Some(Ok(vars))
         }))
     }
 

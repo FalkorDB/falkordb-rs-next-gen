@@ -706,7 +706,7 @@ impl<'a> Parser<'a> {
                 self.lexer.next();
                 match_token!(self.lexer, Equal);
                 let mut vars = Vec::new();
-                let left = self.parse_node_pattern()?;
+                let left = self.parse_node_pattern(&clause)?;
                 let mut left_alias = left.alias.clone();
                 vars.push(left_alias.clone());
                 if nodes_alias.insert(left.alias.clone()) {
@@ -729,7 +729,7 @@ impl<'a> Parser<'a> {
                     }
                 }
             } else {
-                let left = self.parse_node_pattern()?;
+                let left = self.parse_node_pattern(&clause)?;
                 let mut left_alias = left.alias.clone();
 
                 if nodes_alias.insert(left.alias.clone()) {
@@ -1226,7 +1226,10 @@ impl<'a> Parser<'a> {
         ))
     }
 
-    fn parse_node_pattern(&mut self) -> Result<NodePattern, String> {
+    fn parse_node_pattern(
+        &mut self,
+        clause: &Keyword,
+    ) -> Result<NodePattern, String> {
         match_token!(self.lexer, LParen);
         let alias = if let Token::Ident(id) = self.lexer.current() {
             self.lexer.next();
@@ -1235,7 +1238,17 @@ impl<'a> Parser<'a> {
             self.create_var(None)
         };
         let labels = self.parse_labels()?;
-        let attrs = self.parse_map()?;
+        let attrs = if let Token::Parameter(param) = self.lexer.current() {
+            self.lexer.next();
+            if clause == &Keyword::Match {
+                return Err(self
+                    .lexer
+                    .format_error("Encountered unhandled type in inlined properties."));
+            }
+            tree!(ExprIR::Parameter(param))
+        } else {
+            self.parse_map()?
+        };
         match_token!(self.lexer, RParen);
         Ok(NodePattern::new(alias, labels, attrs))
     }
@@ -1260,7 +1273,33 @@ impl<'a> Parser<'a> {
                 types.push(self.parse_ident()?);
                 optional_match_token!(self.lexer, Pipe);
             }
-            let attrs = self.parse_map()?;
+            let _ = if optional_match_token!(self.lexer, Star) {
+                let start = if let Token::Integer(i) = self.lexer.current() {
+                    self.lexer.next();
+                    Some(i)
+                } else {
+                    None
+                };
+                if optional_match_token!(self.lexer, DotDot) {
+                    let end = if let Token::Integer(i) = self.lexer.current() {
+                        self.lexer.next();
+                        Some(i)
+                    } else {
+                        None
+                    };
+                    Some((start, end))
+                } else {
+                    Some((start, None))
+                }
+            } else {
+                None
+            };
+            let attrs = if let Token::Parameter(param) = self.lexer.current() {
+                self.lexer.next();
+                tree!(ExprIR::Parameter(param))
+            } else {
+                self.parse_map()?
+            };
             match_token!(self.lexer, RBrace);
             (alias, types, attrs)
         } else {
@@ -1268,7 +1307,7 @@ impl<'a> Parser<'a> {
         };
         match_token!(self.lexer, Dash);
         let is_outgoing = optional_match_token!(self.lexer, GreaterThan);
-        let dst = self.parse_node_pattern()?;
+        let dst = self.parse_node_pattern(clause)?;
         let relationship = match (is_incoming, is_outgoing) {
             (true, true) | (false, false) => {
                 if *clause == Keyword::Create {
