@@ -1,5 +1,5 @@
 use crate::ast::{NodePattern, Pattern, QuantifierType, RelationshipPattern, VarId};
-use crate::functions::{FnType, Functions, GraphFn, get_functions};
+use crate::functions::{get_functions, FnType, Functions, GraphFn};
 use crate::iter::{Aggregate, LazyReplace, TryFlatMap, TryMap};
 use crate::value::{DisjointOrNull, Env};
 use crate::{ast::ExprIR, graph::Graph, planner::IR, value::Contains, value::Value};
@@ -236,11 +236,8 @@ impl<'a> Runtime<'a> {
                 let b = self.run_expr(ir.child(2), env, finalize_agg)?;
                 get_elements(arr, a, b)
             }
-            ExprIR::IsNull => match self.run_expr(ir.child(0), env, finalize_agg)? {
-                Value::Null => Ok(Value::Bool(true)),
-                _ => Ok(Value::Bool(false)),
-            },
-            ExprIR::IsNode => match self.run_expr(ir.child(0), env)? {
+
+            ExprIR::IsNode => match self.run_expr(ir.child(0), env, finalize_agg)? {
                 Value::Node(_) => Ok(Value::Bool(true)),
                 _ => Ok(Value::Bool(false)),
             },

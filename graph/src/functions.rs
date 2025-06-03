@@ -2,7 +2,7 @@
 
 use crate::runtime::Runtime;
 use crate::value::Value;
-use hashbrown::HashMap;
+use hashbrown::{HashMap, HashSet};
 use rand::Rng;
 use std::fmt::Display;
 use std::rc::Rc;
@@ -57,7 +57,7 @@ impl Display for Type {
                 if let Some(first) = iter.next() {
                     write!(f, "{first}")?;
                 }
-                for _ in 0..types.len() - 2 {
+                for _ in 0..types.len().saturating_sub(2) {
                     if let Some(next) = iter.next() {
                         write!(f, ", {next}")?;
                     }
@@ -643,13 +643,18 @@ pub fn init_functions() -> Result<(), Functions> {
         ],
         FnType::Internal,
     );
-    funcs.add("is_null", internal_is_null, false, 2, 2, FnType::Internal);
+    funcs.add(
+        "is_null",
+        internal_is_null,
+        false,
+        vec![Type::Union(vec![Type::Bool]), Type::Any],
+        FnType::Internal,
+    );
     funcs.add(
         "node_has_labels",
         internal_node_has_labels,
         false,
-        2,
-        2,
+        vec![Type::Node, Type::List(Box::new(Type::Any))],
         FnType::Internal,
     );
     funcs.add(
@@ -1590,7 +1595,7 @@ fn internal_node_has_labels(
                 .g
                 .borrow()
                 .get_node_labels(node_id)
-                .collect::<BTreeSet<_>>();
+                .collect::<HashSet<_>>();
             let all_labels_present = required_labels.iter().all(|label| {
                 if let Value::String(label) = label {
                     actual_labels.contains(label)
