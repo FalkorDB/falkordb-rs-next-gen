@@ -142,6 +142,7 @@ def validate_function(func, expected_args_type):
     ("log", [Type.INT | Type.FLOAT | Type.NULL]),
     ("log10", [Type.INT | Type.FLOAT | Type.NULL]),
     ("pow", [Type.INT | Type.FLOAT | Type.NULL, Type.INT | Type.FLOAT | Type.NULL]),
+    ("rand", []),
     ("round", [Type.INT | Type.FLOAT | Type.NULL]),
     ("sign", [Type.INT | Type.FLOAT | Type.NULL]),
     ("sqrt", [Type.INT | Type.FLOAT | Type.NULL]),
