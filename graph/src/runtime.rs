@@ -1,5 +1,5 @@
 use crate::ast::{NodePattern, Pattern, QuantifierType, RelationshipPattern, VarId};
-use crate::functions::{get_functions, FnType, Functions, GraphFn};
+use crate::functions::{FnType, Functions, GraphFn, get_functions};
 use crate::iter::{Aggregate, LazyReplace, TryFlatMap, TryMap};
 use crate::value::{DisjointOrNull, Env};
 use crate::{ast::ExprIR, graph::Graph, planner::IR, value::Contains, value::Value};
