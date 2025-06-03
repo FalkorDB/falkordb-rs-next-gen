@@ -18,7 +18,6 @@ def setup_function(function):
         common.g.delete()
 
 
-
 class Type(IntFlag):
     NULL = 1
     BOOL = 2
@@ -81,7 +80,7 @@ def validate_function(func, expected_args_type):
                 assert False
             except Exception as e:
                 most = len(expected_args_type)
-                assert f"Received {len(args)} arguments to function '{func.lower()}', expected at most {most}" in str(e)
+                assert f"Received {len(args)} arguments to function '{func}', expected at most {most}" in str(e)
             least = len([x for x in expected_args_type if isinstance(x, Type)])
             while len(args) >= least:
                 args.pop()
@@ -91,7 +90,7 @@ def validate_function(func, expected_args_type):
                 assert False
             except Exception as e:
                 least = len([x for x in expected_args_type if isinstance(x, Type)])
-                assert f"Received {len(args)} arguments to function '{func.lower()}', expected at least {least}" in str(e)
+                assert f"Received {len(args)} arguments to function '{func}', expected at least {least}" in str(e)
         else:
             query = f"RETURN {func}({', '.join(args)})"
             try:
@@ -101,9 +100,9 @@ def validate_function(func, expected_args_type):
                 assert True
 
 def test_functions():
-    validate_function("toInteger", [Type.STRING | Type.BOOL | Type.INT | Type.FLOAT | Type.NULL])
-    validate_function("toFloat", [Type.STRING | Type.INT | Type.FLOAT | Type.NULL])
-    validate_function("toString", [Type.STRING | Type.INT | Type.BOOL | Type.NULL])
+    validate_function("tointeger", [Type.STRING | Type.BOOL | Type.INT | Type.FLOAT | Type.NULL])
+    validate_function("tofloat", [Type.STRING | Type.INT | Type.FLOAT | Type.NULL])
+    validate_function("tostring", [Type.STRING | Type.INT | Type.BOOL | Type.NULL])
     validate_function("size", [Type.LIST | Type.STRING | Type.NULL])
     validate_function("head", [Type.LIST | Type.NULL])
     validate_function("last", [Type.LIST | Type.NULL])
@@ -111,8 +110,8 @@ def test_functions():
     validate_function("reverse", [Type.LIST | Type.STRING | Type.NULL])
     validate_function("substring", [Type.STRING | Type.NULL, Type.INT, Optional[Type.INT]])
     validate_function("split", [Type.STRING | Type.NULL, Type.STRING | Type.NULL])
-    validate_function("toLower", [Type.STRING | Type.NULL])
-    validate_function("toUpper", [Type.STRING | Type.NULL])
+    validate_function("tolower", [Type.STRING | Type.NULL])
+    validate_function("toupper", [Type.STRING | Type.NULL])
     validate_function("replace", [Type.STRING | Type.NULL, Type.STRING | Type.NULL, Type.STRING | Type.NULL])
     validate_function("left", [Type.STRING | Type.NULL, Type.INT | Type.NULL])
     validate_function("ltrim", [Type.STRING | Type.NULL])

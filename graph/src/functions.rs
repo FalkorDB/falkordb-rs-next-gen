@@ -158,13 +158,13 @@ impl Functions {
         args_type: Vec<Type>,
         fn_type: FnType,
     ) {
-        let name = name.to_lowercase();
+        let lower_name = name.to_lowercase();
         assert!(
-            !self.functions.contains_key(&name),
+            !self.functions.contains_key(&lower_name),
             "Function '{name}' already exists"
         );
-        let graph_fn = GraphFn::new(&name, func, write, FnArguments::Fixed(args_type), fn_type);
-        self.functions.insert(name, graph_fn);
+        let graph_fn = GraphFn::new(name, func, write, FnArguments::Fixed(args_type), fn_type);
+        self.functions.insert(lower_name, graph_fn);
     }
 
     pub fn add_var_len(
@@ -207,7 +207,7 @@ impl Functions {
                             .count();
                         if args < least {
                             return Err(format!(
-                                "Received {args} arguments to function '{name}', expected at least {least}"
+                                "Received {args} arguments to function '{}', expected at least {least}", graph_fn.name
                             ));
                         }
                         let most = if fn_type == &FnType::Aggregation {
@@ -219,7 +219,7 @@ impl Functions {
                             return Err(format!(
                                 "Received {} arguments to function '{}', expected at most {}",
                                 args,
-                                name,
+                                graph_fn.name,
                                 args_type.len()
                             ));
                         }
@@ -298,7 +298,7 @@ pub fn init_functions() -> Result<(), Functions> {
         FnType::Function,
     );
     funcs.add(
-        "toInteger",
+        "tointeger",
         value_to_integer,
         false,
         vec![Type::Union(vec![
@@ -311,7 +311,7 @@ pub fn init_functions() -> Result<(), Functions> {
         FnType::Function,
     );
     funcs.add(
-        "toFloat",
+        "tofloat",
         value_to_float,
         false,
         vec![Type::Union(vec![
@@ -323,7 +323,7 @@ pub fn init_functions() -> Result<(), Functions> {
         FnType::Function,
     );
     funcs.add(
-        "toString",
+        "tostring",
         value_to_string,
         false,
         vec![Type::Union(vec![
@@ -408,14 +408,14 @@ pub fn init_functions() -> Result<(), Functions> {
         FnType::Function,
     );
     funcs.add(
-        "toLower",
+        "tolower",
         string_to_lower,
         false,
         vec![Type::Union(vec![Type::String, Type::Null])],
         FnType::Function,
     );
     funcs.add(
-        "toUpper",
+        "toupper",
         string_to_upper,
         false,
         vec![Type::Union(vec![Type::String, Type::Null])],
