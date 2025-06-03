@@ -115,6 +115,8 @@ jobs:
       - check-files
       - docker
     if: ${{ !cancelled() }}
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - name: Run benchmark
