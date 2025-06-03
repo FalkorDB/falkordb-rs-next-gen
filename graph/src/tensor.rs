@@ -2,7 +2,7 @@ use std::{ffi::c_void, sync::Once};
 
 use crate::{
     GraphBLAS::GrB_Vector,
-    matrix::{self, Matrix, Remove, Set, Size, UnaryOp},
+    matrix::{self, Matrix, New, Remove, Set, Size, Transpose, UnaryOp},
     vector::{self, Vector},
 };
 
@@ -118,6 +118,13 @@ impl Tensor {
         ncols: u64,
     ) {
         self.m.resize(nrows, ncols);
+    }
+
+    #[must_use]
+    pub fn transpose(&self) -> Self {
+        Self {
+            m: self.m.transpose(),
+        }
     }
 
     #[must_use]

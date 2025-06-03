@@ -58,7 +58,7 @@ jobs:
     needs:
       - check-files
       - docker
-    if: always()
+    if: ${{ !cancelled() }}
     steps:
       - uses: actions/checkout@v4
       - name: Format
@@ -77,18 +77,18 @@ jobs:
       - name: Run tests
         run: |
           . /data/venv/bin/activate
-          pytest tests/test_e2e.py
+          pytest tests/test_e2e.py tests/test_functions.py -vv
       - name: Run TCK tests
         run: |
           . /data/venv/bin/activate
-          TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py
+          TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -vv
   coverage:
     runs-on: ubuntu-latest
     container: aviavni/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && github.event.pull_request.number || 'latest' }}
     needs:
       - check-files
       - docker
-    if: always()
+    if: ${{ !cancelled() }}
     steps:
       - uses: actions/checkout@v4
       - name: Run code coverage
@@ -99,7 +99,7 @@ jobs:
           mkdir cov
           cd cov
           . /data/venv/bin/activate
-          TARGET=../target/debug/libfalkordb.so pytest ../tests/test_e2e.py
+          TARGET=../target/debug/libfalkordb.so pytest ../tests/test_e2e.py ../tests/test_functions.py -vv
           TARGET=../target/debug/libfalkordb.so TCK_FEATURES=../tests/tck/features/ TCK_DONE=../tck_done.txt pytest ../tests/tck/test_tck.py
           llvm-profdata-20 merge --sparse `find . -name "*.profraw"` -o cov.profdata
           llvm-cov-20 export --format=lcov --instr-profile cov.profdata ../target/debug/libfalkordb.so > codecov.txt.all
@@ -114,7 +114,7 @@ jobs:
     needs:
       - check-files
       - docker
-    if: always()
+    if: ${{ !cancelled() }}
     steps:
       - uses: actions/checkout@v4
       - name: Run benchmark
@@ -123,7 +123,7 @@ jobs:
           rustup default stable
           cargo build --release
           . /data/venv/bin/activate
-          pytest tests/bench.py --benchmark-json output.json
+          pytest tests/test_bench.py --benchmark-json output.json
       - name: Store benchmark result
         uses: benchmark-action/github-action-benchmark@v1
         with:
@@ -168,4 +168,4 @@ jobs:
           python3 -m venv venv
           . venv/bin/activate
           pip install -r  tests/requierment.txt
-          pytest -v -m "not extra" tests/test_e2e.py
+          pytest -v -m "not extra" tests/test_e2e.py tests/test_functions.py -vv

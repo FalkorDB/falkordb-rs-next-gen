@@ -1,7 +1,18 @@
+use graph::ast::VarId;
 use graph::functions::init_functions;
 use graph::runtime::{ReturnCallback, Runtime};
 use graph::value::Env;
 use graph::{cypher::Parser, graph::Graph, matrix::init, planner::Planner, value::Value};
+#[cfg(feature = "zipkin")]
+use opentelemetry::global;
+#[cfg(feature = "zipkin")]
+use opentelemetry::trace::TracerProvider;
+#[cfg(feature = "zipkin")]
+use opentelemetry_sdk::trace::{BatchConfigBuilder, BatchSpanProcessor};
+#[cfg(feature = "zipkin")]
+use opentelemetry_sdk::{Resource, trace::SdkTracerProvider};
+#[cfg(feature = "zipkin")]
+use opentelemetry_zipkin::ZipkinExporter;
 use redis_module::RedisModuleIO;
 use redis_module::{
     Context, NextArg, REDISMODULE_TYPE_METHOD_VERSION, RedisError, RedisModule_Alloc,
@@ -11,7 +22,12 @@ use redis_module::{
 use std::cell::RefCell;
 use std::os::raw::c_void;
 use std::ptr::null_mut;
-use std::rc::Rc;
+#[cfg(feature = "zipkin")]
+use tracing_opentelemetry::OpenTelemetryLayer;
+#[cfg(feature = "zipkin")]
+use tracing_subscriber::layer::SubscriberExt;
+#[cfg(feature = "zipkin")]
+use tracing_subscriber::util::SubscriberInitExt;
 
 const EMPTY_KEY_ERR: RedisResult = Err(RedisError::Str("ERR Invalid graph operation on empty key"));
 
@@ -74,13 +90,14 @@ unsafe extern "C" fn my_free(value: *mut c_void) {
 fn raw_value_to_redis_value(
     g: &RefCell<Graph>,
     mut env: Env,
-    return_names: &Vec<Rc<String>>,
+    return_names: &Vec<VarId>,
 ) -> RedisValue {
-    return_names
-        .iter()
-        .map(|v| inner_raw_value_to_redis_value(g, env.take(v).unwrap()))
-        .collect::<Vec<RedisValue>>()
-        .into()
+    RedisValue::Array(
+        return_names
+            .iter()
+            .map(|v| inner_raw_value_to_redis_value(g, env.take(v).unwrap()))
+            .collect(),
+    )
 }
 
 fn inner_raw_value_to_redis_value(
@@ -209,7 +226,7 @@ impl ReturnCallback for RedisValuesCollector {
         &self,
         graph: &RefCell<Graph>,
         env: Env,
-        return_names: &Vec<Rc<String>>,
+        return_names: &Vec<VarId>,
     ) {
         self.res
             .borrow_mut()
@@ -250,57 +267,72 @@ fn query_mut(
     graph: &RefCell<Graph>,
     query: &str,
 ) -> Result<RedisValue, RedisError> {
-    let collector = RedisValuesCollector::new();
-    let (plan, parameters, _, _) = graph.borrow().get_plan(query).map_err(RedisError::String)?;
-    let mut runtime = Runtime::new(graph, parameters, true, plan);
-    runtime
-        .query(&collector)
-        .map(|summary| {
-            let mut stats = vec![];
-            if summary.labels_added > 0 {
-                stats.push(RedisValue::SimpleString(format!(
-                    "Labels added: {}",
-                    summary.labels_added
-                )));
-            }
-            if summary.nodes_created > 0 {
-                stats.push(RedisValue::SimpleString(format!(
-                    "Nodes created: {}",
-                    summary.nodes_created
-                )));
-            }
-            if summary.nodes_deleted > 0 {
-                stats.push(RedisValue::SimpleString(format!(
-                    "Nodes deleted: {}",
-                    summary.nodes_deleted
-                )));
-            }
-            if summary.properties_set > 0 {
-                stats.push(RedisValue::SimpleString(format!(
-                    "Properties set: {}",
-                    summary.properties_set
-                )));
-            }
-            if summary.relationships_created > 0 {
-                stats.push(RedisValue::SimpleString(format!(
-                    "Relationships created: {}",
-                    summary.relationships_created
-                )));
-            }
-            if summary.relationships_deleted > 0 {
-                stats.push(RedisValue::SimpleString(format!(
-                    "Relationships deleted: {}",
-                    summary.relationships_deleted
-                )));
-            }
-            let columns = summary
-                .return_names
-                .into_iter()
-                .map(|n| vec![RedisValue::Integer(1), RedisValue::BulkString(n)].into())
-                .collect();
-            vec![columns, collector.take(), stats].into()
-        })
-        .map_err(RedisError::String)
+    // Create a child span for parsing and execution
+    tracing::debug_span!("query_execution", query = %query).in_scope(|| {
+        let collector = RedisValuesCollector::new();
+        let (plan, parameters, _, _) =
+            graph.borrow().get_plan(query).map_err(RedisError::String)?;
+        let mut runtime = Runtime::new(graph, parameters, true, plan);
+        runtime
+            .query(&collector)
+            .map(|summary| {
+                let mut stats = vec![];
+                if summary.labels_added > 0 {
+                    stats.push(RedisValue::SimpleString(format!(
+                        "Labels added: {}",
+                        summary.labels_added
+                    )));
+                }
+                if summary.nodes_created > 0 {
+                    stats.push(RedisValue::SimpleString(format!(
+                        "Nodes created: {}",
+                        summary.nodes_created
+                    )));
+                }
+                if summary.nodes_deleted > 0 {
+                    stats.push(RedisValue::SimpleString(format!(
+                        "Nodes deleted: {}",
+                        summary.nodes_deleted
+                    )));
+                }
+                if summary.properties_set > 0 {
+                    stats.push(RedisValue::SimpleString(format!(
+                        "Properties set: {}",
+                        summary.properties_set
+                    )));
+                }
+                if summary.relationships_created > 0 {
+                    stats.push(RedisValue::SimpleString(format!(
+                        "Relationships created: {}",
+                        summary.relationships_created
+                    )));
+                }
+                if summary.relationships_deleted > 0 {
+                    stats.push(RedisValue::SimpleString(format!(
+                        "Relationships deleted: {}",
+                        summary.relationships_deleted
+                    )));
+                }
+                let columns = RedisValue::Array(
+                    summary
+                        .return_names
+                        .into_iter()
+                        .map(|n| {
+                            RedisValue::Array(vec![
+                                RedisValue::Integer(1),
+                                RedisValue::BulkString(n),
+                            ])
+                        })
+                        .collect(),
+                );
+                RedisValue::Array(vec![
+                    columns,
+                    RedisValue::Array(collector.take()),
+                    RedisValue::Array(stats),
+                ])
+            })
+            .map_err(RedisError::String)
+    })
 }
 
 fn graph_query(
@@ -352,16 +384,22 @@ fn graph_ro_query(
                 graph.borrow().get_plan(query).map_err(RedisError::String)?;
             let mut runtime = Runtime::new(graph, parameters, false, plan);
             match runtime.query(&collector) {
-                Ok(summary) => Ok(vec![
-                    summary
-                        .return_names
-                        .into_iter()
-                        .map(|n| vec![RedisValue::Integer(1), RedisValue::BulkString(n)].into())
-                        .collect(),
-                    collector.take(),
-                    vec![],
-                ]
-                .into()),
+                Ok(summary) => Ok(RedisValue::Array(vec![
+                    RedisValue::Array(
+                        summary
+                            .return_names
+                            .into_iter()
+                            .map(|n| {
+                                RedisValue::Array(vec![
+                                    RedisValue::Integer(1),
+                                    RedisValue::BulkString(n),
+                                ])
+                            })
+                            .collect(),
+                    ),
+                    RedisValue::Array(collector.take()),
+                    RedisValue::Array(vec![]),
+                ])),
                 Err(err) => Err(RedisError::String(err)),
             }
         },
@@ -447,10 +485,43 @@ fn graph_plan(
     }
 }
 
+#[cfg(feature = "zipkin")]
+fn init_zipkin() {
+    global::set_text_map_propagator(opentelemetry_zipkin::Propagator::new());
+
+    let exporter = ZipkinExporter::builder().build().unwrap();
+
+    let batch = BatchSpanProcessor::builder(exporter)
+        .with_batch_config(
+            BatchConfigBuilder::default()
+                .with_max_queue_size(4096)
+                .build(),
+        )
+        .build();
+
+    let provider = SdkTracerProvider::builder()
+        .with_span_processor(batch)
+        .with_sampler(opentelemetry_sdk::trace::Sampler::AlwaysOn)
+        .with_resource(
+            Resource::builder_empty()
+                .with_service_name("falkordb-graph-engine")
+                .build(),
+        )
+        .build();
+    let tracer = provider.tracer("falkordb-graph-engine");
+    let layer = OpenTelemetryLayer::new(tracer);
+    tracing_subscriber::registry().with(layer).init();
+
+    global::set_tracer_provider(provider);
+}
+
 fn graph_init(
     _: &Context,
     _: &Vec<RedisString>,
 ) -> Status {
+    #[cfg(feature = "zipkin")]
+    init_zipkin();
+
     unsafe {
         init(
             RedisModule_Alloc,

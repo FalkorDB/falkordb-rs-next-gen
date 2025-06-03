@@ -1,10 +1,10 @@
 use std::{
-    collections::BTreeMap,
     rc::Rc,
     sync::Mutex,
     time::{Duration, Instant},
 };
 
+use hashbrown::HashMap;
 use ordermap::OrderMap;
 use orx_tree::DynTree;
 use roaring::RoaringTreemap;
@@ -12,7 +12,7 @@ use roaring::RoaringTreemap;
 use crate::{
     ast::ExprIR,
     cypher::Parser,
-    matrix::{self, Matrix, Remove, Set, Size},
+    matrix::{self, Matrix, New, Remove, Set, Size},
     planner::{IR, Planner},
     tensor::{self, Tensor},
     value::Value,
@@ -33,15 +33,15 @@ pub struct Graph {
     node_labels_matrix: Matrix<bool>,
     relationship_type_matrix: Matrix<bool>,
     all_nodes_matrix: Matrix<bool>,
-    labels_matices: BTreeMap<usize, Matrix<bool>>,
-    relationship_matrices: BTreeMap<usize, Tensor>,
-    node_properties_map: BTreeMap<u64, BTreeMap<u64, Value>>,
-    relationship_properties_map: BTreeMap<u64, BTreeMap<u64, Value>>,
+    labels_matices: HashMap<usize, Matrix<bool>>,
+    relationship_matrices: HashMap<usize, Tensor>,
+    node_properties_map: HashMap<u64, HashMap<u64, Value>>,
+    relationship_properties_map: HashMap<u64, HashMap<u64, Value>>,
     node_labels: Vec<Rc<String>>,
     relationship_types: Vec<Rc<String>>,
     node_properties: Vec<Rc<String>>,
     relationship_properties: Vec<Rc<String>>,
-    cache: Mutex<BTreeMap<String, Rc<DynTree<IR>>>>,
+    cache: Mutex<HashMap<String, Rc<DynTree<IR>>>>,
 }
 
 impl Graph {
@@ -65,15 +65,15 @@ impl Graph {
             node_labels_matrix: Matrix::<bool>::new(0, 0),
             relationship_type_matrix: Matrix::<bool>::new(0, 0),
             all_nodes_matrix: Matrix::<bool>::new(n, n),
-            labels_matices: BTreeMap::new(),
-            relationship_matrices: BTreeMap::new(),
-            node_properties_map: BTreeMap::new(),
-            relationship_properties_map: BTreeMap::new(),
+            labels_matices: HashMap::new(),
+            relationship_matrices: HashMap::new(),
+            node_properties_map: HashMap::new(),
+            relationship_properties_map: HashMap::new(),
             node_labels: Vec::new(),
             relationship_types: Vec::new(),
             node_properties: Vec::new(),
             relationship_properties: Vec::new(),
-            cache: Mutex::new(BTreeMap::new()),
+            cache: Mutex::new(HashMap::new()),
         }
     }
 
@@ -128,7 +128,7 @@ impl Graph {
     ) -> Result<
         (
             Rc<DynTree<IR>>,
-            BTreeMap<String, DynTree<ExprIR>>,
+            HashMap<String, DynTree<ExprIR>>,
             Duration,
             Duration,
         ),
@@ -149,7 +149,7 @@ impl Graph {
                     let ir = parser.parse()?;
                     parse_duration = start.elapsed();
 
-                    let mut planner = Planner::new();
+                    let planner = Planner::new();
                     let start = Instant::now();
                     let value = Rc::new(planner.plan(ir));
                     plan_duration = start.elapsed();
@@ -302,7 +302,7 @@ impl Graph {
 
     pub fn create_nodes(
         &mut self,
-        nodes: &BTreeMap<u64, (Vec<Rc<String>>, OrderMap<Rc<String>, Value>)>,
+        nodes: &HashMap<u64, (Vec<Rc<String>>, OrderMap<Rc<String>, Value>)>,
     ) {
         self.node_count += nodes.len() as u64;
         self.reserved_node_count -= nodes.len() as u64;
@@ -327,7 +327,7 @@ impl Graph {
                 self.node_labels_matrix.set(*id, label_id, true);
             }
 
-            let mut map = BTreeMap::new();
+            let mut map = HashMap::new();
             for (key, value) in attrs {
                 if *value == Value::Null {
                     continue;
@@ -361,7 +361,7 @@ impl Graph {
     ) -> impl Iterator<Item = (u64, u64, u64)> + '_ {
         self.relationship_matrices
             .values()
-            .flat_map(move |m| m.iter(id, id))
+            .flat_map(move |m| m.iter(id, id).chain(m.transpose().iter(id, id)))
     }
 
     pub fn get_nodes(
@@ -420,7 +420,7 @@ impl Graph {
 
     pub fn create_relationships(
         &mut self,
-        relationships: &BTreeMap<u64, (Rc<String>, u64, u64, OrderMap<Rc<String>, Value>)>,
+        relationships: &HashMap<u64, (Rc<String>, u64, u64, OrderMap<Rc<String>, Value>)>,
     ) {
         self.relationship_count += relationships.len() as u64;
         self.reserved_relationship_count -= relationships.len() as u64;
@@ -450,7 +450,7 @@ impl Graph {
                 true,
             );
 
-            let mut map = BTreeMap::new();
+            let mut map = HashMap::new();
             for (key, value) in attrs {
                 if *value == Value::Null {
                     continue;
@@ -553,7 +553,7 @@ impl Graph {
     pub fn get_node_properties(
         &self,
         id: u64,
-    ) -> &BTreeMap<u64, Value> {
+    ) -> &HashMap<u64, Value> {
         self.node_properties_map
             .get(&id)
             .unwrap_or_else(|| panic!("Node with id {id} not found"))
@@ -562,7 +562,7 @@ impl Graph {
     pub fn get_relationship_properties(
         &self,
         id: u64,
-    ) -> &BTreeMap<u64, Value> {
+    ) -> &HashMap<u64, Value> {
         self.relationship_properties_map
             .get(&id)
             .unwrap_or_else(|| panic!("Relationship with id {id} not found"))
