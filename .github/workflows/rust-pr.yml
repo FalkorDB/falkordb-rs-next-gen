@@ -123,7 +123,7 @@ jobs:
           rustup default stable
           cargo build --release
           . /data/venv/bin/activate
-          pytest tests/test_bench.py --benchmark-json output.json
+          pytest tests/test_bench.py --benchmark-json output.json -vv
       - name: Store benchmark result
         uses: benchmark-action/github-action-benchmark@v1
         with:
