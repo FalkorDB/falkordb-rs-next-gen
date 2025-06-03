@@ -1,4 +1,4 @@
-use crate::ast::{NodePattern, Pattern, QuantifierType, RelationshipPattern};
+use crate::ast::{NodePattern, Pattern, QuantifierType, RelationshipPattern, VarId};
 use crate::functions::{FnType, Functions, GraphFn, get_functions};
 use crate::iter::{Aggregate, LazyReplace, TryFlatMap, TryMap};
 use crate::value::{DisjointOrNull, Env};
@@ -20,7 +20,7 @@ pub trait ReturnCallback {
         &self,
         graph: &RefCell<Graph>,
         env: Env,
-        return_names: &Vec<Rc<String>>,
+        return_names: &Vec<VarId>,
     );
 }
 
@@ -66,17 +66,20 @@ pub struct Runtime<'a> {
 }
 
 trait ReturnNames {
-    fn get_return_names(&self) -> Vec<Rc<String>>;
+    fn get_return_names(&self) -> Vec<VarId>;
 }
 
 impl ReturnNames for DynNode<'_, IR> {
-    fn get_return_names(&self) -> Vec<Rc<String>> {
+    fn get_return_names(&self) -> Vec<VarId> {
         match self.data() {
             IR::Project(trees) => trees.iter().map(|v| v.0.clone()).collect(),
             IR::Commit => self
                 .get_child(0)
                 .map_or(vec![], |child| child.get_return_names()),
-            IR::Call(name, _) => vec![name.clone()],
+            IR::Call(name, _) => vec![VarId {
+                name: Some(name.clone()),
+                id: 0,
+            }],
             IR::Aggregate(names, _, _) => names.clone(),
             _ => vec![],
         }
@@ -88,9 +91,7 @@ impl Debug for Env {
         &self,
         f: &mut std::fmt::Formatter<'_>,
     ) -> std::fmt::Result {
-        f.debug_map()
-            .entries(self.iter().map(|(k, v)| (k, v.name())))
-            .finish()
+        f.debug_list().entries(self.iter()).finish()
     }
 }
 
@@ -143,7 +144,7 @@ impl<'a> Runtime<'a> {
             properties_removed: stats.properties_removed,
             return_names: return_names
                 .into_iter()
-                .map(|v| String::from(v.as_str()))
+                .map(|v| String::from(v.name.unwrap().as_str()))
                 .collect(),
         })
     }
@@ -165,8 +166,8 @@ impl<'a> Runtime<'a> {
                         ));
                     }
                 };
-                curr.insert(key.clone(), acc.get(&key).cloned().unwrap_or(Value::Null));
-                acc.insert(key, self.run_expr(ir, curr, false)?);
+                curr.insert(&key, acc.get(&key).cloned().unwrap_or(Value::Null));
+                acc.insert(&key, self.run_expr(ir, curr, false)?);
             }
             _ => {
                 for child in ir.children() {
@@ -192,7 +193,7 @@ impl<'a> Runtime<'a> {
             ExprIR::Float(x) => Ok(Value::Float(*x)),
             ExprIR::String(x) => Ok(Value::String(x.clone())),
             ExprIR::Var(x) => env.get(x).map_or_else(
-                || Err(format!("Variable {x} not found")),
+                || Err(format!("Variable {} not found", x.as_str())),
                 |v| Ok(v.to_owned()),
             ),
             ExprIR::Parameter(x) => self.parameters.get(x).map_or_else(
@@ -415,7 +416,7 @@ impl<'a> Runtime<'a> {
                 ir.children()
                     .map(|child| {
                         Ok((
-                            if let ExprIR::Var(key) = child.data() {
+                            if let ExprIR::String(key) = child.data() {
                                 key.clone()
                             } else {
                                 todo!();
@@ -434,7 +435,7 @@ impl<'a> Runtime<'a> {
                         let mut f = 0;
                         let mut n = 0;
                         for value in values {
-                            env.insert(var.clone(), value);
+                            env.insert(var, value);
 
                             match self.run_expr(ir.child(1), &env, finalize_agg) {
                                 Ok(Value::Bool(true)) => t += 1,
@@ -478,7 +479,7 @@ impl<'a> Runtime<'a> {
                             let mut curr = start;
                             let mut acc = vec![];
                             for _ in 0..=((stop - start) / step) {
-                                env.insert(var.clone(), Value::Int(curr));
+                                env.insert(var, Value::Int(curr));
                                 curr += step;
                                 match self.run_expr(ir.child(1), &env, finalize_agg) {
                                     Ok(Value::Bool(true)) => {}
@@ -501,7 +502,7 @@ impl<'a> Runtime<'a> {
                         let mut env = env.clone();
                         let mut acc = vec![];
                         for value in values {
-                            env.insert(var.clone(), value);
+                            env.insert(var, value);
                             match self.run_expr(ir.child(1), &env, finalize_agg) {
                                 Ok(Value::Bool(true)) => {}
                                 Ok(_) => continue,
@@ -587,7 +588,7 @@ impl<'a> Runtime<'a> {
                 if let Some(child_idx) = child1_idx {
                     let iter = self.run(&child_idx)?.try_flat_map(move |mut env| {
                         for v in vars {
-                            env.insert(v.clone(), Value::Null);
+                            env.insert(v, Value::Null);
                         }
                         self.run(child0_idx.as_ref().unwrap())
                             .unwrap()
@@ -599,7 +600,7 @@ impl<'a> Runtime<'a> {
                     let iter = self.run(&child_idx)?.lazy_replace(move || {
                         let mut env = Env::new();
                         for v in vars {
-                            env.insert(v.clone(), Value::Null);
+                            env.insert(v, Value::Null);
                         }
                         Box::new(once(Ok(env)))
                     });
@@ -622,7 +623,13 @@ impl<'a> Runtime<'a> {
                     match res {
                         Value::List(arr) => Ok(Box::new(arr.into_iter().map(|v| {
                             let mut env = Env::new();
-                            env.insert(name.clone(), v);
+                            env.insert(
+                                &VarId {
+                                    name: Some(name.clone()),
+                                    id: 0,
+                                },
+                                v,
+                            );
                             Ok(env)
                         }))),
                         _ => Err(format!("Function '{name}' must return a list")),
@@ -639,7 +646,7 @@ impl<'a> Runtime<'a> {
                                 .into_iter()
                                 .map(|v| {
                                     let mut vars = vars.clone();
-                                    vars.insert(name.clone(), v);
+                                    vars.insert(name, v);
                                     Ok(vars)
                                 })
                                 .collect::<Vec<_>>()
@@ -655,7 +662,7 @@ impl<'a> Runtime<'a> {
                 if let Value::List(arr) = value {
                     return Ok(Box::new(arr.into_iter().map(move |v| {
                         let mut vars = Env::new();
-                        vars.insert(name.clone(), v);
+                        vars.insert(name, v);
                         Ok(vars)
                     })));
                 }
@@ -676,7 +683,7 @@ impl<'a> Runtime<'a> {
                                     let tmp = curr;
                                     curr += step;
                                     let mut vars = vars.clone();
-                                    vars.insert(name.clone(), Value::Int(tmp));
+                                    vars.insert(name, Value::Int(tmp));
                                     Ok(vars)
                                 })
                                 .take(((stop - start) / step + 1) as usize)
@@ -702,7 +709,7 @@ impl<'a> Runtime<'a> {
                                 let tmp = curr;
                                 curr += step;
                                 let mut vars = Env::new();
-                                vars.insert(name.clone(), Value::Int(tmp));
+                                vars.insert(name, Value::Int(tmp));
                                 Ok(vars)
                             })
                             .take(((stop - start) / step + 1) as usize),
@@ -748,9 +755,7 @@ impl<'a> Runtime<'a> {
                             (Box::new(self.run(child0_idx.as_ref().unwrap()).unwrap().try_map(
                                 move |v| {
                                     let mut vars = vars.clone();
-                                    for (k, v) in v.iter() {
-                                        vars.insert(k.clone(), v.clone());
-                                    }
+                                    vars.merge(v);
                                     Ok(vars)
                                 },
                             ))
@@ -808,13 +813,13 @@ impl<'a> Runtime<'a> {
                                 .vars
                                 .iter()
                                 .map(|v| {
-                                    vars.get(&v.to_string()).map_or_else(
-                                        || Err(format!("Variable {} not found", v.to_string())),
+                                    vars.get(&v).map_or_else(
+                                        || Err(format!("Variable {} not found", v.as_str())),
                                         |value| Ok(value.clone()),
                                     )
                                 })
                                 .collect::<Result<_, String>>()?;
-                            vars.insert(path.name.clone(), Value::Path(p));
+                            vars.insert(&path.var, Value::Path(p));
                         }
                         Ok(vars)
                     })));
@@ -836,7 +841,7 @@ impl<'a> Runtime<'a> {
                 if let Some(child_idx) = child0_idx {
                     let mut default_value = Env::new();
                     for (name, _) in trees1 {
-                        default_value.insert(name.clone(), Value::Null);
+                        default_value.insert(name, Value::Null);
                     }
                     let aggregator = self
                         .run(&child_idx)?
@@ -846,7 +851,7 @@ impl<'a> Runtime<'a> {
                                 let mut return_vars = Env::new();
                                 for (name, tree) in trees {
                                     let value = self.run_expr(tree.root(), &vars, false)?;
-                                    return_vars.insert(name.clone(), value);
+                                    return_vars.insert(name, value);
                                 }
                                 Ok::<Env, String>(return_vars)
                             },
@@ -862,11 +867,9 @@ impl<'a> Runtime<'a> {
                         )
                         .map(move |(key, v)| {
                             let mut vars = v?;
-                            for (k, v) in key?.iter() {
-                                vars.insert(k.clone(), v.clone());
-                            }
+                            vars.merge(key?);
                             for (name, tree) in trees1 {
-                                vars.insert(name.clone(), self.run_expr(tree.root(), &vars, true)?);
+                                vars.insert(name, self.run_expr(tree.root(), &vars, true)?);
                             }
                             Ok(vars)
                         });
@@ -883,7 +886,7 @@ impl<'a> Runtime<'a> {
                         let mut return_vars = Env::new();
                         for (name, tree) in trees {
                             let value = self.run_expr(tree.root(), &vars, false)?;
-                            return_vars.insert(name.clone(), value);
+                            return_vars.insert(name, value);
                         }
                         Ok(return_vars)
                     })))
@@ -893,7 +896,7 @@ impl<'a> Runtime<'a> {
                         let mut return_vars = Env::new();
                         for (name, tree) in trees {
                             let value = self.run_expr(tree.root(), &vars, false)?;
-                            return_vars.insert(name.clone(), value);
+                            return_vars.insert(name, value);
                         }
                         Ok(return_vars)
                     })))
@@ -928,11 +931,11 @@ impl<'a> Runtime<'a> {
         Box::new(iter.map(move |(src, dst, id)| {
             let mut vars = vars.clone();
             vars.insert(
-                relationship_pattern.alias.to_string(),
+                &relationship_pattern.alias,
                 Value::Relationship(id, src, dst),
             );
-            vars.insert(relationship_pattern.from.to_string(), Value::Node(src));
-            vars.insert(relationship_pattern.to.to_string(), Value::Node(dst));
+            vars.insert(&relationship_pattern.from, Value::Node(src));
+            vars.insert(&relationship_pattern.to, Value::Node(dst));
             Ok(vars)
         }))
     }
@@ -945,7 +948,7 @@ impl<'a> Runtime<'a> {
         let iter = self.g.borrow().get_nodes(&node_pattern.labels);
         Box::new(iter.map(move |(v, _)| {
             let mut vars = vars.clone();
-            vars.insert(node_pattern.alias.to_string(), Value::Node(v));
+            vars.insert(&node_pattern.alias, Value::Node(v));
             Ok(vars)
         }))
     }
@@ -1011,7 +1014,7 @@ impl<'a> Runtime<'a> {
                         .borrow_mut()
                         .created_nodes
                         .insert(id, (node.labels.clone(), properties));
-                    vars.insert(node.alias.to_string(), Value::Node(id));
+                    vars.insert(&node.alias, Value::Node(id));
                 }
                 _ => return Err(String::from("Invalid node properties")),
             }
@@ -1019,15 +1022,15 @@ impl<'a> Runtime<'a> {
         for rel in &pattern.relationships {
             let (from_id, to_id) = {
                 let from_id = vars
-                    .get(&rel.from.to_string())
-                    .ok_or_else(|| format!("Variable {} not found", rel.from.to_string()))?;
+                    .get(&rel.from)
+                    .ok_or_else(|| format!("Variable {} not found", rel.from.as_str()))?;
                 let from_id = match from_id {
                     Value::Node(id) => *id,
                     _ => return Err(String::from("Invalid node id")),
                 };
                 let to_id = vars
-                    .get(&rel.to.to_string())
-                    .ok_or_else(|| format!("Variable {} not found", rel.to.to_string()))?;
+                    .get(&rel.to)
+                    .ok_or_else(|| format!("Variable {} not found", rel.to.as_str()))?;
                 let to_id = match to_id {
                     Value::Node(id) => *id,
                     _ => return Err(String::from("Invalid node id")),
@@ -1047,10 +1050,7 @@ impl<'a> Runtime<'a> {
                             properties,
                         ),
                     );
-                    vars.insert(
-                        rel.alias.to_string(),
-                        Value::Relationship(id, from_id, to_id),
-                    );
+                    vars.insert(&rel.alias, Value::Relationship(id, from_id, to_id));
                 }
                 _ => {
                     return Err(String::from("Invalid relationship properties"));
@@ -1128,7 +1128,7 @@ fn evaluate_param(expr: DynNode<ExprIR>) -> Value {
         ExprIR::Map => Value::Map(
             expr.children()
                 .map(|ir| match ir.data() {
-                    ExprIR::Var(key) => (key.clone(), evaluate_param(ir.child(0))),
+                    ExprIR::String(key) => (key.clone(), evaluate_param(ir.child(0))),
                     _ => todo!(),
                 })
                 .collect(),

@@ -210,7 +210,12 @@ impl Functions {
                                 "Received {args} arguments to function '{name}', expected at least {least}"
                             ));
                         }
-                        if args_type.len() < args {
+                        let most = if fn_type == &FnType::Aggregation {
+                            args_type.len() + 1 // aggregation functions have one more argument for the temporary result
+                        } else {
+                            args_type.len()
+                        };
+                        if args > most {
                             return Err(format!(
                                 "Received {} arguments to function '{}', expected at most {}",
                                 args,
@@ -946,7 +951,6 @@ fn value_to_string(
     _runtime: &Runtime,
     args: Vec<Value>,
 ) -> Result<Value, String> {
-    let len = args.len();
     match args.into_iter().next() {
         Some(Value::Null) => Ok(Value::Null),
         Some(v) => Ok(Value::String(value_string(&v)?)),

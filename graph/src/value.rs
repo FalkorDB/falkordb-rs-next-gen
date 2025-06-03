@@ -6,6 +6,7 @@ use std::rc::Rc;
 
 use ordermap::OrderMap;
 
+use crate::ast::VarId;
 use crate::functions::Type;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -41,7 +42,7 @@ impl Hash for Value {
     }
 }
 
-pub struct Env(HashMap<Rc<String>, Value>);
+pub struct Env(HashMap<u32, Value>);
 
 impl Env {
     #[must_use]
@@ -51,29 +52,38 @@ impl Env {
 
     pub fn insert(
         &mut self,
-        key: Rc<String>,
+        key: &VarId,
         value: Value,
     ) {
-        self.0.insert(key, value);
+        self.0.insert(key.id, value);
     }
 
     #[must_use]
     pub fn get(
         &self,
-        key: &Rc<String>,
+        key: &VarId,
     ) -> Option<&Value> {
-        self.0.get(key)
+        self.0.get(&key.id)
     }
 
     pub fn take(
         &mut self,
-        key: &Rc<String>,
+        key: &VarId,
     ) -> Option<Value> {
-        self.0.remove(key)
+        self.0.remove(&key.id)
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (&Rc<String>, &Value)> {
-        self.0.iter()
+    pub fn merge(
+        &mut self,
+        other: Self,
+    ) {
+        for (key, value) in other.0 {
+            self.0.insert(key, value);
+        }
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Value> {
+        self.0.values()
     }
 }
 

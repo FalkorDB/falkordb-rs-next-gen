@@ -1,3 +1,4 @@
+use graph::ast::VarId;
 use graph::functions::init_functions;
 use graph::runtime::{ReturnCallback, Runtime};
 use graph::value::Env;
@@ -21,7 +22,6 @@ use redis_module::{
 use std::cell::RefCell;
 use std::os::raw::c_void;
 use std::ptr::null_mut;
-use std::rc::Rc;
 #[cfg(feature = "zipkin")]
 use tracing_opentelemetry::OpenTelemetryLayer;
 #[cfg(feature = "zipkin")]
@@ -90,7 +90,7 @@ unsafe extern "C" fn my_free(value: *mut c_void) {
 fn raw_value_to_redis_value(
     g: &RefCell<Graph>,
     mut env: Env,
-    return_names: &Vec<Rc<String>>,
+    return_names: &Vec<VarId>,
 ) -> RedisValue {
     RedisValue::Array(
         return_names
@@ -226,7 +226,7 @@ impl ReturnCallback for RedisValuesCollector {
         &self,
         graph: &RefCell<Graph>,
         env: Env,
-        return_names: &Vec<Rc<String>>,
+        return_names: &Vec<VarId>,
     ) {
         self.res
             .borrow_mut()
