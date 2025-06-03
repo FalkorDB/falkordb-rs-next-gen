@@ -14,9 +14,8 @@ categories = ["data-structures", "database"]
 [dependencies]
 falkordb-macro = { path = "../falkordb-macro" }
 hashbrown = "0.15.3"
-ordermap = "0.5.7"
 once_cell = "1.21.3"
-orx-tree = "1.5.0"
+orx-tree = "1.6.0"
 rand = "0.9.1"
 regex = "1.11.1"
 roaring = "0.10.12"
