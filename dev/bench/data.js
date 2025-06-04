@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749019421495,
+  "lastUpdate": 1749045847149,
   "repoUrl": "https://github.com/FalkorDB/falkordb-rs-next-gen",
   "entries": {
     "FalkorDB Benchmark": [
@@ -912,6 +912,44 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.02819008211053131",
             "extra": "mean: 4.943121561599969 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "barak.bar@gmail.com",
+            "name": "Barak Bar Orion",
+            "username": "barakb"
+          },
+          "committer": {
+            "email": "barak.bar@gmail.com",
+            "name": "Barak Bar Orion",
+            "username": "barakb"
+          },
+          "distinct": true,
+          "id": "2cb05c9915a47056fac857577e61ffc5953dc640",
+          "message": "Potential fix for code scanning alert no. 26: Workflow does not contain permissions\n\nCo-authored-by: Copilot Autofix powered by AI <62310815+github-advanced-security[bot]@users.noreply.github.com>",
+          "timestamp": "2025-06-04T17:01:29+03:00",
+          "tree_id": "99a619df06054bc2e0e5c8bfc00bf394dd3c5e96",
+          "url": "https://github.com/FalkorDB/falkordb-rs-next-gen/commit/2cb05c9915a47056fac857577e61ffc5953dc640"
+        },
+        "date": 1749045846167,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_bench.py::test_return",
+            "value": 8473.226098754209,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000013782663956270824",
+            "extra": "mean: 118.01880279661447 usec\nrounds: 3433"
+          },
+          {
+            "name": "tests/test_bench.py::test_unwind",
+            "value": 0.21191182842658518,
+            "unit": "iter/sec",
+            "range": "stddev: 0.06483200258084738",
+            "extra": "mean: 4.718943757999995 sec\nrounds: 5"
           }
         ]
       }
