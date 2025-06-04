@@ -11,6 +11,9 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
 
+permissions:
+  contents: read
+
 jobs:
   check-files:
     runs-on: ubuntu-latest
@@ -89,6 +92,8 @@ jobs:
       - check-files
       - docker
     if: ${{ !cancelled() }}
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - name: Run code coverage
