@@ -1,5 +1,8 @@
 name: Rust PR Closed
 
+permissions:
+  contents: read
+
 on:
     pull_request:
       branches: ["main"]
