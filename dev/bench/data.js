@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749045847149,
+  "lastUpdate": 1749048970574,
   "repoUrl": "https://github.com/FalkorDB/falkordb-rs-next-gen",
   "entries": {
     "FalkorDB Benchmark": [
@@ -950,6 +950,44 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.06483200258084738",
             "extra": "mean: 4.718943757999995 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "barak.bar@gmail.com",
+            "name": "Barak Bar Orion",
+            "username": "barakb"
+          },
+          "committer": {
+            "email": "barak.bar@gmail.com",
+            "name": "Barak Bar Orion",
+            "username": "barakb"
+          },
+          "distinct": true,
+          "id": "d2f88b79d248adf290f1ec54aa48a1d3edaa7dd4",
+          "message": "Revert \"pin docker/setup-qemu-action to full sha\"\n\nThis reverts commit c8d534d9dae7191cf2263ce06913ae89e220c716.",
+          "timestamp": "2025-06-04T17:53:25+03:00",
+          "tree_id": "96d3f475fbd9b1bf57e0de554ea3f1b97b6da1c6",
+          "url": "https://github.com/FalkorDB/falkordb-rs-next-gen/commit/d2f88b79d248adf290f1ec54aa48a1d3edaa7dd4"
+        },
+        "date": 1749048970248,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_bench.py::test_return",
+            "value": 9819.749786592698,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000016247424136037996",
+            "extra": "mean: 101.83558865882107 usec\nrounds: 2222"
+          },
+          {
+            "name": "tests/test_bench.py::test_unwind",
+            "value": 0.20258838892998257,
+            "unit": "iter/sec",
+            "range": "stddev: 0.020778913194591186",
+            "extra": "mean: 4.9361170464 sec\nrounds: 5"
           }
         ]
       }
