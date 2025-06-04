@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749019145817,
+  "lastUpdate": 1749019421495,
   "repoUrl": "https://github.com/FalkorDB/falkordb-rs-next-gen",
   "entries": {
     "FalkorDB Benchmark": [
@@ -874,6 +874,44 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0650594633095819",
             "extra": "mean: 4.732112285599999 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "avi.avni@gmail.com",
+            "name": "Avi Avni",
+            "username": "AviAvni"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1611d919c3f73913d192a69a7c060b63181f4285",
+          "message": "Merge pull request #84 from FalkorDB/alert-autofix-49\n\nPotential fix for code scanning alert no. 49: Workflow does not contain permissions",
+          "timestamp": "2025-06-04T09:41:03+03:00",
+          "tree_id": "25023a0d1582bebc4e424efd7bd3f7a952af05a2",
+          "url": "https://github.com/FalkorDB/falkordb-rs-next-gen/commit/1611d919c3f73913d192a69a7c060b63181f4285"
+        },
+        "date": 1749019421035,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_bench.py::test_return",
+            "value": 10163.254491070034,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000011381525998628586",
+            "extra": "mean: 98.39367900101806 usec\nrounds: 2405"
+          },
+          {
+            "name": "tests/test_bench.py::test_unwind",
+            "value": 0.2023013165948369,
+            "unit": "iter/sec",
+            "range": "stddev: 0.02819008211053131",
+            "extra": "mean: 4.943121561599969 sec\nrounds: 5"
           }
         ]
       }
