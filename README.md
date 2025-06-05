@@ -32,7 +32,7 @@ dependencies:
 There is an option to run only part of the TCK tests and stop on the first fail
 
 ```bash
-TCK_INCLUDE=tests/tck/features/expressions/list pytest tests/tck/test_tck.py
+TCK_INCLUDE=tests/tck/features/expressions/list pytest tests/test_e2e.py tests/test_functions.py -vv
 ```
 
 To run all passing TCK tests use:

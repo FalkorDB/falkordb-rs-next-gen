@@ -2,7 +2,7 @@
 
 use crate::runtime::Runtime;
 use crate::value::Value;
-use hashbrown::HashMap;
+use hashbrown::{HashMap, HashSet};
 use rand::Rng;
 use std::fmt::Display;
 use std::rc::Rc;
@@ -57,7 +57,7 @@ impl Display for Type {
                 if let Some(first) = iter.next() {
                     write!(f, "{first}")?;
                 }
-                for _ in 0..types.len() - 2 {
+                for _ in 0..types.len().saturating_sub(2) {
                     if let Some(next) = iter.next() {
                         write!(f, ", {next}")?;
                     }
@@ -641,6 +641,20 @@ pub fn init_functions() -> Result<(), Functions> {
             Type::Union(vec![Type::String, Type::Null]),
             Type::Union(vec![Type::String, Type::Null]),
         ],
+        FnType::Internal,
+    );
+    funcs.add(
+        "is_null",
+        internal_is_null,
+        false,
+        vec![Type::Union(vec![Type::Bool]), Type::Any],
+        FnType::Internal,
+    );
+    funcs.add(
+        "node_has_labels",
+        internal_node_has_labels,
+        false,
+        vec![Type::Node, Type::List(Box::new(Type::Any))],
         FnType::Internal,
     );
     funcs.add(
@@ -1554,6 +1568,49 @@ fn internal_contains(
             Ok(Value::Bool(s.contains(substring.as_str())))
         }
         (_, Some(Value::Null)) | (Some(Value::Null), _) => Ok(Value::Null),
+        _ => unreachable!(),
+    }
+}
+
+fn internal_is_null(
+    _: &Runtime,
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    let mut iter = args.into_iter();
+    match (iter.next(), iter.next()) {
+        (Some(Value::Bool(is_not)), Some(Value::Null)) => Ok(Value::Bool(!is_not)),
+        (Some(Value::Bool(is_not)), Some(_)) => Ok(Value::Bool(is_not)),
+        _ => unreachable!(),
+    }
+}
+
+fn internal_node_has_labels(
+    runtime: &Runtime,
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    let mut iter = args.into_iter();
+    match (iter.next(), iter.next()) {
+        (Some(Value::Node(node_id)), Some(Value::List(required_labels))) => {
+            let actual_labels = runtime
+                .g
+                .borrow()
+                .get_node_labels(node_id)
+                .collect::<HashSet<_>>();
+            let all_labels_present = required_labels.iter().all(|label| {
+                if let Value::String(label) = label {
+                    actual_labels.contains(label)
+                } else {
+                    false
+                }
+            });
+
+            Ok(Value::Bool(all_labels_present))
+        }
+        (Some(n), Some(l)) => Err(format!(
+            "Type mismatch: expected Node and Labels Null but was ({}, {})",
+            n.name(),
+            l.name()
+        )),
         _ => unreachable!(),
     }
 }

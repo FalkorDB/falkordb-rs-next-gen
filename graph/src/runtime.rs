@@ -236,10 +236,7 @@ impl<'a> Runtime<'a> {
                 let b = self.run_expr(ir.child(2), env, finalize_agg)?;
                 get_elements(arr, a, b)
             }
-            ExprIR::IsNull => match self.run_expr(ir.child(0), env, finalize_agg)? {
-                Value::Null => Ok(Value::Bool(true)),
-                _ => Ok(Value::Bool(false)),
-            },
+
             ExprIR::IsNode => match self.run_expr(ir.child(0), env, finalize_agg)? {
                 Value::Node(_) => Ok(Value::Bool(true)),
                 _ => Ok(Value::Bool(false)),

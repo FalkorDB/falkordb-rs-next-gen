@@ -387,6 +387,14 @@ impl Graph {
             .map(|(_, l)| l as usize)
     }
 
+    pub fn get_node_labels(
+        &self,
+        id: u64,
+    ) -> impl Iterator<Item = Rc<String>> + '_ {
+        self.get_node_label_ids(id)
+            .map(move |label_id| self.node_labels[label_id].clone())
+    }
+
     pub fn get_node_property(
         &self,
         node_id: u64,
