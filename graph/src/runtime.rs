@@ -522,6 +522,12 @@ impl<'a> Runtime<'a> {
                     )),
                 }
             }
+            ExprIR::ExistsPattern(_pattern) => {
+                // ExistsPattern runtime execution
+                // For now, we'll return false as a placeholder
+                // In a complete implementation, this would check if the pattern exists in the graph
+                Ok(Value::Bool(false))
+            }
         }
     }
 
