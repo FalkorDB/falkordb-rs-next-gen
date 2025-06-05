@@ -5,16 +5,33 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "type": "antlr-debug",
+            "request": "launch",
+            "name": "Debug Current Grammar",
+            "input": "input.txt",
+            "visualParseTree": true,
+            "grammar": "${workspaceFolder}/graph/src/Cypher.g4"
+        },
+        {
             "type": "lldb",
             "request": "launch",
-            "name": "Launch",
+            "name": "Launch Mac",
             "program": "redis-server",
             "args": [
                 "--loadmodule",
-                // for mac
                 "${workspaceFolder}/target/debug/libfalkordb.dylib"
-                // for linux
-                // "${workspaceFolder}/target/debug/libfalkordb.so"
+            ],
+            "cwd": "${workspaceFolder}",
+            "sourceLanguages": ["rust"],
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Launch Linux",
+            "program": "redis-server",
+            "args": [
+                "--loadmodule",
+                "${workspaceFolder}/target/debug/libfalkordb.so"
             ],
             "cwd": "${workspaceFolder}",
             "sourceLanguages": ["rust"],

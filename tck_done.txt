@@ -20,3 +20,7 @@ clauses/create/Create1.feature
 clauses/create/Create2.feature
 clauses/create/Create3.feature
 clauses/create/Create4.feature
+clauses/delete/Delete1.feature
+clauses/delete/Delete2.feature
+clauses/delete/Delete5.feature
+clauses/delete/Delete6.feature

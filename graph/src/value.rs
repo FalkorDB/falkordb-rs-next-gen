@@ -6,6 +6,9 @@ use std::rc::Rc;
 
 use ordermap::OrderMap;
 
+use crate::ast::VarId;
+use crate::functions::Type;
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
     Null,
@@ -39,7 +42,7 @@ impl Hash for Value {
     }
 }
 
-pub struct Env(HashMap<Rc<String>, Value>);
+pub struct Env(HashMap<u32, Value>);
 
 impl Env {
     #[must_use]
@@ -49,29 +52,38 @@ impl Env {
 
     pub fn insert(
         &mut self,
-        key: Rc<String>,
+        key: &VarId,
         value: Value,
     ) {
-        self.0.insert(key, value);
+        self.0.insert(key.id, value);
     }
 
     #[must_use]
     pub fn get(
         &self,
-        key: &Rc<String>,
+        key: &VarId,
     ) -> Option<&Value> {
-        self.0.get(key)
+        self.0.get(&key.id)
     }
 
     pub fn take(
         &mut self,
-        key: &Rc<String>,
+        key: &VarId,
     ) -> Option<Value> {
-        self.0.remove(key)
+        self.0.remove(&key.id)
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (&Rc<String>, &Value)> {
-        self.0.iter()
+    pub fn merge(
+        &mut self,
+        other: Self,
+    ) {
+        for (key, value) in other.0 {
+            self.0.insert(key, value);
+        }
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Value> {
+        self.0.values()
     }
 }
 
@@ -433,6 +445,57 @@ impl Value {
             }
         }
         (Ordering::Equal, DisjointOrNull::None)
+    }
+
+    #[must_use]
+    pub fn get_type(&self) -> Type {
+        match self {
+            Self::Null => Type::Null,
+            Self::Bool(_) => Type::Bool,
+            Self::Int(_) => Type::Int,
+            Self::Float(_) => Type::Float,
+            Self::String(_) => Type::String,
+            Self::List(_) => Type::List(Box::new(Type::Any)),
+            Self::Map(_) => Type::Map,
+            Self::Node(_) => Type::Node,
+            Self::Relationship(_, _, _) => Type::Relationship,
+            Self::Path(_) => Type::Path,
+        }
+    }
+
+    #[must_use]
+    pub fn validate_of_type(
+        &self,
+        arg_type: &Type,
+    ) -> Option<(Type, Type)> {
+        match (self, arg_type) {
+            (Self::List(vs), Type::List(ty)) => {
+                for v in vs {
+                    if let Some(res) = v.validate_of_type(ty) {
+                        return Some(res);
+                    }
+                }
+                None
+            }
+            (Self::Null, Type::Null)
+            | (Self::Bool(_), Type::Bool)
+            | (Self::Int(_), Type::Int)
+            | (Self::Float(_), Type::Float)
+            | (Self::String(_), Type::String)
+            | (Self::Map(_), Type::Map)
+            | (Self::Node(_), Type::Node)
+            | (Self::Relationship(_, _, _), Type::Relationship)
+            | (Self::Path(_), Type::Path)
+            | (_, Type::Any) => None,
+            (v, Type::Optional(ty)) => v.validate_of_type(ty),
+            (v, Type::Union(tys)) => {
+                for ty in tys {
+                    v.validate_of_type(ty)?;
+                }
+                Some((v.get_type(), Type::Union(tys.clone())))
+            }
+            (v, e) => Some((v.get_type(), e.clone())),
+        }
     }
 }
 

@@ -1,8 +1,41 @@
-use std::{collections::HashSet, fmt::Display, rc::Rc};
+use std::{collections::HashSet, fmt::Display, hash::Hash, rc::Rc};
 
-use orx_tree::{DynNode, DynTree, NodeRef};
+use orx_tree::{Dfs, DynNode, DynTree, NodeRef};
 
 use crate::functions::{FnType, get_functions};
+
+#[derive(Clone, Debug)]
+pub struct VarId {
+    pub name: Option<Rc<String>>,
+    pub id: u32,
+}
+
+impl PartialEq for VarId {
+    fn eq(
+        &self,
+        other: &Self,
+    ) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for VarId {}
+
+impl Hash for VarId {
+    fn hash<H: std::hash::Hasher>(
+        &self,
+        state: &mut H,
+    ) {
+        self.id.hash(state);
+    }
+}
+
+impl VarId {
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        self.name.as_ref().map_or("?", |n| n.as_str())
+    }
+}
 
 #[derive(Clone, Debug)]
 pub enum ExprIR {
@@ -11,9 +44,10 @@ pub enum ExprIR {
     Integer(i64),
     Float(f64),
     String(Rc<String>),
-    Var(Rc<String>),
-    Parameter(String),
     List,
+    Map,
+    Var(VarId),
+    Parameter(String),
     Length,
     GetElement,
     GetElements,
@@ -39,9 +73,8 @@ pub enum ExprIR {
     Pow,
     Modulo,
     FuncInvocation(String, FnType),
-    Map,
-    Quantifier(QuantifierType, Rc<String>),
-    ListComprehension(Rc<String>),
+    Quantifier(QuantifierType, VarId),
+    ListComprehension(VarId),
     ExistsPattern(Pattern),
 }
 
@@ -56,9 +89,10 @@ impl Display for ExprIR {
             Self::Integer(i) => write!(f, "{i}"),
             Self::Float(fl) => write!(f, "{fl}"),
             Self::String(s) => write!(f, "{s}"),
-            Self::Var(id) => write!(f, "{id}"),
-            Self::Parameter(p) => write!(f, "@{p}"),
             Self::List => write!(f, "[]"),
+            Self::Map => write!(f, "{{}}"),
+            Self::Var(id) => write!(f, "{}", id.as_str()),
+            Self::Parameter(p) => write!(f, "@{p}"),
             Self::Length => write!(f, "length()"),
             Self::GetElement => write!(f, "get_element()"),
             Self::GetElements => write!(f, "get_elements()"),
@@ -84,12 +118,11 @@ impl Display for ExprIR {
             Self::Pow => write!(f, "^"),
             Self::Modulo => write!(f, "%"),
             Self::FuncInvocation(name, _) => write!(f, "{name}()"),
-            Self::Map => write!(f, "{{}}"),
-            Self::Quantifier(quantifier_type, var_name) => {
-                write!(f, "{quantifier_type} {var_name}")
+            Self::Quantifier(quantifier_type, var) => {
+                write!(f, "{quantifier_type} {}", var.as_str())
             }
             Self::ListComprehension(var) => {
-                write!(f, "list comp({var})")
+                write!(f, "list comp({})", var.as_str())
             }
             Self::ExistsPattern(pattern) => {
                 write!(f, "exists({})", pattern)
@@ -123,14 +156,15 @@ impl Display for QuantifierType {
 pub trait Validate {
     fn validate(
         self,
-        env: &mut HashSet<Rc<String>>,
+        env: &mut HashSet<u32>,
     ) -> Result<(), String>;
 }
 
 impl Validate for DynNode<'_, ExprIR> {
+    #[allow(clippy::too_many_lines)]
     fn validate(
         self,
-        env: &mut HashSet<Rc<String>>,
+        env: &mut HashSet<u32>,
     ) -> Result<(), String> {
         match self.data() {
             ExprIR::Null
@@ -142,12 +176,12 @@ impl Validate for DynNode<'_, ExprIR> {
                 debug_assert_eq!(self.num_children(), 0);
                 Ok(())
             }
-            ExprIR::Var(id) => {
+            ExprIR::Var(var) => {
                 debug_assert_eq!(self.num_children(), 0);
-                if env.contains(id) {
+                if env.contains(&var.id) {
                     Ok(())
                 } else {
-                    Err(format!("'{id}' not defined"))
+                    Err(format!("'{}' not defined", var.as_str()))
                 }
             }
             ExprIR::And | ExprIR::Or | ExprIR::Xor => {
@@ -184,6 +218,13 @@ impl Validate for DynNode<'_, ExprIR> {
                 }
                 Ok(())
             }
+            ExprIR::FuncInvocation(name, FnType::Aggregation) => {
+                get_functions().validate(name, &FnType::Aggregation, self.num_children())?;
+                for i in 0..self.num_children() - 1 {
+                    self.child(i).validate(env)?;
+                }
+                Ok(())
+            }
             ExprIR::FuncInvocation(name, fn_type) => {
                 get_functions().validate(name, fn_type, self.num_children())?;
                 for expr in self.children() {
@@ -193,7 +234,7 @@ impl Validate for DynNode<'_, ExprIR> {
             }
             ExprIR::Map => {
                 for expr in self.children() {
-                    debug_assert!(matches!(expr.data(), ExprIR::Var(_)));
+                    debug_assert!(matches!(expr.data(), ExprIR::String(_)));
                     debug_assert_eq!(expr.num_children(), 1);
                     expr.child(0).validate(env)?;
                 }
@@ -222,22 +263,22 @@ impl Validate for DynNode<'_, ExprIR> {
                 }
                 Ok(())
             }
-            ExprIR::Quantifier(_quantifier_type, var_name) => {
+            ExprIR::Quantifier(_quantifier_type, var) => {
                 debug_assert_eq!(self.num_children(), 2);
                 self.child(0).validate(env)?;
-                env.insert(var_name.clone());
+                env.insert(var.id);
                 self.child(1).validate(env)?;
-                env.remove(var_name);
+                env.remove(&var.id);
                 Ok(())
             }
             ExprIR::ListComprehension(var) => {
                 debug_assert!(0 < self.num_children() && self.num_children() <= 3);
                 self.child(0).validate(env)?;
-                env.insert(var.clone());
+                env.insert(var.id);
                 for expr in self.children().skip(1) {
                     expr.validate(env)?;
                 }
-                env.remove(var);
+                env.remove(&var.id);
                 Ok(())
             }
             ExprIR::ExistsPattern(_pattern) => {
@@ -254,33 +295,20 @@ pub trait SupportAggregation {
     fn is_aggregation(&self) -> bool;
 }
 
-impl SupportAggregation for DynNode<'_, ExprIR> {
+impl SupportAggregation for DynTree<ExprIR> {
     fn is_aggregation(&self) -> bool {
-        match self.data() {
-            ExprIR::FuncInvocation(_, FnType::Aggregation) => true,
-            _ => false,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum Alias {
-    String(Rc<String>),
-    Anon(i32),
-}
-
-impl Alias {
-    pub fn to_string(&self) -> Rc<String> {
-        match self {
-            Alias::String(s) => s.clone(),
-            Alias::Anon(i) => Rc::new(format!("${i}")),
-        }
+        self.root().indices::<Dfs>().any(|idx| {
+            matches!(
+                self.node(&idx).data(),
+                ExprIR::FuncInvocation(_, FnType::Aggregation)
+            )
+        })
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct NodePattern {
-    pub alias: Alias,
+    pub alias: VarId,
     pub labels: Vec<Rc<String>>,
     pub attrs: DynTree<ExprIR>,
 }
@@ -291,12 +319,12 @@ impl Display for NodePattern {
         f: &mut std::fmt::Formatter<'_>,
     ) -> std::fmt::Result {
         if self.labels.is_empty() {
-            return write!(f, "({})", self.alias.to_string());
+            return write!(f, "({})", self.alias.as_str());
         }
         write!(
             f,
             "({}:{})",
-            self.alias.to_string(),
+            self.alias.as_str(),
             self.labels
                 .iter()
                 .map(|label| label.as_str())
@@ -309,7 +337,7 @@ impl Display for NodePattern {
 impl NodePattern {
     #[must_use]
     pub const fn new(
-        alias: Alias,
+        alias: VarId,
         labels: Vec<Rc<String>>,
         attrs: DynTree<ExprIR>,
     ) -> Self {
@@ -323,11 +351,11 @@ impl NodePattern {
 
 #[derive(Clone, Debug)]
 pub struct RelationshipPattern {
-    pub alias: Alias,
+    pub alias: VarId,
     pub types: Vec<Rc<String>>,
     pub attrs: DynTree<ExprIR>,
-    pub from: Alias,
-    pub to: Alias,
+    pub from: VarId,
+    pub to: VarId,
     pub bidirectional: bool,
 }
 
@@ -341,24 +369,24 @@ impl Display for RelationshipPattern {
             return write!(
                 f,
                 "({})-[{}]-{}({})",
-                self.from.to_string(),
-                self.alias.to_string(),
+                self.from.as_str(),
+                self.alias.as_str(),
                 direction,
-                self.to.to_string()
+                self.to.as_str()
             );
         }
         write!(
             f,
             "({})-[{}:{}]-{}({})",
-            self.from.to_string(),
-            self.alias.to_string(),
+            self.from.as_str(),
+            self.alias.as_str(),
             self.types
                 .iter()
                 .map(|label| label.as_str())
                 .collect::<Vec<_>>()
                 .join("|"),
             direction,
-            self.to.to_string()
+            self.to.as_str()
         )
     }
 }
@@ -366,11 +394,11 @@ impl Display for RelationshipPattern {
 impl RelationshipPattern {
     #[must_use]
     pub const fn new(
-        alias: Alias,
+        alias: VarId,
         types: Vec<Rc<String>>,
         attrs: DynTree<ExprIR>,
-        from: Alias,
-        to: Alias,
+        from: VarId,
+        to: VarId,
         bidirectional: bool,
     ) -> Self {
         Self {
@@ -386,17 +414,17 @@ impl RelationshipPattern {
 
 #[derive(Clone, Debug)]
 pub struct PathPattern {
-    pub vars: Vec<Alias>,
-    pub name: Rc<String>,
+    pub var: VarId,
+    pub vars: Vec<VarId>,
 }
 
 impl PathPattern {
     #[must_use]
     pub const fn new(
-        vars: Vec<Alias>,
-        name: Rc<String>,
+        var: VarId,
+        vars: Vec<VarId>,
     ) -> Self {
-        Self { vars, name }
+        Self { var, vars }
     }
 }
 
@@ -444,13 +472,13 @@ impl Pattern {
 pub enum QueryIR {
     Call(Rc<String>, Vec<DynTree<ExprIR>>),
     Match(Pattern, bool),
-    Unwind(DynTree<ExprIR>, Rc<String>),
+    Unwind(DynTree<ExprIR>, VarId),
     Merge(Pattern),
     Where(DynTree<ExprIR>),
     Create(Pattern),
-    Delete(Vec<DynTree<ExprIR>>),
-    With(Vec<(Rc<String>, DynTree<ExprIR>)>, bool),
-    Return(Vec<(Rc<String>, DynTree<ExprIR>)>, bool),
+    Delete(Vec<DynTree<ExprIR>>, bool),
+    With(Vec<(VarId, DynTree<ExprIR>)>, bool),
+    Return(Vec<(VarId, DynTree<ExprIR>)>, bool),
     Query(Vec<QueryIR>, bool),
 }
 
@@ -469,7 +497,7 @@ impl Display for QueryIR {
             }
             Self::Match(p, _) => writeln!(f, "MATCH {p}"),
             Self::Unwind(l, v) => {
-                writeln!(f, "UNWIND {v}:")?;
+                writeln!(f, "UNWIND {}:", v.as_str())?;
                 write!(f, "{l}")
             }
             Self::Merge(p) => writeln!(f, "MERGE {p}"),
@@ -478,7 +506,7 @@ impl Display for QueryIR {
                 write!(f, "{expr}")
             }
             Self::Create(p) => write!(f, "CREATE {p}"),
-            Self::Delete(exprs) => {
+            Self::Delete(exprs, _) => {
                 writeln!(f, "DELETE:")?;
                 for expr in exprs {
                     write!(f, "{expr}")?;
@@ -488,14 +516,14 @@ impl Display for QueryIR {
             Self::With(exprs, _) => {
                 writeln!(f, "WITH:")?;
                 for (name, _) in exprs {
-                    write!(f, "{name}")?;
+                    write!(f, "{}", name.as_str())?;
                 }
                 Ok(())
             }
             Self::Return(exprs, _) => {
                 writeln!(f, "RETURN:")?;
                 for (name, _) in exprs {
-                    write!(f, "{name}")?;
+                    write!(f, "{}", name.as_str())?;
                 }
                 Ok(())
             }
@@ -519,7 +547,7 @@ impl QueryIR {
     fn inner_validate<'a, T>(
         &mut self,
         mut iter: T,
-        env: &mut HashSet<Rc<String>>,
+        env: &mut HashSet<u32>,
     ) -> Result<(), String>
     where
         T: Iterator<Item = &'a mut Self>,
@@ -532,52 +560,54 @@ impl QueryIR {
                 Ok(())
             }
             Self::Match(p, _) => {
-                for node in &p.nodes {
-                    if env.contains(&node.alias.to_string()) {
-                        return Err(format!(
-                            "Duplicate alias {}",
-                            node.alias.to_string().as_str()
-                        ));
+                let mut remove = Vec::new();
+                for (i, node) in p.nodes.iter().enumerate() {
+                    if env.contains(&node.alias.id) {
+                        if p.relationships.is_empty() {
+                            return Err(format!("Duplicate alias {}", node.alias.as_str()));
+                        }
+                        remove.push(i);
                     }
                     node.attrs.root().validate(env)?;
-                    env.insert(node.alias.to_string());
+                    env.insert(node.alias.id);
+                }
+                remove.reverse();
+                for i in remove {
+                    p.nodes.remove(i);
                 }
                 for relationship in &p.relationships {
-                    if env.contains(&relationship.alias.to_string()) {
-                        return Err(format!(
-                            "Duplicate alias {}",
-                            relationship.alias.to_string().as_str()
-                        ));
+                    if env.contains(&relationship.alias.id) {
+                        return Err(format!("Duplicate alias {}", relationship.alias.as_str()));
                     }
                     relationship.attrs.root().validate(env)?;
-                    env.insert(relationship.alias.to_string());
+                    env.insert(relationship.alias.id);
                 }
                 for path in &p.paths {
-                    if env.contains(&path.name) {
-                        return Err(format!("Duplicate alias {}", path.name.as_str()));
+                    if env.contains(&path.var.id) {
+                        return Err(format!("Duplicate alias {}", path.var.as_str()));
                     }
-                    env.insert(path.name.clone());
+                    env.insert(path.var.id);
                 }
                 let first = iter.next().unwrap();
                 first.inner_validate(iter, env)
             }
             Self::Unwind(l, v) => {
                 l.root().validate(env)?;
-                if env.contains(v) {
-                    return Err(format!("Duplicate alias {v}"));
+                if env.contains(&v.id) {
+                    return Err(format!("Duplicate alias {}", v.as_str()));
                 }
-                env.insert(v.clone());
+                env.insert(v.id);
                 let first = iter.next().unwrap();
                 first.inner_validate(iter, env)
             }
             Self::Merge(p) => {
                 let mut remove = Vec::new();
                 for (i, node) in p.nodes.iter().enumerate() {
-                    if env.contains(&node.alias.to_string()) {
+                    if env.contains(&node.alias.id) {
                         if p.relationships.is_empty() {
                             return Err(format!(
                                 "The bound variable {} can't be redeclared in a create clause",
-                                node.alias.to_string().as_str()
+                                node.alias.as_str()
                             ));
                         }
                         remove.push(i);
@@ -589,11 +619,11 @@ impl QueryIR {
                     p.nodes.remove(i);
                 }
                 for node in &p.nodes {
-                    env.insert(node.alias.to_string());
+                    env.insert(node.alias.id);
                 }
                 for relationship in &p.relationships {
                     relationship.attrs.root().validate(env)?;
-                    env.insert(relationship.alias.to_string());
+                    env.insert(relationship.alias.id);
                 }
                 let first = iter.next().unwrap();
                 first.inner_validate(iter, env)
@@ -601,21 +631,21 @@ impl QueryIR {
             Self::Where(expr) => expr.root().validate(env),
             Self::Create(p) => {
                 for path in &p.paths {
-                    if env.contains(&path.name) {
+                    if env.contains(&path.var.id) {
                         return Err(format!(
                             "The bound variable {} can't be redeclared in a create clause",
-                            path.name
+                            path.var.as_str()
                         ));
                     }
-                    env.insert(path.name.clone());
+                    env.insert(path.var.id);
                 }
                 let mut remove = Vec::new();
                 for (i, node) in p.nodes.iter().enumerate() {
-                    if env.contains(&node.alias.to_string()) {
+                    if env.contains(&node.alias.id) {
                         if p.relationships.is_empty() {
                             return Err(format!(
                                 "The bound variable {} can't be redeclared in a create clause",
-                                node.alias.to_string().as_str()
+                                node.alias.as_str()
                             ));
                         }
                         remove.push(i);
@@ -627,13 +657,13 @@ impl QueryIR {
                     p.nodes.remove(i);
                 }
                 for node in &p.nodes {
-                    env.insert(node.alias.to_string());
+                    env.insert(node.alias.id);
                 }
                 for relationship in &p.relationships {
-                    if env.contains(&relationship.alias.to_string()) {
+                    if env.contains(&relationship.alias.id) {
                         return Err(format!(
                             "The bound variable '{}' can't be redeclared in a CREATE clause",
-                            relationship.alias.to_string().as_str()
+                            relationship.alias.as_str()
                         ));
                     }
                     if relationship.types.len() != 1 {
@@ -642,12 +672,12 @@ impl QueryIR {
                         ));
                     }
                     relationship.attrs.root().validate(env)?;
-                    env.insert(relationship.alias.to_string());
+                    env.insert(relationship.alias.id);
                 }
                 iter.next()
                     .map_or(Ok(()), |first| first.inner_validate(iter, env))
             }
-            Self::Delete(exprs) => {
+            Self::Delete(exprs, _) => {
                 for expr in exprs {
                     expr.root().validate(env)?;
                 }
@@ -661,7 +691,7 @@ impl QueryIR {
                 if !exprs.is_empty() {
                     env.clear();
                     for (name, _) in exprs {
-                        env.insert(name.clone());
+                        env.insert(name.id);
                     }
                 }
                 iter.next()
