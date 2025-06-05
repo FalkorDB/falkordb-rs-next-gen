@@ -512,7 +512,7 @@ pub fn init_functions() -> Result<(), Functions> {
         vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
         FnType::Function,
     );
-    funcs.add("exists", exists, false, 1, 1, FnType::Function);
+    funcs.add("exists", exists, false, vec![Type::Any], FnType::Function);
     funcs.add(
         "floor",
         floor,
@@ -736,23 +736,6 @@ fn property(
         }
         (Some(Value::Null), Some(Value::String(_)), None) => Ok(Value::Null),
         _ => unreachable!(),
-    }
-}
-
-fn exists(
-    _runtime: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
-    if args.len() != 1 {
-        return Err("exists() function expects exactly 1 argument".to_string());
-    }
-
-    let value = &args[0];
-
-    // exists() returns false if the value is null, true otherwise
-    match value {
-        Value::Null => Ok(Value::Bool(false)),
-        _ => Ok(Value::Bool(true)),
     }
 }
 
@@ -1525,6 +1508,19 @@ fn to_boolean(
         }
         Some(Value::Int(n)) => Ok(Value::Bool(n != 0)),
         Some(Value::Null) => Ok(Value::Null),
+        _ => unreachable!(),
+    }
+}
+
+fn exists(
+    _runtime: &Runtime,
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    let mut iter = args.into_iter();
+    // exists() returns false if the value is null, true otherwise
+    match iter.next() {
+        Some(Value::Null) => Ok(Value::Bool(false)),
+        Some(_) => Ok(Value::Bool(true)),
         _ => unreachable!(),
     }
 }
