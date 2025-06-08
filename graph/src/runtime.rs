@@ -168,7 +168,7 @@ impl<'a> Runtime<'a> {
                         ));
                     }
                 };
-                curr.insert(&key, acc.get(&key).unwrap_or(RcValue::null()));
+                curr.insert(&key, acc.get(&key).unwrap_or_else(RcValue::null));
                 acc.insert(&key, self.run_expr(ir, curr, false)?);
             }
             _ => {
@@ -391,7 +391,7 @@ impl<'a> Runtime<'a> {
                 if finalize_agg && *fn_type == FnType::Aggregation {
                     match ir.child(ir.num_children() - 1).data() {
                         ExprIR::Var(key) => {
-                            return Ok(env.get(key).unwrap_or(RcValue::null()));
+                            return Ok(env.get(key).unwrap_or_else(RcValue::null));
                         }
                         _ => unreachable!(),
                     }

@@ -731,7 +731,7 @@ fn property(
                 })
         }
         (Some(Value::Map(map)), Some(Value::String(property))) => {
-            Ok(map.get(property).unwrap_or(&RcValue::null()).clone())
+            Ok(map.get(property).cloned().unwrap_or_else(RcValue::null))
         }
         (Some(Value::Null), Some(Value::String(_))) => Ok(RcValue::null()),
         _ => unreachable!(),
@@ -971,7 +971,7 @@ fn last(
     args: Vec<RcValue>,
 ) -> Result<RcValue, String> {
     match args.into_iter().next().as_deref() {
-        Some(Value::List(v)) => Ok(v.last().unwrap_or(&RcValue::null()).clone()),
+        Some(Value::List(v)) => Ok(v.last().cloned().unwrap_or_else(RcValue::null)),
         Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
@@ -1453,7 +1453,7 @@ fn range(
     let mut iter = args.into_iter();
     let start = iter.next().ok_or("Missing start value")?;
     let end = iter.next().ok_or("Missing end value")?;
-    let step = iter.next().unwrap_or(RcValue::int(1));
+    let step = iter.next().unwrap_or_else(|| RcValue::int(1));
     match (&*start, &*end, &*step) {
         (Value::Int(start), Value::Int(end), Value::Int(step)) => {
             if start >= end && *step < 0 {
