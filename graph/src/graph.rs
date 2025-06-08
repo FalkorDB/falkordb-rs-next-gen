@@ -15,7 +15,7 @@ use crate::{
     matrix::{self, Dup, ElementWiseAdd, ElementWiseMultiply, Matrix, New, Remove, Set, Size},
     planner::{IR, Planner},
     tensor::{self, Tensor},
-    value::Value,
+    value::{RcValue, Value},
 };
 
 pub struct Graph {
@@ -35,8 +35,8 @@ pub struct Graph {
     all_nodes_matrix: Matrix<bool>,
     labels_matices: HashMap<usize, Matrix<bool>>,
     relationship_matrices: HashMap<usize, Tensor>,
-    node_properties_map: HashMap<u64, HashMap<u64, Value>>,
-    relationship_properties_map: HashMap<u64, HashMap<u64, Value>>,
+    node_properties_map: HashMap<u64, HashMap<u64, RcValue>>,
+    relationship_properties_map: HashMap<u64, HashMap<u64, RcValue>>,
     node_labels: Vec<Rc<String>>,
     relationship_types: Vec<Rc<String>>,
     node_properties: Vec<Rc<String>>,
@@ -302,7 +302,7 @@ impl Graph {
 
     pub fn create_nodes(
         &mut self,
-        nodes: &HashMap<u64, (Vec<Rc<String>>, OrderMap<Rc<String>, Value>)>,
+        nodes: &HashMap<u64, (Vec<Rc<String>>, OrderMap<Rc<String>, RcValue>)>,
     ) {
         self.node_count += nodes.len() as u64;
         self.reserved_node_count -= nodes.len() as u64;
@@ -320,19 +320,19 @@ impl Graph {
             self.all_nodes_matrix.set(*id, *id, true);
 
             for label in labels {
-                let label_matrix = self.get_label_matrix_mut(label);
+                let label_matrix = self.get_label_matrix_mut(&label);
                 label_matrix.set(*id, *id, true);
-                let label_id = self.get_label_id(label).unwrap();
+                let label_id = self.get_label_id(&label).unwrap();
                 self.resize();
                 self.node_labels_matrix.set(*id, label_id, true);
             }
 
             let mut map = HashMap::new();
             for (key, value) in attrs {
-                if *value == Value::Null {
+                if **value == Value::Null {
                     continue;
                 }
-                let property_id = self.get_or_add_node_property_id(key);
+                let property_id = self.get_or_add_node_property_id(&key);
                 map.insert(property_id, value.clone());
             }
             self.node_properties_map.insert(*id, map);
@@ -401,7 +401,7 @@ impl Graph {
         &self,
         node_id: u64,
         property_id: u64,
-    ) -> Option<Value> {
+    ) -> Option<RcValue> {
         self.node_properties_map
             .get(&node_id)
             .unwrap()
@@ -422,7 +422,7 @@ impl Graph {
 
     pub fn create_relationships(
         &mut self,
-        relationships: &HashMap<u64, (Rc<String>, u64, u64, OrderMap<Rc<String>, Value>)>,
+        relationships: &HashMap<u64, (Rc<String>, u64, u64, OrderMap<Rc<String>, RcValue>)>,
     ) {
         self.relationship_count += relationships.len() as u64;
         self.reserved_relationship_count -= relationships.len() as u64;
@@ -454,10 +454,10 @@ impl Graph {
 
             let mut map = HashMap::new();
             for (key, value) in attrs {
-                if *value == Value::Null {
+                if **value == Value::Null {
                     continue;
                 }
-                let property_id = self.get_or_add_relationship_property_id(key);
+                let property_id = self.get_or_add_relationship_property_id(&key);
                 map.insert(property_id, value.clone());
             }
             self.relationship_properties_map.insert(*id, map);
@@ -535,7 +535,7 @@ impl Graph {
         &self,
         relationship_id: u64,
         property_id: u64,
-    ) -> Option<Value> {
+    ) -> Option<RcValue> {
         self.relationship_properties_map
             .get(&relationship_id)
             .unwrap()
@@ -582,7 +582,7 @@ impl Graph {
     pub fn get_node_properties(
         &self,
         id: u64,
-    ) -> &HashMap<u64, Value> {
+    ) -> &HashMap<u64, RcValue> {
         self.node_properties_map
             .get(&id)
             .unwrap_or_else(|| panic!("Node with id {id} not found"))
@@ -591,7 +591,7 @@ impl Graph {
     pub fn get_relationship_properties(
         &self,
         id: u64,
-    ) -> &HashMap<u64, Value> {
+    ) -> &HashMap<u64, RcValue> {
         self.relationship_properties_map
             .get(&id)
             .unwrap_or_else(|| panic!("Relationship with id {id} not found"))
