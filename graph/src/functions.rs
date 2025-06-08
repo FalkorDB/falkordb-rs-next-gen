@@ -112,7 +112,7 @@ impl GraphFn {
 impl GraphFn {
     pub fn validate_args_type(
         &self,
-        args: &Vec<RcValue>,
+        args: &[RcValue],
     ) -> Result<(), String> {
         match &self.args_type {
             FnArguments::Fixed(args_type) => {
@@ -932,7 +932,7 @@ fn value_to_string(
 ) -> Result<RcValue, String> {
     match args.into_iter().next().as_deref() {
         Some(Value::Null) => Ok(RcValue::null()),
-        Some(v) => Ok(RcValue::string(value_string(&v)?)),
+        Some(v) => Ok(RcValue::string(value_string(v)?)),
         _ => unreachable!(),
     }
 }
@@ -1177,7 +1177,7 @@ fn string_join(
     _: &Runtime,
     args: Vec<RcValue>,
 ) -> Result<RcValue, String> {
-    fn to_string_vec(vec: &Vec<RcValue>) -> Result<Vec<Rc<String>>, String> {
+    fn to_string_vec(vec: &[RcValue]) -> Result<Vec<Rc<String>>, String> {
         vec.iter()
             .map(|item| {
                 if let Value::String(s) = &**item {

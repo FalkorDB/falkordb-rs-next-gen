@@ -111,7 +111,7 @@ fn compact_value_to_redis_value(
             RedisValue::Integer(6),
             RedisValue::Array(
                 values
-                    .into_iter()
+                    .iter()
                     .map(|v| compact_value_to_redis_value(g, v.clone()))
                     .collect(),
             ),
@@ -205,7 +205,7 @@ fn verbose_value_to_redis_value(
         Value::String(x) => RedisValue::BulkString(x.to_string()),
         Value::List(values) => RedisValue::Array(
             values
-                .into_iter()
+                .iter()
                 .map(|v| verbose_value_to_redis_value(g, v.clone()))
                 .collect(),
         ),
@@ -644,7 +644,7 @@ fn graph_init(
         );
     }
     match init_functions() {
-        Ok(_) => Status::Ok,
+        Ok(()) => Status::Ok,
         Err(_) => Status::Err,
     }
 }

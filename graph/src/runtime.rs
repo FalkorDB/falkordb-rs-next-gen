@@ -805,7 +805,7 @@ impl<'a> Runtime<'a> {
                                 .vars
                                 .iter()
                                 .map(|v| {
-                                    vars.get(&v).map_or_else(
+                                    vars.get(v).map_or_else(
                                         || Err(format!("Variable {} not found", v.as_str())),
                                         Ok,
                                     )
@@ -948,7 +948,7 @@ impl<'a> Runtime<'a> {
                     let g = self.g.borrow();
                     let properties = g.get_node_properties(v);
                     for (key, avalue) in attrs {
-                        if let Some(pvalue) = properties.get(&g.get_node_property_id(&key).unwrap())
+                        if let Some(pvalue) = properties.get(&g.get_node_property_id(key).unwrap())
                         {
                             if avalue == pvalue {
                                 continue;
@@ -1032,19 +1032,17 @@ impl<'a> Runtime<'a> {
         }
         for rel in &pattern.relationships {
             let (from_id, to_id) = {
-                let from_id = vars
+                let Value::Node(from_id) = *vars
                     .get(&rel.from)
-                    .ok_or_else(|| format!("Variable {} not found", rel.from.as_str()))?;
-                let from_id = match *from_id {
-                    Value::Node(id) => id,
-                    _ => return Err(String::from("Invalid node id")),
+                    .ok_or_else(|| format!("Variable {} not found", rel.from.as_str()))?
+                else {
+                    return Err(String::from("Invalid node id"));
                 };
-                let to_id = vars
+                let Value::Node(to_id) = *vars
                     .get(&rel.to)
-                    .ok_or_else(|| format!("Variable {} not found", rel.to.as_str()))?;
-                let to_id = match *to_id {
-                    Value::Node(id) => id,
-                    _ => return Err(String::from("Invalid node id")),
+                    .ok_or_else(|| format!("Variable {} not found", rel.to.as_str()))?
+                else {
+                    return Err(String::from("Invalid node id"));
                 };
                 (from_id, to_id)
             };

@@ -320,9 +320,9 @@ impl Graph {
             self.all_nodes_matrix.set(*id, *id, true);
 
             for label in labels {
-                let label_matrix = self.get_label_matrix_mut(&label);
+                let label_matrix = self.get_label_matrix_mut(label);
                 label_matrix.set(*id, *id, true);
-                let label_id = self.get_label_id(&label).unwrap();
+                let label_id = self.get_label_id(label).unwrap();
                 self.resize();
                 self.node_labels_matrix.set(*id, label_id, true);
             }
@@ -332,7 +332,7 @@ impl Graph {
                 if **value == Value::Null {
                     continue;
                 }
-                let property_id = self.get_or_add_node_property_id(&key);
+                let property_id = self.get_or_add_node_property_id(key);
                 map.insert(property_id, value.clone());
             }
             self.node_properties_map.insert(*id, map);
@@ -457,7 +457,7 @@ impl Graph {
                 if **value == Value::Null {
                     continue;
                 }
-                let property_id = self.get_or_add_relationship_property_id(&key);
+                let property_id = self.get_or_add_relationship_property_id(key);
                 map.insert(property_id, value.clone());
             }
             self.relationship_properties_map.insert(*id, map);
