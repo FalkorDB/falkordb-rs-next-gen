@@ -15,7 +15,22 @@ pub enum FnType {
     Function,
     Internal,
     Procedure,
-    Aggregation,
+    Aggregation(AggregationReturnType),
+}
+
+#[derive(Eq, PartialEq, Debug, Clone)]
+pub enum AggregationReturnType {
+    Numeric,
+    Array,
+}
+
+impl AggregationReturnType {
+    pub(crate) const fn zero(&self) -> Value {
+        match self {
+            Self::Numeric => Value::Int(0),
+            Self::Array => Value::List(vec![]),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -210,10 +225,9 @@ impl Functions {
                                 "Received {args} arguments to function '{}', expected at least {least}", graph_fn.name
                             ));
                         }
-                        let most = if fn_type == &FnType::Aggregation {
-                            args_type.len() + 1 // aggregation functions have one more argument for the temporary result
-                        } else {
-                            args_type.len()
+                        let most = match fn_type {
+                            FnType::Aggregation(_) => args_type.len() + 1,
+                            _ => args_type.len(),
                         };
                         if args > most {
                             return Err(format!(
@@ -252,10 +266,13 @@ impl Functions {
     pub fn is_aggregate(
         &self,
         name: &str,
-    ) -> bool {
+    ) -> Option<FnType> {
         self.functions
             .get(name)
-            .is_some_and(|graph_fn| graph_fn.fn_type == FnType::Aggregation)
+            .and_then(|graph_fn| match &(graph_fn.fn_type) {
+                agg @ FnType::Aggregation(_) => Some(agg.clone()),
+                _ => None,
+            })
     }
 }
 
@@ -599,18 +616,36 @@ pub fn init_functions() -> Result<(), Functions> {
         collect,
         false,
         vec![Type::Any],
-        FnType::Aggregation,
+        FnType::Aggregation(AggregationReturnType::Array),
     );
     funcs.add(
         "count",
         count,
         false,
         vec![Type::Optional(Box::new(Type::Any))],
-        FnType::Aggregation,
+        FnType::Aggregation(AggregationReturnType::Numeric),
     );
-    funcs.add("sum", sum, false, vec![Type::Any], FnType::Aggregation);
-    funcs.add("max", max, false, vec![Type::Any], FnType::Aggregation);
-    funcs.add("min", min, false, vec![Type::Any], FnType::Aggregation);
+    funcs.add(
+        "sum",
+        sum,
+        false,
+        vec![Type::Any],
+        FnType::Aggregation(AggregationReturnType::Numeric),
+    );
+    funcs.add(
+        "max",
+        max,
+        false,
+        vec![Type::Any],
+        FnType::Aggregation(AggregationReturnType::Numeric),
+    );
+    funcs.add(
+        "min",
+        min,
+        false,
+        vec![Type::Any],
+        FnType::Aggregation(AggregationReturnType::Numeric),
+    );
 
     // Internal functions
     funcs.add(

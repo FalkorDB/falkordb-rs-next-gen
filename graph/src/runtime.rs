@@ -10,6 +10,7 @@ use orx_tree::{Dyn, DynNode, DynTree, NodeIdx, NodeRef};
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::fmt::Debug;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::iter::{empty, once, repeat_with};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -157,7 +158,7 @@ impl<'a> Runtime<'a> {
         acc: &mut Env,
     ) -> Result<(), String> {
         match ir.data() {
-            ExprIR::FuncInvocation(_, FnType::Aggregation) => {
+            ExprIR::FuncInvocation(_, FnType::Aggregation(_)) => {
                 let key = match ir.child(ir.num_children() - 1).data() {
                     ExprIR::Var(key) => key.clone(),
                     _ => {
@@ -384,12 +385,18 @@ impl<'a> Runtime<'a> {
                 })
                 .ok_or_else(|| String::from("Pow operator requires at least one argument")),
             ExprIR::FuncInvocation(name, fn_type) => {
-                if finalize_agg && *fn_type == FnType::Aggregation {
-                    match ir.child(ir.num_children() - 1).data() {
-                        ExprIR::Var(key) => {
-                            return Ok(env.get(key).cloned().unwrap_or(Value::Null));
+                if finalize_agg {
+                    if let FnType::Aggregation(aggregation_return_type) = fn_type {
+                        match ir.child(ir.num_children() - 1).data() {
+                            ExprIR::Var(key) => {
+                                let res = Ok(env
+                                    .get(key)
+                                    .cloned()
+                                    .unwrap_or_else(|| aggregation_return_type.zero()));
+                                return res;
+                            }
+                            _ => unreachable!(),
                         }
-                        _ => unreachable!(),
                     }
                 }
                 let args = ir
@@ -834,7 +841,29 @@ impl<'a> Runtime<'a> {
                     "Filter operator requires a boolean expression",
                 ))
             }
+            // trees is keys and trees1 is aggregation
             IR::Aggregate(_, trees, trees1) => {
+                let mut cache = std::collections::HashMap::new();
+                // in case there are no aggregation keys the aggregator will return
+                // default value for empty iterator
+                if trees.is_empty() {
+                    let mut env = Env::new();
+                    for (name, t) in trees1 {
+                        if let ExprIR::FuncInvocation(
+                            _,
+                            FnType::Aggregation(aggregation_return_type),
+                        ) = t.root().data()
+                        {
+                            env.insert(name, aggregation_return_type.zero());
+                        }
+                    }
+                    #[allow(clippy::collection_is_never_read)]
+                    let key: Vec<Value> = vec![];
+                    let mut hasher = DefaultHasher::new();
+                    key.hash(&mut hasher);
+                    let k = hasher.finish();
+                    cache.insert(k, (Ok(Env::new()), Ok(env)));
+                }
                 if let Some(child_idx) = child0_idx {
                     let mut default_value = Env::new();
                     for (name, _) in trees1 {
@@ -861,6 +890,7 @@ impl<'a> Runtime<'a> {
                                 }
                                 Ok(acc)
                             },
+                            cache,
                         )
                         .map(move |(key, v)| {
                             let mut vars = v?;

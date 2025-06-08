@@ -212,8 +212,8 @@ impl Validate for DynNode<'_, ExprIR> {
                 }
                 Ok(())
             }
-            ExprIR::FuncInvocation(name, FnType::Aggregation) => {
-                get_functions().validate(name, &FnType::Aggregation, self.num_children())?;
+            ExprIR::FuncInvocation(name, aggregation @ FnType::Aggregation(_)) => {
+                get_functions().validate(name, aggregation, self.num_children())?;
                 for i in 0..self.num_children() - 1 {
                     self.child(i).validate(env)?;
                 }
@@ -287,7 +287,7 @@ impl SupportAggregation for DynTree<ExprIR> {
         self.root().indices::<Dfs>().any(|idx| {
             matches!(
                 self.node(&idx).data(),
-                ExprIR::FuncInvocation(_, FnType::Aggregation)
+                ExprIR::FuncInvocation(_, FnType::Aggregation(_))
             )
         })
     }

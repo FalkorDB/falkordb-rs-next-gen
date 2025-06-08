@@ -857,23 +857,33 @@ impl<'a> Parser<'a> {
                 if self.lexer.current() == Token::LParen {
                     self.lexer.next();
 
-                    let is_aggregate = get_functions().is_aggregate(&namespace_and_function);
-                    if is_aggregate && optional_match_token!(self.lexer, Star) {
-                        match_token!(self.lexer, RParen);
-                        return Ok(tree!(
-                            ExprIR::FuncInvocation(namespace_and_function, FnType::Aggregation),
-                            tree!(ExprIR::Var(self.create_var(None)))
-                        ));
-                    }
-                    let mut args =
-                        self.parse_expression_list(ExpressionListType::ZeroOrMoreClosedBy(RParen))?;
-                    if is_aggregate {
+                    let fn_type_opt = get_functions().is_aggregate(&namespace_and_function);
+                    if let Some(FnType::Aggregation(default_value)) = fn_type_opt {
+                        if optional_match_token!(self.lexer, Star) {
+                            match_token!(self.lexer, RParen);
+                            return Ok(tree!(
+                                ExprIR::FuncInvocation(
+                                    namespace_and_function,
+                                    FnType::Aggregation(default_value)
+                                ),
+                                tree!(ExprIR::Var(self.create_var(None)))
+                            ));
+                        }
+
+                        let mut args = self.parse_expression_list(
+                            ExpressionListType::ZeroOrMoreClosedBy(RParen),
+                        )?;
                         args.push(tree!(ExprIR::Var(self.create_var(None))));
+                        return Ok(
+                            tree!(ExprIR::FuncInvocation(namespace_and_function,FnType::Aggregation(default_value.clone())); args),
+                        );
                     }
-                    return Ok(tree!(ExprIR::FuncInvocation(
-                        namespace_and_function,
-                        if is_aggregate { FnType::Aggregation } else { FnType::Function },
-                    ); args));
+
+                    let args =
+                        self.parse_expression_list(ExpressionListType::ZeroOrMoreClosedBy(RParen))?;
+                    return Ok(
+                        tree!(ExprIR::FuncInvocation(namespace_and_function, FnType::Function); args),
+                    );
                 }
                 self.lexer.set_pos(pos);
                 Ok(tree!(ExprIR::Var(self.create_var(Some(ident)))))
