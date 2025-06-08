@@ -702,13 +702,13 @@ fn property(
                 }
             }
             runtime.g.borrow().get_node_property_id(property).map_or(
-                Ok(RcValue::Null()),
+                Ok(RcValue::null()),
                 |property_id| {
                     runtime
                         .g
                         .borrow()
                         .get_node_property(*node_id, property_id)
-                        .map_or(Ok(RcValue::Null()), Ok)
+                        .map_or(Ok(RcValue::null()), Ok)
                 },
             )
         }
@@ -722,18 +722,18 @@ fn property(
                 .g
                 .borrow()
                 .get_relationship_property_id(property)
-                .map_or(Ok(RcValue::Null()), |property_id| {
+                .map_or(Ok(RcValue::null()), |property_id| {
                     runtime
                         .g
                         .borrow()
                         .get_relationship_property(*id, property_id)
-                        .map_or(Ok(RcValue::Null()), Ok)
+                        .map_or(Ok(RcValue::null()), Ok)
                 })
         }
         (Some(Value::Map(map)), Some(Value::String(property))) => {
-            Ok(map.get(property).unwrap_or(&RcValue::Null()).clone())
+            Ok(map.get(property).unwrap_or(&RcValue::null()).clone())
         }
-        (Some(Value::Null), Some(Value::String(_))) => Ok(RcValue::Null()),
+        (Some(Value::Null), Some(Value::String(_))) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
@@ -745,7 +745,7 @@ fn labels(
     match args.into_iter().next().as_deref() {
         Some(Value::Node(node_id)) => {
             if runtime.pending.borrow().created_nodes.contains_key(node_id) {
-                return Ok(RcValue::List(
+                return Ok(RcValue::list(
                     runtime
                         .pending
                         .borrow()
@@ -754,20 +754,20 @@ fn labels(
                         .unwrap()
                         .0
                         .iter()
-                        .map(|label| RcValue::String(label.clone()))
+                        .map(|label| RcValue::string(label.clone()))
                         .collect(),
                 ));
             }
-            Ok(RcValue::List(
+            Ok(RcValue::list(
                 runtime
                     .g
                     .borrow()
                     .get_node_label_ids(*node_id)
-                    .map(|label_id| RcValue::String(runtime.g.borrow().get_label_by_id(label_id)))
+                    .map(|label_id| RcValue::string(runtime.g.borrow().get_label_by_id(label_id)))
                     .collect(),
             ))
         }
-        Some(Value::Null) => Ok(RcValue::Null()),
+        Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
@@ -778,7 +778,7 @@ fn start_node(
 ) -> Result<RcValue, String> {
     let mut iter = args.into_iter();
     match iter.next().as_deref() {
-        Some(Value::Relationship(_, src, _)) => Ok(RcValue::Node(*src)),
+        Some(Value::Relationship(_, src, _)) => Ok(RcValue::node(*src)),
         _ => unreachable!(),
     }
 }
@@ -789,7 +789,7 @@ fn end_node(
 ) -> Result<RcValue, String> {
     let mut iter = args.into_iter();
     match iter.next().as_deref() {
-        Some(Value::Relationship(_, _, dest)) => Ok(RcValue::Node(*dest)),
+        Some(Value::Relationship(_, _, dest)) => Ok(RcValue::node(*dest)),
         _ => unreachable!(),
     }
 }
@@ -800,14 +800,14 @@ fn collect(
 ) -> Result<RcValue, String> {
     let mut iter = args.into_iter();
     match (iter.next(), iter.next().as_deref()) {
-        (Some(a), Some(Value::Null)) => Ok(RcValue::List(vec![a])),
+        (Some(a), Some(Value::Null)) => Ok(RcValue::list(vec![a])),
         (Some(a), Some(Value::List(l))) => {
             let mut l = l.clone();
             if *a == Value::Null {
-                return Ok(RcValue::List(l));
+                return Ok(RcValue::list(l));
             }
             l.push(a);
-            Ok(RcValue::List(l))
+            Ok(RcValue::list(l))
         }
         _ => unreachable!(),
     }
@@ -821,9 +821,9 @@ fn count(
     let first = iter.next();
     let sec = iter.next();
     match (first.as_deref(), sec.as_deref()) {
-        (Some(_), Some(Value::Null)) | (Some(Value::Null), None) => Ok(RcValue::Int(1)),
+        (Some(_), Some(Value::Null)) | (Some(Value::Null), None) => Ok(RcValue::int(1)),
         (Some(Value::Null), Some(_)) => Ok(sec.unwrap()),
-        (Some(_), Some(Value::Int(a))) | (Some(Value::Int(a)), None) => Ok(RcValue::Int(a + 1)),
+        (Some(_), Some(Value::Int(a))) | (Some(Value::Int(a)), None) => Ok(RcValue::int(a + 1)),
         _ => unreachable!(),
     }
 }
@@ -835,15 +835,15 @@ fn sum(
     let mut iter = args.into_iter();
     match (iter.next().as_deref(), iter.next().as_deref()) {
         (Some(Value::Int(a)), Some(Value::Null)) | (Some(Value::Null), Some(Value::Int(a))) => {
-            Ok(RcValue::Float(*a as f64))
+            Ok(RcValue::float(*a as f64))
         }
         (Some(Value::Float(a)), Some(Value::Null)) | (Some(Value::Null), Some(Value::Float(a))) => {
-            Ok(RcValue::Float(*a))
+            Ok(RcValue::float(*a))
         }
-        (Some(Value::Int(a)), Some(Value::Int(b))) => Ok(RcValue::Float((a + b) as f64)),
-        (Some(Value::Float(a)), Some(Value::Float(b))) => Ok(RcValue::Float(a + b)),
-        (Some(Value::Int(a)), Some(Value::Float(b))) => Ok(RcValue::Float(*a as f64 + b)),
-        (Some(Value::Float(a)), Some(Value::Int(b))) => Ok(RcValue::Float(a + *b as f64)),
+        (Some(Value::Int(a)), Some(Value::Int(b))) => Ok(RcValue::float((a + b) as f64)),
+        (Some(Value::Float(a)), Some(Value::Float(b))) => Ok(RcValue::float(a + b)),
+        (Some(Value::Int(a)), Some(Value::Float(b))) => Ok(RcValue::float(*a as f64 + b)),
+        (Some(Value::Float(a)), Some(Value::Int(b))) => Ok(RcValue::float(a + *b as f64)),
         _ => unreachable!(),
     }
 }
@@ -891,15 +891,15 @@ fn value_to_integer(
     args: Vec<RcValue>,
 ) -> Result<RcValue, String> {
     match args.into_iter().next().as_deref() {
-        Some(Value::String(s)) => s.parse::<i64>().map(RcValue::Int).or_else(|_| {
+        Some(Value::String(s)) => s.parse::<i64>().map(RcValue::int).or_else(|_| {
             s.parse::<f64>()
-                .map(|f| RcValue::Int(f as i64))
-                .or(Ok(RcValue::Null()))
+                .map(|f| RcValue::int(f as i64))
+                .or(Ok(RcValue::null()))
         }),
-        Some(Value::Int(i)) => Ok(RcValue::Int(*i)),
-        Some(Value::Float(f)) => Ok(RcValue::Int(*f as i64)),
-        Some(Value::Bool(b)) => Ok(RcValue::Int(i64::from(*b))),
-        Some(Value::Null) => Ok(RcValue::Null()),
+        Some(Value::Int(i)) => Ok(RcValue::int(*i)),
+        Some(Value::Float(f)) => Ok(RcValue::int(*f as i64)),
+        Some(Value::Bool(b)) => Ok(RcValue::int(i64::from(*b))),
+        Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
@@ -909,10 +909,10 @@ fn value_to_float(
     args: Vec<RcValue>,
 ) -> Result<RcValue, String> {
     match args.into_iter().next().as_deref() {
-        Some(Value::String(s)) => s.parse::<f64>().map(RcValue::Float).or(Ok(RcValue::Null())),
-        Some(Value::Float(f)) => Ok(RcValue::Float(*f)),
-        Some(Value::Int(i)) => Ok(RcValue::Float(*i as f64)),
-        Some(Value::Null) => Ok(RcValue::Null()),
+        Some(Value::String(s)) => s.parse::<f64>().map(RcValue::float).or(Ok(RcValue::null())),
+        Some(Value::Float(f)) => Ok(RcValue::float(*f)),
+        Some(Value::Int(i)) => Ok(RcValue::float(*i as f64)),
+        Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
@@ -931,8 +931,8 @@ fn value_to_string(
     args: Vec<RcValue>,
 ) -> Result<RcValue, String> {
     match args.into_iter().next().as_deref() {
-        Some(Value::Null) => Ok(RcValue::Null()),
-        Some(v) => Ok(RcValue::String(value_string(&v)?)),
+        Some(Value::Null) => Ok(RcValue::null()),
+        Some(v) => Ok(RcValue::string(value_string(&v)?)),
         _ => unreachable!(),
     }
 }
@@ -942,9 +942,9 @@ fn size(
     args: Vec<RcValue>,
 ) -> Result<RcValue, String> {
     match args.into_iter().next().as_deref() {
-        Some(Value::String(s)) => Ok(RcValue::Int(s.len() as i64)),
-        Some(Value::List(v)) => Ok(RcValue::Int(v.len() as i64)),
-        Some(Value::Null) => Ok(RcValue::Null()),
+        Some(Value::String(s)) => Ok(RcValue::int(s.len() as i64)),
+        Some(Value::List(v)) => Ok(RcValue::int(v.len() as i64)),
+        Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
@@ -956,12 +956,12 @@ fn head(
     match args.into_iter().next().as_deref() {
         Some(Value::List(v)) => {
             if v.is_empty() {
-                Ok(RcValue::Null())
+                Ok(RcValue::null())
             } else {
                 Ok(v[0].clone())
             }
         }
-        Some(Value::Null) => Ok(RcValue::Null()),
+        Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
@@ -971,8 +971,8 @@ fn last(
     args: Vec<RcValue>,
 ) -> Result<RcValue, String> {
     match args.into_iter().next().as_deref() {
-        Some(Value::List(v)) => Ok(v.last().unwrap_or(&RcValue::Null()).clone()),
-        Some(Value::Null) => Ok(RcValue::Null()),
+        Some(Value::List(v)) => Ok(v.last().unwrap_or(&RcValue::null()).clone()),
+        Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
@@ -984,12 +984,12 @@ fn tail(
     match args.into_iter().next().as_deref() {
         Some(Value::List(v)) => {
             if v.is_empty() {
-                Ok(RcValue::List(vec![]))
+                Ok(RcValue::list(vec![]))
             } else {
-                Ok(RcValue::List(v[1..].to_vec()))
+                Ok(RcValue::list(v[1..].to_vec()))
             }
         }
-        Some(Value::Null) => Ok(RcValue::Null()),
+        Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
@@ -1002,10 +1002,10 @@ fn reverse(
         Some(Value::List(v)) => {
             let mut v = v.clone();
             v.reverse();
-            Ok(RcValue::List(v))
+            Ok(RcValue::list(v))
         }
-        Some(Value::String(s)) => Ok(RcValue::String(Rc::new(s.chars().rev().collect()))),
-        Some(Value::Null) => Ok(RcValue::Null()),
+        Some(Value::String(s)) => Ok(RcValue::string(Rc::new(s.chars().rev().collect()))),
+        Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
@@ -1021,7 +1021,7 @@ fn substring(
         iter.next().as_deref(),
     ) {
         // Handle NULL input case
-        (Some(Value::Null), _, _) => Ok(RcValue::Null()),
+        (Some(Value::Null), _, _) => Ok(RcValue::null()),
         // Two-argument version: (string, start)
         (Some(Value::String(s)), Some(Value::Int(start)), None) => {
             if *start < 0 {
@@ -1029,7 +1029,7 @@ fn substring(
             }
             let start = *start as usize;
 
-            Ok(RcValue::String(Rc::new(String::from(&s[start..]))))
+            Ok(RcValue::string(Rc::new(String::from(&s[start..]))))
         }
 
         // Three-argument version: (string, start, length)
@@ -1044,7 +1044,7 @@ fn substring(
             let length = *length as usize;
 
             let end = start.saturating_add(length).min(s.len());
-            Ok(RcValue::String(Rc::new(String::from(&s[start..end]))))
+            Ok(RcValue::string(Rc::new(String::from(&s[start..end]))))
         }
         _ => unreachable!(),
     }
@@ -1061,18 +1061,18 @@ fn split(
                 // split string to characters
                 let parts = string
                     .chars()
-                    .map(|c| RcValue::String(Rc::new(String::from(c))))
+                    .map(|c| RcValue::string(Rc::new(String::from(c))))
                     .collect();
-                Ok(RcValue::List(parts))
+                Ok(RcValue::list(parts))
             } else {
                 let parts = string
                     .split(delimiter.as_str())
-                    .map(|s| RcValue::String(Rc::new(String::from(s))))
+                    .map(|s| RcValue::string(Rc::new(String::from(s))))
                     .collect();
-                Ok(RcValue::List(parts))
+                Ok(RcValue::list(parts))
             }
         }
-        (Some(Value::Null), Some(_)) | (Some(_), Some(Value::Null)) => Ok(RcValue::Null()),
+        (Some(Value::Null), Some(_)) | (Some(_), Some(Value::Null)) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
@@ -1082,8 +1082,8 @@ fn string_to_lower(
     args: Vec<RcValue>,
 ) -> Result<RcValue, String> {
     match args.into_iter().next().as_deref() {
-        Some(Value::String(s)) => Ok(RcValue::String(Rc::new(s.to_lowercase()))),
-        Some(Value::Null) => Ok(RcValue::Null()),
+        Some(Value::String(s)) => Ok(RcValue::string(Rc::new(s.to_lowercase()))),
+        Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
@@ -1093,8 +1093,8 @@ fn string_to_upper(
     args: Vec<RcValue>,
 ) -> Result<RcValue, String> {
     match args.into_iter().next().as_deref() {
-        Some(Value::String(s)) => Ok(RcValue::String(Rc::new(s.to_uppercase()))),
-        Some(Value::Null) => Ok(RcValue::Null()),
+        Some(Value::String(s)) => Ok(RcValue::string(Rc::new(s.to_uppercase()))),
+        Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
@@ -1110,12 +1110,12 @@ fn string_replace(
         iter.next().as_deref(),
     ) {
         (Some(Value::String(s)), Some(Value::String(search)), Some(Value::String(replacement))) => {
-            Ok(RcValue::String(Rc::new(
+            Ok(RcValue::string(Rc::new(
                 s.replace(search.as_str(), replacement.as_str()),
             )))
         }
         (Some(Value::Null), _, _) | (_, Some(Value::Null), _) | (_, _, Some(Value::Null)) => {
-            Ok(RcValue::Null())
+            Ok(RcValue::null())
         }
         _ => unreachable!(),
     }
@@ -1131,12 +1131,12 @@ fn string_left(
             if *n < 0 {
                 Err(String::from("length must be a non-negative integer"))
             } else {
-                Ok(RcValue::String(Rc::new(
+                Ok(RcValue::string(Rc::new(
                     s.chars().take(*n as usize).collect(),
                 )))
             }
         }
-        (Some(Value::Null), _) => Ok(RcValue::Null()),
+        (Some(Value::Null), _) => Ok(RcValue::null()),
         (_, Some(Value::Null)) => Err(String::from("length must be a non-negative integer")),
         _ => unreachable!(),
     }
@@ -1147,8 +1147,8 @@ fn string_ltrim(
     args: Vec<RcValue>,
 ) -> Result<RcValue, String> {
     match args.into_iter().next().as_deref() {
-        Some(Value::String(s)) => Ok(RcValue::String(Rc::new(String::from(s.trim_start())))),
-        Some(Value::Null) => Ok(RcValue::Null()),
+        Some(Value::String(s)) => Ok(RcValue::string(Rc::new(String::from(s.trim_start())))),
+        Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
@@ -1164,10 +1164,10 @@ fn string_right(
                 Err(String::from("length must be a non-negative integer"))
             } else {
                 let start = s.len().saturating_sub(*n as usize);
-                Ok(RcValue::String(Rc::new(s.chars().skip(start).collect())))
+                Ok(RcValue::string(Rc::new(s.chars().skip(start).collect())))
             }
         }
-        (Some(Value::Null), _) => Ok(RcValue::Null()),
+        (Some(Value::Null), _) => Ok(RcValue::null()),
         (_, Some(Value::Null)) => Err(String::from("length must be a non-negative integer")),
         _ => unreachable!(),
     }
@@ -1198,7 +1198,7 @@ fn string_join(
             Value::String(s) => {
                 let result = to_string_vec(vec);
                 result.map(|strings| {
-                    RcValue::String(Rc::new(
+                    RcValue::string(Rc::new(
                         strings
                             .iter()
                             .map(|label| label.as_str())
@@ -1212,7 +1212,7 @@ fn string_join(
         (Value::List(vec), None) => {
             let result = to_string_vec(vec);
             result.map(|strings| {
-                RcValue::String(Rc::new(
+                RcValue::string(Rc::new(
                     strings
                         .iter()
                         .map(|label| label.as_str())
@@ -1221,7 +1221,7 @@ fn string_join(
                 ))
             })
         }
-        (Value::Null, _) => Ok(RcValue::Null()),
+        (Value::Null, _) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
@@ -1240,16 +1240,16 @@ fn string_match_reg_ex(
                         for i in 0..caps.len() {
                             if let Some(m) = caps.get(i) {
                                 all_matches
-                                    .push(RcValue::String(Rc::new(String::from(m.as_str()))));
+                                    .push(RcValue::string(Rc::new(String::from(m.as_str()))));
                             }
                         }
                     }
-                    Ok(RcValue::List(all_matches))
+                    Ok(RcValue::list(all_matches))
                 }
                 Err(e) => Err(format!("Invalid regex, {e}")),
             }
         }
-        (Some(Value::Null), Some(_)) | (Some(_), Some(Value::Null)) => Ok(RcValue::List(vec![])),
+        (Some(Value::Null), Some(_)) | (Some(_), Some(Value::Null)) => Ok(RcValue::list(vec![])),
         _ => unreachable!(),
     }
 }
@@ -1273,13 +1273,13 @@ fn string_replace_reg_ex(
                 let replaced_text = re
                     .replace_all(text.as_str(), replacement.as_str())
                     .into_owned();
-                Ok(RcValue::String(Rc::new(replaced_text)))
+                Ok(RcValue::string(Rc::new(replaced_text)))
             }
             Err(e) => Err(format!("Invalid regex, {e}")),
         },
         (Some(Value::Null), Some(_), Some(_))
         | (Some(_), Some(Value::Null), Some(_))
-        | (Some(_), Some(_), Some(Value::Null)) => Ok(RcValue::Null()),
+        | (Some(_), Some(_), Some(Value::Null)) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
@@ -1289,9 +1289,9 @@ fn abs(
     args: Vec<RcValue>,
 ) -> Result<RcValue, String> {
     match args.into_iter().next().as_deref() {
-        Some(Value::Int(n)) => Ok(RcValue::Int(n.abs())),
-        Some(Value::Float(f)) => Ok(RcValue::Float(f.abs())),
-        Some(Value::Null) => Ok(RcValue::Null()),
+        Some(Value::Int(n)) => Ok(RcValue::int(n.abs())),
+        Some(Value::Float(f)) => Ok(RcValue::float(f.abs())),
+        Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
@@ -1301,9 +1301,9 @@ fn ceil(
     args: Vec<RcValue>,
 ) -> Result<RcValue, String> {
     match args.into_iter().next().as_deref() {
-        Some(Value::Int(n)) => Ok(RcValue::Int(*n)),
-        Some(Value::Float(f)) => Ok(RcValue::Float(f.ceil())),
-        Some(Value::Null) => Ok(RcValue::Null()),
+        Some(Value::Int(n)) => Ok(RcValue::int(*n)),
+        Some(Value::Float(f)) => Ok(RcValue::float(f.ceil())),
+        Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
@@ -1313,7 +1313,7 @@ fn e(
     args: Vec<RcValue>,
 ) -> Result<RcValue, String> {
     match args.into_iter().next().as_deref() {
-        None => Ok(RcValue::Float(std::f64::consts::E)),
+        None => Ok(RcValue::float(std::f64::consts::E)),
         _ => unreachable!(),
     }
 }
@@ -1323,9 +1323,9 @@ fn exp(
     args: Vec<RcValue>,
 ) -> Result<RcValue, String> {
     match args.into_iter().next().as_deref() {
-        Some(Value::Int(n)) => Ok(RcValue::Float((*n as f64).exp())),
-        Some(Value::Float(f)) => Ok(RcValue::Float(f.exp())),
-        Some(Value::Null) => Ok(RcValue::Null()),
+        Some(Value::Int(n)) => Ok(RcValue::float((*n as f64).exp())),
+        Some(Value::Float(f)) => Ok(RcValue::float(f.exp())),
+        Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
@@ -1335,9 +1335,9 @@ fn floor(
     args: Vec<RcValue>,
 ) -> Result<RcValue, String> {
     match args.into_iter().next().as_deref() {
-        Some(Value::Int(n)) => Ok(RcValue::Int(*n)),
-        Some(Value::Float(f)) => Ok(RcValue::Float(f.floor())),
-        Some(Value::Null) => Ok(RcValue::Null()),
+        Some(Value::Int(n)) => Ok(RcValue::int(*n)),
+        Some(Value::Float(f)) => Ok(RcValue::float(f.floor())),
+        Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
@@ -1347,9 +1347,9 @@ fn log(
     args: Vec<RcValue>,
 ) -> Result<RcValue, String> {
     match args.into_iter().next().as_deref() {
-        Some(Value::Int(n)) => Ok(RcValue::Float((*n as f64).ln())),
-        Some(Value::Float(f)) => Ok(RcValue::Float(f.ln())),
-        Some(Value::Null) => Ok(RcValue::Null()),
+        Some(Value::Int(n)) => Ok(RcValue::float((*n as f64).ln())),
+        Some(Value::Float(f)) => Ok(RcValue::float(f.ln())),
+        Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
@@ -1359,9 +1359,9 @@ fn log10(
     args: Vec<RcValue>,
 ) -> Result<RcValue, String> {
     match args.into_iter().next().as_deref() {
-        Some(Value::Int(n)) => Ok(RcValue::Float((*n as f64).log10())),
-        Some(Value::Float(f)) => Ok(RcValue::Float(f.log10())),
-        Some(Value::Null) => Ok(RcValue::Null()),
+        Some(Value::Int(n)) => Ok(RcValue::float((*n as f64).log10())),
+        Some(Value::Float(f)) => Ok(RcValue::float(f.log10())),
+        Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
@@ -1373,14 +1373,14 @@ fn pow(
     let mut iter = args.into_iter();
     match (iter.next().as_deref(), iter.next().as_deref()) {
         (Some(Value::Int(i1)), Some(Value::Int(i2))) => {
-            Ok(RcValue::Float((*i1 as f64).powi(*i2 as i32)))
+            Ok(RcValue::float((*i1 as f64).powi(*i2 as i32)))
         }
-        (Some(Value::Float(f1)), Some(Value::Float(f2))) => Ok(RcValue::Float(f1.powf(*f2))),
+        (Some(Value::Float(f1)), Some(Value::Float(f2))) => Ok(RcValue::float(f1.powf(*f2))),
         (Some(Value::Int(i1)), Some(Value::Float(f1))) => {
-            Ok(RcValue::Float((*i1 as f64).powf(*f1)))
+            Ok(RcValue::float((*i1 as f64).powf(*f1)))
         }
-        (Some(Value::Float(f1)), Some(Value::Int(i1))) => Ok(RcValue::Float(f1.powi(*i1 as i32))),
-        (Some(Value::Null), Some(_)) | (Some(_), Some(Value::Null)) => Ok(RcValue::Null()),
+        (Some(Value::Float(f1)), Some(Value::Int(i1))) => Ok(RcValue::float(f1.powi(*i1 as i32))),
+        (Some(Value::Null), Some(_)) | (Some(_), Some(Value::Null)) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
@@ -1391,7 +1391,7 @@ fn rand(
 ) -> Result<RcValue, String> {
     debug_assert!(args.is_empty());
     let mut rng = rand::rng();
-    Ok(RcValue::Float(rng.random_range(0.0..1.0)))
+    Ok(RcValue::float(rng.random_range(0.0..1.0)))
 }
 
 fn round(
@@ -1399,9 +1399,9 @@ fn round(
     args: Vec<RcValue>,
 ) -> Result<RcValue, String> {
     match args.into_iter().next().as_deref() {
-        Some(Value::Int(n)) => Ok(RcValue::Int(*n)),
-        Some(Value::Float(f)) => Ok(RcValue::Float(f.round())),
-        Some(Value::Null) => Ok(RcValue::Null()),
+        Some(Value::Int(n)) => Ok(RcValue::int(*n)),
+        Some(Value::Float(f)) => Ok(RcValue::float(f.round())),
+        Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
@@ -1411,13 +1411,13 @@ fn sign(
     args: Vec<RcValue>,
 ) -> Result<RcValue, String> {
     match args.into_iter().next().as_deref() {
-        Some(Value::Int(n)) => Ok(RcValue::Int(n.signum())),
+        Some(Value::Int(n)) => Ok(RcValue::int(n.signum())),
         Some(Value::Float(f)) => Ok(if *f == 0.0 {
-            RcValue::Int(0)
+            RcValue::int(0)
         } else {
-            RcValue::Float(f.signum().round())
+            RcValue::float(f.signum().round())
         }),
-        Some(Value::Null) => Ok(RcValue::Null()),
+        Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
@@ -1429,19 +1429,19 @@ fn sqrt(
     match args.into_iter().next().as_deref() {
         Some(Value::Int(n)) => {
             if *n < 0 {
-                Ok(RcValue::Float(f64::NAN))
+                Ok(RcValue::float(f64::NAN))
             } else {
-                Ok(RcValue::Float((*n as f64).sqrt()))
+                Ok(RcValue::float((*n as f64).sqrt()))
             }
         }
         Some(Value::Float(f)) => {
             if *f > 0f64 {
-                Ok(RcValue::Float(f.sqrt()))
+                Ok(RcValue::float(f.sqrt()))
             } else {
-                Ok(RcValue::Float(f64::NAN))
+                Ok(RcValue::float(f64::NAN))
             }
         }
-        Some(Value::Null) => Ok(RcValue::Null()),
+        Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
@@ -1453,24 +1453,24 @@ fn range(
     let mut iter = args.into_iter();
     let start = iter.next().ok_or("Missing start value")?;
     let end = iter.next().ok_or("Missing end value")?;
-    let step = iter.next().unwrap_or(RcValue::Int(1));
+    let step = iter.next().unwrap_or(RcValue::int(1));
     match (&*start, &*end, &*step) {
         (Value::Int(start), Value::Int(end), Value::Int(step)) => {
             if start >= end && *step < 0 {
-                Ok(RcValue::List(
+                Ok(RcValue::list(
                     (*end..=*start)
                         .rev()
                         .step_by(step.abs() as usize)
-                        .map(RcValue::Int)
+                        .map(RcValue::int)
                         .collect(),
                 ))
             } else if *step < 0 {
-                Ok(RcValue::List(vec![]))
+                Ok(RcValue::list(vec![]))
             } else {
-                Ok(RcValue::List(
+                Ok(RcValue::list(
                     (*start..=*end)
                         .step_by(*step as usize)
-                        .map(RcValue::Int)
+                        .map(RcValue::int)
                         .collect(),
                 ))
             }
@@ -1490,7 +1490,7 @@ fn coalesce(
         }
         return Ok(arg);
     }
-    Ok(RcValue::Null())
+    Ok(RcValue::null())
 }
 
 fn keys(
@@ -1498,10 +1498,10 @@ fn keys(
     args: Vec<RcValue>,
 ) -> Result<RcValue, String> {
     match args.into_iter().next().as_deref() {
-        Some(Value::Map(map)) => Ok(RcValue::List(
-            map.keys().map(|k| RcValue::String(k.clone())).collect(),
+        Some(Value::Map(map)) => Ok(RcValue::list(
+            map.keys().map(|k| RcValue::string(k.clone())).collect(),
         )),
-        Some(Value::Null) => Ok(RcValue::Null()),
+        Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
@@ -1511,18 +1511,18 @@ fn to_boolean(
     args: Vec<RcValue>,
 ) -> Result<RcValue, String> {
     match args.into_iter().next().as_deref() {
-        Some(Value::Bool(b)) => Ok(RcValue::Bool(*b)),
+        Some(Value::Bool(b)) => Ok(RcValue::bool(*b)),
         Some(Value::String(s)) => {
             if s.eq_ignore_ascii_case("true") {
-                Ok(RcValue::Bool(true))
+                Ok(RcValue::bool(true))
             } else if s.eq_ignore_ascii_case("false") {
-                Ok(RcValue::Bool(false))
+                Ok(RcValue::bool(false))
             } else {
-                Ok(RcValue::Null())
+                Ok(RcValue::null())
             }
         }
-        Some(Value::Int(n)) => Ok(RcValue::Bool(*n != 0)),
-        Some(Value::Null) => Ok(RcValue::Null()),
+        Some(Value::Int(n)) => Ok(RcValue::bool(*n != 0)),
+        Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
@@ -1538,10 +1538,10 @@ fn internal_starts_with(
     let mut iter = args.into_iter();
     match (iter.next().as_deref(), iter.next().as_deref()) {
         (Some(Value::String(s)), Some(Value::String(prefix))) => {
-            Ok(RcValue::Bool(s.starts_with(prefix.as_str())))
+            Ok(RcValue::bool(s.starts_with(prefix.as_str())))
         }
 
-        (_, Some(Value::Null)) | (Some(Value::Null), _) => Ok(RcValue::Null()),
+        (_, Some(Value::Null)) | (Some(Value::Null), _) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
@@ -1553,9 +1553,9 @@ fn internal_ends_with(
     let mut iter = args.into_iter();
     match (iter.next().as_deref(), iter.next().as_deref()) {
         (Some(Value::String(s)), Some(Value::String(suffix))) => {
-            Ok(RcValue::Bool(s.ends_with(suffix.as_str())))
+            Ok(RcValue::bool(s.ends_with(suffix.as_str())))
         }
-        (_, Some(Value::Null)) | (Some(Value::Null), _) => Ok(RcValue::Null()),
+        (_, Some(Value::Null)) | (Some(Value::Null), _) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
@@ -1567,9 +1567,9 @@ fn internal_contains(
     let mut iter = args.into_iter();
     match (iter.next().as_deref(), iter.next().as_deref()) {
         (Some(Value::String(s)), Some(Value::String(substring))) => {
-            Ok(RcValue::Bool(s.contains(substring.as_str())))
+            Ok(RcValue::bool(s.contains(substring.as_str())))
         }
-        (_, Some(Value::Null)) | (Some(Value::Null), _) => Ok(RcValue::Null()),
+        (_, Some(Value::Null)) | (Some(Value::Null), _) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
@@ -1583,11 +1583,11 @@ fn internal_regex_matches(
         (Some(Value::String(s)), Some(Value::String(pattern))) => {
             // Compile the regex pattern
             match regex::Regex::new(pattern.as_str()) {
-                Ok(re) => Ok(RcValue::Bool(re.is_match(s.as_str()))),
+                Ok(re) => Ok(RcValue::bool(re.is_match(s.as_str()))),
                 Err(e) => Err(format!("Invalid regex pattern: {e}")),
             }
         }
-        (Some(Value::Null), _) | (_, Some(Value::Null)) => Ok(RcValue::Null()),
+        (Some(Value::Null), _) | (_, Some(Value::Null)) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
@@ -1605,7 +1605,7 @@ fn internal_case(
                     (_, result) => return Ok(result.clone()),
                 }
             }
-            Ok(RcValue::Null())
+            Ok(RcValue::null())
         }
         (Some(value), Some(Value::List(alts))) => {
             for pair in alts.chunks(2) {
@@ -1615,7 +1615,7 @@ fn internal_case(
                     }
                 }
             }
-            Ok(RcValue::Null())
+            Ok(RcValue::null())
         }
         _ => unreachable!(),
     }
@@ -1625,12 +1625,12 @@ fn db_labels(
     runtime: &Runtime,
     _args: Vec<RcValue>,
 ) -> Result<RcValue, String> {
-    Ok(RcValue::List(
+    Ok(RcValue::list(
         runtime
             .g
             .borrow()
             .get_labels()
-            .map(|n| RcValue::String(n.clone()))
+            .map(|n| RcValue::string(n.clone()))
             .collect(),
     ))
 }
@@ -1639,12 +1639,12 @@ fn db_types(
     runtime: &Runtime,
     _args: Vec<RcValue>,
 ) -> Result<RcValue, String> {
-    Ok(RcValue::List(
+    Ok(RcValue::list(
         runtime
             .g
             .borrow()
             .get_types()
-            .map(|n| RcValue::String(n.clone()))
+            .map(|n| RcValue::string(n.clone()))
             .collect(),
     ))
 }
@@ -1653,12 +1653,12 @@ fn db_properties(
     runtime: &Runtime,
     _args: Vec<RcValue>,
 ) -> Result<RcValue, String> {
-    Ok(RcValue::List(
+    Ok(RcValue::list(
         runtime
             .g
             .borrow()
             .get_properties()
-            .map(|n| RcValue::String(n.clone()))
+            .map(|n| RcValue::string(n.clone()))
             .collect(),
     ))
 }

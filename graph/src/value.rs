@@ -18,47 +18,47 @@ impl RcValue {
     }
 
     #[must_use]
-    pub fn List(collect: Vec<Self>) -> Self {
-        Self::new(Value::List(collect))
+    pub fn list(vec: Vec<Self>) -> Self {
+        Self::new(Value::List(vec))
     }
 
     #[must_use]
-    pub fn String(clone: Rc<String>) -> Self {
-        Self::new(Value::String(clone))
+    pub fn string(str: Rc<String>) -> Self {
+        Self::new(Value::String(str))
     }
 
     #[must_use]
-    pub fn Node(dest: u64) -> Self {
-        Self::new(Value::Node(dest))
+    pub fn node(id: u64) -> Self {
+        Self::new(Value::Node(id))
     }
 
     #[must_use]
-    pub fn Int(b: i64) -> Self {
-        Self::new(Value::Int(b))
+    pub fn int(i: i64) -> Self {
+        Self::new(Value::Int(i))
     }
 
     #[must_use]
-    pub fn Float(b: f64) -> Self {
-        Self::new(Value::Float(b))
+    pub fn float(f: f64) -> Self {
+        Self::new(Value::Float(f))
     }
 
     #[must_use]
-    pub fn Bool(b: bool) -> Self {
+    pub fn bool(b: bool) -> Self {
         Self::new(Value::Bool(b))
     }
 
     #[must_use]
-    pub fn Map(map: OrderMap<Rc<String>, Self>) -> Self {
+    pub fn map(map: OrderMap<Rc<String>, Self>) -> Self {
         Self::new(Value::Map(map))
     }
 
     #[must_use]
-    pub fn Null() -> Self {
+    pub fn null() -> Self {
         Self::new(Value::Null)
     }
 
     #[must_use]
-    pub fn Relationship(
+    pub fn relationship(
         id: u64,
         from_id: u64,
         to_id: u64,
@@ -67,8 +67,8 @@ impl RcValue {
     }
 
     #[must_use]
-    pub fn Path(p: Vec<Self>) -> Self {
-        Self::new(Value::Path(p))
+    pub fn path(path: Vec<Self>) -> Self {
+        Self::new(Value::Path(path))
     }
 }
 
@@ -114,29 +114,24 @@ impl Hash for Value {
             Self::Int(x) => x.hash(state),
             Self::Float(x) => x.to_string().hash(state),
             Self::String(x) => x.hash(state),
-            Self::List(x) => x.hash(state),
+            Self::List(x) | Self::Path(x) => x.hash(state),
             Self::Map(x) => x.hash(state),
             Self::Node(x) | Self::Relationship(x, _, _) => x.hash(state),
-            Self::Path(x) => x.hash(state),
         }
     }
 }
 
+#[derive(Default)]
 pub struct Env(Vec<RcValue>);
 
 impl Env {
-    #[must_use]
-    pub fn new() -> Self {
-        Self(Vec::new())
-    }
-
     pub fn insert(
         &mut self,
         key: &VarId,
         value: RcValue,
     ) {
         while self.0.len() <= key.id as _ {
-            self.0.push(RcValue::Null());
+            self.0.push(RcValue::null());
         }
         self.0[key.id as usize] = value;
     }
@@ -154,13 +149,13 @@ impl Env {
         other: Self,
     ) {
         while self.0.len() < other.0.len() {
-            self.0.push(RcValue::Null());
+            self.0.push(RcValue::null());
         }
-        for (key, value) in other.0.iter().enumerate() {
-            if **value == Value::Null {
+        for (key, value) in other.0.into_iter().enumerate() {
+            if *value == Value::Null {
                 continue;
             }
-            self.0[key] = value.clone();
+            self.0[key] = value;
         }
     }
 
@@ -198,33 +193,33 @@ impl Add for RcValue {
         rhs: Self,
     ) -> Self::Output {
         match (&*self, &*rhs) {
-            (Value::Null, _) | (_, Value::Null) => Ok(Self::Null()),
-            (Value::Int(a), Value::Int(b)) => Ok(Self::Int(a.wrapping_add(*b))),
-            (Value::Float(a), Value::Float(b)) => Ok(Self::Float(a + b)),
-            (Value::Float(a), Value::Int(b)) => Ok(Self::Float(a + *b as f64)),
-            (Value::Int(a), Value::Float(b)) => Ok(Self::Float(*a as f64 + b)),
+            (Value::Null, _) | (_, Value::Null) => Ok(Self::null()),
+            (Value::Int(a), Value::Int(b)) => Ok(Self::int(a.wrapping_add(*b))),
+            (Value::Float(a), Value::Float(b)) => Ok(Self::float(a + b)),
+            (Value::Float(a), Value::Int(b)) => Ok(Self::float(a + *b as f64)),
+            (Value::Int(a), Value::Float(b)) => Ok(Self::float(*a as f64 + b)),
 
             (Value::List(a), Value::List(b)) => {
-                Ok(Self::List(a.iter().chain(b).cloned().collect()))
+                Ok(Self::list(a.iter().chain(b).cloned().collect()))
             }
             (Value::List(l), _) => {
                 let mut l = l.clone();
                 if l.is_empty() {
-                    Ok(Self::List(vec![rhs]))
+                    Ok(Self::list(vec![rhs]))
                 } else {
                     l.push(rhs);
-                    Ok(Self::List(l))
+                    Ok(Self::list(l))
                 }
             }
             (_, Value::List(l)) => {
                 let mut new_list = vec![self];
                 new_list.extend(l.clone());
-                Ok(Self::List(new_list))
+                Ok(Self::list(new_list))
             }
-            (Value::String(a), Value::String(b)) => Ok(Self::String(Rc::new(format!("{a}{b}")))),
-            (Value::String(s), Value::Int(i)) => Ok(Self::String(Rc::new(format!("{s}{i}")))),
-            (Value::String(s), Value::Float(f)) => Ok(Self::String(Rc::new(format!("{s}{f}")))),
-            (Value::String(s), Value::Bool(f)) => Ok(Self::String(Rc::new(format!("{s}{f}")))),
+            (Value::String(a), Value::String(b)) => Ok(Self::string(Rc::new(format!("{a}{b}")))),
+            (Value::String(s), Value::Int(i)) => Ok(Self::string(Rc::new(format!("{s}{i}")))),
+            (Value::String(s), Value::Float(f)) => Ok(Self::string(Rc::new(format!("{s}{f}")))),
+            (Value::String(s), Value::Bool(f)) => Ok(Self::string(Rc::new(format!("{s}{f}")))),
             (a, b) => Err(format!(
                 "Unexpected types for add operator ({}, {})",
                 a.name(),
@@ -242,11 +237,11 @@ impl Sub for RcValue {
         rhs: Self,
     ) -> Self::Output {
         match (&*self, &*rhs) {
-            (Value::Null, _) | (_, Value::Null) => Ok(Self::Null()),
-            (Value::Int(a), Value::Int(b)) => Ok(Self::Int(a.wrapping_sub(*b))),
-            (Value::Float(a), Value::Float(b)) => Ok(Self::Float(a - b)),
-            (Value::Float(a), Value::Int(b)) => Ok(Self::Float(a - *b as f64)),
-            (Value::Int(a), Value::Float(b)) => Ok(Self::Float(*a as f64 - b)),
+            (Value::Null, _) | (_, Value::Null) => Ok(Self::null()),
+            (Value::Int(a), Value::Int(b)) => Ok(Self::int(a.wrapping_sub(*b))),
+            (Value::Float(a), Value::Float(b)) => Ok(Self::float(a - b)),
+            (Value::Float(a), Value::Int(b)) => Ok(Self::float(a - *b as f64)),
+            (Value::Int(a), Value::Float(b)) => Ok(Self::float(*a as f64 - b)),
             (a, b) => Err(format!(
                 "Unexpected types for sub operator ({}, {})",
                 a.name(),
@@ -264,11 +259,11 @@ impl Mul for RcValue {
         rhs: Self,
     ) -> Self::Output {
         match (&*self, &*rhs) {
-            (Value::Null, _) | (_, Value::Null) => Ok(Self::Null()),
-            (Value::Int(a), Value::Int(b)) => Ok(Self::Int(a.wrapping_mul(*b))),
-            (Value::Float(a), Value::Float(b)) => Ok(Self::Float(a * b)),
-            (Value::Float(a), Value::Int(b)) => Ok(Self::Float(a * *b as f64)),
-            (Value::Int(a), Value::Float(b)) => Ok(Self::Float(*a as f64 * b)),
+            (Value::Null, _) | (_, Value::Null) => Ok(Self::null()),
+            (Value::Int(a), Value::Int(b)) => Ok(Self::int(a.wrapping_mul(*b))),
+            (Value::Float(a), Value::Float(b)) => Ok(Self::float(a * b)),
+            (Value::Float(a), Value::Int(b)) => Ok(Self::float(a * *b as f64)),
+            (Value::Int(a), Value::Float(b)) => Ok(Self::float(*a as f64 * b)),
             (a, b) => Err(format!(
                 "Unexpected types for mul operator ({}, {})",
                 a.name(),
@@ -286,33 +281,33 @@ impl Div for RcValue {
         rhs: Self,
     ) -> Self::Output {
         match (&*self, &*rhs) {
-            (Value::Null, _) | (_, Value::Null) => Ok(Self::Null()),
+            (Value::Null, _) | (_, Value::Null) => Ok(Self::null()),
             (Value::Int(a), Value::Int(b)) => {
                 if *b == 0 {
                     Err(String::from("Division by zero"))
                 } else {
-                    Ok(Self::Int(a.wrapping_div(*b)))
+                    Ok(Self::int(a.wrapping_div(*b)))
                 }
             }
             (Value::Float(a), Value::Float(b)) => {
                 if *b == 0.0 {
                     Err(String::from("Division by zero"))
                 } else {
-                    Ok(Self::Float(a / b))
+                    Ok(Self::float(a / b))
                 }
             }
             (Value::Float(a), Value::Int(b)) => {
                 if *b == 0 {
                     Err(String::from("Division by zero"))
                 } else {
-                    Ok(Self::Float(a / *b as f64))
+                    Ok(Self::float(a / *b as f64))
                 }
             }
             (Value::Int(a), Value::Float(b)) => {
                 if *b == 0.0 {
                     Err(String::from("Division by zero"))
                 } else {
-                    Ok(Self::Float(*a as f64 / b))
+                    Ok(Self::float(*a as f64 / b))
                 }
             }
             (a, b) => Err(format!(
@@ -332,33 +327,33 @@ impl Rem for RcValue {
         rhs: Self,
     ) -> Self::Output {
         match (&*self, &*rhs) {
-            (Value::Null, _) | (_, Value::Null) => Ok(Self::Null()),
+            (Value::Null, _) | (_, Value::Null) => Ok(Self::null()),
             (Value::Int(a), Value::Int(b)) => {
                 if *b == 0 {
                     Err(String::from("Division by zero"))
                 } else {
-                    Ok(Self::Int(a.wrapping_rem(*b)))
+                    Ok(Self::int(a.wrapping_rem(*b)))
                 }
             }
             (Value::Float(a), Value::Float(b)) => {
                 if *b == 0.0 {
                     Err(String::from("Division by zero"))
                 } else {
-                    Ok(Self::Float(a % b))
+                    Ok(Self::float(a % b))
                 }
             }
             (Value::Float(a), Value::Int(b)) => {
                 if *b == 0 {
                     Err(String::from("Division by zero"))
                 } else {
-                    Ok(Self::Float(a % *b as f64))
+                    Ok(Self::float(a % *b as f64))
                 }
             }
             (Value::Int(a), Value::Float(b)) => {
                 if *b == 0.0 {
                     Err(String::from("Division by zero"))
                 } else {
-                    Ok(Self::Float(*a as f64 % b))
+                    Ok(Self::float(*a as f64 % b))
                 }
             }
             (a, b) => Err(format!(
@@ -602,16 +597,16 @@ impl Contains for Vec<RcValue> {
             is_null = is_null || dis == DisjointOrNull::ComparedNull;
             if res == Ordering::Equal {
                 return if dis == DisjointOrNull::ComparedNull {
-                    RcValue::Null()
+                    RcValue::null()
                 } else {
-                    RcValue::Bool(true)
+                    RcValue::bool(true)
                 };
             }
         }
         if is_null {
-            RcValue::Null()
+            RcValue::null()
         } else {
-            RcValue::Bool(false)
+            RcValue::bool(false)
         }
     }
 }
