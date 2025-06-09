@@ -2,7 +2,7 @@ use std::{ffi::c_void, sync::Once};
 
 use crate::{
     GraphBLAS::GrB_Vector,
-    matrix::{self, Matrix, New, Remove, Set, Size, Transpose, UnaryOp},
+    matrix::{self, Dup, ElementWiseAdd, Matrix, New, Remove, Set, Size, Transpose, UnaryOp},
     vector::{self, Vector},
 };
 
@@ -35,7 +35,8 @@ macro_rules! clear_msb {
 }
 
 static INIT: Once = Once::new();
-static mut UNARYOP: UnaryOp<u64> = UnaryOp::default();
+static mut FREE_UNARYOP: UnaryOp<u64> = UnaryOp::default();
+static mut DUP_UNARYOP: UnaryOp<u64> = UnaryOp::default();
 
 #[unsafe(no_mangle)]
 #[allow(non_snake_case)]
@@ -49,22 +50,35 @@ unsafe extern "C" fn _free_vectors(
     }
 }
 
+#[unsafe(no_mangle)]
+#[allow(non_snake_case)]
+unsafe extern "C" fn _dup_vectors(
+    z: *mut c_void,
+    x: *const c_void,
+) {
+    let x = *(x as *const u64);
+    if !single_edge!(x) {
+        // let v = Vector::from(clear_msb!(x) as GrB_Vector);
+        // z
+    }
+}
+
 #[allow(static_mut_refs)]
 impl Drop for Tensor {
     fn drop(&mut self) {
         unsafe {
             INIT.call_once(|| {
-                UNARYOP.set(Some(_free_vectors));
+                FREE_UNARYOP.set(Some(_free_vectors));
+                DUP_UNARYOP.set(Some(_dup_vectors));
             });
 
-            self.m.apply(&UNARYOP);
+            self.m.apply(&FREE_UNARYOP);
         }
     }
 }
 
-impl Tensor {
-    #[must_use]
-    pub fn new(
+impl New for Tensor {
+    fn new(
         nrows: u64,
         ncols: u64,
     ) -> Self {
@@ -72,7 +86,18 @@ impl Tensor {
             m: Matrix::<u64>::new(nrows, ncols),
         }
     }
+}
 
+impl ElementWiseAdd<u64> for Tensor {
+    fn element_wise_add(
+        &mut self,
+        other: &Self,
+    ) {
+        self.m.element_wise_add(&other.m);
+    }
+}
+
+impl Tensor {
     pub fn set(
         &mut self,
         src: u64,
@@ -125,6 +150,20 @@ impl Tensor {
         Self {
             m: self.m.transpose(),
         }
+    }
+
+    #[allow(static_mut_refs)]
+    #[must_use]
+    pub fn dup(&self) -> Self {
+        unsafe {
+            INIT.call_once(|| {
+                FREE_UNARYOP.set(Some(_free_vectors));
+                DUP_UNARYOP.set(Some(_dup_vectors));
+            });
+        }
+        let mut m = self.m.dup();
+        m.apply(unsafe { &DUP_UNARYOP });
+        Self { m }
     }
 
     #[must_use]

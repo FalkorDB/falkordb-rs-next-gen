@@ -12,10 +12,10 @@ use roaring::RoaringTreemap;
 use crate::{
     ast::ExprIR,
     cypher::Parser,
-    matrix::{self, Matrix, New, Remove, Set, Size},
+    matrix::{self, Dup, ElementWiseAdd, ElementWiseMultiply, Matrix, New, Remove, Set, Size},
     planner::{IR, Planner},
     tensor::{self, Tensor},
-    value::Value,
+    value::{RcValue, Value},
 };
 
 pub struct Graph {
@@ -35,8 +35,8 @@ pub struct Graph {
     all_nodes_matrix: Matrix<bool>,
     labels_matices: HashMap<usize, Matrix<bool>>,
     relationship_matrices: HashMap<usize, Tensor>,
-    node_properties_map: HashMap<u64, HashMap<u64, Value>>,
-    relationship_properties_map: HashMap<u64, HashMap<u64, Value>>,
+    node_properties_map: HashMap<u64, HashMap<u64, RcValue>>,
+    relationship_properties_map: HashMap<u64, HashMap<u64, RcValue>>,
     node_labels: Vec<Rc<String>>,
     relationship_types: Vec<Rc<String>>,
     node_properties: Vec<Rc<String>>,
@@ -302,7 +302,7 @@ impl Graph {
 
     pub fn create_nodes(
         &mut self,
-        nodes: &HashMap<u64, (Vec<Rc<String>>, OrderMap<Rc<String>, Value>)>,
+        nodes: &HashMap<u64, (Vec<Rc<String>>, OrderMap<Rc<String>, RcValue>)>,
     ) {
         self.node_count += nodes.len() as u64;
         self.reserved_node_count -= nodes.len() as u64;
@@ -329,7 +329,7 @@ impl Graph {
 
             let mut map = HashMap::new();
             for (key, value) in attrs {
-                if *value == Value::Null {
+                if **value == Value::Null {
                     continue;
                 }
                 let property_id = self.get_or_add_node_property_id(key);
@@ -371,10 +371,20 @@ impl Graph {
         if labels.is_empty() {
             return self.all_nodes_matrix.iter(0, u64::MAX);
         }
-        self.get_label_matrix(&labels[0]).map_or_else(
-            || self.zero_matrix.iter(0, u64::MAX),
-            |m| m.iter(0, u64::MAX),
-        )
+        let mut iter = labels.iter();
+        let mut m = if let Some(label_matrix) = self.get_label_matrix(iter.next().unwrap()) {
+            label_matrix.dup()
+        } else {
+            return self.zero_matrix.iter(0, u64::MAX);
+        };
+        for label in iter {
+            if let Some(label_matrix) = self.get_label_matrix(label) {
+                m.element_wise_multiply(label_matrix);
+            } else {
+                return self.zero_matrix.iter(0, u64::MAX);
+            }
+        }
+        m.iter(0, u64::MAX)
     }
 
     #[allow(clippy::cast_possible_truncation)]
@@ -391,7 +401,7 @@ impl Graph {
         &self,
         node_id: u64,
         property_id: u64,
-    ) -> Option<Value> {
+    ) -> Option<RcValue> {
         self.node_properties_map
             .get(&node_id)
             .unwrap()
@@ -412,7 +422,7 @@ impl Graph {
 
     pub fn create_relationships(
         &mut self,
-        relationships: &HashMap<u64, (Rc<String>, u64, u64, OrderMap<Rc<String>, Value>)>,
+        relationships: &HashMap<u64, (Rc<String>, u64, u64, OrderMap<Rc<String>, RcValue>)>,
     ) {
         self.relationship_count += relationships.len() as u64;
         self.reserved_relationship_count -= relationships.len() as u64;
@@ -444,7 +454,7 @@ impl Graph {
 
             let mut map = HashMap::new();
             for (key, value) in attrs {
-                if *value == Value::Null {
+                if **value == Value::Null {
                     continue;
                 }
                 let property_id = self.get_or_add_relationship_property_id(key);
@@ -470,17 +480,44 @@ impl Graph {
     pub fn get_relationships(
         &self,
         types: &[Rc<String>],
+        src_lables: &[Rc<String>],
+        dest_labels: &[Rc<String>],
     ) -> tensor::Iter {
         if types.is_empty() {
             return self.adjacancy_matrix.iter(0, u64::MAX);
         }
-        self.get_relationship_matrix(&types[0]).map_or_else(
-            || self.zero_tensor.iter(0, u64::MAX),
-            |m| {
-                m.wait();
-                m.iter(0, u64::MAX)
-            },
-        )
+        let mut iter = types.iter();
+        let mut m: Tensor =
+            if let Some(relationship_matrix) = self.get_relationship_matrix(iter.next().unwrap()) {
+                relationship_matrix.dup()
+            } else {
+                return self.zero_tensor.iter(0, u64::MAX);
+            };
+        for relationship_type in iter {
+            if let Some(relationship_matrix) = self.get_relationship_matrix(relationship_type) {
+                m.element_wise_add(relationship_matrix);
+            } else {
+                return self.zero_tensor.iter(0, u64::MAX);
+            }
+        }
+        // if !src_lables.is_empty() {
+        //     let mut iter = src_lables.iter();
+        //     let mut src_matrix =
+        //         if let Some(label_matrix) = self.get_label_matrix(iter.next().unwrap()) {
+        //             label_matrix.dup()
+        //         } else {
+        //             return self.zero_tensor.iter(0, u64::MAX);
+        //         };
+        //     for label in iter {
+        //         if let Some(label_matrix) = self.get_label_matrix(label) {
+        //             src_matrix.element_wise_multiply(label_matrix);
+        //         } else {
+        //             return self.zero_tensor.iter(0, u64::MAX);
+        //         }
+        //     }
+        //     // m.element_wise_multiply(&src_matrix);
+        // }
+        m.iter(0, u64::MAX)
     }
 
     pub fn get_relationship_type_id(
@@ -498,7 +535,7 @@ impl Graph {
         &self,
         relationship_id: u64,
         property_id: u64,
-    ) -> Option<Value> {
+    ) -> Option<RcValue> {
         self.relationship_properties_map
             .get(&relationship_id)
             .unwrap()
@@ -545,7 +582,7 @@ impl Graph {
     pub fn get_node_properties(
         &self,
         id: u64,
-    ) -> &HashMap<u64, Value> {
+    ) -> &HashMap<u64, RcValue> {
         self.node_properties_map
             .get(&id)
             .unwrap_or_else(|| panic!("Node with id {id} not found"))
@@ -554,7 +591,7 @@ impl Graph {
     pub fn get_relationship_properties(
         &self,
         id: u64,
-    ) -> &HashMap<u64, Value> {
+    ) -> &HashMap<u64, RcValue> {
         self.relationship_properties_map
             .get(&id)
             .unwrap_or_else(|| panic!("Relationship with id {id} not found"))

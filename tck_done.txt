@@ -24,3 +24,4 @@ clauses/delete/Delete1.feature
 clauses/delete/Delete2.feature
 clauses/delete/Delete5.feature
 clauses/delete/Delete6.feature
+clauses/match/Match1.feature
