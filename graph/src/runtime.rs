@@ -481,8 +481,8 @@ impl<'a> Runtime<'a> {
         ir: DynNode<ExprIR>,
         env: &Env,
     ) -> Result<Box<dyn Iterator<Item = RcValue>>, String> {
-        if let ExprIR::FuncInvocation(func) = ir.data() {
-            if func.name == "range" {
+        match ir.data() {
+            ExprIR::FuncInvocation(func) if func.name == "range" => {
                 let start = self.run_expr(ir.child(0), env, false);
                 let stop = self.run_expr(ir.child(1), env, false);
                 let step = ir
@@ -506,27 +506,12 @@ impl<'a> Runtime<'a> {
                     }
                 }
             }
-            let args = ir
-                .children()
-                .map(|ir| self.run_expr(ir, env, false))
-                .collect::<Result<Vec<_>, _>>()?;
-
-            func.validate_args_type(&args)?;
-            if !self.write && func.write {
-                return Err(String::from(
-                    "graph.RO_QUERY is to be executed only on read-only queries",
-                ));
-            }
-            let res = (func.func)(self, args)?;
-            match &*res {
-                Value::List(arr) => Ok(Box::new(arr.clone().into_iter())),
-                _ => Err(format!("Function '{}' must return a list", func.name)),
-            }
-        } else {
-            let res = self.run_expr(ir, env, false)?;
-            match &*res {
-                Value::List(arr) => Ok(Box::new(arr.clone().into_iter())),
-                _ => Err(format!("Expr must return a list")),
+            _ => {
+                let res = self.run_expr(ir, env, false)?;
+                match &*res {
+                    Value::List(arr) => Ok(Box::new(arr.clone().into_iter())),
+                    _ => Err(String::from("Expr must return a list")),
+                }
             }
         }
     }
@@ -828,7 +813,7 @@ impl<'a> Runtime<'a> {
                             Ok(env),
                             move |x, acc| {
                                 let mut x = x?;
-                                let mut acc = acc?;
+                                let mut acc: Env = acc?;
                                 for (_, tree) in agg {
                                     self.run_agg_expr(tree.root(), &mut x, &mut acc)?;
                                 }
