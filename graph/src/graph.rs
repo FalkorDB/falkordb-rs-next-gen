@@ -400,7 +400,7 @@ impl Graph {
     pub fn get_node_labels(
         &self,
         id: u64,
-    ) -> impl Iterator<Item = Rc<String>> + '_ {
+    ) -> impl Iterator<Item = Rc<String>> {
         self.get_node_label_ids(id)
             .map(move |label_id| self.node_labels[label_id].clone())
     }

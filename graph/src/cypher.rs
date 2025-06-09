@@ -932,22 +932,6 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_property_expression(&mut self) -> Result<DynTree<ExprIR>, String> {
-        let mut expr = self.parse_primary_expr()?;
-
-        while self.lexer.current() == Token::Dot {
-            self.lexer.next();
-            let ident = self.parse_ident()?;
-            expr = tree!(
-                ExprIR::FuncInvocation(get_functions().get("property", &FnType::Internal).unwrap()),
-                expr,
-                tree!(ExprIR::String(ident))
-            );
-        }
-
-        Ok(expr)
-    }
-
     // match one of those kind [..4], [4..], [4..5], [6]
     fn parse_list_operator_expression(
         &mut self,
@@ -990,7 +974,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_non_arithmetic_operator_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
-        let mut res = vec![self.parse_property_expression()?];
+        let mut res = vec![self.parse_primary_expr()?];
         loop {
             match self.lexer.current() {
                 Token::LBrace => {
@@ -999,6 +983,7 @@ impl<'a> Parser<'a> {
                     res.push(self.parse_list_operator_expression(lhs)?);
                 }
                 Token::Dot => {
+                    self.lexer.next();
                     let lhs = res.pop().unwrap();
                     res.push(self.parse_property_lookup(lhs)?);
                 }
@@ -1009,8 +994,7 @@ impl<'a> Parser<'a> {
             let labels = tree!(ExprIR::List; self
                 .parse_node_labels()?
                 .into_iter()
-                .map(|l| tree!(ExprIR::String(l)))
-                .collect::<Vec<_>>());
+                .map(|l| tree!(ExprIR::String(l))));
             return Ok(tree!(
                 ExprIR::FuncInvocation(
                     get_functions()
@@ -1028,16 +1012,19 @@ impl<'a> Parser<'a> {
         &mut self,
         expr: DynTree<ExprIR>,
     ) -> Result<DynTree<ExprIR>, String> {
-        match_token!(self.lexer, Colon);
-        self.parse_ident();
-        todo!()
+        let ident = self.parse_ident()?;
+        Ok(tree!(
+            ExprIR::FuncInvocation(get_functions().get("property", &FnType::Internal).unwrap()),
+            expr,
+            tree!(ExprIR::String(ident))
+        ))
     }
 
     fn parse_node_labels(&mut self) -> Result<Vec<Rc<String>>, String> {
         let mut labels = Vec::new();
 
         while optional_match_token!(self.lexer, Colon) {
-            labels.push(self.parse_ident()?)
+            labels.push(self.parse_ident()?);
         }
 
         if labels.is_empty() {
@@ -1066,7 +1053,7 @@ impl<'a> Parser<'a> {
                     self.lexer.next();
                     let rhs = self.parse_add_sub_expr()?;
                     let lhs = vec.pop().unwrap();
-                    vec.push(tree!(ExprIR::In, lhs, rhs))
+                    vec.push(tree!(ExprIR::In, lhs, rhs));
                 }
                 Token::Keyword(Keyword::Starts, _) => {
                     self.lexer.next();
