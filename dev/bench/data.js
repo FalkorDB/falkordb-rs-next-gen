@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749450066791,
+  "lastUpdate": 1749450333755,
   "repoUrl": "https://github.com/FalkorDB/falkordb-rs-next-gen",
   "entries": {
     "FalkorDB Benchmark": [
@@ -1026,6 +1026,44 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.07180444320667612",
             "extra": "mean: 4.752498052600009 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "avi.avni@gmail.com",
+            "name": "Avi Avni",
+            "username": "AviAvni"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "01b42ef48f2479cbd7c7abbf0c7c72bb1751bb28",
+          "message": "Merge pull request #88 from FalkorDB/dependabot/cargo/hashbrown-0.15.4\n\nBump hashbrown from 0.15.3 to 0.15.4",
+          "timestamp": "2025-06-09T09:22:49+03:00",
+          "tree_id": "78be782cebb5ede07651f36c2737d5fcbf075094",
+          "url": "https://github.com/FalkorDB/falkordb-rs-next-gen/commit/01b42ef48f2479cbd7c7abbf0c7c72bb1751bb28"
+        },
+        "date": 1749450332793,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_bench.py::test_return",
+            "value": 9870.368571923998,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000014348896607326367",
+            "extra": "mean: 101.31333928547244 usec\nrounds: 2632"
+          },
+          {
+            "name": "tests/test_bench.py::test_unwind",
+            "value": 0.20535931975871097,
+            "unit": "iter/sec",
+            "range": "stddev: 0.07384993909769146",
+            "extra": "mean: 4.869513597799994 sec\nrounds: 5"
           }
         ]
       }
