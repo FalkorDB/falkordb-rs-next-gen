@@ -25,10 +25,10 @@ pub enum AggregationReturnType {
 }
 
 impl AggregationReturnType {
-    pub(crate) const fn zero(&self) -> Value {
+    pub(crate) fn zero(&self) -> RcValue {
         match self {
-            Self::Numeric => Value::Int(0),
-            Self::Array => Value::List(vec![]),
+            Self::Numeric => RcValue::int(0),
+            Self::Array => RcValue::list(vec![]),
         }
     }
 }
@@ -1625,37 +1625,37 @@ fn internal_contains(
 
 fn internal_is_null(
     _: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
     let mut iter = args.into_iter();
-    match (iter.next(), iter.next()) {
-        (Some(Value::Bool(is_not)), Some(Value::Null)) => Ok(Value::Bool(!is_not)),
-        (Some(Value::Bool(is_not)), Some(_)) => Ok(Value::Bool(is_not)),
+    match (iter.next().as_deref(), iter.next().as_deref()) {
+        (Some(Value::Bool(is_not)), Some(Value::Null)) => Ok(RcValue::bool(!is_not)),
+        (Some(Value::Bool(is_not)), Some(_)) => Ok(RcValue::bool(*is_not)),
         _ => unreachable!(),
     }
 }
 
 fn internal_node_has_labels(
     runtime: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
     let mut iter = args.into_iter();
-    match (iter.next(), iter.next()) {
+    match (iter.next().as_deref(), iter.next().as_deref()) {
         (Some(Value::Node(node_id)), Some(Value::List(required_labels))) => {
             let actual_labels = runtime
                 .g
                 .borrow()
-                .get_node_labels(node_id)
+                .get_node_labels(*node_id)
                 .collect::<HashSet<_>>();
             let all_labels_present = required_labels.iter().all(|label| {
-                if let Value::String(label) = label {
-                    actual_labels.contains(label)
+                if let Value::String(label_str) = &**label {
+                    actual_labels.contains(label_str)
                 } else {
                     false
                 }
             });
 
-            Ok(Value::Bool(all_labels_present))
+            Ok(RcValue::bool(all_labels_present))
         }
         (Some(n), Some(l)) => Err(format!(
             "Type mismatch: expected Node and Labels Null but was ({}, {})",

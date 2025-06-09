@@ -238,10 +238,6 @@ impl<'a> Runtime<'a> {
                 let b = self.run_expr(ir.child(2), env, finalize_agg)?;
                 get_elements(arr, a, b)
             }
-            ExprIR::IsNull => match *self.run_expr(ir.child(0), env, finalize_agg)? {
-                Value::Null => Ok(RcValue::bool(true)),
-                _ => Ok(RcValue::bool(false)),
-            },
             ExprIR::IsNode => match *self.run_expr(ir.child(0), env, finalize_agg)? {
                 Value::Node(_) => Ok(RcValue::bool(true)),
                 _ => Ok(RcValue::bool(false)),
@@ -389,14 +385,19 @@ impl<'a> Runtime<'a> {
                 })
                 .ok_or_else(|| String::from("Pow operator requires at least one argument")),
             ExprIR::FuncInvocation(name, fn_type) => {
-                if finalize_agg && *fn_type == FnType::Aggregation {
-                    match ir.child(ir.num_children() - 1).data() {
-                        ExprIR::Var(key) => {
-                            return Ok(env.get(key).unwrap_or_else(aggregation_return_type.zero()));
+                if finalize_agg {
+                    if let FnType::Aggregation(aggregation_return_type) = fn_type {
+                        match ir.child(ir.num_children() - 1).data() {
+                            ExprIR::Var(key) => {
+                                return Ok(env
+                                    .get(key)
+                                    .unwrap_or_else(|| aggregation_return_type.zero()));
+                            }
+                            _ => unreachable!(),
                         }
-                        _ => unreachable!(),
                     }
                 }
+
                 let args = ir
                     .children()
                     .map(|ir| self.run_expr(ir, env, finalize_agg))
@@ -836,7 +837,7 @@ impl<'a> Runtime<'a> {
                 // in case there are no aggregation keys the aggregator will return
                 // default value for empty iterator
                 if trees.is_empty() {
-                    let mut env = Env::new();
+                    let mut env = Env::default();
                     for (name, t) in trees1 {
                         if let ExprIR::FuncInvocation(
                             _,
@@ -851,7 +852,7 @@ impl<'a> Runtime<'a> {
                     let mut hasher = DefaultHasher::new();
                     key.hash(&mut hasher);
                     let k = hasher.finish();
-                    cache.insert(k, (Ok(Env::new()), Ok(env)));
+                    cache.insert(k, (Ok(Env::default()), Ok(env)));
                 }
                 if let Some(child_idx) = child0_idx {
                     let mut default_value = Env::default();
