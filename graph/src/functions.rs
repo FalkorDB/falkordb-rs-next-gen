@@ -2,20 +2,36 @@
 
 use crate::runtime::Runtime;
 use crate::value::{RcValue, Value};
-use hashbrown::HashMap;
+use hashbrown::{HashMap, HashSet};
 use rand::Rng;
 use std::fmt::Display;
+use std::iter::repeat_with;
 use std::rc::Rc;
 use std::sync::OnceLock;
 
 type RuntimeFn = fn(&Runtime, Vec<RcValue>) -> Result<RcValue, String>;
 
-#[derive(Eq, PartialEq, Debug, Clone)]
+#[derive(Debug)]
 pub enum FnType {
     Function,
     Internal,
     Procedure,
-    Aggregation,
+    Aggregation(RcValue),
+}
+
+impl PartialEq for FnType {
+    fn eq(
+        &self,
+        other: &Self,
+    ) -> bool {
+        matches!(
+            (self, other),
+            (Self::Function, Self::Function)
+                | (Self::Internal, Self::Internal)
+                | (Self::Procedure, Self::Procedure)
+                | (Self::Aggregation(_), Self::Aggregation(_))
+        )
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -57,7 +73,7 @@ impl Display for Type {
                 if let Some(first) = iter.next() {
                     write!(f, "{first}")?;
                 }
-                for _ in 0..types.len() - 2 {
+                for _ in 0..types.len().saturating_sub(2) {
                     if let Some(next) = iter.next() {
                         write!(f, ", {next}")?;
                     }
@@ -107,6 +123,45 @@ impl GraphFn {
             fn_type,
         }
     }
+
+    #[must_use]
+    pub const fn is_aggregate(&self) -> bool {
+        matches!(self.fn_type, FnType::Aggregation(_))
+    }
+
+    pub fn validate(
+        &self,
+        args: usize,
+    ) -> Result<(), String> {
+        match &self.args_type {
+            FnArguments::Fixed(args_type) => {
+                let least = args_type
+                    .iter()
+                    .filter(|x| !matches!(x, Type::Optional(_)))
+                    .count();
+                if args < least {
+                    return Err(format!(
+                        "Received {args} arguments to function '{}', expected at least {least}",
+                        self.name
+                    ));
+                }
+                let most = match self.fn_type {
+                    FnType::Aggregation(_) => args_type.len() + 1,
+                    _ => args_type.len(),
+                };
+                if args > most {
+                    return Err(format!(
+                        "Received {} arguments to function '{}', expected at most {}",
+                        args,
+                        self.name,
+                        args_type.len()
+                    ));
+                }
+            }
+            FnArguments::VarLength(_) => {}
+        }
+        Ok(())
+    }
 }
 
 impl GraphFn {
@@ -141,8 +196,11 @@ impl GraphFn {
 
 #[derive(Default, Debug)]
 pub struct Functions {
-    functions: HashMap<String, GraphFn>,
+    functions: HashMap<String, Rc<GraphFn>>,
 }
+
+unsafe impl Send for Functions {}
+unsafe impl Sync for Functions {}
 
 impl Functions {
     #[must_use]
@@ -163,7 +221,13 @@ impl Functions {
             !self.functions.contains_key(&lower_name),
             "Function '{name}' already exists"
         );
-        let graph_fn = GraphFn::new(name, func, write, FnArguments::Fixed(args_type), fn_type);
+        let graph_fn = Rc::new(GraphFn::new(
+            name,
+            func,
+            write,
+            FnArguments::Fixed(args_type),
+            fn_type,
+        ));
         self.functions.insert(lower_name, graph_fn);
     }
 
@@ -180,55 +244,14 @@ impl Functions {
             !self.functions.contains_key(&name),
             "Function '{name}' already exists"
         );
-        let graph_fn = GraphFn::new(
+        let graph_fn = Rc::new(GraphFn::new(
             &name,
             func,
             write,
             FnArguments::VarLength(arg_type),
             fn_type,
-        );
+        ));
         self.functions.insert(name, graph_fn);
-    }
-
-    pub fn validate(
-        &self,
-        name: &str,
-        fn_type: &FnType,
-        args: usize,
-    ) -> Result<(), String> {
-        self.get(name, fn_type).map_or_else(
-            || Err(format!("Function {name} not found")),
-            |graph_fn| {
-                match &graph_fn.args_type {
-                    FnArguments::Fixed(args_type) => {
-                        let least = args_type
-                            .iter()
-                            .filter(|x| !matches!(x, Type::Optional(_)))
-                            .count();
-                        if args < least {
-                            return Err(format!(
-                                "Received {args} arguments to function '{}', expected at least {least}", graph_fn.name
-                            ));
-                        }
-                        let most = if fn_type == &FnType::Aggregation {
-                            args_type.len() + 1 // aggregation functions have one more argument for the temporary result
-                        } else {
-                            args_type.len()
-                        };
-                        if args > most {
-                            return Err(format!(
-                                "Received {} arguments to function '{}', expected at most {}",
-                                args,
-                                graph_fn.name,
-                                args_type.len()
-                            ));
-                        }
-                    }
-                    FnArguments::VarLength(_) => {}
-                }
-                Ok(())
-            },
-        )
     }
 
     #[must_use]
@@ -236,12 +259,12 @@ impl Functions {
         &self,
         name: &str,
         fn_type: &FnType,
-    ) -> Option<&GraphFn> {
+    ) -> Option<Rc<GraphFn>> {
         self.functions
             .get(name.to_lowercase().as_str())
             .and_then(|graph_fn| {
                 if &graph_fn.fn_type == fn_type {
-                    Some(graph_fn)
+                    Some(graph_fn.clone())
                 } else {
                     None
                 }
@@ -255,7 +278,7 @@ impl Functions {
     ) -> bool {
         self.functions
             .get(name)
-            .is_some_and(|graph_fn| graph_fn.fn_type == FnType::Aggregation)
+            .is_some_and(|graph_fn| matches!(graph_fn.fn_type, FnType::Aggregation(_)))
     }
 }
 
@@ -599,18 +622,36 @@ pub fn init_functions() -> Result<(), Functions> {
         collect,
         false,
         vec![Type::Any],
-        FnType::Aggregation,
+        FnType::Aggregation(RcValue::list(vec![])),
     );
     funcs.add(
         "count",
         count,
         false,
         vec![Type::Optional(Box::new(Type::Any))],
-        FnType::Aggregation,
+        FnType::Aggregation(RcValue::int(0)),
     );
-    funcs.add("sum", sum, false, vec![Type::Any], FnType::Aggregation);
-    funcs.add("max", max, false, vec![Type::Any], FnType::Aggregation);
-    funcs.add("min", min, false, vec![Type::Any], FnType::Aggregation);
+    funcs.add(
+        "sum",
+        sum,
+        false,
+        vec![Type::Any],
+        FnType::Aggregation(RcValue::float(0.0)),
+    );
+    funcs.add(
+        "max",
+        max,
+        false,
+        vec![Type::Any],
+        FnType::Aggregation(RcValue::null()),
+    );
+    funcs.add(
+        "min",
+        min,
+        false,
+        vec![Type::Any],
+        FnType::Aggregation(RcValue::null()),
+    );
 
     // Internal functions
     funcs.add(
@@ -644,6 +685,20 @@ pub fn init_functions() -> Result<(), Functions> {
         FnType::Internal,
     );
     funcs.add(
+        "is_null",
+        internal_is_null,
+        false,
+        vec![Type::Union(vec![Type::Bool]), Type::Any],
+        FnType::Internal,
+    );
+    funcs.add(
+        "node_has_labels",
+        internal_node_has_labels,
+        false,
+        vec![Type::Node, Type::List(Box::new(Type::Any))],
+        FnType::Internal,
+    );
+    funcs.add(
         "regex_matches",
         internal_regex_matches,
         false,
@@ -657,7 +712,11 @@ pub fn init_functions() -> Result<(), Functions> {
         "case",
         internal_case,
         false,
-        vec![Type::Any, Type::Optional(Box::new(Type::Any))],
+        vec![
+            Type::Any,
+            Type::Optional(Box::new(Type::Any)),
+            Type::Optional(Box::new(Type::Any)),
+        ],
         FnType::Internal,
     );
 
@@ -821,7 +880,6 @@ fn count(
     let first = iter.next();
     let sec = iter.next();
     match (first.as_deref(), sec.as_deref()) {
-        (Some(_), Some(Value::Null)) | (Some(Value::Null), None) => Ok(RcValue::int(1)),
         (Some(Value::Null), Some(_)) => Ok(sec.unwrap()),
         (Some(_), Some(Value::Int(a))) | (Some(Value::Int(a)), None) => Ok(RcValue::int(a + 1)),
         _ => unreachable!(),
@@ -834,12 +892,8 @@ fn sum(
 ) -> Result<RcValue, String> {
     let mut iter = args.into_iter();
     match (iter.next().as_deref(), iter.next().as_deref()) {
-        (Some(Value::Int(a)), Some(Value::Null)) | (Some(Value::Null), Some(Value::Int(a))) => {
-            Ok(RcValue::float(*a as f64))
-        }
-        (Some(Value::Float(a)), Some(Value::Null)) | (Some(Value::Null), Some(Value::Float(a))) => {
-            Ok(RcValue::float(*a))
-        }
+        (Some(Value::Null), Some(Value::Int(a))) => Ok(RcValue::float(*a as f64)),
+        (Some(Value::Null), Some(Value::Float(a))) => Ok(RcValue::float(*a)),
         (Some(Value::Int(a)), Some(Value::Int(b))) => Ok(RcValue::float((a + b) as f64)),
         (Some(Value::Float(a)), Some(Value::Float(b))) => Ok(RcValue::float(a + b)),
         (Some(Value::Int(a)), Some(Value::Float(b))) => Ok(RcValue::float(*a as f64 + b)),
@@ -1455,25 +1509,24 @@ fn range(
     let end = iter.next().ok_or("Missing end value")?;
     let step = iter.next().unwrap_or_else(|| RcValue::int(1));
     match (&*start, &*end, &*step) {
-        (Value::Int(start), Value::Int(end), Value::Int(step)) => {
-            if start >= end && *step < 0 {
-                Ok(RcValue::list(
-                    (*end..=*start)
-                        .rev()
-                        .step_by(step.abs() as usize)
-                        .map(RcValue::int)
-                        .collect(),
-                ))
-            } else if *step < 0 {
-                Ok(RcValue::list(vec![]))
-            } else {
-                Ok(RcValue::list(
-                    (*start..=*end)
-                        .step_by(*step as usize)
-                        .map(RcValue::int)
-                        .collect(),
-                ))
+        (Value::Int(start), Value::Int(stop), Value::Int(step)) => {
+            if *step == 0 {
+                return Err(String::from("Step cannot be zero"));
             }
+            if start > stop && step > &0 {
+                return Ok(RcValue::list(vec![]));
+            }
+            let mut curr = *start;
+            let step = *step;
+            Ok(RcValue::list(
+                repeat_with(move || {
+                    let tmp = curr;
+                    curr += step;
+                    RcValue::int(tmp)
+                })
+                .take(((stop - start) / step + 1) as usize)
+                .collect(),
+            ))
         }
         _ => unreachable!(),
     }
@@ -1574,6 +1627,44 @@ fn internal_contains(
     }
 }
 
+fn internal_is_null(
+    _: &Runtime,
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
+    let mut iter = args.into_iter();
+    match (iter.next().as_deref(), iter.next().as_deref()) {
+        (Some(Value::Bool(is_not)), Some(Value::Null)) => Ok(RcValue::bool(!is_not)),
+        (Some(Value::Bool(is_not)), Some(_)) => Ok(RcValue::bool(*is_not)),
+        _ => unreachable!(),
+    }
+}
+
+fn internal_node_has_labels(
+    runtime: &Runtime,
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
+    let mut iter = args.into_iter();
+    match (iter.next().as_deref(), iter.next().as_deref()) {
+        (Some(Value::Node(node_id)), Some(Value::List(required_labels))) => {
+            let actual_labels = runtime
+                .g
+                .borrow()
+                .get_node_labels(*node_id)
+                .collect::<HashSet<_>>();
+            let all_labels_present = required_labels.iter().all(|label| {
+                if let Value::String(label_str) = &**label {
+                    actual_labels.contains(label_str)
+                } else {
+                    false
+                }
+            });
+
+            Ok(RcValue::bool(all_labels_present))
+        }
+        _ => unreachable!(),
+    }
+}
+
 fn internal_regex_matches(
     _: &Runtime,
     args: Vec<RcValue>,
@@ -1597,17 +1688,20 @@ fn internal_case(
     args: Vec<RcValue>,
 ) -> Result<RcValue, String> {
     let mut iter = args.into_iter();
-    match (iter.next().as_deref(), iter.next().as_deref()) {
-        (Some(Value::List(alts)), None) => {
+    match (iter.next().as_deref(), iter.next(), iter.next()) {
+        (Some(Value::List(alts)), Some(else_), None) => {
             for pair in alts.chunks(2) {
                 match (&*pair[0], &pair[1]) {
                     (Value::Bool(false) | Value::Null, _) => {}
                     (_, result) => return Ok(result.clone()),
                 }
             }
-            Ok(RcValue::null())
+            Ok(else_)
         }
-        (Some(value), Some(Value::List(alts))) => {
+        (Some(value), Some(alt), Some(else_)) => {
+            let Value::List(alts) = &*alt else {
+                unreachable!()
+            };
             for pair in alts.chunks(2) {
                 if let [condition, result] = pair {
                     if &**condition == value {
@@ -1615,7 +1709,7 @@ fn internal_case(
                     }
                 }
             }
-            Ok(RcValue::null())
+            Ok(else_)
         }
         _ => unreachable!(),
     }

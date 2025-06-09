@@ -1,5 +1,5 @@
 use crate::ast::{NodePattern, Pattern, QuantifierType, RelationshipPattern, VarId};
-use crate::functions::{FnType, Functions, GraphFn, get_functions};
+use crate::functions::{FnType, Functions, get_functions};
 use crate::iter::{Aggregate, LazyReplace, TryFlatMap, TryMap};
 use crate::value::{DisjointOrNull, Env, RcValue};
 use crate::{ast::ExprIR, graph::Graph, planner::IR, value::Contains, value::Value};
@@ -10,6 +10,7 @@ use orx_tree::{Dyn, DynNode, DynTree, NodeIdx, NodeRef};
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::fmt::Debug;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::iter::{empty, once, repeat_with};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -159,7 +160,7 @@ impl<'a> Runtime<'a> {
         acc: &mut Env,
     ) -> Result<(), String> {
         match ir.data() {
-            ExprIR::FuncInvocation(_, FnType::Aggregation) => {
+            ExprIR::FuncInvocation(func) if func.is_aggregate() => {
                 let key = match ir.child(ir.num_children() - 1).data() {
                     ExprIR::Var(key) => key.clone(),
                     _ => {
@@ -237,10 +238,6 @@ impl<'a> Runtime<'a> {
                 let b = self.run_expr(ir.child(2), env, finalize_agg)?;
                 get_elements(arr, a, b)
             }
-            ExprIR::IsNull => match *self.run_expr(ir.child(0), env, finalize_agg)? {
-                Value::Null => Ok(RcValue::bool(true)),
-                _ => Ok(RcValue::bool(false)),
-            },
             ExprIR::IsNode => match *self.run_expr(ir.child(0), env, finalize_agg)? {
                 Value::Node(_) => Ok(RcValue::bool(true)),
                 _ => Ok(RcValue::bool(false)),
@@ -387,31 +384,32 @@ impl<'a> Runtime<'a> {
                     _ => RcValue::null(),
                 })
                 .ok_or_else(|| String::from("Pow operator requires at least one argument")),
-            ExprIR::FuncInvocation(name, fn_type) => {
-                if finalize_agg && *fn_type == FnType::Aggregation {
-                    match ir.child(ir.num_children() - 1).data() {
-                        ExprIR::Var(key) => {
-                            return Ok(env.get(key).unwrap_or_else(RcValue::null));
+            ExprIR::FuncInvocation(func) => {
+                if finalize_agg {
+                    if let FnType::Aggregation(aggregation_return_type) = &func.fn_type {
+                        match ir.child(ir.num_children() - 1).data() {
+                            ExprIR::Var(key) => {
+                                return Ok(env
+                                    .get(key)
+                                    .unwrap_or_else(|| aggregation_return_type.clone()));
+                            }
+                            _ => unreachable!(),
                         }
-                        _ => unreachable!(),
                     }
                 }
+
                 let args = ir
                     .children()
                     .map(|ir| self.run_expr(ir, env, finalize_agg))
                     .collect::<Result<Vec<_>, _>>()?;
-                match self.functions.get(name, fn_type) {
-                    Some(gfn @ GraphFn { func, write, .. }) => {
-                        gfn.validate_args_type(&args)?;
-                        if !self.write && *write {
-                            return Err(String::from(
-                                "graph.RO_QUERY is to be executed only on read-only queries",
-                            ));
-                        }
-                        func(self, args)
-                    }
-                    None => Err(format!("Function '{name}' not found")),
+
+                func.validate_args_type(&args)?;
+                if !self.write && func.write {
+                    return Err(String::from(
+                        "graph.RO_QUERY is to be executed only on read-only queries",
+                    ));
                 }
+                (func.func)(self, args)
             }
             ExprIR::Map => Ok(RcValue::map(
                 ir.children()
@@ -460,57 +458,59 @@ impl<'a> Runtime<'a> {
                 }
             }
             ExprIR::ListComprehension(var) => {
-                if let ExprIR::FuncInvocation(name, _) = ir.child(0).data() {
-                    if name == "range" {
-                        let start = self.run_expr(ir.child(0).child(0), env, finalize_agg)?;
-                        let stop = self.run_expr(ir.child(0).child(1), env, finalize_agg)?;
-                        let step = ir
-                            .child(0)
-                            .get_child(2)
-                            .map_or(Ok(RcValue::int(1)), |c| self.run_expr(c, env, finalize_agg))?;
-                        if let (Value::Int(start), Value::Int(stop), Value::Int(step)) =
-                            (&*start, &*stop, &*step)
-                        {
-                            if *step == 0 {
-                                return Err(String::from("Step cannot be zero"));
-                            }
-                            let mut env = env.clone();
-                            let mut curr = *start;
-                            let mut acc = vec![];
-                            for _ in 0..=((stop - start) / step) {
-                                env.insert(var, RcValue::int(curr));
+                let iter = self.run_iter_expr(ir.child(0), env)?;
+                let mut env = env.clone();
+                let mut acc = vec![];
+                for value in iter {
+                    env.insert(var, value.clone());
+                    match *self.run_expr(ir.child(1), &env, finalize_agg)? {
+                        Value::Bool(true) => {}
+                        _ => continue,
+                    }
+                    acc.push(self.run_expr(ir.child(2), &env, finalize_agg)?);
+                }
+
+                Ok(RcValue::list(acc))
+            }
+        }
+    }
+
+    #[instrument(name = "run_iter_expr", level = "debug", skip(self), fields(expr_type = ?ir.data()))]
+    fn run_iter_expr(
+        &self,
+        ir: DynNode<ExprIR>,
+        env: &Env,
+    ) -> Result<Box<dyn Iterator<Item = RcValue>>, String> {
+        match ir.data() {
+            ExprIR::FuncInvocation(func) if func.name == "range" => {
+                let start = self.run_expr(ir.child(0), env, false);
+                let stop = self.run_expr(ir.child(1), env, false);
+                let step = ir
+                    .get_child(2)
+                    .map_or_else(|| Ok(RcValue::int(1)), |c| self.run_expr(c, env, false));
+                match (start.as_deref(), stop.as_deref(), step.as_deref()) {
+                    (Ok(Value::Int(start)), Ok(Value::Int(stop)), Ok(Value::Int(step))) => {
+                        let mut curr = *start;
+                        let step = *step;
+                        return Ok(Box::new(
+                            repeat_with(move || {
+                                let tmp = curr;
                                 curr += step;
-                                match *self.run_expr(ir.child(1), &env, finalize_agg)? {
-                                    Value::Bool(true) => {}
-                                    _ => continue,
-                                }
-                                acc.push(self.run_expr(ir.child(2), &env, finalize_agg)?);
-                            }
-                            return Ok(RcValue::list(acc));
-                        }
-                        return Err(String::from("ListComprehension requires three integers"));
+                                RcValue::int(tmp)
+                            })
+                            .take(((stop - start) / step + 1) as usize),
+                        ));
+                    }
+                    _ => {
+                        todo!();
                     }
                 }
-                let list = self.run_expr(ir.child(0), env, finalize_agg)?;
-                match &*list {
-                    Value::List(values) => {
-                        let mut env = env.clone();
-                        let mut acc = vec![];
-                        for value in values {
-                            env.insert(var, value.clone());
-                            match *self.run_expr(ir.child(1), &env, finalize_agg)? {
-                                Value::Bool(true) => {}
-                                _ => continue,
-                            }
-                            acc.push(self.run_expr(ir.child(2), &env, finalize_agg)?);
-                        }
-
-                        Ok(RcValue::list(acc))
-                    }
-                    value => Err(format!(
-                        "Type mismatch: expected List but was {}",
-                        value.name()
-                    )),
+            }
+            _ => {
+                let res = self.run_expr(ir, env, false)?;
+                match &*res {
+                    Value::List(arr) => Ok(Box::new(arr.clone().into_iter())),
+                    _ => Err(String::from("Expr must return a list")),
                 }
             }
         }
@@ -631,85 +631,27 @@ impl<'a> Runtime<'a> {
             IR::Unwind(tree, name) => {
                 if let Some(child_idx) = child0_idx {
                     return Ok(Box::new(self.run(&child_idx)?.try_flat_map(move |vars| {
-                        let value = self.run_expr(tree.root(), &vars, false);
-                        match value.as_deref() {
-                            Ok(Value::List(arr)) => arr
-                                .iter()
+                        let value = self.run_iter_expr(tree.root(), &vars);
+                        match value {
+                            Ok(iter) => iter
                                 .map(|v| {
                                     let mut vars = vars.clone();
-                                    vars.insert(name, v.clone());
+                                    vars.insert(name, v);
                                     Ok(vars)
                                 })
                                 .collect::<Vec<_>>()
                                 .into_iter(),
-                            Ok(_) => vec![Err(String::from("Unwind operator requires a list"))]
-                                .into_iter(),
-                            Err(e) => vec![Err(e.clone())].into_iter(),
+                            Err(e) => vec![Err(e)].into_iter(),
                         }
                     })));
                 }
                 let vars = Env::default();
-                let value = self.run_expr(tree.root(), &vars, false)?;
-                if let Value::List(arr) = &*value {
-                    return Ok(Box::new(arr.clone().into_iter().map(move |v| {
-                        let mut vars = Env::default();
-                        vars.insert(name, v);
-                        Ok(vars)
-                    })));
-                }
-                Ok(Box::new(once(Err(String::from(
-                    "Unwind operator requires a list",
-                )))))
-            }
-            IR::UnwindRange(start, stop, step, name) => {
-                if let Some(child_idx) = child0_idx {
-                    return Ok(Box::new(self.run(&child_idx)?.try_flat_map(move |vars| {
-                        let start = self.run_expr(start.root(), &vars, false);
-                        let stop = self.run_expr(stop.root(), &vars, false);
-                        let step = self.run_expr(step.root(), &vars, false);
-                        match (start.as_deref(), stop.as_deref(), step.as_deref()) {
-                            (Ok(Value::Int(start)), Ok(Value::Int(stop)), Ok(Value::Int(step))) => {
-                                let mut curr = *start;
-                                let step = *step;
-                                repeat_with(move || {
-                                    let tmp = curr;
-                                    curr += step;
-                                    let mut vars = vars.clone();
-                                    vars.insert(name, RcValue::int(tmp));
-                                    Ok(vars)
-                                })
-                                .take(((stop - start) / step + 1) as usize)
-                            }
-                            _ => {
-                                todo!();
-                            }
-                        }
-                    })));
-                }
-                let vars = Env::default();
-                let start = self.run_expr(start.root(), &vars, false)?;
-                let stop = self.run_expr(stop.root(), &vars, false)?;
-                let step = self.run_expr(step.root(), &vars, false)?;
-                match (&*start, &*stop, &*step) {
-                    (Value::Int(start), Value::Int(stop), Value::Int(step)) => {
-                        if *step == 0 {
-                            return Err(String::from("Step cannot be zero"));
-                        }
-                        let mut curr = *start;
-                        let step = *step;
-                        Ok(Box::new(
-                            repeat_with(move || {
-                                let tmp = curr;
-                                curr += step;
-                                let mut vars = Env::default();
-                                vars.insert(name, RcValue::int(tmp));
-                                Ok(vars)
-                            })
-                            .take(((stop - start) / step + 1) as usize),
-                        ))
-                    }
-                    _ => Err(String::from("UnwindRange operator requires three integers")),
-                }
+                let value = self.run_iter_expr(tree.root(), &vars)?;
+                return Ok(Box::new(value.map(move |v| {
+                    let mut vars = Env::default();
+                    vars.insert(name, v);
+                    Ok(vars)
+                })));
             }
             IR::Create(pattern) => {
                 let mut parent_commit = false;
@@ -829,38 +771,60 @@ impl<'a> Runtime<'a> {
                     "Filter operator requires a boolean expression",
                 ))
             }
-            IR::Aggregate(_, trees, trees1) => {
-                if let Some(child_idx) = child0_idx {
-                    let mut default_value = Env::default();
-                    for (name, _) in trees1 {
-                        default_value.insert(name, RcValue::null());
+            IR::Aggregate(_, keys, agg) => {
+                let mut cache = std::collections::HashMap::new();
+                let mut env = Env::default();
+                for (_, t) in agg {
+                    if let ExprIR::FuncInvocation(func) = t.root().data() {
+                        if let FnType::Aggregation(aggregation_return_type) = &func.fn_type {
+                            let ExprIR::Var(key) =
+                                t.root().child(t.root().num_children() - 1).data()
+                            else {
+                                return Err(String::from(
+                                    "Aggregation function must end with a variable",
+                                ));
+                            };
+                            env.insert(key, aggregation_return_type.clone());
+                        }
                     }
+                }
+                // in case there are no aggregation keys the aggregator will return
+                // default value for empty iterator
+                if keys.is_empty() {
+                    let key = Ok(Env::default());
+                    let mut hasher = DefaultHasher::new();
+                    key.hash(&mut hasher);
+                    let k = hasher.finish();
+                    cache.insert(k, (key, Ok(env.clone())));
+                }
+                if let Some(child_idx) = child0_idx {
                     let aggregator = self
                         .run(&child_idx)?
                         .aggregate(
                             move |vars| {
                                 let vars = vars.clone()?;
                                 let mut return_vars = Env::default();
-                                for (name, tree) in trees {
+                                for (name, tree) in keys {
                                     let value = self.run_expr(tree.root(), &vars, false)?;
                                     return_vars.insert(name, value);
                                 }
                                 Ok::<Env, String>(return_vars)
                             },
-                            Ok(default_value),
+                            Ok(env),
                             move |x, acc| {
                                 let mut x = x?;
-                                let mut acc = acc?;
-                                for (_, tree) in trees1 {
+                                let mut acc: Env = acc?;
+                                for (_, tree) in agg {
                                     self.run_agg_expr(tree.root(), &mut x, &mut acc)?;
                                 }
                                 Ok(acc)
                             },
+                            cache,
                         )
                         .map(move |(key, v)| {
                             let mut vars = v?;
                             vars.merge(key?);
-                            for (name, tree) in trees1 {
+                            for (name, tree) in agg {
                                 vars.insert(name, self.run_expr(tree.root(), &vars, true)?);
                             }
                             Ok(vars)

@@ -61,6 +61,7 @@ pub trait Aggregate {
         key_fn: F,
         default_value: V,
         agg_fn: G,
+        cache: HashMap<u64, (K, V)>,
     ) -> AggregateIter<Box<Self>, K, V, F, G>
     where
         Self: Iterator<Item = V>,
@@ -79,6 +80,7 @@ where
         key_fn: F,
         default_value: V,
         agg_fn: G,
+        cache: HashMap<u64, (K, V)>,
     ) -> AggregateIter<Box<I>, K, V, F, G>
     where
         Self: Iterator<Item = V>,
@@ -92,7 +94,7 @@ where
             key_fn,
             default_value,
             agg_fn,
-            cache: HashMap::new(),
+            cache,
             finished: false,
         }
     }

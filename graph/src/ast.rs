@@ -2,7 +2,7 @@ use std::{collections::HashSet, fmt::Display, hash::Hash, rc::Rc};
 
 use orx_tree::{Dfs, DynNode, DynTree, NodeRef};
 
-use crate::functions::{FnType, get_functions};
+use crate::functions::GraphFn;
 
 #[derive(Clone, Debug)]
 pub struct VarId {
@@ -37,7 +37,7 @@ impl VarId {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub enum ExprIR {
     Null,
     Bool(bool),
@@ -51,7 +51,6 @@ pub enum ExprIR {
     Length,
     GetElement,
     GetElements,
-    IsNull,
     IsNode,
     IsRelationship,
     Or,
@@ -72,7 +71,7 @@ pub enum ExprIR {
     Div,
     Pow,
     Modulo,
-    FuncInvocation(String, FnType),
+    FuncInvocation(Rc<GraphFn>),
     Quantifier(QuantifierType, VarId),
     ListComprehension(VarId),
 }
@@ -95,7 +94,6 @@ impl Display for ExprIR {
             Self::Length => write!(f, "length()"),
             Self::GetElement => write!(f, "get_element()"),
             Self::GetElements => write!(f, "get_elements()"),
-            Self::IsNull => write!(f, "is_null()"),
             Self::IsNode => write!(f, "is_node()"),
             Self::IsRelationship => write!(f, "is_relationship()"),
             Self::Or => write!(f, "or()"),
@@ -116,7 +114,7 @@ impl Display for ExprIR {
             Self::Div => write!(f, "/"),
             Self::Pow => write!(f, "^"),
             Self::Modulo => write!(f, "%"),
-            Self::FuncInvocation(name, _) => write!(f, "{name}()"),
+            Self::FuncInvocation(func) => write!(f, "{}()", func.name),
             Self::Quantifier(quantifier_type, var) => {
                 write!(f, "{quantifier_type} {}", var.as_str())
             }
@@ -214,17 +212,16 @@ impl Validate for DynNode<'_, ExprIR> {
                 }
                 Ok(())
             }
-            ExprIR::FuncInvocation(name, FnType::Aggregation) => {
-                get_functions().validate(name, &FnType::Aggregation, self.num_children())?;
-                for i in 0..self.num_children() - 1 {
-                    self.child(i).validate(env)?;
-                }
-                Ok(())
-            }
-            ExprIR::FuncInvocation(name, fn_type) => {
-                get_functions().validate(name, fn_type, self.num_children())?;
-                for expr in self.children() {
-                    expr.validate(env)?;
+            ExprIR::FuncInvocation(func) => {
+                func.validate(self.num_children())?;
+                if func.is_aggregate() {
+                    for i in 0..self.num_children() - 1 {
+                        self.child(i).validate(env)?;
+                    }
+                } else {
+                    for expr in self.children() {
+                        expr.validate(env)?;
+                    }
                 }
                 Ok(())
             }
@@ -244,7 +241,6 @@ impl Validate for DynNode<'_, ExprIR> {
                 Ok(())
             }
             ExprIR::Not
-            | ExprIR::IsNull
             | ExprIR::Negate
             | ExprIR::Length
             | ExprIR::IsNode
@@ -290,7 +286,7 @@ impl SupportAggregation for DynTree<ExprIR> {
         self.root().indices::<Dfs>().any(|idx| {
             matches!(
                 self.node(&idx).data(),
-                ExprIR::FuncInvocation(_, FnType::Aggregation)
+                ExprIR::FuncInvocation(func) if func.is_aggregate()
             )
         })
     }
@@ -300,7 +296,7 @@ impl SupportAggregation for DynTree<ExprIR> {
 pub struct NodePattern {
     pub alias: VarId,
     pub labels: Vec<Rc<String>>,
-    pub attrs: DynTree<ExprIR>,
+    pub attrs: Rc<DynTree<ExprIR>>,
 }
 
 impl Display for NodePattern {
@@ -329,7 +325,7 @@ impl NodePattern {
     pub const fn new(
         alias: VarId,
         labels: Vec<Rc<String>>,
-        attrs: DynTree<ExprIR>,
+        attrs: Rc<DynTree<ExprIR>>,
     ) -> Self {
         Self {
             alias,
@@ -343,7 +339,7 @@ impl NodePattern {
 pub struct RelationshipPattern {
     pub alias: VarId,
     pub types: Vec<Rc<String>>,
-    pub attrs: DynTree<ExprIR>,
+    pub attrs: Rc<DynTree<ExprIR>>,
     pub from: VarId,
     pub to: VarId,
     pub bidirectional: bool,
@@ -386,7 +382,7 @@ impl RelationshipPattern {
     pub const fn new(
         alias: VarId,
         types: Vec<Rc<String>>,
-        attrs: DynTree<ExprIR>,
+        attrs: Rc<DynTree<ExprIR>>,
         from: VarId,
         to: VarId,
         bidirectional: bool,
