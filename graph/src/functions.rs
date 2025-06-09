@@ -124,7 +124,8 @@ impl GraphFn {
         }
     }
 
-    pub fn is_aggregate(&self) -> bool {
+    #[must_use]
+    pub const fn is_aggregate(&self) -> bool {
         matches!(self.fn_type, FnType::Aggregation(_))
     }
 
@@ -277,10 +278,7 @@ impl Functions {
     ) -> bool {
         self.functions
             .get(name)
-            .is_some_and(|graph_fn| match graph_fn.fn_type {
-                FnType::Aggregation(_) => true,
-                _ => false,
-            })
+            .is_some_and(|graph_fn| matches!(graph_fn.fn_type, FnType::Aggregation(_)))
     }
 }
 
