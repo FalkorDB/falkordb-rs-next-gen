@@ -937,12 +937,12 @@ impl<'a> Runtime<'a> {
         node_pattern: &'a NodePattern,
         vars: Env,
     ) -> Box<dyn Iterator<Item = Result<Env, String>> + '_> {
+        let attrs = self
+            .run_expr(node_pattern.attrs.root(), &vars, false)
+            .unwrap();
         let iter = self.g.borrow().get_nodes(&node_pattern.labels);
         Box::new(iter.filter_map(move |(v, _)| {
             let mut vars = vars.clone();
-            let attrs = self
-                .run_expr(node_pattern.attrs.root(), &vars, false)
-                .unwrap();
             if let Value::Map(attrs) = &*attrs {
                 if !attrs.is_empty() {
                     let g = self.g.borrow();
