@@ -4,6 +4,7 @@ use crate::ast::{
 use crate::cypher::Token::RParen;
 use crate::functions::{FnType, get_functions};
 use crate::tree;
+use crate::value::RcValue;
 use falkordb_macro::parse_binary_expr;
 use hashbrown::HashMap;
 use orx_tree::{DynTree, NodeRef};
@@ -775,30 +776,24 @@ impl<'a> Parser<'a> {
         } else {
             children.push(self.parse_expr()?);
         }
-        let mut params = Vec::new();
+        let mut conditions = vec![];
         while optional_match_token!(self.lexer => When) {
-            let when = self.parse_expr()?;
+            conditions.push(self.parse_expr()?);
             match_token!(self.lexer => Then);
-            let then = self.parse_expr()?;
-            params.push(when);
-            params.push(then);
+            conditions.push(self.parse_expr()?);
         }
-        if optional_match_token!(self.lexer => Else) {
-            let else_ = self.parse_expr()?;
-            if children.len() == 1 {
-                params.push(children[0].clone());
-            } else {
-                params.push(tree!(ExprIR::Bool(true)));
-            }
-            params.push(else_);
-        }
-        match_token!(self.lexer => End);
-        if params.is_empty() {
+        if conditions.is_empty() {
             return Err(self.lexer.format_error("Invalid input"));
         }
-        children.push(tree!(ExprIR::List ; params));
+        children.push(tree!(ExprIR::List ; conditions));
+        if optional_match_token!(self.lexer => Else) {
+            children.push(self.parse_expr()?);
+        } else {
+            children.push(tree!(ExprIR::Null));
+        }
+        match_token!(self.lexer => End);
         Ok(tree!(
-            ExprIR::FuncInvocation(String::from("case"), FnType::Internal); children
+            ExprIR::FuncInvocation(get_functions().get("case", &FnType::Internal).unwrap() ); children
         ))
     }
 
@@ -857,15 +852,20 @@ impl<'a> Parser<'a> {
                 if self.lexer.current() == Token::LParen {
                     self.lexer.next();
 
-                    let fn_type_opt = get_functions().is_aggregate(&namespace_and_function);
-                    if let Some(FnType::Aggregation(default_value)) = fn_type_opt {
+                    let func = get_functions()
+                        .get(&namespace_and_function, &FnType::Function)
+                        .or_else(|| {
+                            get_functions().get(
+                                &namespace_and_function,
+                                &FnType::Aggregation(RcValue::null()),
+                            )
+                        })
+                        .unwrap();
+                    if func.is_aggregate() {
                         if optional_match_token!(self.lexer, Star) {
                             match_token!(self.lexer, RParen);
                             return Ok(tree!(
-                                ExprIR::FuncInvocation(
-                                    namespace_and_function,
-                                    FnType::Aggregation(default_value)
-                                ),
+                                ExprIR::FuncInvocation(func),
                                 tree!(ExprIR::Var(self.create_var(None)))
                             ));
                         }
@@ -874,16 +874,12 @@ impl<'a> Parser<'a> {
                             ExpressionListType::ZeroOrMoreClosedBy(RParen),
                         )?;
                         args.push(tree!(ExprIR::Var(self.create_var(None))));
-                        return Ok(
-                            tree!(ExprIR::FuncInvocation(namespace_and_function,FnType::Aggregation(default_value.clone())); args),
-                        );
+                        return Ok(tree!(ExprIR::FuncInvocation(func); args));
                     }
 
                     let args =
                         self.parse_expression_list(ExpressionListType::ZeroOrMoreClosedBy(RParen))?;
-                    return Ok(
-                        tree!(ExprIR::FuncInvocation(namespace_and_function, FnType::Function); args),
-                    );
+                    return Ok(tree!(ExprIR::FuncInvocation(func); args));
                 }
                 self.lexer.set_pos(pos);
                 Ok(tree!(ExprIR::Var(self.create_var(Some(ident)))))
@@ -943,7 +939,7 @@ impl<'a> Parser<'a> {
             self.lexer.next();
             let ident = self.parse_ident()?;
             expr = tree!(
-                ExprIR::FuncInvocation(String::from("property"), FnType::Internal),
+                ExprIR::FuncInvocation(get_functions().get("property", &FnType::Internal).unwrap()),
                 expr,
                 tree!(ExprIR::String(ident))
             );
@@ -963,9 +959,9 @@ impl<'a> Parser<'a> {
             match_token!(self.lexer, RBrace);
             lhs = tree!(
                 ExprIR::GetElements,
-                lhs.clone(),
+                lhs,
                 from.unwrap_or_else(|_| tree!(ExprIR::Integer(0))),
-                to.unwrap_or_else(|_| tree!(ExprIR::Length, lhs))
+                to.unwrap_or_else(|_| tree!(ExprIR::Integer(i64::MAX)))
             );
         } else {
             match_token!(self.lexer, RBrace);
@@ -1016,7 +1012,11 @@ impl<'a> Parser<'a> {
                 .map(|l| tree!(ExprIR::String(l)))
                 .collect::<Vec<_>>());
             return Ok(tree!(
-                ExprIR::FuncInvocation(String::from("node_has_labels"), FnType::Internal),
+                ExprIR::FuncInvocation(
+                    get_functions()
+                        .get("node_has_labels", &FnType::Internal)
+                        .unwrap()
+                ),
                 res.pop().unwrap(),
                 labels
             ));
@@ -1074,7 +1074,11 @@ impl<'a> Parser<'a> {
                     let rhs = self.parse_add_sub_expr()?;
                     let lhs = vec.pop().unwrap();
                     vec.push(tree!(
-                        ExprIR::FuncInvocation(String::from("starts_with"), FnType::Internal),
+                        ExprIR::FuncInvocation(
+                            get_functions()
+                                .get("starts_with", &FnType::Internal)
+                                .unwrap()
+                        ),
                         lhs,
                         rhs
                     ));
@@ -1085,7 +1089,9 @@ impl<'a> Parser<'a> {
                     let rhs = self.parse_add_sub_expr()?;
                     let lhs = vec.pop().unwrap();
                     vec.push(tree!(
-                        ExprIR::FuncInvocation(String::from("ends_with"), FnType::Internal),
+                        ExprIR::FuncInvocation(
+                            get_functions().get("ends_with", &FnType::Internal).unwrap()
+                        ),
                         lhs,
                         rhs
                     ));
@@ -1095,7 +1101,9 @@ impl<'a> Parser<'a> {
                     let rhs = self.parse_add_sub_expr()?;
                     let lhs = vec.pop().unwrap();
                     vec.push(tree!(
-                        ExprIR::FuncInvocation(String::from("contains"), FnType::Internal),
+                        ExprIR::FuncInvocation(
+                            get_functions().get("contains", &FnType::Internal).unwrap()
+                        ),
                         lhs,
                         rhs
                     ));
@@ -1105,7 +1113,11 @@ impl<'a> Parser<'a> {
                     let rhs = self.parse_add_sub_expr()?;
                     let lhs = vec.pop().unwrap();
                     vec.push(tree!(
-                        ExprIR::FuncInvocation(String::from("regex_matches"), FnType::Internal),
+                        ExprIR::FuncInvocation(
+                            get_functions()
+                                .get("regex_matches", &FnType::Internal)
+                                .unwrap()
+                        ),
                         lhs,
                         rhs
                     ));
@@ -1116,7 +1128,9 @@ impl<'a> Parser<'a> {
                     match_token!(self.lexer => Null);
                     let lhs = vec.pop().unwrap();
                     vec.push(tree!(
-                        ExprIR::FuncInvocation(String::from("is_null"), FnType::Internal),
+                        ExprIR::FuncInvocation(
+                            get_functions().get("is_null", &FnType::Internal).unwrap()
+                        ),
                         is_not,
                         lhs
                     ));
@@ -1307,7 +1321,7 @@ impl<'a> Parser<'a> {
             self.parse_map()?
         };
         match_token!(self.lexer, RParen);
-        Ok(NodePattern::new(alias, labels, attrs))
+        Ok(NodePattern::new(alias, labels, Rc::new(attrs)))
     }
 
     fn parse_relationship_pattern(
@@ -1372,14 +1386,24 @@ impl<'a> Parser<'a> {
                         .lexer
                         .format_error("Only directed relationships are supported in CREATE"));
                 }
-                RelationshipPattern::new(alias, types, attrs, src, dst.alias.clone(), true)
+                RelationshipPattern::new(alias, types, Rc::new(attrs), src, dst.alias.clone(), true)
             }
-            (true, false) => {
-                RelationshipPattern::new(alias, types, attrs, dst.alias.clone(), src, false)
-            }
-            (false, true) => {
-                RelationshipPattern::new(alias, types, attrs, src, dst.alias.clone(), false)
-            }
+            (true, false) => RelationshipPattern::new(
+                alias,
+                types,
+                Rc::new(attrs),
+                dst.alias.clone(),
+                src,
+                false,
+            ),
+            (false, true) => RelationshipPattern::new(
+                alias,
+                types,
+                Rc::new(attrs),
+                src,
+                dst.alias.clone(),
+                false,
+            ),
         };
         Ok((relationship, dst))
     }

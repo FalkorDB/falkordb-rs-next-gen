@@ -10,13 +10,12 @@ use crate::{
     tree,
 };
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub enum IR {
     Empty,
     Optional(Vec<VarId>),
     Call(Rc<String>, Vec<DynTree<ExprIR>>),
     Unwind(DynTree<ExprIR>, VarId),
-    UnwindRange(DynTree<ExprIR>, DynTree<ExprIR>, DynTree<ExprIR>, VarId),
     Create(Pattern),
     Merge(Pattern),
     Delete(Vec<DynTree<ExprIR>>, bool),
@@ -44,9 +43,6 @@ impl Display for IR {
             Self::Call(name, _) => write!(f, "Call({name})"),
             Self::Unwind(_, alias) => {
                 write!(f, "Unwind({})", alias.as_str())
-            }
-            Self::UnwindRange(_, _, _, alias) => {
-                write!(f, "UnwindRange({})", alias.as_str())
             }
             Self::Create(pattern) => write!(f, "Create {pattern}"),
             Self::Merge(pattern) => write!(f, "Merge {pattern}"),
@@ -99,23 +95,6 @@ impl Planner {
             return res;
         }
         tree!(IR::Empty)
-    }
-
-    fn plan_unwind(
-        &self,
-        expr: orx_tree::Tree<Dyn<ExprIR>>,
-        alias: VarId,
-    ) -> orx_tree::Tree<Dyn<IR>> {
-        let root = expr.root();
-        if matches!(root.data(), ExprIR::FuncInvocation(name, _) if name == "range") {
-            let start = root.child(0).clone_as_tree();
-            let end = root.child(1).clone_as_tree();
-            let step = root
-                .get_child(2)
-                .map_or_else(|| tree!(ExprIR::Integer(1)), |v| v.clone_as_tree());
-            return tree!(IR::UnwindRange(start, end, step, alias));
-        }
-        tree!(IR::Unwind(expr, alias))
     }
 
     fn plan_project(
@@ -193,7 +172,7 @@ impl Planner {
                     self.plan_match(pattern)
                 }
             }
-            QueryIR::Unwind(expr, alias) => self.plan_unwind(expr, alias),
+            QueryIR::Unwind(expr, alias) => tree!(IR::Unwind(expr, alias)),
             QueryIR::Merge(pattern) => tree!(IR::Merge(pattern.clone()), self.plan_match(pattern)),
             QueryIR::Where(expr) => tree!(IR::Filter(expr)),
             QueryIR::Create(pattern) => tree!(IR::Create(pattern)),
