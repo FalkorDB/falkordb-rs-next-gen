@@ -1661,11 +1661,6 @@ fn internal_node_has_labels(
 
             Ok(RcValue::bool(all_labels_present))
         }
-        (Some(n), Some(l)) => Err(format!(
-            "Type mismatch: expected Node and Labels Null but was ({}, {})",
-            n.name(),
-            l.name()
-        )),
         _ => unreachable!(),
     }
 }
