@@ -144,11 +144,11 @@ enum ExpressionListType {
 impl ExpressionListType {
     fn is_end_token(
         &self,
-        current_token: Token,
+        current_token: &Token,
     ) -> bool {
         match self {
             Self::OneOrMore => false,
-            Self::ZeroOrMoreClosedBy(token) => *token == current_token,
+            Self::ZeroOrMoreClosedBy(token) => token == current_token,
         }
     }
 }
@@ -642,7 +642,7 @@ impl<'a> Parser<'a> {
         optional: bool,
     ) -> Result<QueryIR, String> {
         Ok(QueryIR::Match(
-            self.parse_pattern(Keyword::Match)?,
+            self.parse_pattern(&Keyword::Match)?,
             optional,
         ))
     }
@@ -655,11 +655,11 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_create_clause(&mut self) -> Result<QueryIR, String> {
-        Ok(QueryIR::Create(self.parse_pattern(Keyword::Create)?))
+        Ok(QueryIR::Create(self.parse_pattern(&Keyword::Create)?))
     }
 
     fn parse_merge_clause(&mut self) -> Result<QueryIR, String> {
-        Ok(QueryIR::Merge(self.parse_pattern(Keyword::Merge)?))
+        Ok(QueryIR::Merge(self.parse_pattern(&Keyword::Merge)?))
     }
 
     fn parse_delete_clause(
@@ -695,7 +695,7 @@ impl<'a> Parser<'a> {
 
     fn parse_pattern(
         &mut self,
-        clause: Keyword,
+        clause: &Keyword,
     ) -> Result<Pattern, String> {
         let mut nodes = Vec::new();
         let mut nodes_alias = HashSet::new();
@@ -706,7 +706,7 @@ impl<'a> Parser<'a> {
                 self.lexer.next();
                 match_token!(self.lexer, Equal);
                 let mut vars = Vec::new();
-                let left = self.parse_node_pattern()?;
+                let left = self.parse_node_pattern(clause)?;
                 let mut left_alias = left.alias.clone();
                 vars.push(left_alias.clone());
                 if nodes_alias.insert(left.alias.clone()) {
@@ -715,7 +715,7 @@ impl<'a> Parser<'a> {
                 loop {
                     if let Token::Dash | Token::LessThan = self.lexer.current() {
                         let (relationship, right) =
-                            self.parse_relationship_pattern(left_alias, &clause)?;
+                            self.parse_relationship_pattern(left_alias, clause)?;
                         vars.push(relationship.alias.clone());
                         vars.push(right.alias.clone());
                         left_alias = right.alias.clone();
@@ -729,7 +729,7 @@ impl<'a> Parser<'a> {
                     }
                 }
             } else {
-                let left = self.parse_node_pattern()?;
+                let left = self.parse_node_pattern(clause)?;
                 let mut left_alias = left.alias.clone();
 
                 if nodes_alias.insert(left.alias.clone()) {
@@ -737,7 +737,7 @@ impl<'a> Parser<'a> {
                 }
                 while let Token::Dash | Token::LessThan = self.lexer.current() {
                     let (relationship, right) =
-                        self.parse_relationship_pattern(left_alias, &clause)?;
+                        self.parse_relationship_pattern(left_alias, clause)?;
                     left_alias = right.alias.clone();
                     relationships.push(relationship);
                     if nodes_alias.insert(right.alias.clone()) {
@@ -746,7 +746,7 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            if clause == Keyword::Merge {
+            if *clause == Keyword::Merge {
                 break;
             }
 
@@ -755,7 +755,7 @@ impl<'a> Parser<'a> {
                     self.lexer.next();
                 }
                 Token::Keyword(token, _) => {
-                    if token == clause {
+                    if token == *clause {
                         self.lexer.next();
                         continue;
                     }
@@ -1205,7 +1205,7 @@ impl<'a> Parser<'a> {
         expression_list_type: ExpressionListType,
     ) -> Result<Vec<DynTree<ExprIR>>, String> {
         let mut exprs = Vec::new();
-        while !expression_list_type.is_end_token(self.lexer.current()) {
+        while !expression_list_type.is_end_token(&self.lexer.current()) {
             exprs.push(self.parse_expr()?);
             match self.lexer.current() {
                 Token::Comma => self.lexer.next(),
@@ -1283,7 +1283,10 @@ impl<'a> Parser<'a> {
         ))
     }
 
-    fn parse_node_pattern(&mut self) -> Result<NodePattern, String> {
+    fn parse_node_pattern(
+        &mut self,
+        clause: &Keyword,
+    ) -> Result<NodePattern, String> {
         match_token!(self.lexer, LParen);
         let alias = if let Token::Ident(id) = self.lexer.current() {
             self.lexer.next();
@@ -1292,7 +1295,17 @@ impl<'a> Parser<'a> {
             self.create_var(None)
         };
         let labels = self.parse_labels()?;
-        let attrs = self.parse_map()?;
+        let attrs = if let Token::Parameter(param) = self.lexer.current() {
+            self.lexer.next();
+            if clause == &Keyword::Match {
+                return Err(self
+                    .lexer
+                    .format_error("Encountered unhandled type in inlined properties."));
+            }
+            tree!(ExprIR::Parameter(param))
+        } else {
+            self.parse_map()?
+        };
         match_token!(self.lexer, RParen);
         Ok(NodePattern::new(alias, labels, attrs))
     }
@@ -1317,7 +1330,33 @@ impl<'a> Parser<'a> {
                 types.push(self.parse_ident()?);
                 optional_match_token!(self.lexer, Pipe);
             }
-            let attrs = self.parse_map()?;
+            let _ = if optional_match_token!(self.lexer, Star) {
+                let start = if let Token::Integer(i) = self.lexer.current() {
+                    self.lexer.next();
+                    Some(i)
+                } else {
+                    None
+                };
+                if optional_match_token!(self.lexer, DotDot) {
+                    let end = if let Token::Integer(i) = self.lexer.current() {
+                        self.lexer.next();
+                        Some(i)
+                    } else {
+                        None
+                    };
+                    Some((start, end))
+                } else {
+                    Some((start, None))
+                }
+            } else {
+                None
+            };
+            let attrs = if let Token::Parameter(param) = self.lexer.current() {
+                self.lexer.next();
+                tree!(ExprIR::Parameter(param))
+            } else {
+                self.parse_map()?
+            };
             match_token!(self.lexer, RBrace);
             (alias, types, attrs)
         } else {
@@ -1325,7 +1364,7 @@ impl<'a> Parser<'a> {
         };
         match_token!(self.lexer, Dash);
         let is_outgoing = optional_match_token!(self.lexer, GreaterThan);
-        let dst = self.parse_node_pattern()?;
+        let dst = self.parse_node_pattern(clause)?;
         let relationship = match (is_incoming, is_outgoing) {
             (true, true) | (false, false) => {
                 if *clause == Keyword::Create {

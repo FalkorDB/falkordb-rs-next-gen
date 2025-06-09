@@ -1,7 +1,7 @@
 use graph::ast::VarId;
 use graph::functions::init_functions;
-use graph::runtime::{ReturnCallback, Runtime};
-use graph::value::Env;
+use graph::runtime::{ResultSummary, ReturnCallback, Runtime};
+use graph::value::{Env, RcValue};
 use graph::{cypher::Parser, graph::Graph, matrix::init, planner::Planner, value::Value};
 #[cfg(feature = "zipkin")]
 use opentelemetry::global;
@@ -20,6 +20,7 @@ use redis_module::{
     RedisString, RedisValue, Status, native_types::RedisType, redis_module,
 };
 use std::cell::RefCell;
+use std::marker::PhantomData;
 use std::os::raw::c_void;
 use std::ptr::null_mut;
 #[cfg(feature = "zipkin")]
@@ -87,33 +88,20 @@ unsafe extern "C" fn my_free(value: *mut c_void) {
     }
 }
 
-fn raw_value_to_redis_value(
+fn compact_value_to_redis_value(
     g: &RefCell<Graph>,
-    mut env: Env,
-    return_names: &Vec<VarId>,
+    r: RcValue,
 ) -> RedisValue {
-    RedisValue::Array(
-        return_names
-            .iter()
-            .map(|v| inner_raw_value_to_redis_value(g, env.take(v).unwrap()))
-            .collect(),
-    )
-}
-
-fn inner_raw_value_to_redis_value(
-    g: &RefCell<Graph>,
-    r: Value,
-) -> RedisValue {
-    match r {
+    match &*r {
         Value::Null => RedisValue::Array(vec![RedisValue::Integer(1), RedisValue::Null]),
         Value::Bool(x) => RedisValue::Array(vec![
             RedisValue::Integer(4),
-            RedisValue::SimpleStringStatic(if x { "true" } else { "false" }),
+            RedisValue::SimpleStringStatic(if *x { "true" } else { "false" }),
         ]),
-        Value::Int(x) => RedisValue::Array(vec![RedisValue::Integer(3), RedisValue::Integer(x)]),
+        Value::Int(x) => RedisValue::Array(vec![RedisValue::Integer(3), RedisValue::Integer(*x)]),
         Value::Float(x) => RedisValue::Array(vec![
             RedisValue::Integer(5),
-            RedisValue::SimpleString(format!("{:.14e}", x)),
+            RedisValue::SimpleString(format!("{x:.14e}")),
         ]),
         Value::String(x) => RedisValue::Array(vec![
             RedisValue::Integer(2),
@@ -123,8 +111,8 @@ fn inner_raw_value_to_redis_value(
             RedisValue::Integer(6),
             RedisValue::Array(
                 values
-                    .into_iter()
-                    .map(|v| inner_raw_value_to_redis_value(g, v))
+                    .iter()
+                    .map(|v| compact_value_to_redis_value(g, v.clone()))
                     .collect(),
             ),
         ]),
@@ -132,16 +120,16 @@ fn inner_raw_value_to_redis_value(
             let mut vec = vec![];
             for (key, value) in map {
                 vec.push(RedisValue::BulkString(key.to_string()));
-                vec.push(inner_raw_value_to_redis_value(g, value));
+                vec.push(compact_value_to_redis_value(g, value.clone()));
             }
             RedisValue::Array(vec![RedisValue::Integer(10), RedisValue::Array(vec)])
         }
         Value::Node(id) => {
             let mut props = Vec::new();
-            for (key, value) in g.borrow().get_node_properties(id) {
+            for (key, value) in g.borrow().get_node_properties(*id) {
                 let mut prop = Vec::new();
                 prop.push(RedisValue::Integer(*key as _));
-                if let RedisValue::Array(mut v) = inner_raw_value_to_redis_value(g, value.clone()) {
+                if let RedisValue::Array(mut v) = compact_value_to_redis_value(g, value.clone()) {
                     prop.append(&mut v);
                 }
                 props.push(RedisValue::Array(prop));
@@ -149,10 +137,10 @@ fn inner_raw_value_to_redis_value(
             RedisValue::Array(vec![
                 RedisValue::Integer(8),
                 RedisValue::Array(vec![
-                    RedisValue::Integer(id as _),
+                    RedisValue::Integer(*id as _),
                     RedisValue::Array(
                         g.borrow()
-                            .get_node_label_ids(id)
+                            .get_node_label_ids(*id)
                             .map(|l| RedisValue::Integer(l as _))
                             .collect(),
                     ),
@@ -162,10 +150,10 @@ fn inner_raw_value_to_redis_value(
         }
         Value::Relationship(id, from, to) => {
             let mut props = Vec::new();
-            for (key, value) in g.borrow().get_relationship_properties(id) {
+            for (key, value) in g.borrow().get_relationship_properties(*id) {
                 let mut prop = Vec::new();
                 prop.push(RedisValue::Integer(*key as _));
-                if let RedisValue::Array(mut v) = inner_raw_value_to_redis_value(g, value.clone()) {
+                if let RedisValue::Array(mut v) = compact_value_to_redis_value(g, value.clone()) {
                     prop.append(&mut v);
                 }
                 props.push(RedisValue::Array(prop));
@@ -173,10 +161,10 @@ fn inner_raw_value_to_redis_value(
             RedisValue::Array(vec![
                 RedisValue::Integer(7),
                 RedisValue::Array(vec![
-                    RedisValue::Integer(id as _),
-                    RedisValue::Integer(g.borrow().get_relationship_type_id(id) as _),
-                    RedisValue::Integer(from as _),
-                    RedisValue::Integer(to as _),
+                    RedisValue::Integer(*id as _),
+                    RedisValue::Integer(g.borrow().get_relationship_type_id(*id) as _),
+                    RedisValue::Integer(*from as _),
+                    RedisValue::Integer(*to as _),
                     RedisValue::Array(props),
                 ]),
             ])
@@ -185,7 +173,7 @@ fn inner_raw_value_to_redis_value(
             let mut nodes = Vec::new();
             let mut rels = Vec::new();
             for node in path {
-                match node {
+                match **node {
                     Value::Node(id) => nodes.push(RedisValue::Integer(id as _)),
                     Value::Relationship(id, from, to) => {
                         rels.push(RedisValue::Array(vec![
@@ -205,14 +193,103 @@ fn inner_raw_value_to_redis_value(
     }
 }
 
-struct RedisValuesCollector {
-    res: RefCell<Vec<RedisValue>>,
+fn verbose_value_to_redis_value(
+    g: &RefCell<Graph>,
+    r: RcValue,
+) -> RedisValue {
+    match &*r {
+        Value::Null => RedisValue::Null,
+        Value::Bool(x) => RedisValue::Bool(*x),
+        Value::Int(x) => RedisValue::Integer(*x),
+        Value::Float(x) => RedisValue::SimpleString(format!("{x:.14e}")),
+        Value::String(x) => RedisValue::BulkString(x.to_string()),
+        Value::List(values) => RedisValue::Array(
+            values
+                .iter()
+                .map(|v| verbose_value_to_redis_value(g, v.clone()))
+                .collect(),
+        ),
+        Value::Map(map) => {
+            let mut vec = vec![];
+            for (key, value) in map {
+                vec.push(RedisValue::BulkString(key.to_string()));
+                vec.push(verbose_value_to_redis_value(g, value.clone()));
+            }
+            RedisValue::Array(vec)
+        }
+        Value::Node(id) => {
+            let mut props = Vec::new();
+            for (key, value) in g.borrow().get_node_properties(*id) {
+                let mut prop = Vec::new();
+                prop.push(RedisValue::Integer(*key as _));
+                if let RedisValue::Array(mut v) = verbose_value_to_redis_value(g, value.clone()) {
+                    prop.append(&mut v);
+                }
+                props.push(RedisValue::Array(prop));
+            }
+            RedisValue::Array(vec![
+                RedisValue::Integer(*id as _),
+                RedisValue::Array(
+                    g.borrow()
+                        .get_node_label_ids(*id)
+                        .map(|l| RedisValue::BulkString(g.borrow().get_label_by_id(l).to_string()))
+                        .collect(),
+                ),
+                RedisValue::Array(props),
+            ])
+        }
+        Value::Relationship(id, from, to) => {
+            let mut props = Vec::new();
+            for (key, value) in g.borrow().get_relationship_properties(*id) {
+                let mut prop = Vec::new();
+                prop.push(RedisValue::Integer(*key as _));
+                if let RedisValue::Array(mut v) = verbose_value_to_redis_value(g, value.clone()) {
+                    prop.append(&mut v);
+                }
+                props.push(RedisValue::Array(prop));
+            }
+            RedisValue::Array(vec![
+                RedisValue::Integer(*id as _),
+                RedisValue::Integer(g.borrow().get_relationship_type_id(*id) as _),
+                RedisValue::Integer(*from as _),
+                RedisValue::Integer(*to as _),
+                RedisValue::Array(props),
+            ])
+        }
+        Value::Path(path) => {
+            let mut nodes = Vec::new();
+            let mut rels = Vec::new();
+            for node in path {
+                match **node {
+                    Value::Node(id) => nodes.push(RedisValue::Integer(id as _)),
+                    Value::Relationship(id, from, to) => {
+                        rels.push(RedisValue::Array(vec![
+                            RedisValue::Integer(id as _),
+                            RedisValue::Integer(from as _),
+                            RedisValue::Integer(to as _),
+                        ]));
+                    }
+                    _ => unreachable!("Path should only contain nodes and relationships"),
+                }
+            }
+            RedisValue::Array(vec![RedisValue::Array(nodes), RedisValue::Array(rels)])
+        }
+    }
 }
 
-impl RedisValuesCollector {
+struct RedisValuesCollector<T> {
+    res: RefCell<Vec<RedisValue>>,
+    phantom: PhantomData<T>,
+}
+
+pub struct Compact;
+pub struct Verbose;
+
+impl<T> RedisValuesCollector<T> {
     const fn new() -> Self {
         Self {
             res: RefCell::new(Vec::new()),
+            phantom: PhantomData,
         }
     }
 
@@ -221,16 +298,37 @@ impl RedisValuesCollector {
     }
 }
 
-impl ReturnCallback for RedisValuesCollector {
+impl ReturnCallback for RedisValuesCollector<Compact> {
     fn return_value(
         &self,
         graph: &RefCell<Graph>,
         env: Env,
         return_names: &Vec<VarId>,
     ) {
-        self.res
-            .borrow_mut()
-            .push(raw_value_to_redis_value(graph, env, return_names));
+        self.res.borrow_mut().push(
+            return_names
+                .iter()
+                .map(|v| compact_value_to_redis_value(graph, env.get(v).unwrap()))
+                .collect::<Vec<RedisValue>>()
+                .into(),
+        );
+    }
+}
+
+impl ReturnCallback for RedisValuesCollector<Verbose> {
+    fn return_value(
+        &self,
+        graph: &RefCell<Graph>,
+        env: Env,
+        return_names: &Vec<VarId>,
+    ) {
+        self.res.borrow_mut().push(
+            return_names
+                .iter()
+                .map(|v| verbose_value_to_redis_value(graph, env.get(v).unwrap()))
+                .collect::<Vec<RedisValue>>()
+                .into(),
+        );
     }
 }
 
@@ -266,73 +364,82 @@ fn graph_delete(
 fn query_mut(
     graph: &RefCell<Graph>,
     query: &str,
+    compact: bool,
 ) -> Result<RedisValue, RedisError> {
     // Create a child span for parsing and execution
     tracing::debug_span!("query_execution", query = %query).in_scope(|| {
-        let collector = RedisValuesCollector::new();
         let (plan, parameters, _, _) =
             graph.borrow().get_plan(query).map_err(RedisError::String)?;
         let mut runtime = Runtime::new(graph, parameters, true, plan);
-        runtime
-            .query(&collector)
-            .map(|summary| {
-                let mut stats = vec![];
-                if summary.labels_added > 0 {
-                    stats.push(RedisValue::SimpleString(format!(
-                        "Labels added: {}",
-                        summary.labels_added
-                    )));
-                }
-                if summary.nodes_created > 0 {
-                    stats.push(RedisValue::SimpleString(format!(
-                        "Nodes created: {}",
-                        summary.nodes_created
-                    )));
-                }
-                if summary.nodes_deleted > 0 {
-                    stats.push(RedisValue::SimpleString(format!(
-                        "Nodes deleted: {}",
-                        summary.nodes_deleted
-                    )));
-                }
-                if summary.properties_set > 0 {
-                    stats.push(RedisValue::SimpleString(format!(
-                        "Properties set: {}",
-                        summary.properties_set
-                    )));
-                }
-                if summary.relationships_created > 0 {
-                    stats.push(RedisValue::SimpleString(format!(
-                        "Relationships created: {}",
-                        summary.relationships_created
-                    )));
-                }
-                if summary.relationships_deleted > 0 {
-                    stats.push(RedisValue::SimpleString(format!(
-                        "Relationships deleted: {}",
-                        summary.relationships_deleted
-                    )));
-                }
-                let columns = RedisValue::Array(
-                    summary
+        if compact {
+            runtime
+                .query(RedisValuesCollector::<Compact>::new())
+                .map(|summary| {
+                    let stats = stats_to_redis_value(&summary);
+                    let columns = summary
                         .return_names
                         .into_iter()
-                        .map(|n| {
-                            RedisValue::Array(vec![
-                                RedisValue::Integer(1),
-                                RedisValue::BulkString(n),
-                            ])
-                        })
-                        .collect(),
-                );
-                RedisValue::Array(vec![
-                    columns,
-                    RedisValue::Array(collector.take()),
-                    RedisValue::Array(stats),
-                ])
-            })
-            .map_err(RedisError::String)
+                        .map(|n| vec![RedisValue::Integer(1), RedisValue::BulkString(n)].into())
+                        .collect();
+                    vec![columns, summary.callback.take(), stats].into()
+                })
+                .map_err(RedisError::String)
+        } else {
+            runtime
+                .query(RedisValuesCollector::<Verbose>::new())
+                .map(|summary| {
+                    let stats = stats_to_redis_value(&summary);
+                    let columns = summary
+                        .return_names
+                        .into_iter()
+                        .map(|n| vec![RedisValue::Integer(1), RedisValue::BulkString(n)].into())
+                        .collect();
+                    vec![columns, summary.callback.take(), stats].into()
+                })
+                .map_err(RedisError::String)
+        }
     })
+}
+
+fn stats_to_redis_value<CB: ReturnCallback>(summary: &ResultSummary<CB>) -> Vec<RedisValue> {
+    let mut stats = vec![];
+    if summary.labels_added > 0 {
+        stats.push(RedisValue::SimpleString(format!(
+            "Labels added: {}",
+            summary.labels_added
+        )));
+    }
+    if summary.nodes_created > 0 {
+        stats.push(RedisValue::SimpleString(format!(
+            "Nodes created: {}",
+            summary.nodes_created
+        )));
+    }
+    if summary.nodes_deleted > 0 {
+        stats.push(RedisValue::SimpleString(format!(
+            "Nodes deleted: {}",
+            summary.nodes_deleted
+        )));
+    }
+    if summary.properties_set > 0 {
+        stats.push(RedisValue::SimpleString(format!(
+            "Properties set: {}",
+            summary.properties_set
+        )));
+    }
+    if summary.relationships_created > 0 {
+        stats.push(RedisValue::SimpleString(format!(
+            "Relationships created: {}",
+            summary.relationships_created
+        )));
+    }
+    if summary.relationships_deleted > 0 {
+        stats.push(RedisValue::SimpleString(format!(
+            "Relationships deleted: {}",
+            summary.relationships_deleted
+        )));
+    }
+    stats
 }
 
 fn graph_query(
@@ -342,14 +449,14 @@ fn graph_query(
     let mut args = args.into_iter().skip(1);
     let key = args.next_arg()?;
     let query = args.next_str()?;
-
+    let compact = args.next_str().is_ok_and(|arg| arg == "--compact");
     let key = ctx.open_key_writable(&key);
 
     if let Some(graph) = key.get_value::<RefCell<Graph>>(&GRAPH_TYPE)? {
-        query_mut(graph, query)
+        query_mut(graph, query, compact)
     } else {
         let value = RefCell::new(Graph::new(16384, 16384));
-        let res = query_mut(&value, query);
+        let res = query_mut(&value, query, compact);
         key.set_value(&GRAPH_TYPE, value)?;
         res
     }
@@ -371,6 +478,7 @@ fn graph_ro_query(
     let mut args = args.into_iter().skip(1);
     let key = args.next_arg()?;
     let query = args.next_str()?;
+    let compact = args.next_str().is_ok_and(|arg| arg == "--compact");
 
     let key = ctx.open_key(&key);
 
@@ -379,28 +487,33 @@ fn graph_ro_query(
         // If the key does not exist, we return an error
         EMPTY_KEY_ERR,
         |graph| {
-            let collector = RedisValuesCollector::new();
             let (plan, parameters, _, _) =
                 graph.borrow().get_plan(query).map_err(RedisError::String)?;
             let mut runtime = Runtime::new(graph, parameters, false, plan);
-            match runtime.query(&collector) {
-                Ok(summary) => Ok(RedisValue::Array(vec![
-                    RedisValue::Array(
-                        summary
+            if compact {
+                runtime
+                    .query(RedisValuesCollector::<Compact>::new())
+                    .map(|summary| {
+                        let columns = summary
                             .return_names
                             .into_iter()
-                            .map(|n| {
-                                RedisValue::Array(vec![
-                                    RedisValue::Integer(1),
-                                    RedisValue::BulkString(n),
-                                ])
-                            })
-                            .collect(),
-                    ),
-                    RedisValue::Array(collector.take()),
-                    RedisValue::Array(vec![]),
-                ])),
-                Err(err) => Err(RedisError::String(err)),
+                            .map(|n| vec![RedisValue::Integer(1), RedisValue::BulkString(n)].into())
+                            .collect();
+                        vec![columns, summary.callback.take(), vec![]].into()
+                    })
+                    .map_err(RedisError::String)
+            } else {
+                runtime
+                    .query(RedisValuesCollector::<Verbose>::new())
+                    .map(|summary| {
+                        let columns = summary
+                            .return_names
+                            .into_iter()
+                            .map(|n| vec![RedisValue::Integer(1), RedisValue::BulkString(n)].into())
+                            .collect();
+                        vec![columns, summary.callback.take(), vec![]].into()
+                    })
+                    .map_err(RedisError::String)
             }
         },
     )
@@ -531,7 +644,7 @@ fn graph_init(
         );
     }
     match init_functions() {
-        Ok(_) => Status::Ok,
+        Ok(()) => Status::Ok,
         Err(_) => Status::Err,
     }
 }

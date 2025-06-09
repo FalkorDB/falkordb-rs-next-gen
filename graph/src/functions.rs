@@ -1,14 +1,14 @@
 #![allow(clippy::unnecessary_wraps)]
 
 use crate::runtime::Runtime;
-use crate::value::Value;
+use crate::value::{RcValue, Value};
 use hashbrown::{HashMap, HashSet};
 use rand::Rng;
 use std::fmt::Display;
 use std::rc::Rc;
 use std::sync::OnceLock;
 
-type RuntimeFn = fn(&Runtime, Vec<Value>) -> Result<Value, String>;
+type RuntimeFn = fn(&Runtime, Vec<RcValue>) -> Result<RcValue, String>;
 
 #[derive(Eq, PartialEq, Debug, Clone)]
 pub enum FnType {
@@ -127,7 +127,7 @@ impl GraphFn {
 impl GraphFn {
     pub fn validate_args_type(
         &self,
-        args: &Vec<Value>,
+        args: &[RcValue],
     ) -> Result<(), String> {
         match &self.args_type {
             FnArguments::Fixed(args_type) => {
@@ -740,249 +740,228 @@ pub fn get_functions() -> &'static Functions {
 
 fn property(
     runtime: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
     let mut iter = args.into_iter();
-    match (iter.next(), iter.next(), iter.next()) {
-        (Some(Value::Node(node_id)), Some(Value::String(property)), None) => {
-            if let Some(node) = runtime.pending.borrow().created_nodes.get(&node_id) {
-                if let Some(value) = node.1.get(&property) {
+    match (iter.next().as_deref(), iter.next().as_deref()) {
+        (Some(Value::Node(node_id)), Some(Value::String(property))) => {
+            if let Some(node) = runtime.pending.borrow().created_nodes.get(node_id) {
+                if let Some(value) = node.1.get(property) {
                     return Ok(value.clone());
                 }
             }
-            runtime.g.borrow().get_node_property_id(&property).map_or(
-                Ok(Value::Null),
+            runtime.g.borrow().get_node_property_id(property).map_or(
+                Ok(RcValue::null()),
                 |property_id| {
                     runtime
                         .g
                         .borrow()
-                        .get_node_property(node_id, property_id)
-                        .map_or(Ok(Value::Null), Ok)
+                        .get_node_property(*node_id, property_id)
+                        .map_or(Ok(RcValue::null()), Ok)
                 },
             )
         }
-        (Some(Value::Relationship(id, _, _)), Some(Value::String(property)), None) => {
-            if let Some(rel) = runtime.pending.borrow().created_relationships.get(&id) {
-                if let Some(value) = rel.3.get(&property) {
+        (Some(Value::Relationship(id, _, _)), Some(Value::String(property))) => {
+            if let Some(rel) = runtime.pending.borrow().created_relationships.get(id) {
+                if let Some(value) = rel.3.get(property) {
                     return Ok(value.clone());
                 }
             }
             runtime
                 .g
                 .borrow()
-                .get_relationship_property_id(&property)
-                .map_or(Ok(Value::Null), |property_id| {
+                .get_relationship_property_id(property)
+                .map_or(Ok(RcValue::null()), |property_id| {
                     runtime
                         .g
                         .borrow()
-                        .get_relationship_property(id, property_id)
-                        .map_or(Ok(Value::Null), Ok)
+                        .get_relationship_property(*id, property_id)
+                        .map_or(Ok(RcValue::null()), Ok)
                 })
         }
-        (Some(Value::Map(map)), Some(Value::String(property)), None) => {
-            Ok(map.get(&property).unwrap_or(&Value::Null).clone())
+        (Some(Value::Map(map)), Some(Value::String(property))) => {
+            Ok(map.get(property).cloned().unwrap_or_else(RcValue::null))
         }
-        (Some(Value::Null), Some(Value::String(_)), None) => Ok(Value::Null),
+        (Some(Value::Null), Some(Value::String(_))) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
 
 fn labels(
     runtime: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
-    let mut iter = args.into_iter();
-    match (iter.next(), iter.next()) {
-        (Some(Value::Node(node_id)), None) => {
-            if runtime
-                .pending
-                .borrow()
-                .created_nodes
-                .contains_key(&node_id)
-            {
-                return Ok(Value::List(
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
+    match args.into_iter().next().as_deref() {
+        Some(Value::Node(node_id)) => {
+            if runtime.pending.borrow().created_nodes.contains_key(node_id) {
+                return Ok(RcValue::list(
                     runtime
                         .pending
                         .borrow()
                         .created_nodes
-                        .get(&node_id)
+                        .get(node_id)
                         .unwrap()
                         .0
                         .iter()
-                        .map(|label| Value::String(label.clone()))
+                        .map(|label| RcValue::string(label.clone()))
                         .collect(),
                 ));
             }
-            Ok(Value::List(
+            Ok(RcValue::list(
                 runtime
                     .g
                     .borrow()
-                    .get_node_label_ids(node_id)
-                    .map(|label_id| Value::String(runtime.g.borrow().get_label_by_id(label_id)))
+                    .get_node_label_ids(*node_id)
+                    .map(|label_id| RcValue::string(runtime.g.borrow().get_label_by_id(label_id)))
                     .collect(),
             ))
         }
-        (Some(Value::Null), None) => Ok(Value::Null),
+        Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
 
 fn start_node(
     _runtime: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
     let mut iter = args.into_iter();
-    match (iter.next(), iter.next()) {
-        (Some(Value::Relationship(_, src, _)), None) => Ok(Value::Node(src)),
+    match iter.next().as_deref() {
+        Some(Value::Relationship(_, src, _)) => Ok(RcValue::node(*src)),
         _ => unreachable!(),
     }
 }
 
 fn end_node(
     _runtime: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
     let mut iter = args.into_iter();
-    match (iter.next(), iter.next()) {
-        (Some(Value::Relationship(_, _, dest)), None) => Ok(Value::Node(dest)),
+    match iter.next().as_deref() {
+        Some(Value::Relationship(_, _, dest)) => Ok(RcValue::node(*dest)),
         _ => unreachable!(),
     }
 }
 
 fn collect(
     _: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
     let mut iter = args.into_iter();
-    match (iter.next(), iter.next(), iter.next()) {
-        (Some(a), Some(Value::Null), None) => {
-            return Ok(Value::List(vec![a]));
-        }
-        (Some(Value::Null), Some(Value::List(a)), None) => {
-            return Ok(Value::List(a));
-        }
-        (Some(a), Some(Value::List(mut l)), None) => {
+    match (iter.next(), iter.next().as_deref()) {
+        (Some(a), Some(Value::Null)) => Ok(RcValue::list(vec![a])),
+        (Some(a), Some(Value::List(l))) => {
+            let mut l = l.clone();
+            if *a == Value::Null {
+                return Ok(RcValue::list(l));
+            }
             l.push(a);
-            return Ok(Value::List(l));
+            Ok(RcValue::list(l))
         }
-        _ => (),
+        _ => unreachable!(),
     }
-    Ok(Value::Null)
 }
 
 fn count(
     _: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
     let mut iter = args.into_iter();
-    match (iter.next(), iter.next(), iter.next()) {
-        (Some(_), Some(Value::Null), None) => {
-            return Ok(Value::Int(1));
-        }
-        (Some(Value::Null), Some(a), None) => {
-            return Ok(a);
-        }
-        (Some(_), Some(Value::Int(a)), None) => {
-            return Ok(Value::Int(a + 1));
-        }
-        (Some(Value::Null), None, None) => {
-            return Ok(Value::Int(1));
-        }
-        (Some(Value::Int(a)), None, None) => {
-            return Ok(Value::Int(a + 1));
-        }
-        _ => (),
+    let first = iter.next();
+    let sec = iter.next();
+    match (first.as_deref(), sec.as_deref()) {
+        (Some(_), Some(Value::Null)) | (Some(Value::Null), None) => Ok(RcValue::int(1)),
+        (Some(Value::Null), Some(_)) => Ok(sec.unwrap()),
+        (Some(_), Some(Value::Int(a))) | (Some(Value::Int(a)), None) => Ok(RcValue::int(a + 1)),
+        _ => unreachable!(),
     }
-    Ok(Value::Null)
 }
 
 fn sum(
     _: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
     let mut iter = args.into_iter();
-    match (iter.next(), iter.next(), iter.next()) {
-        (Some(Value::Null), Some(a), None) | (Some(a), Some(Value::Null), None) => {
-            return Ok(a);
+    match (iter.next().as_deref(), iter.next().as_deref()) {
+        (Some(Value::Int(a)), Some(Value::Null)) | (Some(Value::Null), Some(Value::Int(a))) => {
+            Ok(RcValue::float(*a as f64))
         }
-        (Some(Value::Int(a)), Some(Value::Int(b)), None) => {
-            return Ok(Value::Float((a + b) as f64));
+        (Some(Value::Float(a)), Some(Value::Null)) | (Some(Value::Null), Some(Value::Float(a))) => {
+            Ok(RcValue::float(*a))
         }
-        (Some(Value::Float(a)), Some(Value::Float(b)), None) => {
-            return Ok(Value::Float(a + b));
-        }
-        (Some(Value::Int(a)), Some(Value::Float(b)), None) => {
-            return Ok(Value::Float(a as f64 + b));
-        }
-        (Some(Value::Float(a)), Some(Value::Int(b)), None) => {
-            return Ok(Value::Float(a + b as f64));
-        }
-        _ => (),
+        (Some(Value::Int(a)), Some(Value::Int(b))) => Ok(RcValue::float((a + b) as f64)),
+        (Some(Value::Float(a)), Some(Value::Float(b))) => Ok(RcValue::float(a + b)),
+        (Some(Value::Int(a)), Some(Value::Float(b))) => Ok(RcValue::float(*a as f64 + b)),
+        (Some(Value::Float(a)), Some(Value::Int(b))) => Ok(RcValue::float(a + *b as f64)),
+        _ => unreachable!(),
     }
-    Ok(Value::Null)
 }
 
 fn max(
     _: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
-    match args.as_slice() {
-        [a, Value::Null] => return Ok(a.clone()),
-        [a, b] => {
-            if a.partial_cmp(b) == Some(std::cmp::Ordering::Greater) {
-                return Ok(a.clone());
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
+    let mut iter = args.into_iter();
+    match (iter.next(), iter.next()) {
+        (Some(a), Some(b)) => {
+            if *b == Value::Null {
+                return Ok(a);
             }
-            return Ok(b.clone());
+            if a.partial_cmp(&b) == Some(std::cmp::Ordering::Greater) {
+                return Ok(a);
+            }
+            Ok(b)
         }
-        _ => (),
+        _ => unreachable!(),
     }
-    Ok(Value::Null)
 }
 
 fn min(
     _: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
-    match args.as_slice() {
-        [a, Value::Null] => return Ok(a.clone()),
-        [a, b] => {
-            if a.partial_cmp(b) == Some(std::cmp::Ordering::Less) {
-                return Ok(a.clone());
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
+    let mut iter = args.into_iter();
+    match (iter.next(), iter.next()) {
+        (Some(a), Some(b)) => {
+            if *b == Value::Null {
+                return Ok(a);
             }
-            return Ok(b.clone());
+            if a.partial_cmp(&b) == Some(std::cmp::Ordering::Less) {
+                return Ok(a);
+            }
+            Ok(b)
         }
-        _ => (),
+        _ => unreachable!(),
     }
-    Ok(Value::Null)
 }
 
 fn value_to_integer(
     _runtime: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
-    match args.into_iter().next() {
-        Some(Value::String(s)) => s.parse::<i64>().map(Value::Int).or_else(|_| {
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
+    match args.into_iter().next().as_deref() {
+        Some(Value::String(s)) => s.parse::<i64>().map(RcValue::int).or_else(|_| {
             s.parse::<f64>()
-                .map(|f| Value::Int(f as i64))
-                .or(Ok(Value::Null))
+                .map(|f| RcValue::int(f as i64))
+                .or(Ok(RcValue::null()))
         }),
-        Some(v @ Value::Int(_)) => Ok(v),
-        Some(Value::Float(f)) => Ok(Value::Int(f as i64)),
-        Some(Value::Bool(b)) => Ok(Value::Int(i64::from(b))),
-        Some(Value::Null) => Ok(Value::Null),
+        Some(Value::Int(i)) => Ok(RcValue::int(*i)),
+        Some(Value::Float(f)) => Ok(RcValue::int(*f as i64)),
+        Some(Value::Bool(b)) => Ok(RcValue::int(i64::from(*b))),
+        Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
 
 fn value_to_float(
     _runtime: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
-    match args.into_iter().next() {
-        Some(Value::String(s)) => s.parse::<f64>().map(Value::Float).or(Ok(Value::Null)),
-        Some(v @ Value::Float(_)) => Ok(v),
-        Some(Value::Int(i)) => Ok(Value::Float(i as f64)),
-        Some(Value::Null) => Ok(Value::Null),
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
+    match args.into_iter().next().as_deref() {
+        Some(Value::String(s)) => s.parse::<f64>().map(RcValue::float).or(Ok(RcValue::null())),
+        Some(Value::Float(f)) => Ok(RcValue::float(*f)),
+        Some(Value::Int(i)) => Ok(RcValue::float(*i as f64)),
+        Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
@@ -998,118 +977,123 @@ fn value_string(value: &Value) -> Result<Rc<String>, String> {
 
 fn value_to_string(
     _runtime: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
-    match args.into_iter().next() {
-        Some(Value::Null) => Ok(Value::Null),
-        Some(v) => Ok(Value::String(value_string(&v)?)),
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
+    match args.into_iter().next().as_deref() {
+        Some(Value::Null) => Ok(RcValue::null()),
+        Some(v) => Ok(RcValue::string(value_string(v)?)),
         _ => unreachable!(),
     }
 }
 
 fn size(
     _: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
-    match args.into_iter().next() {
-        Some(Value::String(s)) => Ok(Value::Int(s.len() as i64)),
-        Some(Value::List(v)) => Ok(Value::Int(v.len() as i64)),
-        Some(Value::Null) => Ok(Value::Null),
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
+    match args.into_iter().next().as_deref() {
+        Some(Value::String(s)) => Ok(RcValue::int(s.len() as i64)),
+        Some(Value::List(v)) => Ok(RcValue::int(v.len() as i64)),
+        Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
 
 fn head(
     _: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
-    match args.into_iter().next() {
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
+    match args.into_iter().next().as_deref() {
         Some(Value::List(v)) => {
             if v.is_empty() {
-                Ok(Value::Null)
+                Ok(RcValue::null())
             } else {
                 Ok(v[0].clone())
             }
         }
-        Some(Value::Null) => Ok(Value::Null),
+        Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
 
 fn last(
     _: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
-    match args.into_iter().next() {
-        Some(Value::List(v)) => Ok(v.last().unwrap_or(&Value::Null).clone()),
-        Some(Value::Null) => Ok(Value::Null),
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
+    match args.into_iter().next().as_deref() {
+        Some(Value::List(v)) => Ok(v.last().cloned().unwrap_or_else(RcValue::null)),
+        Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
 
 fn tail(
     _: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
-    match args.into_iter().next() {
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
+    match args.into_iter().next().as_deref() {
         Some(Value::List(v)) => {
             if v.is_empty() {
-                Ok(Value::List(vec![]))
+                Ok(RcValue::list(vec![]))
             } else {
-                Ok(Value::List(v[1..].to_vec()))
+                Ok(RcValue::list(v[1..].to_vec()))
             }
         }
-        Some(Value::Null) => Ok(Value::Null),
+        Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
 
 fn reverse(
     _: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
-    match args.into_iter().next() {
-        Some(Value::List(mut v)) => {
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
+    match args.into_iter().next().as_deref() {
+        Some(Value::List(v)) => {
+            let mut v = v.clone();
             v.reverse();
-            Ok(Value::List(v))
+            Ok(RcValue::list(v))
         }
-        Some(Value::String(s)) => Ok(Value::String(Rc::new(s.chars().rev().collect()))),
-        Some(Value::Null) => Ok(Value::Null),
+        Some(Value::String(s)) => Ok(RcValue::string(Rc::new(s.chars().rev().collect()))),
+        Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
 
 fn substring(
     _: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
     let mut iter = args.into_iter();
-    match (iter.next(), iter.next(), iter.next()) {
+    match (
+        iter.next().as_deref(),
+        iter.next().as_deref(),
+        iter.next().as_deref(),
+    ) {
         // Handle NULL input case
-        (Some(Value::Null), _, _) => Ok(Value::Null),
+        (Some(Value::Null), _, _) => Ok(RcValue::null()),
         // Two-argument version: (string, start)
         (Some(Value::String(s)), Some(Value::Int(start)), None) => {
-            if start < 0 {
+            if *start < 0 {
                 return Err("start must be a non-negative integer".into());
             }
-            let start = start as usize;
+            let start = *start as usize;
 
-            Ok(Value::String(Rc::new(String::from(&s[start..]))))
+            Ok(RcValue::string(Rc::new(String::from(&s[start..]))))
         }
 
         // Three-argument version: (string, start, length)
         (Some(Value::String(s)), Some(Value::Int(start)), Some(Value::Int(length))) => {
-            if length < 0 {
+            if *length < 0 {
                 return Err("length must be a non-negative integer".into());
             }
-            if start < 0 {
+            if *start < 0 {
                 return Err("start must be a non-negative integer".into());
             }
-            let start = start as usize;
-            let length = length as usize;
+            let start = *start as usize;
+            let length = *length as usize;
 
             let end = start.saturating_add(length).min(s.len());
-            Ok(Value::String(Rc::new(String::from(&s[start..end]))))
+            Ok(RcValue::string(Rc::new(String::from(&s[start..end]))))
         }
         _ => unreachable!(),
     }
@@ -1117,66 +1101,70 @@ fn substring(
 
 fn split(
     _: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
     let mut iter = args.into_iter();
-    match (iter.next(), iter.next()) {
+    match (iter.next().as_deref(), iter.next().as_deref()) {
         (Some(Value::String(string)), Some(Value::String(delimiter))) => {
             if delimiter.is_empty() {
                 // split string to characters
-                let parts: Vec<Value> = string
+                let parts = string
                     .chars()
-                    .map(|c| Value::String(Rc::new(String::from(c))))
+                    .map(|c| RcValue::string(Rc::new(String::from(c))))
                     .collect();
-                Ok(Value::List(parts))
+                Ok(RcValue::list(parts))
             } else {
-                let parts: Vec<Value> = string
+                let parts = string
                     .split(delimiter.as_str())
-                    .map(|s| Value::String(Rc::new(String::from(s))))
+                    .map(|s| RcValue::string(Rc::new(String::from(s))))
                     .collect();
-                Ok(Value::List(parts))
+                Ok(RcValue::list(parts))
             }
         }
-        (Some(Value::Null), Some(_)) | (Some(_), Some(Value::Null)) => Ok(Value::Null),
+        (Some(Value::Null), Some(_)) | (Some(_), Some(Value::Null)) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
 
 fn string_to_lower(
     _: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
-    match args.into_iter().next() {
-        Some(Value::String(s)) => Ok(Value::String(Rc::new(s.to_lowercase()))),
-        Some(Value::Null) => Ok(Value::Null),
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
+    match args.into_iter().next().as_deref() {
+        Some(Value::String(s)) => Ok(RcValue::string(Rc::new(s.to_lowercase()))),
+        Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
 
 fn string_to_upper(
     _: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
-    match args.into_iter().next() {
-        Some(Value::String(s)) => Ok(Value::String(Rc::new(s.to_uppercase()))),
-        Some(Value::Null) => Ok(Value::Null),
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
+    match args.into_iter().next().as_deref() {
+        Some(Value::String(s)) => Ok(RcValue::string(Rc::new(s.to_uppercase()))),
+        Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
 
 fn string_replace(
     _: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
     let mut iter = args.into_iter();
-    match (iter.next(), iter.next(), iter.next()) {
+    match (
+        iter.next().as_deref(),
+        iter.next().as_deref(),
+        iter.next().as_deref(),
+    ) {
         (Some(Value::String(s)), Some(Value::String(search)), Some(Value::String(replacement))) => {
-            Ok(Value::String(Rc::new(
+            Ok(RcValue::string(Rc::new(
                 s.replace(search.as_str(), replacement.as_str()),
             )))
         }
         (Some(Value::Null), _, _) | (_, Some(Value::Null), _) | (_, _, Some(Value::Null)) => {
-            Ok(Value::Null)
+            Ok(RcValue::null())
         }
         _ => unreachable!(),
     }
@@ -1184,18 +1172,20 @@ fn string_replace(
 
 fn string_left(
     _: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
     let mut iter = args.into_iter();
-    match (iter.next(), iter.next()) {
+    match (iter.next().as_deref(), iter.next().as_deref()) {
         (Some(Value::String(s)), Some(Value::Int(n))) => {
-            if n < 0 {
+            if *n < 0 {
                 Err(String::from("length must be a non-negative integer"))
             } else {
-                Ok(Value::String(Rc::new(s.chars().take(n as usize).collect())))
+                Ok(RcValue::string(Rc::new(
+                    s.chars().take(*n as usize).collect(),
+                )))
             }
         }
-        (Some(Value::Null), _) => Ok(Value::Null),
+        (Some(Value::Null), _) => Ok(RcValue::null()),
         (_, Some(Value::Null)) => Err(String::from("length must be a non-negative integer")),
         _ => unreachable!(),
     }
@@ -1203,30 +1193,30 @@ fn string_left(
 
 fn string_ltrim(
     _: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
-    match args.into_iter().next() {
-        Some(Value::String(s)) => Ok(Value::String(Rc::new(String::from(s.trim_start())))),
-        Some(Value::Null) => Ok(Value::Null),
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
+    match args.into_iter().next().as_deref() {
+        Some(Value::String(s)) => Ok(RcValue::string(Rc::new(String::from(s.trim_start())))),
+        Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
 
 fn string_right(
     _: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
     let mut iter = args.into_iter();
-    match (iter.next(), iter.next()) {
+    match (iter.next().as_deref(), iter.next().as_deref()) {
         (Some(Value::String(s)), Some(Value::Int(n))) => {
-            if n < 0 {
+            if *n < 0 {
                 Err(String::from("length must be a non-negative integer"))
             } else {
-                let start = s.len().saturating_sub(n as usize);
-                Ok(Value::String(Rc::new(s.chars().skip(start).collect())))
+                let start = s.len().saturating_sub(*n as usize);
+                Ok(RcValue::string(Rc::new(s.chars().skip(start).collect())))
             }
         }
-        (Some(Value::Null), _) => Ok(Value::Null),
+        (Some(Value::Null), _) => Ok(RcValue::null()),
         (_, Some(Value::Null)) => Err(String::from("length must be a non-negative integer")),
         _ => unreachable!(),
     }
@@ -1234,13 +1224,13 @@ fn string_right(
 
 fn string_join(
     _: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
-    fn to_string_vec(vec: Vec<Value>) -> Result<Vec<String>, String> {
-        vec.into_iter()
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
+    fn to_string_vec(vec: &[RcValue]) -> Result<Vec<Rc<String>>, String> {
+        vec.iter()
             .map(|item| {
-                if let Value::String(s) = item {
-                    Ok((*s).clone())
+                if let Value::String(s) = &**item {
+                    Ok(s.clone())
                 } else {
                     Err(format!(
                         "Type mismatch: expected String but was {}",
@@ -1251,26 +1241,46 @@ fn string_join(
             .collect()
     }
     let mut iter = args.into_iter();
-    match (iter.next(), iter.next()) {
-        (Some(Value::List(vec)), Some(Value::String(s))) => {
+    let first = iter.next().unwrap();
+    match (&*first, iter.next()) {
+        (Value::List(vec), Some(a)) => match &*a {
+            Value::String(s) => {
+                let result = to_string_vec(vec);
+                result.map(|strings| {
+                    RcValue::string(Rc::new(
+                        strings
+                            .iter()
+                            .map(|label| label.as_str())
+                            .collect::<Vec<_>>()
+                            .join(s.as_str()),
+                    ))
+                })
+            }
+            _ => unreachable!(),
+        },
+        (Value::List(vec), None) => {
             let result = to_string_vec(vec);
-            result.map(|strings| Value::String(Rc::new(strings.join(s.as_str()))))
+            result.map(|strings| {
+                RcValue::string(Rc::new(
+                    strings
+                        .iter()
+                        .map(|label| label.as_str())
+                        .collect::<Vec<_>>()
+                        .join(""),
+                ))
+            })
         }
-        (Some(Value::List(vec)), None) => {
-            let result = to_string_vec(vec);
-            result.map(|strings| Value::String(Rc::new(strings.join(""))))
-        }
-        (Some(Value::Null), _) => Ok(Value::Null),
+        (Value::Null, _) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
 
 fn string_match_reg_ex(
     _: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
     let mut iter = args.into_iter();
-    match (iter.next(), iter.next()) {
+    match (iter.next().as_deref(), iter.next().as_deref()) {
         (Some(Value::String(text)), Some(Value::String(pattern))) => {
             match regex::Regex::new(pattern.as_str()) {
                 Ok(re) => {
@@ -1278,26 +1288,31 @@ fn string_match_reg_ex(
                     for caps in re.captures_iter(text.as_str()) {
                         for i in 0..caps.len() {
                             if let Some(m) = caps.get(i) {
-                                all_matches.push(Value::String(Rc::new(String::from(m.as_str()))));
+                                all_matches
+                                    .push(RcValue::string(Rc::new(String::from(m.as_str()))));
                             }
                         }
                     }
-                    Ok(Value::List(all_matches))
+                    Ok(RcValue::list(all_matches))
                 }
                 Err(e) => Err(format!("Invalid regex, {e}")),
             }
         }
-        (Some(Value::Null), Some(_)) | (Some(_), Some(Value::Null)) => Ok(Value::List(vec![])),
+        (Some(Value::Null), Some(_)) | (Some(_), Some(Value::Null)) => Ok(RcValue::list(vec![])),
         _ => unreachable!(),
     }
 }
 
 fn string_replace_reg_ex(
     _: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
     let mut iter = args.into_iter();
-    match (iter.next(), iter.next(), iter.next()) {
+    match (
+        iter.next().as_deref(),
+        iter.next().as_deref(),
+        iter.next().as_deref(),
+    ) {
         (
             Some(Value::String(text)),
             Some(Value::String(pattern)),
@@ -1307,202 +1322,204 @@ fn string_replace_reg_ex(
                 let replaced_text = re
                     .replace_all(text.as_str(), replacement.as_str())
                     .into_owned();
-                Ok(Value::String(Rc::new(replaced_text)))
+                Ok(RcValue::string(Rc::new(replaced_text)))
             }
             Err(e) => Err(format!("Invalid regex, {e}")),
         },
         (Some(Value::Null), Some(_), Some(_))
         | (Some(_), Some(Value::Null), Some(_))
-        | (Some(_), Some(_), Some(Value::Null)) => Ok(Value::Null),
+        | (Some(_), Some(_), Some(Value::Null)) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
 
 fn abs(
     _: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
-    match args.into_iter().next() {
-        Some(Value::Int(n)) => Ok(Value::Int(n.abs())),
-        Some(Value::Float(f)) => Ok(Value::Float(f.abs())),
-        Some(Value::Null) => Ok(Value::Null),
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
+    match args.into_iter().next().as_deref() {
+        Some(Value::Int(n)) => Ok(RcValue::int(n.abs())),
+        Some(Value::Float(f)) => Ok(RcValue::float(f.abs())),
+        Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
 
 fn ceil(
     _: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
-    match args.into_iter().next() {
-        Some(Value::Int(n)) => Ok(Value::Int(n)),
-        Some(Value::Float(f)) => Ok(Value::Float(f.ceil())),
-        Some(Value::Null) => Ok(Value::Null),
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
+    match args.into_iter().next().as_deref() {
+        Some(Value::Int(n)) => Ok(RcValue::int(*n)),
+        Some(Value::Float(f)) => Ok(RcValue::float(f.ceil())),
+        Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
 
 fn e(
     _: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
-    match args.into_iter().next() {
-        None => Ok(Value::Float(std::f64::consts::E)),
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
+    match args.into_iter().next().as_deref() {
+        None => Ok(RcValue::float(std::f64::consts::E)),
         _ => unreachable!(),
     }
 }
 
 fn exp(
     _: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
-    match args.into_iter().next() {
-        Some(Value::Int(n)) => Ok(Value::Float((n as f64).exp())),
-        Some(Value::Float(f)) => Ok(Value::Float(f.exp())),
-        Some(Value::Null) => Ok(Value::Null),
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
+    match args.into_iter().next().as_deref() {
+        Some(Value::Int(n)) => Ok(RcValue::float((*n as f64).exp())),
+        Some(Value::Float(f)) => Ok(RcValue::float(f.exp())),
+        Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
 
 fn floor(
     _: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
-    match args.into_iter().next() {
-        Some(Value::Int(n)) => Ok(Value::Int(n)),
-        Some(Value::Float(f)) => Ok(Value::Float(f.floor())),
-        Some(Value::Null) => Ok(Value::Null),
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
+    match args.into_iter().next().as_deref() {
+        Some(Value::Int(n)) => Ok(RcValue::int(*n)),
+        Some(Value::Float(f)) => Ok(RcValue::float(f.floor())),
+        Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
 
 fn log(
     _: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
-    match args.into_iter().next() {
-        Some(Value::Int(n)) => Ok(Value::Float((n as f64).ln())),
-        Some(Value::Float(f)) => Ok(Value::Float(f.ln())),
-        Some(Value::Null) => Ok(Value::Null),
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
+    match args.into_iter().next().as_deref() {
+        Some(Value::Int(n)) => Ok(RcValue::float((*n as f64).ln())),
+        Some(Value::Float(f)) => Ok(RcValue::float(f.ln())),
+        Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
 
 fn log10(
     _: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
-    match args.into_iter().next() {
-        Some(Value::Int(n)) => Ok(Value::Float((n as f64).log10())),
-        Some(Value::Float(f)) => Ok(Value::Float(f.log10())),
-        Some(Value::Null) => Ok(Value::Null),
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
+    match args.into_iter().next().as_deref() {
+        Some(Value::Int(n)) => Ok(RcValue::float((*n as f64).log10())),
+        Some(Value::Float(f)) => Ok(RcValue::float(f.log10())),
+        Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
 
 fn pow(
     _: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
     let mut iter = args.into_iter();
-    match (iter.next(), iter.next()) {
+    match (iter.next().as_deref(), iter.next().as_deref()) {
         (Some(Value::Int(i1)), Some(Value::Int(i2))) => {
-            Ok(Value::Float((i1 as f64).powi(i2 as i32)))
+            Ok(RcValue::float((*i1 as f64).powi(*i2 as i32)))
         }
-        (Some(Value::Float(f1)), Some(Value::Float(f2))) => Ok(Value::Float(f1.powf(f2))),
-        (Some(Value::Int(i1)), Some(Value::Float(f1))) => Ok(Value::Float((i1 as f64).powf(f1))),
-        (Some(Value::Float(f1)), Some(Value::Int(i1))) => Ok(Value::Float(f1.powi(i1 as i32))),
-        (Some(Value::Null), Some(_)) | (Some(_), Some(Value::Null)) => Ok(Value::Null),
+        (Some(Value::Float(f1)), Some(Value::Float(f2))) => Ok(RcValue::float(f1.powf(*f2))),
+        (Some(Value::Int(i1)), Some(Value::Float(f1))) => {
+            Ok(RcValue::float((*i1 as f64).powf(*f1)))
+        }
+        (Some(Value::Float(f1)), Some(Value::Int(i1))) => Ok(RcValue::float(f1.powi(*i1 as i32))),
+        (Some(Value::Null), Some(_)) | (Some(_), Some(Value::Null)) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
 
 fn rand(
     _: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
     debug_assert!(args.is_empty());
     let mut rng = rand::rng();
-    Ok(Value::Float(rng.random_range(0.0..1.0)))
+    Ok(RcValue::float(rng.random_range(0.0..1.0)))
 }
 
 fn round(
     _: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
-    match args.into_iter().next() {
-        Some(Value::Int(n)) => Ok(Value::Int(n)),
-        Some(Value::Float(f)) => Ok(Value::Float(f.round())),
-        Some(Value::Null) => Ok(Value::Null),
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
+    match args.into_iter().next().as_deref() {
+        Some(Value::Int(n)) => Ok(RcValue::int(*n)),
+        Some(Value::Float(f)) => Ok(RcValue::float(f.round())),
+        Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
 
 fn sign(
     _: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
-    match args.into_iter().next() {
-        Some(Value::Int(n)) => Ok(Value::Int(n.signum())),
-        Some(Value::Float(f)) => Ok(if f == 0.0 {
-            Value::Int(0)
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
+    match args.into_iter().next().as_deref() {
+        Some(Value::Int(n)) => Ok(RcValue::int(n.signum())),
+        Some(Value::Float(f)) => Ok(if *f == 0.0 {
+            RcValue::int(0)
         } else {
-            Value::Float(f.signum().round())
+            RcValue::float(f.signum().round())
         }),
-        Some(Value::Null) => Ok(Value::Null),
+        Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
 
 fn sqrt(
     _: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
-    match args.into_iter().next() {
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
+    match args.into_iter().next().as_deref() {
         Some(Value::Int(n)) => {
-            if n < 0 {
-                Ok(Value::Float(f64::NAN))
+            if *n < 0 {
+                Ok(RcValue::float(f64::NAN))
             } else {
-                Ok(Value::Float((n as f64).sqrt()))
+                Ok(RcValue::float((*n as f64).sqrt()))
             }
         }
         Some(Value::Float(f)) => {
-            if f > 0f64 {
-                Ok(Value::Float(f.sqrt()))
+            if *f > 0f64 {
+                Ok(RcValue::float(f.sqrt()))
             } else {
-                Ok(Value::Float(f64::NAN))
+                Ok(RcValue::float(f64::NAN))
             }
         }
-        Some(Value::Null) => Ok(Value::Null),
+        Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
 
 fn range(
     _: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
     let mut iter = args.into_iter();
     let start = iter.next().ok_or("Missing start value")?;
     let end = iter.next().ok_or("Missing end value")?;
-    let step = iter.next().unwrap_or(Value::Int(1));
-    match (start, end, step) {
+    let step = iter.next().unwrap_or_else(|| RcValue::int(1));
+    match (&*start, &*end, &*step) {
         (Value::Int(start), Value::Int(end), Value::Int(step)) => {
-            if start >= end && step < 0 {
-                Ok(Value::List(
-                    (end..=start)
+            if start >= end && *step < 0 {
+                Ok(RcValue::list(
+                    (*end..=*start)
                         .rev()
                         .step_by(step.abs() as usize)
-                        .map(Value::Int)
+                        .map(RcValue::int)
                         .collect(),
                 ))
-            } else if step < 0 {
-                Ok(Value::List(vec![]))
+            } else if *step < 0 {
+                Ok(RcValue::list(vec![]))
             } else {
-                Ok(Value::List(
-                    (start..=end)
-                        .step_by(step as usize)
-                        .map(Value::Int)
+                Ok(RcValue::list(
+                    (*start..=*end)
+                        .step_by(*step as usize)
+                        .map(RcValue::int)
                         .collect(),
                 ))
             }
@@ -1510,52 +1527,51 @@ fn range(
         _ => unreachable!(),
     }
 }
+
 fn coalesce(
     _: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
     let iter = args.into_iter();
     for arg in iter {
-        if arg == Value::Null {
+        if *arg == Value::Null {
             continue;
         }
         return Ok(arg);
     }
-    Ok(Value::Null)
+    Ok(RcValue::null())
 }
 
 fn keys(
     _: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
-    let mut iter = args.into_iter();
-    match (iter.next(), iter.next()) {
-        (Some(Value::Map(map)), None) => Ok(Value::List(
-            map.keys().map(|k| Value::String(k.clone())).collect(),
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
+    match args.into_iter().next().as_deref() {
+        Some(Value::Map(map)) => Ok(RcValue::list(
+            map.keys().map(|k| RcValue::string(k.clone())).collect(),
         )),
-        (Some(Value::Null), None) => Ok(Value::Null),
+        Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
 
 fn to_boolean(
     _: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
-    let mut iter = args.into_iter();
-    match iter.next() {
-        Some(Value::Bool(b)) => Ok(Value::Bool(b)),
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
+    match args.into_iter().next().as_deref() {
+        Some(Value::Bool(b)) => Ok(RcValue::bool(*b)),
         Some(Value::String(s)) => {
             if s.eq_ignore_ascii_case("true") {
-                Ok(Value::Bool(true))
+                Ok(RcValue::bool(true))
             } else if s.eq_ignore_ascii_case("false") {
-                Ok(Value::Bool(false))
+                Ok(RcValue::bool(false))
             } else {
-                Ok(Value::Null)
+                Ok(RcValue::null())
             }
         }
-        Some(Value::Int(n)) => Ok(Value::Bool(n != 0)),
-        Some(Value::Null) => Ok(Value::Null),
+        Some(Value::Int(n)) => Ok(RcValue::bool(*n != 0)),
+        Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
@@ -1566,43 +1582,43 @@ fn to_boolean(
 
 fn internal_starts_with(
     _: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
     let mut iter = args.into_iter();
-    match (iter.next(), iter.next()) {
+    match (iter.next().as_deref(), iter.next().as_deref()) {
         (Some(Value::String(s)), Some(Value::String(prefix))) => {
-            Ok(Value::Bool(s.starts_with(prefix.as_str())))
+            Ok(RcValue::bool(s.starts_with(prefix.as_str())))
         }
 
-        (_, Some(Value::Null)) | (Some(Value::Null), _) => Ok(Value::Null),
+        (_, Some(Value::Null)) | (Some(Value::Null), _) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
 
 fn internal_ends_with(
     _: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
     let mut iter = args.into_iter();
-    match (iter.next(), iter.next()) {
+    match (iter.next().as_deref(), iter.next().as_deref()) {
         (Some(Value::String(s)), Some(Value::String(suffix))) => {
-            Ok(Value::Bool(s.ends_with(suffix.as_str())))
+            Ok(RcValue::bool(s.ends_with(suffix.as_str())))
         }
-        (_, Some(Value::Null)) | (Some(Value::Null), _) => Ok(Value::Null),
+        (_, Some(Value::Null)) | (Some(Value::Null), _) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
 
 fn internal_contains(
     _: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
     let mut iter = args.into_iter();
-    match (iter.next(), iter.next()) {
+    match (iter.next().as_deref(), iter.next().as_deref()) {
         (Some(Value::String(s)), Some(Value::String(substring))) => {
-            Ok(Value::Bool(s.contains(substring.as_str())))
+            Ok(RcValue::bool(s.contains(substring.as_str())))
         }
-        (_, Some(Value::Null)) | (Some(Value::Null), _) => Ok(Value::Null),
+        (_, Some(Value::Null)) | (Some(Value::Null), _) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
@@ -1652,47 +1668,46 @@ fn internal_node_has_labels(
 
 fn internal_regex_matches(
     _: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
     let mut iter = args.into_iter();
-    match (iter.next(), iter.next()) {
+    match (iter.next().as_deref(), iter.next().as_deref()) {
         (Some(Value::String(s)), Some(Value::String(pattern))) => {
             // Compile the regex pattern
             match regex::Regex::new(pattern.as_str()) {
-                Ok(re) => Ok(Value::Bool(re.is_match(s.as_str()))),
+                Ok(re) => Ok(RcValue::bool(re.is_match(s.as_str()))),
                 Err(e) => Err(format!("Invalid regex pattern: {e}")),
             }
         }
-        (Some(Value::Null), _) | (_, Some(Value::Null)) => Ok(Value::Null),
+        (Some(Value::Null), _) | (_, Some(Value::Null)) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }
 
 fn internal_case(
     _: &Runtime,
-    args: Vec<Value>,
-) -> Result<Value, String> {
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
     let mut iter = args.into_iter();
-    match (iter.next(), iter.next()) {
+    match (iter.next().as_deref(), iter.next().as_deref()) {
         (Some(Value::List(alts)), None) => {
             for pair in alts.chunks(2) {
-                match pair {
-                    [Value::Bool(false) | Value::Null, _] => {}
-                    [_, result] => return Ok(result.clone()),
-                    _ => unreachable!(),
+                match (&*pair[0], &pair[1]) {
+                    (Value::Bool(false) | Value::Null, _) => {}
+                    (_, result) => return Ok(result.clone()),
                 }
             }
-            Ok(Value::Null)
+            Ok(RcValue::null())
         }
         (Some(value), Some(Value::List(alts))) => {
             for pair in alts.chunks(2) {
                 if let [condition, result] = pair {
-                    if *condition == value {
+                    if &**condition == value {
                         return Ok(result.clone());
                     }
                 }
             }
-            Ok(Value::Null)
+            Ok(RcValue::null())
         }
         _ => unreachable!(),
     }
@@ -1700,42 +1715,42 @@ fn internal_case(
 
 fn db_labels(
     runtime: &Runtime,
-    _args: Vec<Value>,
-) -> Result<Value, String> {
-    Ok(Value::List(
+    _args: Vec<RcValue>,
+) -> Result<RcValue, String> {
+    Ok(RcValue::list(
         runtime
             .g
             .borrow()
             .get_labels()
-            .map(|n| Value::String(n.clone()))
+            .map(|n| RcValue::string(n.clone()))
             .collect(),
     ))
 }
 
 fn db_types(
     runtime: &Runtime,
-    _args: Vec<Value>,
-) -> Result<Value, String> {
-    Ok(Value::List(
+    _args: Vec<RcValue>,
+) -> Result<RcValue, String> {
+    Ok(RcValue::list(
         runtime
             .g
             .borrow()
             .get_types()
-            .map(|n| Value::String(n.clone()))
+            .map(|n| RcValue::string(n.clone()))
             .collect(),
     ))
 }
 
 fn db_properties(
     runtime: &Runtime,
-    _args: Vec<Value>,
-) -> Result<Value, String> {
-    Ok(Value::List(
+    _args: Vec<RcValue>,
+) -> Result<RcValue, String> {
+    Ok(RcValue::list(
         runtime
             .g
             .borrow()
             .get_properties()
-            .map(|n| Value::String(n.clone()))
+            .map(|n| RcValue::string(n.clone()))
             .collect(),
     ))
 }

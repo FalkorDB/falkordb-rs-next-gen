@@ -551,7 +551,10 @@ impl QueryIR {
                 for (i, node) in p.nodes.iter().enumerate() {
                     if env.contains(&node.alias.id) {
                         if p.relationships.is_empty() {
-                            return Err(format!("Duplicate alias {}", node.alias.as_str()));
+                            return Err(format!(
+                                "The alias '{}' was specified for both a node and a relationship.",
+                                node.alias.as_str()
+                            ));
                         }
                         remove.push(i);
                     }
@@ -564,7 +567,10 @@ impl QueryIR {
                 }
                 for relationship in &p.relationships {
                     if env.contains(&relationship.alias.id) {
-                        return Err(format!("Duplicate alias {}", relationship.alias.as_str()));
+                        return Err(format!(
+                            "The alias '{}' was specified for both a node and a relationship.",
+                            relationship.alias.as_str()
+                        ));
                     }
                     relationship.attrs.root().validate(env)?;
                     env.insert(relationship.alias.id);
