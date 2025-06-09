@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1749048970574,
+  "lastUpdate": 1749450066791,
   "repoUrl": "https://github.com/FalkorDB/falkordb-rs-next-gen",
   "entries": {
     "FalkorDB Benchmark": [
@@ -988,6 +988,44 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.020778913194591186",
             "extra": "mean: 4.9361170464 sec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "avi.avni@gmail.com",
+            "name": "Avi Avni",
+            "username": "AviAvni"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0e9ec8eca5d66acbaaabff1b5c3d04a44cef4a71",
+          "message": "Merge pull request #89 from FalkorDB/dependabot/cargo/orx-tree-1.7.1\n\nBump orx-tree from 1.6.0 to 1.7.1",
+          "timestamp": "2025-06-09T09:18:30+03:00",
+          "tree_id": "077b352fcf33fa65d9b40f0f59e4df12ca927770",
+          "url": "https://github.com/FalkorDB/falkordb-rs-next-gen/commit/0e9ec8eca5d66acbaaabff1b5c3d04a44cef4a71"
+        },
+        "date": 1749450066407,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_bench.py::test_return",
+            "value": 10592.831466410591,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000008647995262174926",
+            "extra": "mean: 94.40346551070473 usec\nrounds: 2595"
+          },
+          {
+            "name": "tests/test_bench.py::test_unwind",
+            "value": 0.21041565697284553,
+            "unit": "iter/sec",
+            "range": "stddev: 0.07180444320667612",
+            "extra": "mean: 4.752498052600009 sec\nrounds: 5"
           }
         ]
       }
