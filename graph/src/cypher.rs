@@ -1339,9 +1339,16 @@ impl<'a> Parser<'a> {
                 self.create_var(None)
             };
             let mut types = vec![];
-            while optional_match_token!(self.lexer, Colon) {
-                types.push(self.parse_ident()?);
-                optional_match_token!(self.lexer, Pipe);
+            if optional_match_token!(self.lexer, Colon) {
+                loop {
+                    types.push(self.parse_ident()?);
+                    let pipe = optional_match_token!(self.lexer, Pipe);
+                    let colon = optional_match_token!(self.lexer, Colon);
+                    if pipe || colon {
+                        continue;
+                    }
+                    break;
+                }
             }
             let _ = if optional_match_token!(self.lexer, Star) {
                 let start = if let Token::Integer(i) = self.lexer.current() {
