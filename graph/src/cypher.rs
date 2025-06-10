@@ -87,7 +87,7 @@ enum Token {
     EndOfFile,
 }
 
-const KEYWORDS: [(&str, Keyword); 34] = [
+const KEYWORDS: &[(&str, Keyword)] = &[
     ("CALL", Keyword::Call),
     ("OPTIONAL", Keyword::Optional),
     ("MATCH", Keyword::Match),

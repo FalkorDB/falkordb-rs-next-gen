@@ -1691,13 +1691,16 @@ fn internal_node_has_labels(
         (Some(Value::Node(node_id)), Some(Value::List(required_labels))) => {
             let actual_labels =
                 if let Some((labels, _)) = runtime.pending.borrow().created_nodes.get(node_id) {
-                    labels.clone()
+                    labels
+                        .iter()
+                        .map(std::clone::Clone::clone)
+                        .collect::<HashSet<_>>()
                 } else {
                     runtime
                         .g
                         .borrow()
                         .get_node_labels(*node_id)
-                        .collect::<Vec<_>>()
+                        .collect::<HashSet<_>>()
                 };
             let all_labels_present = required_labels.iter().all(|label| {
                 if let Value::String(label_str) = &**label {
