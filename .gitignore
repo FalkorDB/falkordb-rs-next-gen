@@ -17,3 +17,5 @@ dump.rdb
 cov.profdata
 *.profraw
 neo.md
+.history
+.DS_Store
