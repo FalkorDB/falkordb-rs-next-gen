@@ -79,7 +79,7 @@ jobs:
         run: cargo fmt --all --check
       - name: Lint
         run: |
-          cargo clippy --all --all-targets
+          CXX=clang++-20 cargo clippy --all --all-targets
       - name: Build
         run: |
           cargo build
