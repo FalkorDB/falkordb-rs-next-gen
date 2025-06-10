@@ -1327,7 +1327,7 @@ def test_aggregation():
     res = query("UNWIND range(1, 100) AS x RETURN {min: min(x), max: max(x)}")
     assert_result_set_equal_no_order(res, [[{"min": 1, "max": 100}]])
     
-    res = query("unwind range(0,-1) as a RETURN  count(a), 1 + sum(a)")
+    res = query("UNWIND range(0,-1) AS a RETURN count(a), 1 + sum(a)")
     assert res.result_set == [[0, 1]]
 
 
