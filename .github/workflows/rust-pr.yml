@@ -62,8 +62,18 @@ jobs:
       - check-files
       - docker
     if: ${{ !cancelled() }}
+    env:
+      # The version of `cargo-fuzz` to install and use.
+      CARGO_FUZZ_VERSION: 0.12.0
     steps:
       - uses: actions/checkout@v4
+      # Install and cache `cargo-fuzz`.
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.tool_cache }}/cargo-fuzz
+          key: cargo-fuzz-bin-${{ env.CARGO_FUZZ_VERSION }}
+      - run: echo "${{ runner.tool_cache }}/cargo-fuzz/bin" >> $GITHUB_PATH
+      - run: cargo install --root "${{ runner.tool_cache }}/cargo-fuzz" --version ${{ env.CARGO_FUZZ_VERSION }} cargo-fuzz --locked
       - name: Format
         run: |
           rustup default stable
