@@ -1690,8 +1690,8 @@ fn internal_node_has_labels(
     match (iter.next().as_deref(), iter.next().as_deref()) {
         (Some(Value::Node(node_id)), Some(Value::List(required_labels))) => {
             let actual_labels =
-                if let Some((lables, _)) = runtime.pending.borrow().created_nodes.get(node_id) {
-                    lables.clone()
+                if let Some((labels, _)) = runtime.pending.borrow().created_nodes.get(node_id) {
+                    labels.clone()
                 } else {
                     runtime
                         .g
