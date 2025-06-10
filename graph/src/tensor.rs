@@ -2,7 +2,9 @@ use std::{ffi::c_void, sync::Once};
 
 use crate::{
     GraphBLAS::GrB_Vector,
-    matrix::{self, Dup, ElementWiseAdd, Matrix, New, Remove, Set, Size, Transpose, UnaryOp},
+    matrix::{
+        self, Dup, DupBool, ElementWiseAdd, Get, Matrix, New, Remove, Set, Size, Transpose, UnaryOp,
+    },
     vector::{self, Vector},
 };
 
@@ -98,6 +100,15 @@ impl ElementWiseAdd<u64> for Tensor {
 }
 
 impl Tensor {
+    #[must_use]
+    pub fn get(
+        &self,
+        src: u64,
+        dest: u64,
+    ) -> Option<u64> {
+        self.m.get(src, dest)
+    }
+
     pub fn set(
         &mut self,
         src: u64,
@@ -164,6 +175,11 @@ impl Tensor {
         let mut m = self.m.dup();
         m.apply(unsafe { &DUP_UNARYOP });
         Self { m }
+    }
+
+    #[must_use]
+    pub fn dup_bool(&self) -> Matrix<bool> {
+        self.m.dup_bool()
     }
 
     #[must_use]

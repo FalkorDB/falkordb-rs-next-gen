@@ -232,7 +232,17 @@ impl<'a> Lexer<'a> {
                     let mut end = false;
                     while let Some(c) = chars.next() {
                         if c == '\\' {
-                            len += chars.next().unwrap().len_utf8();
+                            match chars.next() {
+                                Some(c) => {
+                                    len += c.len_utf8();
+                                }
+                                None => {
+                                    return (
+                                        Token::Error(String::from(&str[pos + 1..pos + len])),
+                                        len + 1,
+                                    );
+                                }
+                            }
                         } else if c == '\'' {
                             end = true;
                             break;
@@ -707,19 +717,18 @@ impl<'a> Parser<'a> {
                 self.lexer.next();
                 match_token!(self.lexer, Equal);
                 let mut vars = Vec::new();
-                let left = self.parse_node_pattern(clause)?;
-                let mut left_alias = left.alias.clone();
-                vars.push(left_alias.clone());
+                let mut left = self.parse_node_pattern(clause)?;
+                vars.push(left.alias.clone());
                 if nodes_alias.insert(left.alias.clone()) {
-                    nodes.push(left);
+                    nodes.push(left.clone());
                 }
                 loop {
                     if let Token::Dash | Token::LessThan = self.lexer.current() {
                         let (relationship, right) =
-                            self.parse_relationship_pattern(left_alias, clause)?;
+                            self.parse_relationship_pattern(left, clause)?;
                         vars.push(relationship.alias.clone());
                         vars.push(right.alias.clone());
-                        left_alias = right.alias.clone();
+                        left = right.clone();
                         relationships.push(relationship);
                         if nodes_alias.insert(right.alias.clone()) {
                             nodes.push(right);
@@ -730,16 +739,14 @@ impl<'a> Parser<'a> {
                     }
                 }
             } else {
-                let left = self.parse_node_pattern(clause)?;
-                let mut left_alias = left.alias.clone();
+                let mut left = self.parse_node_pattern(clause)?;
 
                 if nodes_alias.insert(left.alias.clone()) {
-                    nodes.push(left);
+                    nodes.push(left.clone());
                 }
                 while let Token::Dash | Token::LessThan = self.lexer.current() {
-                    let (relationship, right) =
-                        self.parse_relationship_pattern(left_alias, clause)?;
-                    left_alias = right.alias.clone();
+                    let (relationship, right) = self.parse_relationship_pattern(left, clause)?;
+                    left = right.clone();
                     relationships.push(relationship);
                     if nodes_alias.insert(right.alias.clone()) {
                         nodes.push(right);
@@ -860,7 +867,7 @@ impl<'a> Parser<'a> {
                                 &FnType::Aggregation(RcValue::null()),
                             )
                         })
-                        .unwrap();
+                        .ok_or_else(|| format!("Unknown function '{namespace_and_function}'"))?;
                     if func.is_aggregate() {
                         if optional_match_token!(self.lexer, Star) {
                             match_token!(self.lexer, RParen);
@@ -1287,7 +1294,7 @@ impl<'a> Parser<'a> {
     fn parse_node_pattern(
         &mut self,
         clause: &Keyword,
-    ) -> Result<NodePattern, String> {
+    ) -> Result<Rc<NodePattern>, String> {
         match_token!(self.lexer, LParen);
         let alias = if let Token::Ident(id) = self.lexer.current() {
             self.lexer.next();
@@ -1308,14 +1315,14 @@ impl<'a> Parser<'a> {
             self.parse_map()?
         };
         match_token!(self.lexer, RParen);
-        Ok(NodePattern::new(alias, labels, Rc::new(attrs)))
+        Ok(Rc::new(NodePattern::new(alias, labels, Rc::new(attrs))))
     }
 
     fn parse_relationship_pattern(
         &mut self,
-        src: VarId,
+        src: Rc<NodePattern>,
         clause: &Keyword,
-    ) -> Result<(RelationshipPattern, NodePattern), String> {
+    ) -> Result<(Rc<RelationshipPattern>, Rc<NodePattern>), String> {
         let is_incoming = optional_match_token!(self.lexer, LessThan);
         match_token!(self.lexer, Dash);
         let has_details = optional_match_token!(self.lexer, LBrace);
@@ -1373,26 +1380,16 @@ impl<'a> Parser<'a> {
                         .lexer
                         .format_error("Only directed relationships are supported in CREATE"));
                 }
-                RelationshipPattern::new(alias, types, Rc::new(attrs), src, dst.alias.clone(), true)
+                RelationshipPattern::new(alias, types, Rc::new(attrs), src, dst.clone(), true)
             }
-            (true, false) => RelationshipPattern::new(
-                alias,
-                types,
-                Rc::new(attrs),
-                dst.alias.clone(),
-                src,
-                false,
-            ),
-            (false, true) => RelationshipPattern::new(
-                alias,
-                types,
-                Rc::new(attrs),
-                src,
-                dst.alias.clone(),
-                false,
-            ),
+            (true, false) => {
+                RelationshipPattern::new(alias, types, Rc::new(attrs), dst.clone(), src, false)
+            }
+            (false, true) => {
+                RelationshipPattern::new(alias, types, Rc::new(attrs), src, dst.clone(), false)
+            }
         };
-        Ok((relationship, dst))
+        Ok((Rc::new(relationship), dst))
     }
 
     fn parse_labels(&mut self) -> Result<Vec<Rc<String>>, String> {

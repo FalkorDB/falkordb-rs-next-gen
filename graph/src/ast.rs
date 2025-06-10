@@ -340,8 +340,8 @@ pub struct RelationshipPattern {
     pub alias: VarId,
     pub types: Vec<Rc<String>>,
     pub attrs: Rc<DynTree<ExprIR>>,
-    pub from: VarId,
-    pub to: VarId,
+    pub from: Rc<NodePattern>,
+    pub to: Rc<NodePattern>,
     pub bidirectional: bool,
 }
 
@@ -355,16 +355,16 @@ impl Display for RelationshipPattern {
             return write!(
                 f,
                 "({})-[{}]-{}({})",
-                self.from.as_str(),
+                self.from.alias.as_str(),
                 self.alias.as_str(),
                 direction,
-                self.to.as_str()
+                self.to.alias.as_str()
             );
         }
         write!(
             f,
             "({})-[{}:{}]-{}({})",
-            self.from.as_str(),
+            self.from.alias.as_str(),
             self.alias.as_str(),
             self.types
                 .iter()
@@ -372,7 +372,7 @@ impl Display for RelationshipPattern {
                 .collect::<Vec<_>>()
                 .join("|"),
             direction,
-            self.to.as_str()
+            self.to.alias.as_str()
         )
     }
 }
@@ -383,8 +383,8 @@ impl RelationshipPattern {
         alias: VarId,
         types: Vec<Rc<String>>,
         attrs: Rc<DynTree<ExprIR>>,
-        from: VarId,
-        to: VarId,
+        from: Rc<NodePattern>,
+        to: Rc<NodePattern>,
         bidirectional: bool,
     ) -> Self {
         Self {
@@ -416,8 +416,8 @@ impl PathPattern {
 
 #[derive(Clone, Debug)]
 pub struct Pattern {
-    pub nodes: Vec<NodePattern>,
-    pub relationships: Vec<RelationshipPattern>,
+    pub nodes: Vec<Rc<NodePattern>>,
+    pub relationships: Vec<Rc<RelationshipPattern>>,
     pub paths: Vec<PathPattern>,
 }
 
@@ -442,8 +442,8 @@ impl Display for Pattern {
 impl Pattern {
     #[must_use]
     pub const fn new(
-        nodes: Vec<NodePattern>,
-        relationships: Vec<RelationshipPattern>,
+        nodes: Vec<Rc<NodePattern>>,
+        relationships: Vec<Rc<RelationshipPattern>>,
         paths: Vec<PathPattern>,
     ) -> Self {
         Self {
@@ -580,8 +580,9 @@ impl QueryIR {
                     }
                     env.insert(path.var.id);
                 }
-                let first = iter.next().unwrap();
-                first.inner_validate(iter, env)
+                iter.next().map_or_else(|| Err(String::from(
+                        "Query cannot conclude with MATCH (must be a RETURN clause, an update clause, a procedure call or a non-returning subquery)",
+                    )), |first| first.inner_validate(iter, env))
             }
             Self::Unwind(l, v) => {
                 l.root().validate(env)?;
@@ -589,8 +590,9 @@ impl QueryIR {
                     return Err(format!("Duplicate alias {}", v.as_str()));
                 }
                 env.insert(v.id);
-                let first = iter.next().unwrap();
-                first.inner_validate(iter, env)
+                iter.next().map_or_else(|| Err(String::from(
+                        "Query cannot conclude with UNWIND (must be a RETURN clause, an update clause, a procedure call or a non-returning subquery)",
+                    )), |first| first.inner_validate(iter, env))
             }
             Self::Merge(p) => {
                 let mut remove = Vec::new();
@@ -617,8 +619,8 @@ impl QueryIR {
                     relationship.attrs.root().validate(env)?;
                     env.insert(relationship.alias.id);
                 }
-                let first = iter.next().unwrap();
-                first.inner_validate(iter, env)
+                iter.next()
+                    .map_or(Ok(()), |first| first.inner_validate(iter, env))
             }
             Self::Where(expr) => expr.root().validate(env),
             Self::Create(p) => {

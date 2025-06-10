@@ -17,3 +17,4 @@ dump.rdb
 cov.profdata
 *.profraw
 neo.md
+cov.html

@@ -20,6 +20,10 @@ use redis_module::{
     RedisString, RedisValue, Status, native_types::RedisType, redis_module,
 };
 use std::cell::RefCell;
+#[cfg(feature = "fuzz")]
+use std::fs::File;
+#[cfg(feature = "fuzz")]
+use std::io::Write;
 use std::marker::PhantomData;
 use std::os::raw::c_void;
 use std::ptr::null_mut;
@@ -442,6 +446,10 @@ fn stats_to_redis_value<CB: ReturnCallback>(summary: &ResultSummary<CB>) -> Vec<
     stats
 }
 
+#[cfg(feature = "fuzz")]
+static mut file_id: i32 = 0;
+
+#[allow(static_mut_refs)]
 fn graph_query(
     ctx: &Context,
     args: Vec<RedisString>,
@@ -449,6 +457,18 @@ fn graph_query(
     let mut args = args.into_iter().skip(1);
     let key = args.next_arg()?;
     let query = args.next_str()?;
+
+    #[cfg(feature = "fuzz")]
+    unsafe {
+        //  write the quert to file
+        let mut file = File::create(format!(
+            "fuzz/corpus/fuzz_target_runtime/output{file_id}.txt"
+        ))?;
+        file.write_all(query.as_bytes())?;
+        drop(file);
+        file_id += 1;
+    }
+
     let compact = args.next_str().is_ok_and(|arg| arg == "--compact");
     let key = ctx.open_key_writable(&key);
 

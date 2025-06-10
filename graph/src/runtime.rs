@@ -738,6 +738,14 @@ impl<'a> Runtime<'a> {
                 }
                 Ok(self.relationship_scan(relationship_pattern, Env::default()))
             }
+            IR::ExpandInto(relationship_pattern) => {
+                if let Some(child_idx) = child0_idx {
+                    return Ok(Box::new(self.run(&child_idx)?.try_flat_map(move |vars| {
+                        self.expand_into(relationship_pattern, vars)
+                    })));
+                }
+                Ok(self.expand_into(relationship_pattern, Env::default()))
+            }
             IR::PathBuilder(paths) => {
                 if let Some(child_idx) = child0_idx {
                     return Ok(Box::new(self.run(&child_idx)?.try_map(move |mut vars| {
@@ -880,20 +888,68 @@ impl<'a> Runtime<'a> {
         relationship_pattern: &'a RelationshipPattern,
         vars: Env,
     ) -> Box<dyn Iterator<Item = Result<Env, String>> + '_> {
-        let iter = self
-            .g
-            .borrow()
-            .get_relationships(&relationship_pattern.types, &[], &[]);
-        Box::new(iter.map(move |(src, dst, id)| {
-            let mut vars = vars.clone();
-            vars.insert(
-                &relationship_pattern.alias,
-                RcValue::relationship(id, src, dst),
-            );
-            vars.insert(&relationship_pattern.from, RcValue::node(src));
-            vars.insert(&relationship_pattern.to, RcValue::node(dst));
-            Ok(vars)
+        let iter = self.g.borrow().get_relationships(
+            &relationship_pattern.types,
+            &relationship_pattern.from.labels,
+            &relationship_pattern.to.labels,
+        );
+        Box::new(iter.flat_map(move |(src, dst)| {
+            let vars = vars.clone();
+            self.g
+                .borrow()
+                .get_src_dest_relationships(src, dst, &relationship_pattern.types)
+                .iter()
+                .map(move |id| {
+                    let mut vars = vars.clone();
+                    vars.insert(
+                        &relationship_pattern.alias,
+                        RcValue::relationship(*id, src, dst),
+                    );
+                    vars.insert(&relationship_pattern.from.alias, RcValue::node(src));
+                    vars.insert(&relationship_pattern.to.alias, RcValue::node(dst));
+                    Ok(vars)
+                })
+                .collect::<Vec<_>>()
         }))
+    }
+
+    fn expand_into(
+        &self,
+        relationship_pattern: &'a RelationshipPattern,
+        vars: Env,
+    ) -> Box<dyn Iterator<Item = Result<Env, String>> + '_> {
+        let src = vars
+            .get(&relationship_pattern.from.alias)
+            .and_then(|v| match *v {
+                Value::Node(id) => Some(id),
+                _ => None,
+            })
+            .unwrap();
+        let dst = vars
+            .get(&relationship_pattern.to.alias)
+            .and_then(|v| match *v {
+                Value::Node(id) => Some(id),
+                _ => None,
+            })
+            .unwrap();
+        Box::new(
+            self.g
+                .borrow()
+                .get_src_dest_relationships(src, dst, &relationship_pattern.types)
+                .iter()
+                .map(move |id| {
+                    let mut vars = vars.clone();
+                    vars.insert(
+                        &relationship_pattern.alias,
+                        RcValue::relationship(*id, src, dst),
+                    );
+                    vars.insert(&relationship_pattern.from.alias, RcValue::node(src));
+                    vars.insert(&relationship_pattern.to.alias, RcValue::node(dst));
+                    Ok(vars)
+                })
+                .collect::<Vec<_>>()
+                .into_iter(),
+        )
     }
 
     fn node_scan(
@@ -997,14 +1053,14 @@ impl<'a> Runtime<'a> {
         for rel in &pattern.relationships {
             let (from_id, to_id) = {
                 let Value::Node(from_id) = *vars
-                    .get(&rel.from)
-                    .ok_or_else(|| format!("Variable {} not found", rel.from.as_str()))?
+                    .get(&rel.from.alias)
+                    .ok_or_else(|| format!("Variable {} not found", rel.from.alias.as_str()))?
                 else {
                     return Err(String::from("Invalid node id"));
                 };
                 let Value::Node(to_id) = *vars
-                    .get(&rel.to)
-                    .ok_or_else(|| format!("Variable {} not found", rel.to.as_str()))?
+                    .get(&rel.to.alias)
+                    .ok_or_else(|| format!("Variable {} not found", rel.to.alias.as_str()))?
                 else {
                     return Err(String::from("Invalid node id"));
                 };

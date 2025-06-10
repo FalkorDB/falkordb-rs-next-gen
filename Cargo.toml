@@ -1,7 +1,8 @@
 [workspace]
 members = [
     "graph",
-    "falkordb-macro", ]
+    "falkordb-macro",
+    "fuzz", ]
 
 [package]
 name = "falkordb-rs"
@@ -39,3 +40,4 @@ lto = true
 
 [features]
 zipkin = ["opentelemetry", "opentelemetry-zipkin", "opentelemetry_sdk", "tracing-opentelemetry"]
+fuzz = []
