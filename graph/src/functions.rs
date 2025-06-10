@@ -615,7 +615,14 @@ pub fn init_functions() -> Result<(), Functions> {
         ])],
         FnType::Function,
     );
-
+    funcs.add(
+        "type",
+        relationship_type,
+        false,
+        vec![Type::Relationship],
+        FnType::Function,
+    );
+    funcs.add("nodes", nodes, false, vec![Type::Path], FnType::Function);
     // aggregation functions
     funcs.add(
         "collect",
@@ -1580,6 +1587,42 @@ fn to_boolean(
     }
 }
 
+fn relationship_type(
+    runtime: &Runtime,
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
+    let mut iter = args.into_iter();
+    match iter.next().as_deref() {
+        Some(Value::Relationship(id, from, to)) => {
+            if let Some((type_name, _, _, _)) =
+                runtime.pending.borrow().created_relationships.get(id)
+            {
+                return Ok(RcValue::string(type_name.clone()));
+            }
+            let relation_type_id = runtime.g.borrow().get_relationship_type_id(*id);
+            runtime
+                .g
+                .borrow()
+                .get_types()
+                .nth(relation_type_id as usize)
+                .map(|type_name| RcValue::string(type_name.clone()))
+                .ok_or_else(|| String::from("Relationship type not found"))
+        }
+        _ => unreachable!(),
+    }
+}
+
+fn nodes(
+    _: &Runtime,
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
+    let mut iter = args.into_iter();
+    match iter.next().as_deref() {
+        Some(Value::Path(_values)) => Ok(RcValue::null()),
+        _ => unreachable!(),
+    }
+}
+
 //
 // Internal functions
 //
@@ -1646,11 +1689,19 @@ fn internal_node_has_labels(
     let mut iter = args.into_iter();
     match (iter.next().as_deref(), iter.next().as_deref()) {
         (Some(Value::Node(node_id)), Some(Value::List(required_labels))) => {
-            let actual_labels = runtime
-                .g
-                .borrow()
-                .get_node_labels(*node_id)
-                .collect::<HashSet<_>>();
+            let actual_labels =
+                if let Some((labels, _)) = runtime.pending.borrow().created_nodes.get(node_id) {
+                    labels
+                        .iter()
+                        .map(std::clone::Clone::clone)
+                        .collect::<HashSet<_>>()
+                } else {
+                    runtime
+                        .g
+                        .borrow()
+                        .get_node_labels(*node_id)
+                        .collect::<HashSet<_>>()
+                };
             let all_labels_present = required_labels.iter().all(|label| {
                 if let Value::String(label_str) = &**label {
                     actual_labels.contains(label_str)

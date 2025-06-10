@@ -48,6 +48,7 @@ enum Keyword {
     Any,
     None,
     Single,
+    Distinct,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -86,7 +87,7 @@ enum Token {
     EndOfFile,
 }
 
-const KEYWORDS: [(&str, Keyword); 33] = [
+const KEYWORDS: &[(&str, Keyword)] = &[
     ("CALL", Keyword::Call),
     ("OPTIONAL", Keyword::Optional),
     ("MATCH", Keyword::Match),
@@ -120,6 +121,7 @@ const KEYWORDS: [(&str, Keyword); 33] = [
     ("ANY", Keyword::Any),
     ("NONE", Keyword::None),
     ("SINGLE", Keyword::Single),
+    ("DISTINCT", Keyword::Distinct),
 ];
 
 const MIN_I64: [&str; 5] = [
@@ -860,7 +862,10 @@ impl<'a> Parser<'a> {
                                 &FnType::Aggregation(RcValue::null()),
                             )
                         })
-                        .unwrap();
+                        .ok_or_else(|| format!("Unknown function '{namespace_and_function}'"))?;
+
+                    let distinct = optional_match_token!(self.lexer => Distinct);
+
                     if func.is_aggregate() {
                         if optional_match_token!(self.lexer, Star) {
                             match_token!(self.lexer, RParen);

@@ -26,3 +26,5 @@ clauses/delete/Delete5.feature
 clauses/delete/Delete6.feature
 clauses/match/Match1.feature
 clauses/return/Return1.feature
+clauses/return/Return2.feature
+clauses/return/Return3.feature
