@@ -615,6 +615,13 @@ pub fn init_functions() -> Result<(), Functions> {
         ])],
         FnType::Function,
     );
+    funcs.add(
+        "type",
+        primitive_type,
+        false,
+        vec![Type::Relationship],
+        FnType::Function,
+    );
 
     // aggregation functions
     funcs.add(
@@ -1576,6 +1583,25 @@ fn to_boolean(
         }
         Some(Value::Int(n)) => Ok(RcValue::bool(*n != 0)),
         Some(Value::Null) => Ok(RcValue::null()),
+        _ => unreachable!(),
+    }
+}
+fn primitive_type(
+    runtime: &Runtime,
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
+    let mut iter = args.into_iter();
+    match iter.next().as_deref() {
+        Some(Value::Relationship(id, from, to)) => {
+            let relation_type_id = runtime.g.borrow().get_relationship_type_id(*id);
+            runtime
+                .g
+                .borrow()
+                .get_types()
+                .nth(relation_type_id as usize)
+                .map(|type_name| RcValue::string(type_name.clone()))
+                .ok_or_else(|| String::from("Relationship type not found"))
+        }
         _ => unreachable!(),
     }
 }

@@ -860,7 +860,7 @@ impl<'a> Parser<'a> {
                                 &FnType::Aggregation(RcValue::null()),
                             )
                         })
-                        .unwrap();
+                        .ok_or_else(|| format!("Unknown function '{namespace_and_function}'"))?;
                     if func.is_aggregate() {
                         if optional_match_token!(self.lexer, Star) {
                             match_token!(self.lexer, RParen);
