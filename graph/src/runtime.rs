@@ -888,6 +888,9 @@ impl<'a> Runtime<'a> {
         relationship_pattern: &'a RelationshipPattern,
         vars: Env,
     ) -> Box<dyn Iterator<Item = Result<Env, String>> + '_> {
+        let attrs = self
+            .run_expr(relationship_pattern.attrs.root(), &vars, false)
+            .unwrap();
         let iter = self.g.borrow().get_relationships(
             &relationship_pattern.types,
             &relationship_pattern.from.labels,
@@ -895,15 +898,36 @@ impl<'a> Runtime<'a> {
         );
         Box::new(iter.flat_map(move |(src, dst)| {
             let vars = vars.clone();
+            let attrs = attrs.clone();
             self.g
                 .borrow()
                 .get_src_dest_relationships(src, dst, &relationship_pattern.types)
-                .iter()
+                .into_iter()
+                .filter(move |v| {
+                    if let Value::Map(attrs) = &*attrs {
+                        if !attrs.is_empty() {
+                            let g = self.g.borrow();
+                            let properties = g.get_relationship_properties(*v);
+                            for (key, avalue) in attrs {
+                                if let Some(pvalue) =
+                                    properties.get(&g.get_relationship_property_id(key).unwrap())
+                                {
+                                    if avalue == pvalue {
+                                        continue;
+                                    }
+                                    return false;
+                                }
+                                return false;
+                            }
+                        }
+                    }
+                    true
+                })
                 .map(move |id| {
                     let mut vars = vars.clone();
                     vars.insert(
                         &relationship_pattern.alias,
-                        RcValue::relationship(*id, src, dst),
+                        RcValue::relationship(id, src, dst),
                     );
                     vars.insert(&relationship_pattern.from.alias, RcValue::node(src));
                     vars.insert(&relationship_pattern.to.alias, RcValue::node(dst));
