@@ -2,7 +2,7 @@ use crate::ast::{
     ExprIR, NodePattern, PathPattern, Pattern, QuantifierType, QueryIR, RelationshipPattern, VarId,
 };
 use crate::cypher::Token::RParen;
-use crate::functions::{FnType, get_functions};
+use crate::functions::{FnType, Type, get_functions};
 use crate::tree;
 use crate::value::RcValue;
 use falkordb_macro::parse_binary_expr;
@@ -477,7 +477,7 @@ macro_rules! optional_match_token {
 pub struct Parser<'a> {
     lexer: Lexer<'a>,
     var_id: u32,
-    vars: HashMap<Rc<String>, u32>,
+    vars: HashMap<Rc<String>, VarId>,
 }
 
 impl<'a> Parser<'a> {
@@ -493,21 +493,40 @@ impl<'a> Parser<'a> {
     fn create_var(
         &mut self,
         name: Option<Rc<String>>,
-    ) -> VarId {
+        ty: Type,
+    ) -> Result<VarId, String> {
         if let Some(name) = &name {
             if let Some(id) = self.vars.get(name) {
-                return VarId {
-                    name: Some(name.clone()),
-                    id: *id,
-                };
+                if (ty == Type::Relationship && id.ty == Type::Node)
+                    || (ty == Type::Node && id.ty == Type::Relationship)
+                {
+                    return Err(format!(
+                        "The alias '{}' was specified for both a node and a relationship.",
+                        name.as_str()
+                    ));
+                }
+                // debug_assert!(id.ty == ty, "Variable type mismatch");
+                return Ok(VarId {
+                    name: id.name.clone(),
+                    id: id.id,
+                    ty,
+                });
             }
-            self.vars.insert(name.clone(), self.var_id);
+            self.vars.insert(
+                name.clone(),
+                VarId {
+                    name: Some(name.clone()),
+                    id: self.var_id,
+                    ty: ty.clone(),
+                },
+            );
         }
         self.var_id += 1;
-        VarId {
+        Ok(VarId {
             name,
             id: self.var_id - 1,
-        }
+            ty,
+        })
     }
 
     pub fn parse_parameters(
@@ -664,7 +683,10 @@ impl<'a> Parser<'a> {
         let list = self.parse_expr()?;
         match_token!(self.lexer => As);
         let ident = self.parse_ident()?;
-        Ok(QueryIR::Unwind(list, self.create_var(Some(ident))))
+        Ok(QueryIR::Unwind(
+            list,
+            self.create_var(Some(ident), Type::Any)?,
+        ))
     }
 
     fn parse_create_clause(&mut self) -> Result<QueryIR, String> {
@@ -718,7 +740,7 @@ impl<'a> Parser<'a> {
             if let Token::Ident(ident) = self.lexer.current() {
                 self.lexer.next();
                 match_token!(self.lexer, Equal);
-                let mut vars = Vec::new();
+                let mut vars = vec![];
                 let mut left = self.parse_node_pattern(clause)?;
                 vars.push(left.alias.clone());
                 if nodes_alias.insert(left.alias.clone()) {
@@ -736,7 +758,10 @@ impl<'a> Parser<'a> {
                             nodes.push(right);
                         }
                     } else {
-                        paths.push(PathPattern::new(self.create_var(Some(ident)), vars));
+                        paths.push(Rc::new(PathPattern::new(
+                            self.create_var(Some(ident), Type::Path)?,
+                            vars,
+                        )));
                         break;
                     }
                 }
@@ -835,7 +860,7 @@ impl<'a> Parser<'a> {
         let condition = self.parse_expr()?;
         match_token!(self.lexer, RParen);
         Ok(tree!(
-            ExprIR::Quantifier(quantifier_type, self.create_var(Some(var))),
+            ExprIR::Quantifier(quantifier_type, self.create_var(Some(var), Type::Any)?),
             expr,
             condition
         ))
@@ -878,14 +903,14 @@ impl<'a> Parser<'a> {
                             match_token!(self.lexer, RParen);
                             return Ok(tree!(
                                 ExprIR::FuncInvocation(func),
-                                tree!(ExprIR::Var(self.create_var(None)))
+                                tree!(ExprIR::Var(self.create_var(None, Type::Any)?))
                             ));
                         }
 
                         let mut args = self.parse_expression_list(
                             ExpressionListType::ZeroOrMoreClosedBy(RParen),
                         )?;
-                        args.push(tree!(ExprIR::Var(self.create_var(None))));
+                        args.push(tree!(ExprIR::Var(self.create_var(None, Type::Any)?)));
                         return Ok(tree!(ExprIR::FuncInvocation(func); args));
                     }
 
@@ -894,7 +919,7 @@ impl<'a> Parser<'a> {
                     return Ok(tree!(ExprIR::FuncInvocation(func); args));
                 }
                 self.lexer.set_pos(pos);
-                Ok(tree!(ExprIR::Var(self.create_var(Some(ident)))))
+                Ok(tree!(ExprIR::Var(self.create_var(Some(ident), Type::Any)?)))
             }
             Token::Parameter(param) => {
                 self.lexer.next();
@@ -1195,14 +1220,15 @@ impl<'a> Parser<'a> {
             if let Token::Keyword(Keyword::As, _) = self.lexer.current() {
                 self.lexer.next();
                 let ident = self.parse_ident()?;
-                named_exprs.push((self.create_var(Some(ident)), expr));
+                named_exprs.push((self.create_var(Some(ident), Type::Any)?, expr));
             } else if let ExprIR::Var(id) = expr.root().data() {
                 named_exprs.push((id.clone(), expr));
             } else {
                 named_exprs.push((
-                    self.create_var(Some(Rc::new(String::from(
-                        &self.lexer.str[pos..self.lexer.pos],
-                    )))),
+                    self.create_var(
+                        Some(Rc::new(String::from(&self.lexer.str[pos..self.lexer.pos]))),
+                        Type::Any,
+                    )?,
                     expr,
                 ));
             }
@@ -1289,10 +1315,13 @@ impl<'a> Parser<'a> {
         match_token!(self.lexer, RBrace);
 
         Ok(tree!(
-            ExprIR::ListComprehension(self.create_var(Some(var.clone()))),
+            ExprIR::ListComprehension(self.create_var(Some(var.clone()), Type::Any)?),
             list_expr,
             condition.unwrap_or_else(|| tree!(ExprIR::Bool(true))),
-            expression.unwrap_or_else(|| tree!(ExprIR::Var(self.create_var(Some(var)))))
+            expression.map_or_else(
+                || Ok::<_, String>(tree!(ExprIR::Var(self.create_var(Some(var), Type::Any)?))),
+                |v| Ok(v)
+            )?
         ))
     }
 
@@ -1303,9 +1332,9 @@ impl<'a> Parser<'a> {
         match_token!(self.lexer, LParen);
         let alias = if let Token::Ident(id) = self.lexer.current() {
             self.lexer.next();
-            self.create_var(Some(id))
+            self.create_var(Some(id), Type::Node)?
         } else {
-            self.create_var(None)
+            self.create_var(None, Type::Node)?
         };
         let labels = self.parse_labels()?;
         let attrs = if let Token::Parameter(param) = self.lexer.current() {
@@ -1334,9 +1363,9 @@ impl<'a> Parser<'a> {
         let (alias, types, attrs) = if has_details {
             let alias = if let Token::Ident(id) = self.lexer.current() {
                 self.lexer.next();
-                self.create_var(Some(id))
+                self.create_var(Some(id), Type::Relationship)?
             } else {
-                self.create_var(None)
+                self.create_var(None, Type::Relationship)?
             };
             let mut types = vec![];
             if optional_match_token!(self.lexer, Colon) {
@@ -1373,6 +1402,11 @@ impl<'a> Parser<'a> {
             };
             let attrs = if let Token::Parameter(param) = self.lexer.current() {
                 self.lexer.next();
+                if clause == &Keyword::Match {
+                    return Err(self
+                        .lexer
+                        .format_error("Encountered unhandled type in inlined properties."));
+                }
                 tree!(ExprIR::Parameter(param))
             } else {
                 self.parse_map()?
@@ -1380,7 +1414,11 @@ impl<'a> Parser<'a> {
             match_token!(self.lexer, RBrace);
             (alias, types, attrs)
         } else {
-            (self.create_var(None), vec![], tree!(ExprIR::Map))
+            (
+                self.create_var(None, Type::Relationship)?,
+                vec![],
+                tree!(ExprIR::Map),
+            )
         };
         match_token!(self.lexer, Dash);
         let is_outgoing = optional_match_token!(self.lexer, GreaterThan);

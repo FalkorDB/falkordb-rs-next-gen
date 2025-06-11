@@ -1,5 +1,5 @@
 use crate::ast::{NodePattern, Pattern, QuantifierType, RelationshipPattern, VarId};
-use crate::functions::{FnType, Functions, get_functions};
+use crate::functions::{FnType, Functions, Type, get_functions};
 use crate::iter::{Aggregate, LazyReplace, TryFlatMap, TryMap};
 use crate::value::{DisjointOrNull, Env, RcValue};
 use crate::{ast::ExprIR, graph::Graph, planner::IR, value::Contains, value::Value};
@@ -81,6 +81,7 @@ impl ReturnNames for DynNode<'_, IR> {
             IR::Call(name, _) => vec![VarId {
                 name: Some(name.clone()),
                 id: 0,
+                ty: Type::Any,
             }],
             IR::Aggregate(names, _, _) => names.clone(),
             _ => vec![],
@@ -618,6 +619,7 @@ impl<'a> Runtime<'a> {
                                 &VarId {
                                     name: Some(name.clone()),
                                     id: 0,
+                                    ty: Type::Any,
                                 },
                                 v,
                             );

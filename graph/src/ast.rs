@@ -2,12 +2,13 @@ use std::{collections::HashSet, fmt::Display, hash::Hash, rc::Rc};
 
 use orx_tree::{Dfs, DynNode, DynTree, NodeRef};
 
-use crate::functions::GraphFn;
+use crate::functions::{GraphFn, Type};
 
 #[derive(Clone, Debug)]
 pub struct VarId {
     pub name: Option<Rc<String>>,
     pub id: u32,
+    pub ty: Type,
 }
 
 impl PartialEq for VarId {
@@ -292,7 +293,7 @@ impl SupportAggregation for DynTree<ExprIR> {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct NodePattern {
     pub alias: VarId,
     pub labels: Vec<Rc<String>>,
@@ -335,7 +336,7 @@ impl NodePattern {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct RelationshipPattern {
     pub alias: VarId,
     pub types: Vec<Rc<String>>,
@@ -398,7 +399,7 @@ impl RelationshipPattern {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct PathPattern {
     pub var: VarId,
     pub vars: Vec<VarId>,
@@ -418,7 +419,7 @@ impl PathPattern {
 pub struct Pattern {
     pub nodes: Vec<Rc<NodePattern>>,
     pub relationships: Vec<Rc<RelationshipPattern>>,
-    pub paths: Vec<PathPattern>,
+    pub paths: Vec<Rc<PathPattern>>,
 }
 
 impl Display for Pattern {
@@ -444,7 +445,7 @@ impl Pattern {
     pub const fn new(
         nodes: Vec<Rc<NodePattern>>,
         relationships: Vec<Rc<RelationshipPattern>>,
-        paths: Vec<PathPattern>,
+        paths: Vec<Rc<PathPattern>>,
     ) -> Self {
         Self {
             nodes,
@@ -549,12 +550,6 @@ impl QueryIR {
                 let mut remove = Vec::new();
                 for (i, node) in p.nodes.iter().enumerate() {
                     if env.contains(&node.alias.id) {
-                        if p.relationships.is_empty() {
-                            return Err(format!(
-                                "The alias '{}' was specified for both a node and a relationship.",
-                                node.alias.as_str()
-                            ));
-                        }
                         remove.push(i);
                     }
                     node.attrs.root().validate(env)?;
@@ -565,12 +560,6 @@ impl QueryIR {
                     p.nodes.remove(i);
                 }
                 for relationship in &p.relationships {
-                    if env.contains(&relationship.alias.id) {
-                        return Err(format!(
-                            "The alias '{}' was specified for both a node and a relationship.",
-                            relationship.alias.as_str()
-                        ));
-                    }
                     relationship.attrs.root().validate(env)?;
                     env.insert(relationship.alias.id);
                 }

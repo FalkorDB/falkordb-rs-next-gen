@@ -34,7 +34,7 @@ impl PartialEq for FnType {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(PartialEq, Clone, Debug)]
 pub enum Type {
     Null,
     Bool,

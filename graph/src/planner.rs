@@ -22,7 +22,7 @@ pub enum IR {
     NodeScan(Rc<NodePattern>),
     RelationshipScan(Rc<RelationshipPattern>),
     ExpandInto(Rc<RelationshipPattern>),
-    PathBuilder(Vec<PathPattern>),
+    PathBuilder(Vec<Rc<PathPattern>>),
     Filter(DynTree<ExprIR>),
     Aggregate(
         Vec<VarId>,
