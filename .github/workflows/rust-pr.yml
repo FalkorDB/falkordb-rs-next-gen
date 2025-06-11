@@ -141,13 +141,14 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: fuzzing-corpus
-          path: /falkordb-rs-next-gen/fuzz/corpus
+          path: fuzz/corpus
         continue-on-error: true
       - name: Run fuzz tests
         run: |
           cargo build --features fuzz
           . /data/venv/bin/activate
-          TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -v
+          mkdir -p fuzz/corpus/fuzz_target_runtime/
+          TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -vv
           cargo fuzz build fuzz_target_runtime
           cargo fuzz run fuzz_target_runtime -- -max_total_time=300 -sanitizer=address
           cargo fuzz cmin fuzz_target_runtime
@@ -155,7 +156,7 @@ jobs:
         if: ${{ !cancelled() }}
         with:
           name: fuzzing-corpus
-          path: /falkordb-rs-next-gen/fuzz/corpus
+          path: fuzz/corpus
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
