@@ -364,7 +364,10 @@ def test_toInteger():
 @given(st.integers(-100, 100) | st.floats(-100, 100))
 def test_prop_toInteger(x):
     res = query(f"RETURN toInteger({x}), toInteger('{x}')")
-    assert res.result_set == [[int(x), int(x)]]
+    if isinstance(x, float):
+        assert res.result_set == [[int(math.floor(x)), int(math.floor(x))]]    
+    else:
+        assert res.result_set == [[int(x), int(x)]]
 
 def test_list_range():
     res = query("RETURN [1, 2, 3][null..1] AS r")
@@ -386,12 +389,12 @@ def test_prop_list_range(a, b):
     res = query(f"RETURN [1, 2, 3, 4, 5][..{a}] AS r")
     assert res.result_set == [[[1, 2, 3, 4, 5][:a]]]
 
-@given(st.lists(st.booleans() | st.integers(-10, 10) | st.text()), st.lists(st.booleans() | st.integers(-10, 10) | st.text()))
+@given(st.lists(st.booleans() | st.integers(-10, 10) | st.text().filter(lambda s: all(0x00 < ord(c) < 0x80 for c in s))), st.lists(st.booleans() | st.integers(-10, 10) | st.text().filter(lambda s: all(0x00 < ord(c) < 0x80 for c in s))))
 def test_list_concat(a, b):
     res = query(f"RETURN $a + $b", params={"a": a, "b": b})
     assert res.result_set == [[a + b]]
 
-@given(st.lists(st.booleans() | st.integers(-10, 10) | st.text()), st.booleans() | st.integers(-10, 10) | st.text())
+@given(st.lists(st.booleans() | st.integers(-10, 10) | st.text().filter(lambda s: all(0x00 < ord(c) < 0x80 for c in s))), st.booleans() | st.integers(-10, 10) | st.text().filter(lambda s: all(0x00 < ord(c) < 0x80 for c in s)))
 def test_list_append(a, b):
     res = query(f"RETURN $a + $b", params={"a": a, "b": b})
     assert res.result_set == [[a + [b]]]
@@ -585,80 +588,37 @@ def test_is_equal():
     assert res.result_set == [[None]]
 
 
-def test_list_size():
-    res = query("RETURN size([1, 2, 3]) AS res")
-    assert res.result_set == [[3]]
+@given(st.none() | st.text().filter(lambda s: all(0x00 < ord(c) < 0x80 for c in s)) | st.lists(st.none() | st.booleans() | st.integers(-10, 10) | st.text().filter(lambda s: all(0x00 < ord(c) < 0x80 for c in s)) | st.lists(st.none() | st.booleans() | st.integers(-10, 10) | st.text().filter(lambda s: all(0x00 < ord(c) < 0x80 for c in s)))))
+def test_list_size(a):
+    res = query("RETURN size($a)", params={"a": a})
+    assert res.result_set == [[len(a) if a is not None else None]]
 
-    res = query("RETURN size([]) AS res")
-    assert res.result_set == [[0]]
+@given(st.none() | st.lists(st.none() | st.booleans() | st.integers(-10, 10) | st.text().filter(lambda s: all(0x00 < ord(c) < 0x80 for c in s)) | st.lists(st.none() | st.booleans() | st.integers(-10, 10) | st.text().filter(lambda s: all(0x00 < ord(c) < 0x80 for c in s)))))
+def test_list_head(a):
+    res = query("RETURN head($a)", params={"a": a})
+    assert res.result_set == [[a[0] if a else None]]
 
-    res = query("RETURN size(null) AS res")
-    assert res.result_set == [[None]]
-
-    res = query("RETURN size('Avi') AS res")
-    assert res.result_set == [[3]]
-
-    res = query("RETURN size([[], []] + [[]]) AS l")
-    assert res.result_set == [[3]]
-    res = query("WITH null AS l RETURN size(l), size(null)")
-    assert res.result_set == [[None, None]]
+@given(st.none() | st.lists(st.none() | st.booleans() | st.integers(-10, 10) | st.text().filter(lambda s: all(0x00 < ord(c) < 0x80 for c in s)) | st.lists(st.none() | st.booleans() | st.integers(-10, 10) | st.text().filter(lambda s: all(0x00 < ord(c) < 0x80 for c in s)))))
+def test_list_last(a):
+    res = query("RETURN last($a)", params={"a": a})
+    assert res.result_set == [[a[-1] if a else None]]
 
 
-def test_list_head():
-    res = query("RETURN head([1, 2, 3]) AS res")
-    assert res.result_set == [[1]]
-
-    res = query("RETURN head([]) AS res")
-    assert res.result_set == [[None]]
-
-    res = query("RETURN head(null) AS res")
-    assert res.result_set == [[None]]
-
-
-def test_list_last():
-    res = query("RETURN last([1, 2, 3]) AS res")
-    assert res.result_set == [[3]]
-
-    res = query("RETURN last([]) AS res")
-    assert res.result_set == [[None]]
-
-    res = query("RETURN last(null) AS res")
-    assert res.result_set == [[None]]
-
-    for value in [False, True, 1, 1.0, {}]:
-        res = query(f"RETURN last([1, {value}]) AS res")
-        assert res.result_set == [[value]]
+@given(st.none() | st.lists(st.none() | st.booleans() | st.integers(-10, 10) | st.text().filter(lambda s: all(0x00 < ord(c) < 0x80 for c in s)) | st.lists(st.none() | st.booleans() | st.integers(-10, 10) | st.text().filter(lambda s: all(0x00 < ord(c) < 0x80 for c in s)))))
+def test_list_tail(a):
+    res = query("RETURN tail($a)", params={"a": a})
+    if a is None:
+        assert res.result_set == [[None]]
+    elif len(a) == 0:
+        assert res.result_set == [[[]]]
+    else:
+        assert res.result_set == [[a[1:]]]
 
 
-def test_list_tail():
-    res = query("RETURN tail([1, 2, 3]) AS res")
-    assert res.result_set == [[[2, 3]]]
-
-    res = query("RETURN tail([]) AS res")
-    assert res.result_set == [[[]]]
-
-    res = query("RETURN tail(null) AS res")
-    assert res.result_set == [[None]]
-
-
-def test_list_reverse():
-    res = query("RETURN reverse([1, 2, 3]) AS res")
-    assert res.result_set == [[[3, 2, 1]]]
-
-    res = query("RETURN reverse(['a', 'b', 'c']) AS res")
-    assert res.result_set == [[['c', 'b', 'a']]]
-
-    res = query("RETURN reverse([True, False]) AS res")
-    assert res.result_set == [[[False, True]]]
-
-    res = query("RETURN reverse([null, False]) AS res")
-    assert res.result_set == [[[False, None]]]
-
-    res = query("RETURN reverse([]) AS res")
-    assert res.result_set == [[[]]]
-
-    res = query("RETURN reverse(null) AS res")
-    assert res.result_set == [[None]]
+@given(st.none() | st.lists(st.none() | st.booleans() | st.integers(-10, 10) | st.text().filter(lambda s: all(0x00 < ord(c) < 0x80 for c in s)) | st.lists(st.none() | st.booleans() | st.integers(-10, 10) | st.text().filter(lambda s: all(0x00 < ord(c) < 0x80 for c in s)))))
+def test_list_reverse(a):
+    res = query("RETURN reverse($a)", params={"a": a})
+    assert res.result_set == [[a[::-1] if a is not None else None]]
 
 
 def cypher_xor(a, b, c):

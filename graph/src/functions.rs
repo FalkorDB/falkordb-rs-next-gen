@@ -954,11 +954,11 @@ fn value_to_integer(
     match args.into_iter().next().as_deref() {
         Some(Value::String(s)) => s.parse::<i64>().map(RcValue::int).or_else(|_| {
             s.parse::<f64>()
-                .map(|f| RcValue::int(f as i64))
+                .map(|f| RcValue::int(f.floor() as i64))
                 .or(Ok(RcValue::null()))
         }),
         Some(Value::Int(i)) => Ok(RcValue::int(*i)),
-        Some(Value::Float(f)) => Ok(RcValue::int(*f as i64)),
+        Some(Value::Float(f)) => Ok(RcValue::int(f.floor() as i64)),
         Some(Value::Bool(b)) => Ok(RcValue::int(i64::from(*b))),
         Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
