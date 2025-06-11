@@ -142,6 +142,7 @@ jobs:
         with:
           name: fuzzing-corpus
           path: /falkordb-rs-next-gen/fuzz/corpus
+        continue-on-error: true
       - name: Run fuzz tests
         run: |
           cargo build --features fuzz
