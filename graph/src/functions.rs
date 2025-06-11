@@ -1088,6 +1088,9 @@ fn substring(
             if *start < 0 {
                 return Err("start must be a non-negative integer".into());
             }
+            if start >= &(s.len() as _) {
+                return Ok(RcValue::string(Rc::new(String::new())));
+            }
             let start = *start as usize;
 
             Ok(RcValue::string(Rc::new(String::from(&s[start..]))))
