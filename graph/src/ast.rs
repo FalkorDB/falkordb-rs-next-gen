@@ -2,12 +2,13 @@ use std::{collections::HashSet, fmt::Display, hash::Hash, rc::Rc};
 
 use orx_tree::{Dfs, DynNode, DynTree, NodeRef};
 
-use crate::functions::GraphFn;
+use crate::functions::{GraphFn, Type};
 
 #[derive(Clone, Debug)]
 pub struct VarId {
     pub name: Option<Rc<String>>,
     pub id: u32,
+    pub ty: Type,
 }
 
 impl PartialEq for VarId {
@@ -215,12 +216,13 @@ impl Validate for DynNode<'_, ExprIR> {
                 Ok(())
             }
             ExprIR::FuncInvocation(func) => {
-                func.validate(self.num_children())?;
                 if func.is_aggregate() {
+                    func.validate(self.num_children() - 1)?;
                     for i in 0..self.num_children() - 1 {
                         self.child(i).validate(env)?;
                     }
                 } else {
+                    func.validate(self.num_children())?;
                     for expr in self.children() {
                         expr.validate(env)?;
                     }
@@ -295,7 +297,7 @@ impl SupportAggregation for DynTree<ExprIR> {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct NodePattern {
     pub alias: VarId,
     pub labels: Vec<Rc<String>>,
@@ -338,13 +340,13 @@ impl NodePattern {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct RelationshipPattern {
     pub alias: VarId,
     pub types: Vec<Rc<String>>,
     pub attrs: Rc<DynTree<ExprIR>>,
-    pub from: VarId,
-    pub to: VarId,
+    pub from: Rc<NodePattern>,
+    pub to: Rc<NodePattern>,
     pub bidirectional: bool,
 }
 
@@ -358,16 +360,16 @@ impl Display for RelationshipPattern {
             return write!(
                 f,
                 "({})-[{}]-{}({})",
-                self.from.as_str(),
+                self.from.alias.as_str(),
                 self.alias.as_str(),
                 direction,
-                self.to.as_str()
+                self.to.alias.as_str()
             );
         }
         write!(
             f,
             "({})-[{}:{}]-{}({})",
-            self.from.as_str(),
+            self.from.alias.as_str(),
             self.alias.as_str(),
             self.types
                 .iter()
@@ -375,7 +377,7 @@ impl Display for RelationshipPattern {
                 .collect::<Vec<_>>()
                 .join("|"),
             direction,
-            self.to.as_str()
+            self.to.alias.as_str()
         )
     }
 }
@@ -386,8 +388,8 @@ impl RelationshipPattern {
         alias: VarId,
         types: Vec<Rc<String>>,
         attrs: Rc<DynTree<ExprIR>>,
-        from: VarId,
-        to: VarId,
+        from: Rc<NodePattern>,
+        to: Rc<NodePattern>,
         bidirectional: bool,
     ) -> Self {
         Self {
@@ -401,7 +403,7 @@ impl RelationshipPattern {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct PathPattern {
     pub var: VarId,
     pub vars: Vec<VarId>,
@@ -419,9 +421,9 @@ impl PathPattern {
 
 #[derive(Clone, Debug)]
 pub struct Pattern {
-    pub nodes: Vec<NodePattern>,
-    pub relationships: Vec<RelationshipPattern>,
-    pub paths: Vec<PathPattern>,
+    pub nodes: Vec<Rc<NodePattern>>,
+    pub relationships: Vec<Rc<RelationshipPattern>>,
+    pub paths: Vec<Rc<PathPattern>>,
 }
 
 impl Display for Pattern {
@@ -445,9 +447,9 @@ impl Display for Pattern {
 impl Pattern {
     #[must_use]
     pub const fn new(
-        nodes: Vec<NodePattern>,
-        relationships: Vec<RelationshipPattern>,
-        paths: Vec<PathPattern>,
+        nodes: Vec<Rc<NodePattern>>,
+        relationships: Vec<Rc<RelationshipPattern>>,
+        paths: Vec<Rc<PathPattern>>,
     ) -> Self {
         Self {
             nodes,
@@ -552,12 +554,6 @@ impl QueryIR {
                 let mut remove = Vec::new();
                 for (i, node) in p.nodes.iter().enumerate() {
                     if env.contains(&node.alias.id) {
-                        if p.relationships.is_empty() {
-                            return Err(format!(
-                                "The alias '{}' was specified for both a node and a relationship.",
-                                node.alias.as_str()
-                            ));
-                        }
                         remove.push(i);
                     }
                     node.attrs.root().validate(env)?;
@@ -568,12 +564,6 @@ impl QueryIR {
                     p.nodes.remove(i);
                 }
                 for relationship in &p.relationships {
-                    if env.contains(&relationship.alias.id) {
-                        return Err(format!(
-                            "The alias '{}' was specified for both a node and a relationship.",
-                            relationship.alias.as_str()
-                        ));
-                    }
                     relationship.attrs.root().validate(env)?;
                     env.insert(relationship.alias.id);
                 }
@@ -583,8 +573,9 @@ impl QueryIR {
                     }
                     env.insert(path.var.id);
                 }
-                let first = iter.next().unwrap();
-                first.inner_validate(iter, env)
+                iter.next().map_or_else(|| Err(String::from(
+                        "Query cannot conclude with MATCH (must be a RETURN clause, an update clause, a procedure call or a non-returning subquery)",
+                    )), |first| first.inner_validate(iter, env))
             }
             Self::Unwind(l, v) => {
                 l.root().validate(env)?;
@@ -592,8 +583,9 @@ impl QueryIR {
                     return Err(format!("Duplicate alias {}", v.as_str()));
                 }
                 env.insert(v.id);
-                let first = iter.next().unwrap();
-                first.inner_validate(iter, env)
+                iter.next().map_or_else(|| Err(String::from(
+                        "Query cannot conclude with UNWIND (must be a RETURN clause, an update clause, a procedure call or a non-returning subquery)",
+                    )), |first| first.inner_validate(iter, env))
             }
             Self::Merge(p) => {
                 let mut remove = Vec::new();
@@ -620,8 +612,8 @@ impl QueryIR {
                     relationship.attrs.root().validate(env)?;
                     env.insert(relationship.alias.id);
                 }
-                let first = iter.next().unwrap();
-                first.inner_validate(iter, env)
+                iter.next()
+                    .map_or(Ok(()), |first| first.inner_validate(iter, env))
             }
             Self::Where(expr) => expr.root().validate(env),
             Self::Create(p) => {

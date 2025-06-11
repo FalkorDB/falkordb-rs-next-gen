@@ -1,15 +1,16 @@
 use std::{marker::PhantomData, mem::MaybeUninit, os::raw::c_void, ptr::null_mut, rc::Rc};
 
 use crate::GraphBLAS::{
-    GrB_BOOL, GrB_Info, GrB_Matrix, GrB_Matrix_apply, GrB_Matrix_dup, GrB_Matrix_eWiseAdd_Semiring,
-    GrB_Matrix_eWiseMult_Semiring, GrB_Matrix_extractElement_BOOL,
+    GrB_BOOL, GrB_DESC_ST0, GrB_Info, GrB_Matrix, GrB_Matrix_apply, GrB_Matrix_dup,
+    GrB_Matrix_eWiseAdd_Semiring, GrB_Matrix_eWiseMult_Semiring, GrB_Matrix_extractElement_BOOL,
     GrB_Matrix_extractElement_UINT64, GrB_Matrix_free, GrB_Matrix_ncols, GrB_Matrix_new,
     GrB_Matrix_nrows, GrB_Matrix_nvals, GrB_Matrix_removeElement, GrB_Matrix_resize,
     GrB_Matrix_setElement_BOOL, GrB_Matrix_setElement_UINT64, GrB_Matrix_wait, GrB_Mode,
     GrB_UINT64, GrB_UnaryOp, GrB_UnaryOp_free, GrB_UnaryOp_new, GrB_WaitMode, GrB_finalize,
-    GrB_transpose, GxB_ANY_PAIR_BOOL, GxB_Iterator, GxB_Iterator_free, GxB_Iterator_get_UINT64,
-    GxB_Iterator_new, GxB_Matrix_Iterator_attach, GxB_Matrix_Iterator_getIndex,
-    GxB_Matrix_Iterator_next, GxB_init, GxB_rowIterator_seekRow, GxB_unary_function,
+    GrB_mxm, GrB_transpose, GxB_ANY_PAIR_BOOL, GxB_Iterator, GxB_Iterator_free,
+    GxB_Iterator_get_UINT64, GxB_Iterator_new, GxB_Matrix_Iterator_attach,
+    GxB_Matrix_Iterator_getIndex, GxB_Matrix_Iterator_next, GxB_Matrix_fprint, GxB_Print_Level,
+    GxB_init, GxB_rowIterator_seekRow, GxB_unary_function,
 };
 
 /// Initializes the GraphBLAS library in non-blocking mode.
@@ -192,6 +193,60 @@ impl ElementWiseMultiply<bool> for Matrix<bool> {
     }
 }
 
+pub trait MxM<T> {
+    /// Multiplies two matrices and stores the result in the current matrix.
+    ///
+    /// # Parameters
+    /// - `b`: The matrix to multiply with.
+    fn lmxm(
+        &mut self,
+        b: &Self,
+    );
+
+    fn rmxm(
+        &mut self,
+        b: &Self,
+    );
+}
+
+impl MxM<bool> for Matrix<bool> {
+    fn lmxm(
+        &mut self,
+        b: &Self,
+    ) {
+        unsafe {
+            let info = GrB_mxm(
+                *self.m,
+                null_mut(),
+                null_mut(),
+                GxB_ANY_PAIR_BOOL,
+                *self.m,
+                *b.m,
+                null_mut(),
+            );
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+    }
+
+    fn rmxm(
+        &mut self,
+        b: &Self,
+    ) {
+        unsafe {
+            let info = GrB_mxm(
+                *self.m,
+                null_mut(),
+                null_mut(),
+                GxB_ANY_PAIR_BOOL,
+                *b.m,
+                *self.m,
+                null_mut(),
+            );
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+    }
+}
+
 /// A wrapper around a GraphBLAS matrix with type safety for elements.
 pub struct Matrix<T> {
     /// The underlying GraphBLAS matrix.
@@ -317,6 +372,27 @@ impl<T> Dup<Self> for Matrix<T> {
     }
 }
 
+pub trait DupBool {
+    fn dup_bool(&self) -> Matrix<bool>;
+}
+
+impl DupBool for Matrix<u64> {
+    fn dup_bool(&self) -> Matrix<bool> {
+        Matrix::<bool> {
+            m: Rc::new(unsafe {
+                let mut m: MaybeUninit<GrB_Matrix> = MaybeUninit::uninit();
+                let info = GrB_Matrix_new(m.as_mut_ptr(), GrB_BOOL, self.nrows(), self.ncols());
+                debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+                let m = m.assume_init();
+                let info = GrB_transpose(m, null_mut(), null_mut(), *self.m, GrB_DESC_ST0);
+                debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+                m
+            }),
+            phantom: PhantomData,
+        }
+    }
+}
+
 impl Matrix<bool> {
     #[must_use]
     #[allow(clippy::iter_without_into_iter)]
@@ -326,6 +402,20 @@ impl Matrix<bool> {
         max_row: u64,
     ) -> Iter<bool> {
         Iter::new(self, min_row, max_row)
+    }
+
+    pub fn print(&self) {
+        unsafe {
+            let info = GrB_Matrix_wait(*self.m, GrB_WaitMode::GrB_MATERIALIZE as _);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            let info = GxB_Matrix_fprint(
+                *self.m,
+                null_mut(),
+                GxB_Print_Level::GxB_COMPLETE as _,
+                null_mut(),
+            );
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
     }
 }
 

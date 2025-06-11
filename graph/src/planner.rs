@@ -1,6 +1,6 @@
 use std::{fmt::Display, rc::Rc};
 
-use orx_tree::{Dyn, DynTree, NodeRef};
+use orx_tree::{DynTree, NodeRef};
 
 use crate::{
     ast::{
@@ -19,9 +19,10 @@ pub enum IR {
     Create(Pattern),
     Merge(Pattern),
     Delete(Vec<DynTree<ExprIR>>, bool),
-    NodeScan(NodePattern),
-    RelationshipScan(RelationshipPattern),
-    PathBuilder(Vec<PathPattern>),
+    NodeScan(Rc<NodePattern>),
+    RelationshipScan(Rc<RelationshipPattern>),
+    ExpandInto(Rc<RelationshipPattern>),
+    PathBuilder(Vec<Rc<PathPattern>>),
     Filter(DynTree<ExprIR>),
     Aggregate(
         Vec<VarId>,
@@ -49,6 +50,7 @@ impl Display for IR {
             Self::Delete(_, _) => write!(f, "Delete"),
             Self::NodeScan(node) => write!(f, "NodeScan {node}"),
             Self::RelationshipScan(rel) => write!(f, "RelationshipScan {rel}"),
+            Self::ExpandInto(rel) => write!(f, "ExpandInto {rel}"),
             Self::PathBuilder(_) => write!(f, "PathBuilder"),
             Self::Filter(_) => write!(f, "Filter"),
             Self::Aggregate(_, _, _) => write!(f, "Aggregate"),
@@ -74,7 +76,7 @@ impl Planner {
 
     fn plan_match(
         &self,
-        mut pattern: Pattern,
+        pattern: Pattern,
     ) -> DynTree<IR> {
         if pattern.relationships.is_empty() && !pattern.nodes.is_empty() {
             let mut iter = pattern.nodes.into_iter().rev();
@@ -88,7 +90,18 @@ impl Planner {
             return res;
         }
         if pattern.relationships.len() == 1 {
-            let mut res = tree!(IR::RelationshipScan(pattern.relationships.pop().unwrap()));
+            let rel = pattern.relationships[0].clone();
+            if rel.from.alias.id == rel.to.alias.id {
+                let mut res = tree!(
+                    IR::ExpandInto(rel.clone()),
+                    tree!(IR::NodeScan(rel.from.clone()))
+                );
+                if !pattern.paths.is_empty() {
+                    res = tree!(IR::PathBuilder(pattern.paths), res);
+                }
+                return res;
+            }
+            let mut res = tree!(IR::RelationshipScan(rel));
             if !pattern.paths.is_empty() {
                 res = tree!(IR::PathBuilder(pattern.paths), res);
             }

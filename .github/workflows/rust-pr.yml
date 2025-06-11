@@ -62,15 +62,22 @@ jobs:
       - check-files
       - docker
     if: ${{ !cancelled() }}
+    env:
+      CARGO_FUZZ_VERSION: 0.12.0
     steps:
       - uses: actions/checkout@v4
+      - run: rustup default stable
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.tool_cache }}/cargo-fuzz
+          key: cargo-fuzz-bin-${{ env.CARGO_FUZZ_VERSION }}
+      - run: echo "${{ runner.tool_cache }}/cargo-fuzz/bin" >> $GITHUB_PATH
+      - run: cargo install --root "${{ runner.tool_cache }}/cargo-fuzz" --version ${{ env.CARGO_FUZZ_VERSION }} cargo-fuzz --locked
       - name: Format
-        run: |
-          rustup default stable
-          cargo fmt --all --check
+        run: cargo fmt --all --check
       - name: Lint
         run: |
-          cargo clippy --all --all-targets
+          CXX=clang++-20 cargo clippy --all --all-targets
       - name: Build
         run: |
           cargo build
@@ -113,6 +120,48 @@ jobs:
         uses: codecov/codecov-action@18283e04ce6e62d37312384ff67231eb8fd56d24
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
+  fuzz:
+    runs-on: ubuntu-latest
+    container: aviavni/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && github.event.pull_request.number || 'latest' }}
+    needs:
+      - check-files
+      - docker
+    if: ${{ !cancelled() }}
+    env:
+      CARGO_FUZZ_VERSION: 0.12.0
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup default nightly
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.tool_cache }}/cargo-fuzz
+          key: cargo-fuzz-bin-${{ env.CARGO_FUZZ_VERSION }}
+      - run: echo "${{ runner.tool_cache }}/cargo-fuzz/bin" >> $GITHUB_PATH
+      - run: cargo install --root "${{ runner.tool_cache }}/cargo-fuzz" --version ${{ env.CARGO_FUZZ_VERSION }} cargo-fuzz --locked
+      - uses: actions/download-artifact@v4
+        with:
+          name: fuzzing-corpus
+          path: fuzz/corpus
+        continue-on-error: true
+      - name: Run fuzz tests
+        run: |
+          cargo build --features fuzz
+          . /data/venv/bin/activate
+          mkdir -p fuzz/corpus/fuzz_target_runtime/
+          TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -vv
+          CXX=clang++-20 CARGO_PROFILE_RELEASE_LTO=false cargo fuzz build fuzz_target_runtime
+          CXX=clang++-20 CARGO_PROFILE_RELEASE_LTO=false cargo fuzz run fuzz_target_runtime -- -max_total_time=300
+          CXX=clang++-20 CARGO_PROFILE_RELEASE_LTO=false cargo fuzz cmin fuzz_target_runtime
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: fuzzing-corpus
+          path: fuzz/corpus
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: fuzzing-artifacts-fuzz_target_runtime-${{ github.sha }}
+          path: fuzz/artifacts
   benchmark:
     runs-on: ubuntu-latest
     container: aviavni/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && github.event.pull_request.number || 'latest' }}

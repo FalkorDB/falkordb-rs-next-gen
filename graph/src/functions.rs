@@ -34,7 +34,7 @@ impl PartialEq for FnType {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(PartialEq, Clone, Debug)]
 pub enum Type {
     Null,
     Bool,
@@ -1087,6 +1087,9 @@ fn substring(
         (Some(Value::String(s)), Some(Value::Int(start)), None) => {
             if *start < 0 {
                 return Err("start must be a non-negative integer".into());
+            }
+            if start >= &(s.len() as _) {
+                return Ok(RcValue::string(Rc::new(String::new())));
             }
             let start = *start as usize;
 

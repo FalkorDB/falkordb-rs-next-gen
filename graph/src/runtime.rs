@@ -1,5 +1,5 @@
 use crate::ast::{NodePattern, Pattern, QuantifierType, RelationshipPattern, VarId};
-use crate::functions::{FnType, Functions, get_functions};
+use crate::functions::{FnType, Functions, Type, get_functions};
 use crate::iter::{Aggregate, LazyReplace, TryFlatMap, TryMap};
 use crate::value::{DisjointOrNull, Env, RcValue, ValuesDeduper};
 use crate::{ast::ExprIR, graph::Graph, planner::IR, value::Contains, value::Value};
@@ -82,6 +82,7 @@ impl ReturnNames for DynNode<'_, IR> {
             IR::Call(name, _) => vec![VarId {
                 name: Some(name.clone()),
                 id: 0,
+                ty: Type::Any,
             }],
             IR::Aggregate(names, _, _) => names.clone(),
             _ => vec![],
@@ -102,16 +103,13 @@ impl<'a> Runtime<'a> {
     #[must_use]
     pub fn new(
         g: &'a RefCell<Graph>,
-        parameters: HashMap<String, DynTree<ExprIR>>,
+        parameters: HashMap<String, RcValue>,
         write: bool,
         plan: Rc<DynTree<IR>>,
     ) -> Self {
         Self {
             functions: get_functions(),
-            parameters: parameters
-                .into_iter()
-                .map(|(k, v)| (k, evaluate_param(v.root())))
-                .collect(),
+            parameters,
             g,
             write,
             pending: Lazy::new(|| RefCell::new(Pending::default())),
@@ -152,6 +150,28 @@ impl<'a> Runtime<'a> {
                 .map(|v| String::from(v.name.unwrap().as_str()))
                 .collect(),
         })
+    }
+
+    fn set_agg_expr_zero(
+        &self,
+        ir: DynNode<ExprIR>,
+        env: &mut Env,
+    ) {
+        match ir.data() {
+            ExprIR::FuncInvocation(func) if func.is_aggregate() => {
+                if let FnType::Aggregation(aggregation_return_type) = &func.fn_type {
+                    let ExprIR::Var(key) = ir.child(ir.num_children() - 1).data() else {
+                        unreachable!();
+                    };
+                    env.insert(key, aggregation_return_type.clone());
+                }
+            }
+            _ => {
+                for child in ir.children() {
+                    self.set_agg_expr_zero(child, env);
+                }
+            }
+        }
     }
 
     #[instrument(name = "run_agg_expr", level = "debug", skip(self, ir), fields(expr_type = ?ir.data()))]
@@ -514,21 +534,32 @@ impl<'a> Runtime<'a> {
                 let step = ir
                     .get_child(2)
                     .map_or_else(|| Ok(RcValue::int(1)), |c| self.run_expr(c, env, false));
-                match (start.as_deref(), stop.as_deref(), step.as_deref()) {
-                    (Ok(Value::Int(start)), Ok(Value::Int(stop)), Ok(Value::Int(step))) => {
-                        let mut curr = *start;
-                        let step = *step;
-                        return Ok(Box::new(
-                            repeat_with(move || {
-                                let tmp = curr;
-                                curr += step;
-                                RcValue::int(tmp)
-                            })
-                            .take(((stop - start) / step + 1) as usize),
-                        ));
+                match (start, stop, step) {
+                    (Ok(start), Ok(stop), Ok(step)) => {
+                        func.validate_args_type(&[start.clone(), stop.clone(), step.clone()])?;
+                        match (&*start, &*stop, &*step) {
+                            (Value::Int(start), Value::Int(stop), Value::Int(step)) => {
+                                if start > stop && step > &0 {
+                                    return Ok(Box::new(empty()));
+                                }
+                                let mut curr = *start;
+                                let step = *step;
+                                return Ok(Box::new(
+                                    repeat_with(move || {
+                                        let tmp = curr;
+                                        curr += step;
+                                        RcValue::int(tmp)
+                                    })
+                                    .take(((stop - start) / step + 1) as usize),
+                                ));
+                            }
+                            _ => {
+                                unreachable!();
+                            }
+                        }
                     }
                     _ => {
-                        todo!();
+                        unreachable!();
                     }
                 }
             }
@@ -644,6 +675,7 @@ impl<'a> Runtime<'a> {
                                 &VarId {
                                     name: Some(name.clone()),
                                     id: 0,
+                                    ty: Type::Any,
                                 },
                                 v,
                             );
@@ -764,6 +796,14 @@ impl<'a> Runtime<'a> {
                 }
                 Ok(self.relationship_scan(relationship_pattern, Env::default()))
             }
+            IR::ExpandInto(relationship_pattern) => {
+                if let Some(child_idx) = child0_idx {
+                    return Ok(Box::new(self.run(&child_idx)?.try_flat_map(move |vars| {
+                        self.expand_into(relationship_pattern, vars)
+                    })));
+                }
+                Ok(self.expand_into(relationship_pattern, Env::default()))
+            }
             IR::PathBuilder(paths) => {
                 if let Some(child_idx) = child0_idx {
                     return Ok(Box::new(self.run(&child_idx)?.try_map(move |mut vars| {
@@ -788,10 +828,20 @@ impl<'a> Runtime<'a> {
             }
             IR::Filter(tree) => {
                 if let Some(child_idx) = child0_idx {
-                    return Ok(Box::new(self.run(&child_idx)?.filter(move |vars| {
-                        let vars = vars.clone().unwrap();
-                        self.run_expr(tree.root(), &vars, false) == Ok(RcValue::bool(true))
-                    })));
+                    return Ok(Box::new(self.run(&child_idx)?.filter_map(
+                        move |vars| match vars {
+                            Ok(vars) => {
+                                if self.run_expr(tree.root(), &vars, false)
+                                    == Ok(RcValue::bool(true))
+                                {
+                                    Some(Ok(vars))
+                                } else {
+                                    None
+                                }
+                            }
+                            Err(e) => Some(Err(e)),
+                        },
+                    )));
                 }
                 Err(String::from(
                     "Filter operator requires a boolean expression",
@@ -801,18 +851,7 @@ impl<'a> Runtime<'a> {
                 let mut cache = std::collections::HashMap::new();
                 let mut env = Env::default();
                 for (_var, t) in agg {
-                    if let ExprIR::FuncInvocation(func) = t.root().data() {
-                        if let FnType::Aggregation(aggregation_return_type) = &func.fn_type {
-                            let ExprIR::Var(key) =
-                                t.root().child(t.root().num_children() - 1).data()
-                            else {
-                                return Err(String::from(
-                                    "Aggregation function must end with a variable",
-                                ));
-                            };
-                            env.insert(key, aggregation_return_type.clone());
-                        }
-                    }
+                    self.set_agg_expr_zero(t.root(), &mut env);
                 }
                 // in case there are no aggregation keys the aggregator will return
                 // default value for empty iterator
@@ -906,20 +945,92 @@ impl<'a> Runtime<'a> {
         relationship_pattern: &'a RelationshipPattern,
         vars: Env,
     ) -> Box<dyn Iterator<Item = Result<Env, String>> + '_> {
-        let iter = self
-            .g
-            .borrow()
-            .get_relationships(&relationship_pattern.types, &[], &[]);
-        Box::new(iter.map(move |(src, dst, id)| {
-            let mut vars = vars.clone();
-            vars.insert(
-                &relationship_pattern.alias,
-                RcValue::relationship(id, src, dst),
-            );
-            vars.insert(&relationship_pattern.from, RcValue::node(src));
-            vars.insert(&relationship_pattern.to, RcValue::node(dst));
-            Ok(vars)
+        let attrs = self
+            .run_expr(relationship_pattern.attrs.root(), &vars, false)
+            .unwrap();
+        let iter = self.g.borrow().get_relationships(
+            &relationship_pattern.types,
+            &relationship_pattern.from.labels,
+            &relationship_pattern.to.labels,
+        );
+        Box::new(iter.flat_map(move |(src, dst)| {
+            let vars = vars.clone();
+            let attrs = attrs.clone();
+            self.g
+                .borrow()
+                .get_src_dest_relationships(src, dst, &relationship_pattern.types)
+                .into_iter()
+                .filter(move |v| {
+                    if let Value::Map(attrs) = &*attrs {
+                        if !attrs.is_empty() {
+                            let g = self.g.borrow();
+                            let properties = g.get_relationship_properties(*v);
+                            for (key, avalue) in attrs {
+                                if let Some(pvalue) =
+                                    properties.get(&g.get_relationship_property_id(key).unwrap())
+                                {
+                                    if avalue == pvalue {
+                                        continue;
+                                    }
+                                    return false;
+                                }
+                                return false;
+                            }
+                        }
+                    }
+                    true
+                })
+                .map(move |id| {
+                    let mut vars = vars.clone();
+                    vars.insert(
+                        &relationship_pattern.alias,
+                        RcValue::relationship(id, src, dst),
+                    );
+                    vars.insert(&relationship_pattern.from.alias, RcValue::node(src));
+                    vars.insert(&relationship_pattern.to.alias, RcValue::node(dst));
+                    Ok(vars)
+                })
+                .collect::<Vec<_>>()
         }))
+    }
+
+    fn expand_into(
+        &self,
+        relationship_pattern: &'a RelationshipPattern,
+        vars: Env,
+    ) -> Box<dyn Iterator<Item = Result<Env, String>> + '_> {
+        let src = vars
+            .get(&relationship_pattern.from.alias)
+            .and_then(|v| match *v {
+                Value::Node(id) => Some(id),
+                _ => None,
+            })
+            .unwrap();
+        let dst = vars
+            .get(&relationship_pattern.to.alias)
+            .and_then(|v| match *v {
+                Value::Node(id) => Some(id),
+                _ => None,
+            })
+            .unwrap();
+        Box::new(
+            self.g
+                .borrow()
+                .get_src_dest_relationships(src, dst, &relationship_pattern.types)
+                .iter()
+                .map(move |id| {
+                    let mut vars = vars.clone();
+                    vars.insert(
+                        &relationship_pattern.alias,
+                        RcValue::relationship(*id, src, dst),
+                    );
+                    vars.insert(&relationship_pattern.from.alias, RcValue::node(src));
+                    vars.insert(&relationship_pattern.to.alias, RcValue::node(dst));
+                    Ok(vars)
+                })
+                .collect::<Vec<_>>()
+                .into_iter(),
+        )
     }
 
     fn node_scan(
@@ -1023,14 +1134,14 @@ impl<'a> Runtime<'a> {
         for rel in &pattern.relationships {
             let (from_id, to_id) = {
                 let Value::Node(from_id) = *vars
-                    .get(&rel.from)
-                    .ok_or_else(|| format!("Variable {} not found", rel.from.as_str()))?
+                    .get(&rel.from.alias)
+                    .ok_or_else(|| format!("Variable {} not found", rel.from.alias.as_str()))?
                 else {
                     return Err(String::from("Invalid node id"));
                 };
                 let Value::Node(to_id) = *vars
-                    .get(&rel.to)
-                    .ok_or_else(|| format!("Variable {} not found", rel.to.as_str()))?
+                    .get(&rel.to.alias)
+                    .ok_or_else(|| format!("Variable {} not found", rel.to.alias.as_str()))?
                 else {
                     return Err(String::from("Invalid node id"));
                 };
@@ -1115,32 +1226,37 @@ impl<'a> Runtime<'a> {
     }
 }
 
-#[must_use]
-fn evaluate_param(expr: DynNode<ExprIR>) -> RcValue {
+pub fn evaluate_param(expr: DynNode<ExprIR>) -> Result<RcValue, String> {
     match expr.data() {
-        ExprIR::Null => RcValue::null(),
-        ExprIR::Bool(x) => RcValue::bool(*x),
-        ExprIR::Integer(x) => RcValue::int(*x),
-        ExprIR::Float(x) => RcValue::float(*x),
-        ExprIR::String(x) => RcValue::string(x.clone()),
-        ExprIR::List => RcValue::list(expr.children().map(evaluate_param).collect()),
-        ExprIR::Map => RcValue::map(
+        ExprIR::Null => Ok(RcValue::null()),
+        ExprIR::Bool(x) => Ok(RcValue::bool(*x)),
+        ExprIR::Integer(x) => Ok(RcValue::int(*x)),
+        ExprIR::Float(x) => Ok(RcValue::float(*x)),
+        ExprIR::String(x) => Ok(RcValue::string(x.clone())),
+        ExprIR::List => Ok(RcValue::list(
+            expr.children()
+                .map(evaluate_param)
+                .collect::<Result<Vec<_>, _>>()?,
+        )),
+        ExprIR::Map => Ok(RcValue::map(
             expr.children()
                 .map(|ir| match ir.data() {
-                    ExprIR::String(key) => (key.clone(), evaluate_param(ir.child(0))),
+                    ExprIR::String(key) => {
+                        Ok::<_, String>((key.clone(), evaluate_param(ir.child(0))?))
+                    }
                     _ => todo!(),
                 })
-                .collect(),
-        ),
+                .collect::<Result<OrderMap<_, _>, _>>()?,
+        )),
         ExprIR::Negate => {
-            let v = evaluate_param(expr.child(0));
+            let v = evaluate_param(expr.child(0))?;
             match *v {
-                Value::Int(i) => RcValue::int(-i),
-                Value::Float(f) => RcValue::float(-f),
-                _ => RcValue::null(),
+                Value::Int(i) => Ok(RcValue::int(-i)),
+                Value::Float(f) => Ok(RcValue::float(-f)),
+                _ => Ok(RcValue::null()),
             }
         }
-        _ => todo!(),
+        _ => Err(String::from("Invalid parameter expression.")),
     }
 }
 

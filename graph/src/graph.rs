@@ -12,9 +12,9 @@ use roaring::RoaringTreemap;
 use crate::{
     ast::ExprIR,
     cypher::Parser,
-    matrix::{self, Dup, ElementWiseAdd, ElementWiseMultiply, Matrix, New, Remove, Set, Size},
+    matrix::{self, Dup, ElementWiseAdd, ElementWiseMultiply, Matrix, MxM, New, Remove, Set, Size},
     planner::{IR, Planner},
-    tensor::{self, Tensor},
+    tensor::Tensor,
     value::{RcValue, Value},
 };
 
@@ -29,7 +29,7 @@ pub struct Graph {
     deleted_relationships: RoaringTreemap,
     zero_matrix: Matrix<bool>,
     zero_tensor: Tensor,
-    adjacancy_matrix: Tensor,
+    adjacancy_matrix: Matrix<bool>,
     node_labels_matrix: Matrix<bool>,
     relationship_type_matrix: Matrix<bool>,
     all_nodes_matrix: Matrix<bool>,
@@ -61,7 +61,7 @@ impl Graph {
             deleted_relationships: RoaringTreemap::new(),
             zero_matrix: Matrix::<bool>::new(0, 0),
             zero_tensor: Tensor::new(0, 0),
-            adjacancy_matrix: Tensor::new(n, n),
+            adjacancy_matrix: Matrix::<bool>::new(n, n),
             node_labels_matrix: Matrix::<bool>::new(0, 0),
             relationship_type_matrix: Matrix::<bool>::new(0, 0),
             all_nodes_matrix: Matrix::<bool>::new(n, n),
@@ -77,7 +77,7 @@ impl Graph {
         }
     }
 
-    pub fn get_labels_count(&self) -> usize {
+    pub const fn get_labels_count(&self) -> usize {
         self.node_labels.len()
     }
 
@@ -450,7 +450,7 @@ impl Graph {
         self.resize();
 
         for (id, (relationship_type, src, dest, attrs)) in relationships {
-            self.adjacancy_matrix.set(*src, *dest, *id);
+            self.adjacancy_matrix.set(*src, *dest, true);
             self.relationship_type_matrix.set(
                 *id,
                 self.relationship_types
@@ -485,46 +485,84 @@ impl Graph {
             .for_each(|m| m.remove(src, dest, id));
     }
 
+    pub fn get_src_dest_relationships(
+        &self,
+        src: u64,
+        dest: u64,
+        types: &[Rc<String>],
+    ) -> Vec<u64> {
+        let mut vec = vec![];
+        for relationship_type in if types.is_empty() {
+            &self.relationship_types
+        } else {
+            types
+        } {
+            if let Some(relationship_matrix) = self.get_relationship_matrix(relationship_type) {
+                if let Some(id) = relationship_matrix.get(src, dest) {
+                    vec.push(id);
+                }
+            }
+        }
+        vec
+    }
+
     pub fn get_relationships(
         &self,
         types: &[Rc<String>],
         src_lables: &[Rc<String>],
         dest_labels: &[Rc<String>],
-    ) -> tensor::Iter {
-        if types.is_empty() {
-            return self.adjacancy_matrix.iter(0, u64::MAX);
-        }
+    ) -> matrix::Iter<bool> {
         let mut iter = types.iter();
-        let mut m: Tensor =
-            if let Some(relationship_matrix) = self.get_relationship_matrix(iter.next().unwrap()) {
-                relationship_matrix.dup()
+        let mut m = if let Some(relationship_type) = iter.next() {
+            if let Some(relationship_matrix) = self.get_relationship_matrix(relationship_type) {
+                relationship_matrix.dup_bool()
             } else {
-                return self.zero_tensor.iter(0, u64::MAX);
-            };
+                return self.zero_matrix.iter(0, u64::MAX);
+            }
+        } else {
+            self.adjacancy_matrix.dup()
+        };
         for relationship_type in iter {
             if let Some(relationship_matrix) = self.get_relationship_matrix(relationship_type) {
-                m.element_wise_add(relationship_matrix);
+                m.element_wise_add(&relationship_matrix.dup_bool());
             } else {
-                return self.zero_tensor.iter(0, u64::MAX);
+                return self.zero_matrix.iter(0, u64::MAX);
             }
         }
-        // if !src_lables.is_empty() {
-        //     let mut iter = src_lables.iter();
-        //     let mut src_matrix =
-        //         if let Some(label_matrix) = self.get_label_matrix(iter.next().unwrap()) {
-        //             label_matrix.dup()
-        //         } else {
-        //             return self.zero_tensor.iter(0, u64::MAX);
-        //         };
-        //     for label in iter {
-        //         if let Some(label_matrix) = self.get_label_matrix(label) {
-        //             src_matrix.element_wise_multiply(label_matrix);
-        //         } else {
-        //             return self.zero_tensor.iter(0, u64::MAX);
-        //         }
-        //     }
-        //     // m.element_wise_multiply(&src_matrix);
-        // }
+        if !src_lables.is_empty() {
+            let mut iter = src_lables.iter();
+            let mut src_matrix =
+                if let Some(label_matrix) = self.get_label_matrix(iter.next().unwrap()) {
+                    label_matrix.dup()
+                } else {
+                    return self.zero_matrix.iter(0, u64::MAX);
+                };
+            for label in iter {
+                if let Some(label_matrix) = self.get_label_matrix(label) {
+                    src_matrix.element_wise_multiply(label_matrix);
+                } else {
+                    return self.zero_matrix.iter(0, u64::MAX);
+                }
+            }
+            m.rmxm(&src_matrix);
+        }
+        if !dest_labels.is_empty() {
+            let mut iter = dest_labels.iter();
+            let mut dest_matrix =
+                if let Some(label_matrix) = self.get_label_matrix(iter.next().unwrap()) {
+                    label_matrix.dup()
+                } else {
+                    return self.zero_matrix.iter(0, u64::MAX);
+                };
+            for label in iter {
+                if let Some(label_matrix) = self.get_label_matrix(label) {
+                    dest_matrix.element_wise_multiply(label_matrix);
+                } else {
+                    return self.zero_matrix.iter(0, u64::MAX);
+                }
+            }
+            m.lmxm(&dest_matrix);
+        }
         m.iter(0, u64::MAX)
     }
 
