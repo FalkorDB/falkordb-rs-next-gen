@@ -1,5 +1,7 @@
+use std::cell::RefCell;
 use std::cmp::Ordering;
-use std::hash::Hash;
+use std::collections::HashSet;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::ops::{Add, Deref, Div, Mul, Rem, Sub};
 use std::rc::Rc;
 
@@ -634,5 +636,31 @@ fn compare_floats(
         Some(Ordering::Less) => (Ordering::Less, DisjointOrNull::None),
         Some(Ordering::Greater) => (Ordering::Greater, DisjointOrNull::None),
         None => (Ordering::Less, DisjointOrNull::NaN),
+    }
+}
+
+#[derive(Default, Debug)]
+pub struct ValuesDeduper {
+    seen: RefCell<HashSet<u64>>,
+}
+
+impl ValuesDeduper {
+    #[must_use]
+    pub fn is_seen(
+        &self,
+        values: &[RcValue],
+    ) -> bool {
+        let mut hasher = DefaultHasher::new();
+        values.hash(&mut hasher);
+        let hash = hasher.finish();
+
+        // Check if already seen
+        let mut seen = self.seen.borrow_mut();
+        if seen.contains(&hash) {
+            true
+        } else {
+            seen.insert(hash);
+            false
+        }
     }
 }
