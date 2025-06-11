@@ -386,14 +386,14 @@ def test_prop_list_range(a, b):
     res = query(f"RETURN [1, 2, 3, 4, 5][..{a}] AS r")
     assert res.result_set == [[[1, 2, 3, 4, 5][:a]]]
 
-@given(st.lists(st.booleans() | st.integers(-10, 10)), st.lists(st.booleans() | st.integers(-10, 10)))
+@given(st.lists(st.booleans() | st.integers(-10, 10) | st.text()), st.lists(st.booleans() | st.integers(-10, 10) | st.text()))
 def test_list_concat(a, b):
-    res = query(f"RETURN {a} + {b}")
+    res = query(f"RETURN $a + $b", params={"a": a, "b": b})
     assert res.result_set == [[a + b]]
 
-@given(st.lists(st.booleans() | st.integers(-10, 10)), st.booleans() | st.integers(-10, 10))
+@given(st.lists(st.booleans() | st.integers(-10, 10) | st.text()), st.booleans() | st.integers(-10, 10) | st.text())
 def test_list_append(a, b):
-    res = query(f"RETURN {a} + {b}")
+    res = query(f"RETURN $a + $b", params={"a": a, "b": b})
     assert res.result_set == [[a + [b]]]
 
 

@@ -12,6 +12,7 @@ use std::collections::HashSet;
 use std::num::IntErrorKind;
 use std::rc::Rc;
 use std::str::Chars;
+use unescaper::unescape;
 
 #[derive(Debug, PartialEq, Clone)]
 enum Keyword {
@@ -257,16 +258,33 @@ impl<'a> Lexer<'a> {
                             len + 1,
                         );
                     }
-                    (
-                        Token::String(Rc::new(String::from(&str[pos + 1..pos + len]))),
-                        len + 1,
+                    unescape(&str[pos + 1..pos + len]).map_or_else(
+                        |_| {
+                            (
+                                Token::Error(String::from(&str[pos + 1..pos + len])),
+                                len + 1,
+                            )
+                        },
+                        |unescaped| (Token::String(Rc::new(unescaped)), len + 1),
                     )
                 }
                 '\"' => {
                     let mut len = 1;
                     let mut end = false;
-                    for c in chars.by_ref() {
-                        if c == '\"' {
+                    while let Some(c) = chars.next() {
+                        if c == '\\' {
+                            match chars.next() {
+                                Some(c) => {
+                                    len += c.len_utf8();
+                                }
+                                None => {
+                                    return (
+                                        Token::Error(String::from(&str[pos + 1..pos + len])),
+                                        len + 1,
+                                    );
+                                }
+                            }
+                        } else if c == '\"' {
                             end = true;
                             break;
                         }
@@ -278,9 +296,14 @@ impl<'a> Lexer<'a> {
                             len + 1,
                         );
                     }
-                    (
-                        Token::String(Rc::new(String::from(&str[pos + 1..pos + len]))),
-                        len + 1,
+                    unescape(&str[pos + 1..pos + len]).map_or_else(
+                        |_| {
+                            (
+                                Token::Error(String::from(&str[pos + 1..pos + len])),
+                                len + 1,
+                            )
+                        },
+                        |unescaped| (Token::String(Rc::new(unescaped)), len + 1),
                     )
                 }
                 '0'..='9' => Self::lex_numeric(str, chars, pos, 1),
