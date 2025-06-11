@@ -259,11 +259,15 @@ impl<'a> Lexer<'a> {
                         );
                     }
                     unescape(&str[pos + 1..pos + len]).map_or_else(
-                        |_| {
-                            (
+                        |e| match e {
+                            unescaper::Error::InvalidChar { .. } => (
+                                Token::String(Rc::new(String::from(&str[pos + 1..pos + len]))),
+                                len + 1,
+                            ),
+                            _ => (
                                 Token::Error(String::from(&str[pos + 1..pos + len])),
                                 len + 1,
-                            )
+                            ),
                         },
                         |unescaped| (Token::String(Rc::new(unescaped)), len + 1),
                     )
@@ -297,11 +301,15 @@ impl<'a> Lexer<'a> {
                         );
                     }
                     unescape(&str[pos + 1..pos + len]).map_or_else(
-                        |_| {
-                            (
+                        |e| match e {
+                            unescaper::Error::InvalidChar { .. } => (
+                                Token::String(Rc::new(String::from(&str[pos + 1..pos + len]))),
+                                len + 1,
+                            ),
+                            _ => (
                                 Token::Error(String::from(&str[pos + 1..pos + len])),
                                 len + 1,
-                            )
+                            ),
                         },
                         |unescaped| (Token::String(Rc::new(unescaped)), len + 1),
                     )
