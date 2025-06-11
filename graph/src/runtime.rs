@@ -160,7 +160,7 @@ impl<'a> Runtime<'a> {
         acc: &mut Env,
     ) -> Result<(), String> {
         match ir.data() {
-            ExprIR::FuncInvocation(func) if func.is_aggregate() => {
+            ExprIR::FuncInvocation(func, _) if func.is_aggregate() => {
                 let key = match ir.child(ir.num_children() - 1).data() {
                     ExprIR::Var(key) => key.clone(),
                     _ => {
@@ -384,7 +384,7 @@ impl<'a> Runtime<'a> {
                     _ => RcValue::null(),
                 })
                 .ok_or_else(|| String::from("Pow operator requires at least one argument")),
-            ExprIR::FuncInvocation(func) => {
+            ExprIR::FuncInvocation(func, maybe_dedup) => {
                 if finalize_agg {
                     if let FnType::Aggregation(aggregation_return_type) = &func.fn_type {
                         match ir.child(ir.num_children() - 1).data() {
@@ -409,6 +409,16 @@ impl<'a> Runtime<'a> {
                         "graph.RO_QUERY is to be executed only on read-only queries",
                     ));
                 }
+
+                if let Some(dedup) = maybe_dedup {
+                    assert!(func.is_aggregate());
+                    assert!(!args.is_empty());
+                    let all_args_but_last = &args[..args.len() - 1];
+                    if dedup.is_seen(all_args_but_last) {
+                        return Ok(args.last().cloned().unwrap_or_else(RcValue::null));
+                    }
+                }
+
                 (func.func)(self, args)
             }
             ExprIR::Map => Ok(RcValue::map(
@@ -482,7 +492,7 @@ impl<'a> Runtime<'a> {
         env: &Env,
     ) -> Result<Box<dyn Iterator<Item = RcValue>>, String> {
         match ir.data() {
-            ExprIR::FuncInvocation(func) if func.name == "range" => {
+            ExprIR::FuncInvocation(func, _) if func.name == "range" => {
                 let start = self.run_expr(ir.child(0), env, false);
                 let stop = self.run_expr(ir.child(1), env, false);
                 let step = ir
@@ -774,8 +784,8 @@ impl<'a> Runtime<'a> {
             IR::Aggregate(_, keys, agg) => {
                 let mut cache = std::collections::HashMap::new();
                 let mut env = Env::default();
-                for (_, t) in agg {
-                    if let ExprIR::FuncInvocation(func) = t.root().data() {
+                for (_var, t) in agg {
+                    if let ExprIR::FuncInvocation(func, _) = t.root().data() {
                         if let FnType::Aggregation(aggregation_return_type) = &func.fn_type {
                             let ExprIR::Var(key) =
                                 t.root().child(t.root().num_children() - 1).data()
