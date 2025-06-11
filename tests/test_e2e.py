@@ -245,7 +245,7 @@ def test_unwind(f, t):
 @given(st.integers(-100, 100), st.integers(-100, 100), st.integers(-100, 100))
 def test_unwind_range_step(f, t, s):
     if s == 0:
-        query_exception(f"UNWIND range({f}, {t}, {s}) AS x RETURN x", "Step cannot be zero")
+        query_exception(f"UNWIND range({f}, {t}, {s}) AS x RETURN x", "ArgumentError: step argument to range() can't be 0")
         return
     res = query(f"UNWIND range({f}, {t}, {s}) AS x RETURN x")
     if s > 0:
@@ -326,7 +326,7 @@ def test_graph_crud():
 
     res = query("MATCH (n:N) DELETE n", write=True)
     assert res.nodes_deleted == 3
-    # assert res.relationships_deleted == 3
+    assert res.relationships_deleted == 3
 
 
 def test_node_labels():
@@ -357,25 +357,16 @@ def test_toInteger():
         res = query("RETURN toInteger($p)", params={"p": v})
         assert res.result_set == [[None]]
 
-    for v in [True, False, 1, 1.0, 1.1, '1', '1.0', '1.1']:
+    for v in [True, False]:
         res = query("RETURN toInteger($p)", params={"p": v})
         assert res.result_set == [[int(float(v))]]
 
+@given(st.integers(-100, 100) | st.floats(-100, 100))
+def test_prop_toInteger(x):
+    res = query(f"RETURN toInteger({x}), toInteger('{x}')")
+    assert res.result_set == [[int(x), int(x)]]
 
 def test_list_range():
-    for a in range(-10, 10):
-        for b in range(-10, 10):
-            res = query(f"RETURN [1, 2, 3, 4, 5][{a}..{b}] AS r")
-            assert res.result_set == [[[1, 2, 3, 4, 5][a:b]]]
-            res = query("RETURN [1, 2, 3, 4, 5][$from..$to] AS r", params={"from": a, "to": b})
-            assert res.result_set == [[[1, 2, 3, 4, 5][a:b]]]
-
-    for a in range(-10, 10):
-        res = query(f"RETURN [1, 2, 3, 4, 5][{a}..] AS r")
-        assert res.result_set == [[[1, 2, 3, 4, 5][a:]]]
-        res = query(f"RETURN [1, 2, 3, 4, 5][..{a}] AS r")
-        assert res.result_set == [[[1, 2, 3, 4, 5][:a]]]
-
     res = query("RETURN [1, 2, 3][null..1] AS r")
     assert res.result_set == [[None]]
     res = query("RETURN [1, 2, 3][1..null] AS r")
@@ -383,13 +374,27 @@ def test_list_range():
     res = query("RETURN [1, 2, 3][..] AS r")
     assert res.result_set == [[[1, 2, 3]]]
 
+@given(st.integers(-10, 10), st.integers(-10, 10))
+def test_prop_list_range(a, b):
+    res = query(f"RETURN [1, 2, 3, 4, 5][{a}..{b}] AS r")
+    assert res.result_set == [[[1, 2, 3, 4, 5][a:b]]]
+    res = query("RETURN [1, 2, 3, 4, 5][$from..$to] AS r", params={"from": a, "to": b})
+    assert res.result_set == [[[1, 2, 3, 4, 5][a:b]]]
 
-def test_list_concat():
-    res = query("RETURN [1, 10, 100] + [4, 5] AS foo")
-    assert res.result_set == [[[1, 10, 100, 4, 5]]]
+    res = query(f"RETURN [1, 2, 3, 4, 5][{a}..] AS r")
+    assert res.result_set == [[[1, 2, 3, 4, 5][a:]]]
+    res = query(f"RETURN [1, 2, 3, 4, 5][..{a}] AS r")
+    assert res.result_set == [[[1, 2, 3, 4, 5][:a]]]
 
-    res = query("RETURN [false, true] + false AS foo")
-    assert res.result_set == [[[False, True, False]]]
+@given(st.lists(st.booleans() | st.integers(-10, 10)), st.lists(st.booleans() | st.integers(-10, 10)))
+def test_list_concat(a, b):
+    res = query(f"RETURN {a} + {b}")
+    assert res.result_set == [[a + b]]
+
+@given(st.lists(st.booleans() | st.integers(-10, 10)), st.booleans() | st.integers(-10, 10))
+def test_list_append(a, b):
+    res = query(f"RETURN {a} + {b}")
+    assert res.result_set == [[a + [b]]]
 
 
 def test_in_list():

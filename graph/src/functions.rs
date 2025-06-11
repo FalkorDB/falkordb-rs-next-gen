@@ -1521,7 +1521,9 @@ fn range(
     match (&*start, &*end, &*step) {
         (Value::Int(start), Value::Int(stop), Value::Int(step)) => {
             if *step == 0 {
-                return Err(String::from("Step cannot be zero"));
+                return Err(String::from(
+                    "ArgumentError: step argument to range() can't be 0",
+                ));
             }
             if (start > stop && step > &0) || (start < stop && step < &0) {
                 return Ok(RcValue::list(vec![]));
