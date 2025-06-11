@@ -62,17 +62,26 @@ jobs:
   test:
     runs-on: ubuntu-latest
     container: aviavni/falkordb-build:latest
-    needs: docker
+    needs:
+      - check-files
+      - docker
     if: ${{ !cancelled() }}
+    env:
+      CARGO_FUZZ_VERSION: 0.12.0
     steps:
       - uses: actions/checkout@v4
+      - run: rustup default stable
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.tool_cache }}/cargo-fuzz
+          key: cargo-fuzz-bin-${{ env.CARGO_FUZZ_VERSION }}
+      - run: echo "${{ runner.tool_cache }}/cargo-fuzz/bin" >> $GITHUB_PATH
+      - run: cargo install --root "${{ runner.tool_cache }}/cargo-fuzz" --version ${{ env.CARGO_FUZZ_VERSION }} cargo-fuzz --locked
       - name: Format
-        run: |
-          rustup default stable
-          cargo fmt --all --check
+        run: cargo fmt --all --check
       - name: Lint
         run: |
-          cargo clippy --all --all-targets
+          CXX=clang++-20 cargo clippy --all --all-targets
       - name: Build
         run: |
           cargo build
@@ -86,7 +95,7 @@ jobs:
       - name: Run TCK tests
         run: |
           . /data/venv/bin/activate
-          TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py
+          TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -vv
   coverage:
     runs-on: ubuntu-latest
     container: aviavni/falkordb-build:latest

@@ -1523,7 +1523,7 @@ fn range(
             if *step == 0 {
                 return Err(String::from("Step cannot be zero"));
             }
-            if start > stop && step > &0 {
+            if (start > stop && step > &0) || (start < stop && step < &0) {
                 return Ok(RcValue::list(vec![]));
             }
             let mut curr = *start;

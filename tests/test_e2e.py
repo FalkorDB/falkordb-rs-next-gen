@@ -1,11 +1,10 @@
+import common
+from falkordb import Node, Edge
+from hypothesis import given, strategies as st
 import itertools
 import math
-
 import pytest
-from falkordb import Node, Edge
 from redis import ResponseError
-
-import common
 
 
 def setup_module(module):
@@ -235,22 +234,32 @@ def test_operators():
     assert res.result_set == [[True], [False], [False], [False], [False], [False], [False]]
 
 
-def test_unwind():
-    res = query("UNWIND [1, 2, 3] AS x RETURN x")
-    assert res.result_set == [[1], [2], [3]]
+@given(st.integers(-100, 100), st.integers(-100, 100))
+def test_unwind(f, t):
+    res = query(f"UNWIND range({f}, {t}) AS x RETURN x")
+    assert res.result_set == [[i] for i in range(f, t + 1)]
 
-    res = query("UNWIND range(1, 3) AS x RETURN x")
-    assert res.result_set == [[1], [2], [3]]
+    res = query(f"UNWIND {list(range(f, t + 1))} AS x RETURN x")
+    assert res.result_set == [[i] for i in range(f, t + 1)]
 
-    res = query("UNWIND range(1, 4, 2) AS x RETURN x")
-    assert res.result_set == [[1], [3]]
+@given(st.integers(-100, 100), st.integers(-100, 100), st.integers(-100, 100))
+def test_unwind_range_step(f, t, s):
+    if s == 0:
+        query_exception(f"UNWIND range({f}, {t}, {s}) AS x RETURN x", "Step cannot be zero")
+        return
+    res = query(f"UNWIND range({f}, {t}, {s}) AS x RETURN x")
+    if s > 0:
+        if f == t:
+            assert res.result_set == [[f]]
+        else:
+            assert res.result_set == [[i] for i in range(f, t + 1, s)]
+    else:
+        assert res.result_set == [[i] for i in range(f, t - 1, s)]
 
-    res = query("UNWIND range(1, 3) AS x UNWIND range(1, 3) AS y RETURN x, y")
-    assert res.result_set == [[1, 1], [1, 2], [1, 3], [2, 1], [2, 2], [2, 3], [3, 1], [3, 2], [3, 3]]
-
-    res = query("UNWIND range(1, 3) AS x UNWIND range(1, 3) AS y WITH x, y WHERE x = 2 RETURN x, y")
-    assert res.result_set == [[2, 1], [2, 2], [2, 3]]
-
+@given(st.integers(-100, 100), st.integers(-100, 100), st.integers(-100, 100), st.integers(-100, 100))
+def test_nested_unwind_range(f1, t1, f2, t2):
+    res = query(f"UNWIND range({f1}, {t1}) AS x UNWIND range({f2}, {t2}) AS y RETURN x, y")
+    assert res.result_set == [[i, j] for i in range(f1, t1 + 1) for j in range(f2, t2 + 1)]
 
 def test_graph_crud():
     res = query("CREATE ()", write=True)
