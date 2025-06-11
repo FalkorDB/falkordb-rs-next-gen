@@ -150,7 +150,7 @@ jobs:
           mkdir -p fuzz/corpus/fuzz_target_runtime/
           TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -vv
           CXX=clang++-20 CARGO_PROFILE_RELEASE_LTO=false cargo fuzz build fuzz_target_runtime
-          CXX=clang++-20 CARGO_PROFILE_RELEASE_LTO=false cargo fuzz run fuzz_target_runtime -- -max_total_time=300 -sanitizer=address
+          CXX=clang++-20 CARGO_PROFILE_RELEASE_LTO=false cargo fuzz run fuzz_target_runtime -- -max_total_time=300
           CXX=clang++-20 CARGO_PROFILE_RELEASE_LTO=false cargo fuzz cmin fuzz_target_runtime
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}

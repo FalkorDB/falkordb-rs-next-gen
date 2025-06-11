@@ -5,7 +5,7 @@ cargo build --features fuzz
 TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -v
 
 # run fuzz test
-cargo fuzz run fuzz_target_runtime -- -max_total_time=30 -sanitizer=address
+cargo fuzz run fuzz_target_runtime -- -max_total_time=30
 
 # minimize the corpus
 cargo fuzz cmin fuzz_target_runtime

@@ -795,10 +795,20 @@ impl<'a> Runtime<'a> {
             }
             IR::Filter(tree) => {
                 if let Some(child_idx) = child0_idx {
-                    return Ok(Box::new(self.run(&child_idx)?.filter(move |vars| {
-                        let vars = vars.clone().unwrap();
-                        self.run_expr(tree.root(), &vars, false) == Ok(RcValue::bool(true))
-                    })));
+                    return Ok(Box::new(self.run(&child_idx)?.filter_map(
+                        move |vars| match vars {
+                            Ok(vars) => {
+                                if self.run_expr(tree.root(), &vars, false)
+                                    == Ok(RcValue::bool(true))
+                                {
+                                    Some(Ok(vars))
+                                } else {
+                                    None
+                                }
+                            }
+                            Err(e) => Some(Err(e)),
+                        },
+                    )));
                 }
                 Err(String::from(
                     "Filter operator requires a boolean expression",
