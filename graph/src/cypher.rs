@@ -827,7 +827,7 @@ impl<'a> Parser<'a> {
         }
         match_token!(self.lexer => End);
         Ok(tree!(
-            ExprIR::FuncInvocation(get_functions().get("case", &FnType::Internal).unwrap() ); children
+            ExprIR::FuncInvocation(get_functions().get("case", &FnType::Internal).unwrap()); children
         ))
     }
 
@@ -866,6 +866,7 @@ impl<'a> Parser<'a> {
         ))
     }
 
+    #[allow(clippy::too_many_lines)]
     fn parse_primary_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
         match self.lexer.current() {
             Token::Ident(ident) => {
@@ -900,16 +901,20 @@ impl<'a> Parser<'a> {
 
                     if func.is_aggregate() {
                         if optional_match_token!(self.lexer, Star) {
+                            let mut arg = tree!(ExprIR::Var(self.create_var(None, Type::Any)?));
+                            if distinct {
+                                arg = tree!(ExprIR::Distinct, arg);
+                            }
                             match_token!(self.lexer, RParen);
-                            return Ok(tree!(
-                                ExprIR::FuncInvocation(func),
-                                tree!(ExprIR::Var(self.create_var(None, Type::Any)?))
-                            ));
+                            return Ok(tree!(ExprIR::FuncInvocation(func), arg));
                         }
 
                         let mut args = self.parse_expression_list(
                             ExpressionListType::ZeroOrMoreClosedBy(RParen),
                         )?;
+                        if distinct {
+                            args = vec![tree!(ExprIR::Distinct; args)];
+                        }
                         args.push(tree!(ExprIR::Var(self.create_var(None, Type::Any)?)));
                         return Ok(tree!(ExprIR::FuncInvocation(func); args));
                     }
@@ -1036,7 +1041,7 @@ impl<'a> Parser<'a> {
                 ExprIR::FuncInvocation(
                     get_functions()
                         .get("node_has_labels", &FnType::Internal)
-                        .unwrap()
+                        .unwrap(),
                 ),
                 res.pop().unwrap(),
                 labels
@@ -1101,7 +1106,7 @@ impl<'a> Parser<'a> {
                         ExprIR::FuncInvocation(
                             get_functions()
                                 .get("starts_with", &FnType::Internal)
-                                .unwrap()
+                                .unwrap(),
                         ),
                         lhs,
                         rhs
@@ -1114,7 +1119,7 @@ impl<'a> Parser<'a> {
                     let lhs = vec.pop().unwrap();
                     vec.push(tree!(
                         ExprIR::FuncInvocation(
-                            get_functions().get("ends_with", &FnType::Internal).unwrap()
+                            get_functions().get("ends_with", &FnType::Internal).unwrap(),
                         ),
                         lhs,
                         rhs
@@ -1126,7 +1131,7 @@ impl<'a> Parser<'a> {
                     let lhs = vec.pop().unwrap();
                     vec.push(tree!(
                         ExprIR::FuncInvocation(
-                            get_functions().get("contains", &FnType::Internal).unwrap()
+                            get_functions().get("contains", &FnType::Internal).unwrap(),
                         ),
                         lhs,
                         rhs
@@ -1140,7 +1145,7 @@ impl<'a> Parser<'a> {
                         ExprIR::FuncInvocation(
                             get_functions()
                                 .get("regex_matches", &FnType::Internal)
-                                .unwrap()
+                                .unwrap(),
                         ),
                         lhs,
                         rhs
@@ -1153,7 +1158,7 @@ impl<'a> Parser<'a> {
                     let lhs = vec.pop().unwrap();
                     vec.push(tree!(
                         ExprIR::FuncInvocation(
-                            get_functions().get("is_null", &FnType::Internal).unwrap()
+                            get_functions().get("is_null", &FnType::Internal).unwrap(),
                         ),
                         is_not,
                         lhs

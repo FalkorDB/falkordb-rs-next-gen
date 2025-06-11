@@ -1593,7 +1593,7 @@ fn relationship_type(
 ) -> Result<RcValue, String> {
     let mut iter = args.into_iter();
     match iter.next().as_deref() {
-        Some(Value::Relationship(id, from, to)) => {
+        Some(Value::Relationship(id, _from, _to)) => {
             if let Some((type_name, _, _, _)) =
                 runtime.pending.borrow().created_relationships.get(id)
             {

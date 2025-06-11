@@ -1,7 +1,7 @@
 use crate::ast::{NodePattern, Pattern, QuantifierType, RelationshipPattern, VarId};
 use crate::functions::{FnType, Functions, Type, get_functions};
 use crate::iter::{Aggregate, LazyReplace, TryFlatMap, TryMap};
-use crate::value::{DisjointOrNull, Env, RcValue};
+use crate::value::{DisjointOrNull, Env, RcValue, ValuesDeduper};
 use crate::{ast::ExprIR, graph::Graph, planner::IR, value::Contains, value::Value};
 use hashbrown::{HashMap, HashSet};
 use once_cell::unsync::Lazy;
@@ -65,6 +65,7 @@ pub struct Runtime<'a> {
     pub pending: Lazy<RefCell<Pending>>,
     pub stats: RefCell<Stats>,
     pub plan: Rc<DynTree<IR>>,
+    pub value_dedupers: RefCell<HashMap<String, ValuesDeduper>>,
 }
 
 trait ReturnNames {
@@ -117,6 +118,7 @@ impl<'a> Runtime<'a> {
             pending: Lazy::new(|| RefCell::new(Pending::default())),
             stats: RefCell::new(Stats::default()),
             plan,
+            value_dedupers: RefCell::new(HashMap::new()),
         }
     }
 
@@ -385,6 +387,18 @@ impl<'a> Runtime<'a> {
                     _ => RcValue::null(),
                 })
                 .ok_or_else(|| String::from("Pow operator requires at least one argument")),
+            ExprIR::Distinct => {
+                let values = ir
+                    .children()
+                    .map(|ir| self.run_expr(ir, env, finalize_agg))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let mut value_dedupers = self.value_dedupers.borrow_mut();
+                let value_deduper = value_dedupers.entry(format!("{:?}", ir.idx())).or_default();
+                if value_deduper.is_seen(&values) {
+                    return Ok(RcValue::list(vec![RcValue::null()]));
+                }
+                Ok(RcValue::list(values))
+            }
             ExprIR::FuncInvocation(func) => {
                 if finalize_agg {
                     if let FnType::Aggregation(aggregation_return_type) = &func.fn_type {
@@ -399,10 +413,21 @@ impl<'a> Runtime<'a> {
                     }
                 }
 
-                let args = ir
+                let mut args = ir
                     .children()
                     .map(|ir| self.run_expr(ir, env, finalize_agg))
                     .collect::<Result<Vec<_>, _>>()?;
+                if ir.num_children() == 2 && matches!(ir.child(0).data(), ExprIR::Distinct) {
+                    let arg = &args[0];
+                    if let Value::List(values) = &**arg {
+                        let mut values = values.clone();
+                        args.remove(0);
+                        values.append(&mut args);
+                        args = values;
+                    } else {
+                        unreachable!();
+                    }
+                }
 
                 func.validate_args_type(&args)?;
                 if !self.write && func.write {
@@ -410,6 +435,7 @@ impl<'a> Runtime<'a> {
                         "graph.RO_QUERY is to be executed only on read-only queries",
                     ));
                 }
+
                 (func.func)(self, args)
             }
             ExprIR::Map => Ok(RcValue::map(
@@ -784,7 +810,7 @@ impl<'a> Runtime<'a> {
             IR::Aggregate(_, keys, agg) => {
                 let mut cache = std::collections::HashMap::new();
                 let mut env = Env::default();
-                for (_, t) in agg {
+                for (_var, t) in agg {
                     if let ExprIR::FuncInvocation(func) = t.root().data() {
                         if let FnType::Aggregation(aggregation_return_type) = &func.fn_type {
                             let ExprIR::Var(key) =

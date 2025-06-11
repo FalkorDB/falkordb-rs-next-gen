@@ -72,6 +72,7 @@ pub enum ExprIR {
     Div,
     Pow,
     Modulo,
+    Distinct,
     FuncInvocation(Rc<GraphFn>),
     Quantifier(QuantifierType, VarId),
     ListComprehension(VarId),
@@ -115,6 +116,7 @@ impl Display for ExprIR {
             Self::Div => write!(f, "/"),
             Self::Pow => write!(f, "^"),
             Self::Modulo => write!(f, "%"),
+            Self::Distinct => write!(f, "distinct"),
             Self::FuncInvocation(func) => write!(f, "{}()", func.name),
             Self::Quantifier(quantifier_type, var) => {
                 write!(f, "{quantifier_type} {}", var.as_str())
@@ -245,7 +247,8 @@ impl Validate for DynNode<'_, ExprIR> {
             | ExprIR::Negate
             | ExprIR::Length
             | ExprIR::IsNode
-            | ExprIR::IsRelationship => {
+            | ExprIR::IsRelationship
+            | ExprIR::Distinct => {
                 debug_assert_eq!(self.num_children(), 1);
                 self.child(0).validate(env)
             }
