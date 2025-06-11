@@ -152,7 +152,7 @@ impl<'a> Runtime<'a> {
         })
     }
 
-    fn get_agg_expr_zero(
+    fn set_agg_expr_zero(
         &self,
         ir: DynNode<ExprIR>,
         env: &mut Env,
@@ -168,7 +168,7 @@ impl<'a> Runtime<'a> {
             }
             _ => {
                 for child in ir.children() {
-                    self.get_agg_expr_zero(child, env);
+                    self.set_agg_expr_zero(child, env);
                 }
             }
         }
@@ -848,7 +848,7 @@ impl<'a> Runtime<'a> {
                 let mut cache = std::collections::HashMap::new();
                 let mut env = Env::default();
                 for (_var, t) in agg {
-                    self.get_agg_expr_zero(t.root(), &mut env);
+                    self.set_agg_expr_zero(t.root(), &mut env);
                 }
                 // in case there are no aggregation keys the aggregator will return
                 // default value for empty iterator
