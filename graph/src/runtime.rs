@@ -152,6 +152,28 @@ impl<'a> Runtime<'a> {
         })
     }
 
+    fn get_agg_expr_zero(
+        &self,
+        ir: DynNode<ExprIR>,
+        env: &mut Env,
+    ) {
+        match ir.data() {
+            ExprIR::FuncInvocation(func) if func.is_aggregate() => {
+                if let FnType::Aggregation(aggregation_return_type) = &func.fn_type {
+                    let ExprIR::Var(key) = ir.child(ir.num_children() - 1).data() else {
+                        unreachable!();
+                    };
+                    env.insert(key, aggregation_return_type.clone());
+                }
+            }
+            _ => {
+                for child in ir.children() {
+                    self.get_agg_expr_zero(child, env);
+                }
+            }
+        }
+    }
+
     #[instrument(name = "run_agg_expr", level = "debug", skip(self, ir), fields(expr_type = ?ir.data()))]
     fn run_agg_expr(
         &self,
@@ -826,18 +848,7 @@ impl<'a> Runtime<'a> {
                 let mut cache = std::collections::HashMap::new();
                 let mut env = Env::default();
                 for (_var, t) in agg {
-                    if let ExprIR::FuncInvocation(func) = t.root().data() {
-                        if let FnType::Aggregation(aggregation_return_type) = &func.fn_type {
-                            let ExprIR::Var(key) =
-                                t.root().child(t.root().num_children() - 1).data()
-                            else {
-                                return Err(String::from(
-                                    "Aggregation function must end with a variable",
-                                ));
-                            };
-                            env.insert(key, aggregation_return_type.clone());
-                        }
-                    }
+                    self.get_agg_expr_zero(t.root(), &mut env);
                 }
                 // in case there are no aggregation keys the aggregator will return
                 // default value for empty iterator
