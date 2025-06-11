@@ -1334,7 +1334,7 @@ def test_aggregation():
     assert_result_set_equal_no_order(res, [[False, 8, 4], [True, 4, 2]])
     
     res = query("UNWIND [1, 2, 3, 1, 2, 3] AS x RETURN sum(x), sum(distinct x)", compare_results=False)
-    #ssert_result_set_equal_no_order(res, [[12, 6]])
+    assert_result_set_equal_no_order(res, [[12, 6]])
     
 
 def test_case():
