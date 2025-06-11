@@ -512,21 +512,29 @@ impl<'a> Runtime<'a> {
                 let step = ir
                     .get_child(2)
                     .map_or_else(|| Ok(RcValue::int(1)), |c| self.run_expr(c, env, false));
-                match (start.as_deref(), stop.as_deref(), step.as_deref()) {
-                    (Ok(Value::Int(start)), Ok(Value::Int(stop)), Ok(Value::Int(step))) => {
-                        let mut curr = *start;
-                        let step = *step;
-                        return Ok(Box::new(
-                            repeat_with(move || {
-                                let tmp = curr;
-                                curr += step;
-                                RcValue::int(tmp)
-                            })
-                            .take(((stop - start) / step + 1) as usize),
-                        ));
+                match (start, stop, step) {
+                    (Ok(start), Ok(stop), Ok(step)) => {
+                        func.validate_args_type(&[start.clone(), stop.clone(), step.clone()])?;
+                        match (&*start, &*stop, &*step) {
+                            (Value::Int(start), Value::Int(stop), Value::Int(step)) => {
+                                let mut curr = *start;
+                                let step = *step;
+                                return Ok(Box::new(
+                                    repeat_with(move || {
+                                        let tmp = curr;
+                                        curr += step;
+                                        RcValue::int(tmp)
+                                    })
+                                    .take(((stop - start) / step + 1) as usize),
+                                ));
+                            }
+                            _ => {
+                                unreachable!();
+                            }
+                        }
                     }
                     _ => {
-                        todo!();
+                        unreachable!();
                     }
                 }
             }
