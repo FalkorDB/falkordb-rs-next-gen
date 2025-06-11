@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::hash::{DefaultHasher, Hash, Hasher};
+use std::mem::discriminant;
 use std::ops::{Add, Deref, Div, Mul, Rem, Sub};
 use std::rc::Rc;
 
@@ -110,8 +111,9 @@ impl Hash for Value {
         &self,
         state: &mut H,
     ) {
+        discriminant(self).hash(state);
         match self {
-            Self::Null => todo!(),
+            Self::Null => {}
             Self::Bool(x) => x.hash(state),
             Self::Int(x) => x.hash(state),
             Self::Float(x) => x.to_string().hash(state),
