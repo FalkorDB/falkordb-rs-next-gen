@@ -539,6 +539,9 @@ impl<'a> Runtime<'a> {
                         func.validate_args_type(&[start.clone(), stop.clone(), step.clone()])?;
                         match (&*start, &*stop, &*step) {
                             (Value::Int(start), Value::Int(stop), Value::Int(step)) => {
+                                if start > stop && step > &0 {
+                                    return Ok(Box::new(empty()));
+                                }
                                 let mut curr = *start;
                                 let step = *step;
                                 return Ok(Box::new(
