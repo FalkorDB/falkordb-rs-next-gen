@@ -3,7 +3,6 @@ use std::{collections::HashSet, fmt::Display, hash::Hash, rc::Rc};
 use orx_tree::{Dfs, DynNode, DynTree, NodeRef};
 
 use crate::functions::GraphFn;
-use crate::value::ValuesDeduper;
 
 #[derive(Clone, Debug)]
 pub struct VarId {
@@ -72,7 +71,8 @@ pub enum ExprIR {
     Div,
     Pow,
     Modulo,
-    FuncInvocation(Rc<GraphFn>, Option<ValuesDeduper>),
+    Distinct,
+    FuncInvocation(Rc<GraphFn>),
     Quantifier(QuantifierType, VarId),
     ListComprehension(VarId),
 }
@@ -115,7 +115,8 @@ impl Display for ExprIR {
             Self::Div => write!(f, "/"),
             Self::Pow => write!(f, "^"),
             Self::Modulo => write!(f, "%"),
-            Self::FuncInvocation(func, _) => write!(f, "{}()", func.name),
+            Self::Distinct => write!(f, "distinct"),
+            Self::FuncInvocation(func) => write!(f, "{}()", func.name),
             Self::Quantifier(quantifier_type, var) => {
                 write!(f, "{quantifier_type} {}", var.as_str())
             }
@@ -213,7 +214,7 @@ impl Validate for DynNode<'_, ExprIR> {
                 }
                 Ok(())
             }
-            ExprIR::FuncInvocation(func, _) => {
+            ExprIR::FuncInvocation(func) => {
                 func.validate(self.num_children())?;
                 if func.is_aggregate() {
                     for i in 0..self.num_children() - 1 {
@@ -245,7 +246,8 @@ impl Validate for DynNode<'_, ExprIR> {
             | ExprIR::Negate
             | ExprIR::Length
             | ExprIR::IsNode
-            | ExprIR::IsRelationship => {
+            | ExprIR::IsRelationship
+            | ExprIR::Distinct => {
                 debug_assert_eq!(self.num_children(), 1);
                 self.child(0).validate(env)
             }
@@ -287,7 +289,7 @@ impl SupportAggregation for DynTree<ExprIR> {
         self.root().indices::<Dfs>().any(|idx| {
             matches!(
                 self.node(&idx).data(),
-                ExprIR::FuncInvocation(func, _) if func.is_aggregate()
+                ExprIR::FuncInvocation(func) if func.is_aggregate()
             )
         })
     }
