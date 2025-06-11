@@ -4,7 +4,7 @@ use crate::ast::{
 use crate::cypher::Token::RParen;
 use crate::functions::{FnType, get_functions};
 use crate::tree;
-use crate::value::{RcValue, ValuesDeduper};
+use crate::value::RcValue;
 use falkordb_macro::parse_binary_expr;
 use hashbrown::HashMap;
 use orx_tree::{DynTree, NodeRef};
@@ -795,7 +795,7 @@ impl<'a> Parser<'a> {
         }
         match_token!(self.lexer => End);
         Ok(tree!(
-            ExprIR::FuncInvocation(get_functions().get("case", &FnType::Internal).unwrap(), None); children
+            ExprIR::FuncInvocation(get_functions().get("case", &FnType::Internal).unwrap()); children
         ))
     }
 
@@ -834,6 +834,7 @@ impl<'a> Parser<'a> {
         ))
     }
 
+    #[allow(clippy::too_many_lines)]
     fn parse_primary_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
         match self.lexer.current() {
             Token::Ident(ident) => {
@@ -867,29 +868,28 @@ impl<'a> Parser<'a> {
                     let distinct = optional_match_token!(self.lexer => Distinct);
 
                     if func.is_aggregate() {
-                        let value_dedup = if distinct {
-                            Some(ValuesDeduper::default())
-                        } else {
-                            None
-                        };
                         if optional_match_token!(self.lexer, Star) {
+                            let mut arg = tree!(ExprIR::Var(self.create_var(None)));
+                            if distinct {
+                                arg = tree!(ExprIR::Distinct, arg);
+                            }
                             match_token!(self.lexer, RParen);
-                            return Ok(tree!(
-                                ExprIR::FuncInvocation(func, value_dedup),
-                                tree!(ExprIR::Var(self.create_var(None)))
-                            ));
+                            return Ok(tree!(ExprIR::FuncInvocation(func), arg));
                         }
 
                         let mut args = self.parse_expression_list(
                             ExpressionListType::ZeroOrMoreClosedBy(RParen),
                         )?;
+                        if distinct {
+                            args = vec![tree!(ExprIR::Distinct; args)];
+                        }
                         args.push(tree!(ExprIR::Var(self.create_var(None))));
-                        return Ok(tree!(ExprIR::FuncInvocation(func, value_dedup); args));
+                        return Ok(tree!(ExprIR::FuncInvocation(func); args));
                     }
 
                     let args =
                         self.parse_expression_list(ExpressionListType::ZeroOrMoreClosedBy(RParen))?;
-                    return Ok(tree!(ExprIR::FuncInvocation(func, None); args));
+                    return Ok(tree!(ExprIR::FuncInvocation(func); args));
                 }
                 self.lexer.set_pos(pos);
                 Ok(tree!(ExprIR::Var(self.create_var(Some(ident)))))
@@ -1010,7 +1010,6 @@ impl<'a> Parser<'a> {
                     get_functions()
                         .get("node_has_labels", &FnType::Internal)
                         .unwrap(),
-                    None
                 ),
                 res.pop().unwrap(),
                 labels
@@ -1025,10 +1024,7 @@ impl<'a> Parser<'a> {
     ) -> Result<DynTree<ExprIR>, String> {
         let ident = self.parse_ident()?;
         Ok(tree!(
-            ExprIR::FuncInvocation(
-                get_functions().get("property", &FnType::Internal).unwrap(),
-                None
-            ),
+            ExprIR::FuncInvocation(get_functions().get("property", &FnType::Internal).unwrap()),
             expr,
             tree!(ExprIR::String(ident))
         ))
@@ -1079,7 +1075,6 @@ impl<'a> Parser<'a> {
                             get_functions()
                                 .get("starts_with", &FnType::Internal)
                                 .unwrap(),
-                            None
                         ),
                         lhs,
                         rhs
@@ -1093,7 +1088,6 @@ impl<'a> Parser<'a> {
                     vec.push(tree!(
                         ExprIR::FuncInvocation(
                             get_functions().get("ends_with", &FnType::Internal).unwrap(),
-                            None
                         ),
                         lhs,
                         rhs
@@ -1106,7 +1100,6 @@ impl<'a> Parser<'a> {
                     vec.push(tree!(
                         ExprIR::FuncInvocation(
                             get_functions().get("contains", &FnType::Internal).unwrap(),
-                            None
                         ),
                         lhs,
                         rhs
@@ -1121,7 +1114,6 @@ impl<'a> Parser<'a> {
                             get_functions()
                                 .get("regex_matches", &FnType::Internal)
                                 .unwrap(),
-                            None
                         ),
                         lhs,
                         rhs
@@ -1135,7 +1127,6 @@ impl<'a> Parser<'a> {
                     vec.push(tree!(
                         ExprIR::FuncInvocation(
                             get_functions().get("is_null", &FnType::Internal).unwrap(),
-                            None
                         ),
                         is_not,
                         lhs
