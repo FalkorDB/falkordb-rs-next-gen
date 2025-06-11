@@ -103,16 +103,13 @@ impl<'a> Runtime<'a> {
     #[must_use]
     pub fn new(
         g: &'a RefCell<Graph>,
-        parameters: HashMap<String, DynTree<ExprIR>>,
+        parameters: HashMap<String, RcValue>,
         write: bool,
         plan: Rc<DynTree<IR>>,
     ) -> Self {
         Self {
             functions: get_functions(),
-            parameters: parameters
-                .into_iter()
-                .map(|(k, v)| (k, evaluate_param(v.root())))
-                .collect(),
+            parameters,
             g,
             write,
             pending: Lazy::new(|| RefCell::new(Pending::default())),
@@ -1197,32 +1194,37 @@ impl<'a> Runtime<'a> {
     }
 }
 
-#[must_use]
-fn evaluate_param(expr: DynNode<ExprIR>) -> RcValue {
+pub fn evaluate_param(expr: DynNode<ExprIR>) -> Result<RcValue, String> {
     match expr.data() {
-        ExprIR::Null => RcValue::null(),
-        ExprIR::Bool(x) => RcValue::bool(*x),
-        ExprIR::Integer(x) => RcValue::int(*x),
-        ExprIR::Float(x) => RcValue::float(*x),
-        ExprIR::String(x) => RcValue::string(x.clone()),
-        ExprIR::List => RcValue::list(expr.children().map(evaluate_param).collect()),
-        ExprIR::Map => RcValue::map(
+        ExprIR::Null => Ok(RcValue::null()),
+        ExprIR::Bool(x) => Ok(RcValue::bool(*x)),
+        ExprIR::Integer(x) => Ok(RcValue::int(*x)),
+        ExprIR::Float(x) => Ok(RcValue::float(*x)),
+        ExprIR::String(x) => Ok(RcValue::string(x.clone())),
+        ExprIR::List => Ok(RcValue::list(
+            expr.children()
+                .map(evaluate_param)
+                .collect::<Result<Vec<_>, _>>()?,
+        )),
+        ExprIR::Map => Ok(RcValue::map(
             expr.children()
                 .map(|ir| match ir.data() {
-                    ExprIR::String(key) => (key.clone(), evaluate_param(ir.child(0))),
+                    ExprIR::String(key) => {
+                        Ok::<_, String>((key.clone(), evaluate_param(ir.child(0))?))
+                    }
                     _ => todo!(),
                 })
-                .collect(),
-        ),
+                .collect::<Result<OrderMap<_, _>, _>>()?,
+        )),
         ExprIR::Negate => {
-            let v = evaluate_param(expr.child(0));
+            let v = evaluate_param(expr.child(0))?;
             match *v {
-                Value::Int(i) => RcValue::int(-i),
-                Value::Float(f) => RcValue::float(-f),
-                _ => RcValue::null(),
+                Value::Int(i) => Ok(RcValue::int(-i)),
+                Value::Float(f) => Ok(RcValue::float(-f)),
+                _ => Ok(RcValue::null()),
             }
         }
-        _ => todo!(),
+        _ => Err(String::from("Invalid parameter expression.")),
     }
 }
 

@@ -1,8 +1,9 @@
 use graph::ast::VarId;
 use graph::functions::init_functions;
-use graph::runtime::{ResultSummary, ReturnCallback, Runtime};
+use graph::runtime::{ResultSummary, ReturnCallback, Runtime, evaluate_param};
 use graph::value::{Env, RcValue};
 use graph::{cypher::Parser, graph::Graph, matrix::init, planner::Planner, value::Value};
+use hashbrown::HashMap;
 #[cfg(feature = "zipkin")]
 use opentelemetry::global;
 #[cfg(feature = "zipkin")]
@@ -374,6 +375,11 @@ fn query_mut(
     tracing::debug_span!("query_execution", query = %query).in_scope(|| {
         let (plan, parameters, _, _) =
             graph.borrow().get_plan(query).map_err(RedisError::String)?;
+        let parameters = parameters
+            .into_iter()
+            .map(|(k, v)| Ok((k, evaluate_param(v.root())?)))
+            .collect::<Result<HashMap<_, _>, String>>()
+            .map_err(RedisError::String)?;
         let mut runtime = Runtime::new(graph, parameters, true, plan);
         if compact {
             runtime
@@ -509,6 +515,11 @@ fn graph_ro_query(
         |graph| {
             let (plan, parameters, _, _) =
                 graph.borrow().get_plan(query).map_err(RedisError::String)?;
+            let parameters = parameters
+                .into_iter()
+                .map(|(k, v)| Ok((k, evaluate_param(v.root())?)))
+                .collect::<Result<HashMap<_, _>, String>>()
+                .map_err(RedisError::String)?;
             let mut runtime = Runtime::new(graph, parameters, false, plan);
             if compact {
                 runtime

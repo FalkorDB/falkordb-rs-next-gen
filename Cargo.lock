@@ -246,6 +246,7 @@ name = "falkordb-rs"
 version = "0.1.0"
 dependencies = [
  "graph",
+ "hashbrown",
  "opentelemetry",
  "opentelemetry-zipkin",
  "opentelemetry_sdk",
@@ -415,6 +416,7 @@ name = "graph-fuzz"
 version = "0.0.0"
 dependencies = [
  "graph",
+ "hashbrown",
  "libfuzzer-sys",
 ]
 
