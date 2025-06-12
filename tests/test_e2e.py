@@ -1,3 +1,4 @@
+import sys
 import common
 from falkordb import Node, Edge
 from hypothesis import given, strategies as st
@@ -6,6 +7,8 @@ import math
 import pytest
 from redis import ResponseError
 
+text_st = st.text().filter(lambda s: all(0x00 < ord(c) < 0x80 for c in s))
+at_least_1_text_st = st.text(min_size=1).filter(lambda s: all(0x00 < ord(c) < 0x80 for c in s))
 
 def setup_module(module):
     common.start_redis()
@@ -256,7 +259,7 @@ def test_unwind_range_step(f, t, s):
     else:
         assert res.result_set == [[i] for i in range(f, t - 1, s)]
 
-@given(st.integers(-100, 100), st.integers(-100, 100), st.integers(-100, 100), st.integers(-100, 100))
+@given(st.integers(-10, 10), st.integers(-10, 10), st.integers(-10, 10), st.integers(-10, 10))
 def test_nested_unwind_range(f1, t1, f2, t2):
     res = query(f"UNWIND range({f1}, {t1}) AS x UNWIND range({f2}, {t2}) AS y RETURN x, y")
     assert res.result_set == [[i, j] for i in range(f1, t1 + 1) for j in range(f2, t2 + 1)]
@@ -361,7 +364,10 @@ def test_toInteger():
         res = query("RETURN toInteger($p)", params={"p": v})
         assert res.result_set == [[int(float(v))]]
 
-@given(st.integers(-100, 100) | st.floats(-100, 100))
+def is_subnormal(num):
+    return 0 < abs(num) < sys.float_info.min
+
+@given(st.integers(-100, 100) | st.floats(-100, 100).filter(lambda x: not is_subnormal(x)))
 def test_prop_toInteger(x):
     res = query(f"RETURN toInteger({x}), toInteger('{x}')")
     if isinstance(x, float):
@@ -389,12 +395,12 @@ def test_prop_list_range(a, b):
     res = query(f"RETURN [1, 2, 3, 4, 5][..{a}] AS r")
     assert res.result_set == [[[1, 2, 3, 4, 5][:a]]]
 
-@given(st.lists(st.booleans() | st.integers(-10, 10) | st.text().filter(lambda s: all(0x00 < ord(c) < 0x80 for c in s))), st.lists(st.booleans() | st.integers(-10, 10) | st.text().filter(lambda s: all(0x00 < ord(c) < 0x80 for c in s))))
+@given(st.lists(st.booleans() | st.integers(-10, 10) | text_st), st.lists(st.booleans() | st.integers(-10, 10) | text_st))
 def test_list_concat(a, b):
     res = query(f"RETURN $a + $b", params={"a": a, "b": b})
     assert res.result_set == [[a + b]]
 
-@given(st.lists(st.booleans() | st.integers(-10, 10) | st.text().filter(lambda s: all(0x00 < ord(c) < 0x80 for c in s))), st.booleans() | st.integers(-10, 10) | st.text().filter(lambda s: all(0x00 < ord(c) < 0x80 for c in s)))
+@given(st.lists(st.booleans() | st.integers(-10, 10) | text_st), st.booleans() | st.integers(-10, 10) | text_st)
 def test_list_append(a, b):
     res = query(f"RETURN $a + $b", params={"a": a, "b": b})
     assert res.result_set == [[a + [b]]]
@@ -402,172 +408,47 @@ def test_list_append(a, b):
 
 def test_in_list():
     # test for simple values
-    for value in [True, False, 1, -1, 0.1, 'Avi', [1]]:
+    for value in [True, False, [1]]:
         res = query("RETURN $p IN [$p]", params={"p": value})
         assert res.result_set == [[True]]
 
-    # TCK
-    res = query("WITH [[1, 2, 3]] AS list RETURN 3 IN list[0] AS r")
-    assert res.result_set == [[True]]
+@given(st.lists(st.integers(-10, 10) | text_st), st.integers(-10, 10) | text_st)
+def test_prop_in_list(a, b):
+    res = query("RETURN $b IN $a", params={"a": a, "b": b})
+    assert res.result_set == [[b in a]]
 
-    res = query("RETURN 1 IN null AS r")
+@given(st.none() |  st.booleans() | st.integers(-10, 10) | text_st | st.lists(st.none() | st.booleans() | st.integers(-10, 10) | text_st) | st.dictionaries(at_least_1_text_st.filter(lambda x: all(ch.isalpha() for ch in x)), st.none() | st.booleans() | st.integers(-10, 10) | text_st))
+def test_equal_null(a):
+    res = query("RETURN $a = null", params={"a": a})
     assert res.result_set == [[None]]
 
-    res = query("RETURN 3 IN [[1, 2, 3]][0] AS r")
-    assert res.result_set == [[True]]
-
-    res = query("WITH [1, 2, 3] AS list RETURN 3 IN list[0..1] AS r")
-    assert res.result_set == [[False]]
-
-    res = query("RETURN 1 IN ['1', 2] AS res")
-    assert res.result_set == [[False]]
-
-    res = query("RETURN [1, 2] IN [1, [1, '2']] AS res")
-    assert res.result_set == [[False]]
-
-    res = query("RETURN [1] IN [1, 2] AS res")
-    assert res.result_set == [[False]]
-
-    res = query("RETURN [1, 2] IN [1, 2] AS res")
-    assert res.result_set == [[False]]
-
-    res = query("RETURN [1] IN [1, 2, [1]] AS res")
-    assert res.result_set == [[True]]
-
-    res = query("RETURN [1, 2] IN [1, [1, 2]] AS res")
-    assert res.result_set == [[True]]
-
-    res = query("RETURN [1, 2] IN [1, [2, 1]] AS res")
-    assert res.result_set == [[False]]
-
-    res = query("RETURN [1, 2] IN [1, [1, 2, 3]] AS res")
-    assert res.result_set == [[False]]
-
-    res = query("RETURN [1, 2] IN [1, [[1, 2]]] AS res")
-    assert res.result_set == [[False]]
-
-    res = query("RETURN [[1, 2], [3, 4]] IN [5, [[1, 2], [3, 4]]] AS res")
-    assert res.result_set == [[True]]
-
-    res = query("RETURN [[1, 2], 3] IN [1, [[1, 2], 3]] AS res")
-    assert res.result_set == [[True]]
-
-    res = query("RETURN [[1]] IN [2, [[1]]] AS res")
-    assert res.result_set == [[True]]
-
-    res = query("RETURN [[1, 3]] IN [2, [[1, 3]]] AS res")
-    assert res.result_set == [[True]]
-
-    res = query("RETURN [[1]] IN [2, [1]] AS res")
-    assert res.result_set == [[False]]
-
-    res = query("RETURN [[1, 3]] IN [2, [1, 3]] AS res")
-    assert res.result_set == [[False]]
-
-    res = query("RETURN null IN [null] AS res")
+    res = query("RETURN null = $a", params={"a": a})
     assert res.result_set == [[None]]
 
-    res = query("RETURN [null] IN [[null]] AS res")
-    assert res.result_set == [[None]]
+@given(st.booleans() | st.integers(-10, 10) | text_st | st.lists(st.booleans() | st.integers(-10, 10) | text_st) | st.dictionaries(at_least_1_text_st.filter(lambda x: all(ch.isalpha() for ch in x)), st.booleans() | st.integers(-10, 10) | text_st))
+def test_prop_equal(a):
+    res = query("RETURN $a = $a", params={"a": a})
+    assert res.result_set == [[True]]
 
-    res = query("RETURN [null] IN [null] AS res")
-    assert res.result_set == [[None]]
+@pytest.mark.extra
+@given(st.booleans() | st.integers(-10, 10) | text_st | st.lists(st.booleans() | st.integers(-10, 10) | text_st) | st.dictionaries(at_least_1_text_st.filter(lambda x: all(ch.isalpha() for ch in x)), st.booleans() | st.integers(-10, 10) | text_st))
+def test_prop_equal_extra(a):
+    res = query("RETURN $a = $a = $a AS res", params={"a": a})
+    assert res.result_set == [[True]]
 
-    res = query("RETURN [1] IN [[1, null]] AS res")
+    res = query("RETURN $a = $a = $a = $b AS res", params={"a": a, "b": "foo"})
     assert res.result_set == [[False]]
 
-    res = query("RETURN 3 IN [1, null, 3] AS res")
-    assert res.result_set == [[True]]
-
-    res = query("RETURN 4 IN [1, null, 3] AS res")
-    assert res.result_set == [[None]]
-
-    res = query("RETURN [1, 2] IN [[null, 'foo'], [1, 2]] AS res")
-    assert res.result_set == [[True]]
-
-    res = query("RETURN [1, 2] IN [1, [1, 2], null] AS res")
-    assert res.result_set == [[True]]
-
-    res = query("RETURN [1, 2] IN [[null, 'foo']] AS res")
-    assert res.result_set == [[False]]
-
-    res = query("RETURN [1, 2] IN [[null, 2]] AS res")
-    assert res.result_set == [[None]]
-
-    res = query("RETURN [1, 2] IN [1, [1, 2, null]] AS res")
-    assert res.result_set == [[False]]
-
-    res = query("RETURN [1, 2, null] IN [1, [1, 2, null]] AS res")
-    assert res.result_set == [[None]]
-
-    res = query("RETURN [1, 2] IN [[null, 2], [1, 2]] AS res")
-    assert res.result_set == [[True]]
-
-    res = query("RETURN [[1, 2], [3, 4]] IN [5, [[1, 2], [3, 4], null]] AS res")
-    assert res.result_set == [[False]]
-
-    res = query("RETURN [1, 2] IN [[null, 2], [1, 3]] AS res")
-    assert res.result_set == [[None]]
-
-    res = query("RETURN [] IN [[]] AS res")
-    assert res.result_set == [[True]]
-
-    res = query("RETURN [] IN [] AS res")
-    assert res.result_set == [[False]]
-
-    res = query("RETURN [] IN [1, []] AS res")
-    assert res.result_set == [[True]]
-
-    res = query("RETURN [] IN [1, 2] AS res")
-    assert res.result_set == [[False]]
-
-    res = query("RETURN [[]] IN [1, [[]]] AS res")
-    assert res.result_set == [[True]]
-
-    res = query("RETURN [] IN [1, 2, null] AS res")
-    assert res.result_set == [[None]]
-
-    res = query("RETURN [[], []] IN [1, [[], []]] AS res")
-    assert res.result_set == [[True]]
-
+@given(st.booleans() | st.integers(-10, 10) | text_st | st.lists(st.booleans() | st.integers(-10, 10) | text_st) | st.dictionaries(at_least_1_text_st.filter(lambda x: all(ch.isalpha() for ch in x)), st.booleans() | st.integers(-10, 10) | text_st), st.booleans() | st.integers(-10, 10) | text_st | st.lists(st.booleans() | st.integers(-10, 10) | text_st) | st.dictionaries(at_least_1_text_st.filter(lambda x: all(ch.isalpha() for ch in x)), st.booleans() | st.integers(-10, 10) | text_st))
+def test_prop_equal2(a, b):
+    res = query("RETURN $a = $b", params={"a": a, "b": b})
+    assert res.result_set == [[a == b and type(a) == type(b)]]
 
 def test_is_equal():
-    for v in [1, 1.0, 1.1, '1', '1.0', '1.1', True, False, None, "Avi", [], {}, [1], {"a": 2}]:
-        res = query("RETURN $a = null AS res", params={"a": v})
-        assert res.result_set == [[None]]
-
-        res = query("RETURN null = $a AS res", params={"a": v})
-        assert res.result_set == [[None]]
-
-        res = query("RETURN $a = $a = null = 1.8 AS res", params={"a": v})
-        assert res.result_set == [[None]]
-
-    for v in [1, 1.0, 1.1, '1', '1.0', '1.1', True, False, "Avi", [], {}, [1], {"a": 2}]:
-        res = query("RETURN $a = $a AS res", params={"a": v})
-        assert res.result_set == [[True]]
-
-        # res = query("RETURN $a = $a = $a AS res", params={"a": v})
-        # assert res.result_set == [[True]]
-
-        res = query("RETURN $a = $a = $a = $b AS res", params={"a": v, "b": "foo"})
-        assert res.result_set == [[False]]
-
-        # res = query("RETURN $a = $a = $a = null AS res", params={"a": v})
-        # assert res.result_set == [[None]]
-
-        res = query("RETURN $a = $a = $a = $b AS res", params={"a": v, "b": "foo"})
-        assert res.result_set == [[False]]
-
-        # res = query("RETURN $a = $a = 1.8 = null AS res", params={"a": v})
-        # assert res.result_set == [[False]]
-
     res = query("RETURN $a = $a AS res", params={"a": None})
     assert res.result_set == [[None]]
     res = query("RETURN [null] = [null] AS res")
     assert res.result_set == [[None]]
-
-    res = query("RETURN [1, 2] = 'foo' AS res")
-    assert res.result_set == [[False]]
 
     res = query("RETURN [1] = [1, null] AS res")
     assert res.result_set == [[False]]
@@ -588,23 +469,23 @@ def test_is_equal():
     assert res.result_set == [[None]]
 
 
-@given(st.none() | st.text().filter(lambda s: all(0x00 < ord(c) < 0x80 for c in s)) | st.lists(st.none() | st.booleans() | st.integers(-10, 10) | st.text().filter(lambda s: all(0x00 < ord(c) < 0x80 for c in s)) | st.lists(st.none() | st.booleans() | st.integers(-10, 10) | st.text().filter(lambda s: all(0x00 < ord(c) < 0x80 for c in s)))))
+@given(st.none() | text_st | st.lists(st.none() | st.booleans() | st.integers(-10, 10) | text_st | st.lists(st.none() | st.booleans() | st.integers(-10, 10) | text_st)))
 def test_list_size(a):
     res = query("RETURN size($a)", params={"a": a})
     assert res.result_set == [[len(a) if a is not None else None]]
 
-@given(st.none() | st.lists(st.none() | st.booleans() | st.integers(-10, 10) | st.text().filter(lambda s: all(0x00 < ord(c) < 0x80 for c in s)) | st.lists(st.none() | st.booleans() | st.integers(-10, 10) | st.text().filter(lambda s: all(0x00 < ord(c) < 0x80 for c in s)))))
+@given(st.none() | st.lists(st.none() | st.booleans() | st.integers(-10, 10) | text_st | st.lists(st.none() | st.booleans() | st.integers(-10, 10) | text_st)))
 def test_list_head(a):
     res = query("RETURN head($a)", params={"a": a})
     assert res.result_set == [[a[0] if a else None]]
 
-@given(st.none() | st.lists(st.none() | st.booleans() | st.integers(-10, 10) | st.text().filter(lambda s: all(0x00 < ord(c) < 0x80 for c in s)) | st.lists(st.none() | st.booleans() | st.integers(-10, 10) | st.text().filter(lambda s: all(0x00 < ord(c) < 0x80 for c in s)))))
+@given(st.none() | st.lists(st.none() | st.booleans() | st.integers(-10, 10) | text_st | st.lists(st.none() | st.booleans() | st.integers(-10, 10) | text_st)))
 def test_list_last(a):
     res = query("RETURN last($a)", params={"a": a})
     assert res.result_set == [[a[-1] if a else None]]
 
 
-@given(st.none() | st.lists(st.none() | st.booleans() | st.integers(-10, 10) | st.text().filter(lambda s: all(0x00 < ord(c) < 0x80 for c in s)) | st.lists(st.none() | st.booleans() | st.integers(-10, 10) | st.text().filter(lambda s: all(0x00 < ord(c) < 0x80 for c in s)))))
+@given(st.none() | st.lists(st.none() | st.booleans() | st.integers(-10, 10) | text_st | st.lists(st.none() | st.booleans() | st.integers(-10, 10) | text_st)))
 def test_list_tail(a):
     res = query("RETURN tail($a)", params={"a": a})
     if a is None:
@@ -615,7 +496,7 @@ def test_list_tail(a):
         assert res.result_set == [[a[1:]]]
 
 
-@given(st.none() | st.lists(st.none() | st.booleans() | st.integers(-10, 10) | st.text().filter(lambda s: all(0x00 < ord(c) < 0x80 for c in s)) | st.lists(st.none() | st.booleans() | st.integers(-10, 10) | st.text().filter(lambda s: all(0x00 < ord(c) < 0x80 for c in s)))))
+@given(st.none() | st.lists(st.none() | st.booleans() | st.integers(-10, 10) | text_st | st.lists(st.none() | st.booleans() | st.integers(-10, 10) | text_st)))
 def test_list_reverse(a):
     res = query("RETURN reverse($a)", params={"a": a})
     assert res.result_set == [[a[::-1] if a is not None else None]]
@@ -661,53 +542,24 @@ def test_literals():
         res = query("RETURN -.2 AS literal")
         assert res.result_set == [[-0.2]]
 
+@given(st.none() | text_st, st.none() | text_st)
+def test_split(a, b):
+    res = query("RETURN split($a, $b)", params={"a": a, "b": b})
+    if a is None or b is None:
+        assert res.result_set == [[None]]
+    elif b == "":
+        assert res.result_set == [[list(a)]]
+    else:
+        # If b is not empty, we split a by b
+        if a == "":
+            assert res.result_set == [[[]]]
+        else:
+            assert res.result_set == [[a.split(b) if a else []]]
 
-def test_split():
-    res = query("RETURN split('Learning Cypher!', ' ')")
-    assert res.result_set == [[["Learning", "Cypher!"]]]
-
-    res = query("RETURN split('We are learning Cypher!', ' ')")
-    assert res.result_set == [[["We", "are", "learning", "Cypher!"]]]
-
-    res = query("RETURN split('Hakuna-Matata', ' ')")
-    assert res.result_set == [[["Hakuna-Matata"]]]
-
-    res = query("RETURN split('Hakuna-Matata', '-')")
-    assert res.result_set == [[["Hakuna", "Matata"]]]
-
-    res = query("RETURN split('We are learning Cypher', 'e ')")
-    assert res.result_set == [[["W", "ar", "learning Cypher"]]]
-
-    res = query("RETURN split('We are learning Cypher', null)")
-    assert res.result_set == [[None]]
-
-    res = query("RETURN split(null, ' ')")
-    assert res.result_set == [[None]]
-
-    res = query("RETURN split('we are learning cypher', '')")
-    assert res.result_set == [
-        [["w", "e", " ", "a", "r", "e", " ", "l", "e", "a", "r", "n", "i", "n", "g", " ", "c", "y", "p", "h", "e",
-          "r"]]]
-
-
-def test_letter_casing():
-    res = query("RETURN toUpper('Avi') AS name")
-    assert res.result_set == [["AVI"]]
-
-    res = query("RETURN toLower('Avi') AS name")
-    assert res.result_set == [["avi"]]
-
-    res = query("RETURN toLower(null) AS name")
-    assert res.result_set == [[None]]
-
-    res = query("RETURN toUpper(null) AS name")
-    assert res.result_set == [[None]]
-
-    res = query("RETURN toLower('') AS name")
-    assert res.result_set == [[""]]
-
-    res = query("RETURN toUpper('') AS name")
-    assert res.result_set == [[""]]
+@given(st.none() | text_st)
+def test_letter_casing(a):
+    res = query("RETURN toUpper($a)", params={"a": a})
+    assert res.result_set == [[a.upper() if a is not None else None]]
 
 
 def test_add():

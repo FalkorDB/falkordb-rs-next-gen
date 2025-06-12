@@ -406,7 +406,7 @@ impl<'a> Lexer<'a> {
     fn str2number_token(str: &str) -> Token {
         if Lexer::is_str_float(str) {
             return match str.parse::<f64>() {
-                Ok(f) if f.is_finite() => Token::Float(f),
+                Ok(f) if f.is_finite() && !f.is_subnormal() => Token::Float(f),
                 Ok(_) => Token::Error(format!("Float overflow '{str}'")),
                 Err(_) => Token::Error(format!("Invalid float: {str}")),
             };

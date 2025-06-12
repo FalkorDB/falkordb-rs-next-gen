@@ -1121,7 +1121,9 @@ fn split(
     let mut iter = args.into_iter();
     match (iter.next().as_deref(), iter.next().as_deref()) {
         (Some(Value::String(string)), Some(Value::String(delimiter))) => {
-            if delimiter.is_empty() {
+            if string.is_empty() {
+                Ok(RcValue::list(vec![]))
+            } else if delimiter.is_empty() {
                 // split string to characters
                 let parts = string
                     .chars()
