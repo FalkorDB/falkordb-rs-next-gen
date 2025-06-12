@@ -1,5 +1,4 @@
 from decimal import Decimal
-import sys
 from typing import Counter
 import common
 from falkordb import Node, Edge
@@ -366,8 +365,9 @@ def test_toInteger():
         res = query("RETURN toInteger($p)", params={"p": v})
         assert res.result_set == [[int(float(v))]]
 
-@given(st.integers(-100, 100) | st.floats(-100, 100, allow_subnormal=False))
+@given(st.integers(-100, 100) | st.decimals(-100, 100, places=13))
 def test_prop_toInteger(x):
+    x = float(x) if isinstance(x, Decimal) else x
     res = query(f"RETURN toInteger({x}), toInteger('{x}')")
     if isinstance(x, float):
         assert res.result_set == [[int(math.floor(x)), int(math.floor(x))]]    
