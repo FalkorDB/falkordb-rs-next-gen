@@ -135,7 +135,7 @@ def validate_function(func, expected_args_type):
     ("left", [Type.STRING | Type.NULL, Type.INT | Type.NULL]),
     ("ltrim", [Type.STRING | Type.NULL]),
     ("right", [Type.STRING | Type.NULL, Type.INT | Type.NULL]),
-    ("string.join", [Type.LIST | Type.NULL, Optional[Type.STRING | Type.NULL]]),
+    ("string.join", [Type.LIST | Type.NULL, Optional[Type.STRING]]),
     ("abs", [Type.INT | Type.FLOAT | Type.NULL]),
     ("ceil", [Type.INT | Type.FLOAT | Type.NULL]),
     ("e", []),

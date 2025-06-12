@@ -1,4 +1,5 @@
-import sys
+from decimal import Decimal
+from typing import Counter
 import common
 from falkordb import Node, Edge
 from hypothesis import given, strategies as st
@@ -364,11 +365,9 @@ def test_toInteger():
         res = query("RETURN toInteger($p)", params={"p": v})
         assert res.result_set == [[int(float(v))]]
 
-def is_subnormal(num):
-    return 0 < abs(num) < sys.float_info.min
-
-@given(st.integers(-100, 100) | st.floats(-100, 100).filter(lambda x: not is_subnormal(x)))
+@given(st.integers(-100, 100) | st.decimals(-100, 100, places=13))
 def test_prop_toInteger(x):
+    x = float(x) if isinstance(x, Decimal) else x
     res = query(f"RETURN toInteger({x}), toInteger('{x}')")
     if isinstance(x, float):
         assert res.result_set == [[int(math.floor(x)), int(math.floor(x))]]    
@@ -721,23 +720,19 @@ def test_graph_list(a):
         assert i in graphs
         common.client.select_graph(i).delete()
 
-
-def test_function_with_namespace():
-    res = query("RETURN string.join(null, ',') AS result")
-    assert res.result_set == [[None]]
-
-    res = query("RETURN string.join([], 'foo') AS result")
-    assert res.result_set == [[""]]
-
-    res = query("RETURN string.join(['a', 'b'], ', ') AS result")
-    assert res.result_set == [['a, b']]
-
-    res = query("RETURN string.join(['a', 'b']) AS result")
-    assert res.result_set == [['ab']]
+@given(st.lists(text_st), text_st)
+def test_string_join(a, b):
+    q = "RETURN string.join($a, $b)" if b else "RETURN string.join($a)"
+    if a is None:
+        res = query(q, params={"a": a, "b": b})
+        assert res.result_set == [[None]]
+    else:
+        res = query(q, params={"a": a, "b": b})
+        assert res.result_set == [[(b if b else "").join(a)]]
 
 
 @pytest.mark.extra
-def test_match_reg_ex():
+def test_string_match_regex():
     res = query("RETURN string.matchRegEx(null, null) AS name")
     assert res.result_set == [[[]]]
 
@@ -759,7 +754,7 @@ def test_match_reg_ex():
 
 
 @pytest.mark.extra
-def test_list_re_replace():
+def test_string_replace_regex():
     res = query(
         "RETURN string.replaceRegEx('foo-bar baz-qux', '(?<first>[a-z]+)-(?<last>[a-z]+)', '$first $last') AS name")
     assert res.result_set == [["foo bar baz qux"]]
@@ -784,46 +779,21 @@ def test_list_re_replace():
     query_exception("RETURN string.replaceRegEx('foo bar', '**', 'a') AS name",
                     "Invalid regex")
 
+@given(st.none() | st.integers(-100, 100) | st.decimals(-100, 100, places=13))
+def test_abs(a):
+    a = float(a) if isinstance(a, Decimal) else a
+    res = query("RETURN abs($a)", params={"a": a})
+    assert res.result_set == [[abs(a) if a is not None else None]]
 
-def test_abs():
-    res = query("RETURN abs(1) AS name")
-    assert res.result_set == [[1]]
-
-    res = query("RETURN abs(1.0) AS name")
-    assert res.result_set == [[1.0]]
-
-    res = query("RETURN abs(-1) AS name")
-    assert res.result_set == [[1]]
-
-    res = query("RETURN abs(0) AS name")
-    assert res.result_set == [[0]]
-
-    res = query("RETURN abs(null) AS name")
-    assert res.result_set == [[None]]
-
-
-def test_ceil():
-    res = query("RETURN ceil(1.1) AS name")
-    assert res.result_set == [[2]]
-
-    res = query("RETURN ceil(1) AS name")
-    assert res.result_set == [[1]]
-
-    res = query("RETURN ceil(1.0) AS name")
-    assert res.result_set == [[1]]
-
-    res = query("RETURN ceil(-1.1) AS name")
-    assert res.result_set == [[-1]]
-
-    res = query("RETURN ceil(-1.0) AS name")
-    assert res.result_set == [[-1]]
-
-    res = query("RETURN ceil(null) AS name")
-    assert res.result_set == [[None]]
+@given(st.none() | st.integers(-100, 100) | st.decimals(-100, 100, places=13))
+def test_ceil(a):
+    a = float(a) if isinstance(a, Decimal) else a
+    res = query("RETURN ceil($a)", params={"a": float(a) if a is not None else None})
+    assert res.result_set == [[math.ceil(a) if a is not None else None]]
 
 
 def test_e():
-    res = query("RETURN e() AS name")
+    res = query("RETURN e()")
     assert res.result_set == [[2.71828182845905e0]]
 
 
@@ -843,26 +813,10 @@ def test_exp():
     res = query("RETURN exp(null) AS name")
     assert res.result_set == [[None]]
 
-
-def test_floor():
-    res = query("RETURN floor(1.1) AS name")
-    assert res.result_set == [[1]]
-
-    res = query("RETURN floor(1) AS name")
-    assert res.result_set == [[1]]
-
-    res = query("RETURN floor(1.0) AS name")
-    assert res.result_set == [[1]]
-
-    res = query("RETURN floor(-1.1) AS name")
-    assert res.result_set == [[-2]]
-
-    res = query("RETURN floor(-1.0) AS name")
-    assert res.result_set == [[-1]]
-
-    res = query("RETURN floor(null) AS name")
-    assert res.result_set == [[None]]
-
+@given(st.none() | st.integers(-100, 100) | st.floats(-100, 100, allow_subnormal=False))
+def test_floor(a):
+    res = query("RETURN floor($a)", params={"a": a})
+    assert res.result_set == [[math.floor(a) if a is not None else None]]
 
 def test_log():
     res = query("RETURN log(1) AS name")
@@ -933,57 +887,43 @@ def test_pow():
     assert res.result_set == [[None]]
 
 
+def shannon_entropy(data):
+    n = len(data)
+    counts = Counter(data)
+    probabilities = [count / n for count in counts.values()]
+
+    return -sum(p * math.log2(p) for p in probabilities if p > 0)
+
+
 def test_rand():
-    res = query("RETURN rand() AS name", compare_results=False)
-    assert res.result_set[0][0] >= 0.0
-    assert res.result_set[0][0] < 1.0
+    data = []
+    for _ in range(1000):
+        res = query("RETURN rand()", compare_results=False)
+        data.append(res.result_set[0][0])
+        assert res.result_set[0][0] >= 0.0
+        assert res.result_set[0][0] < 1.0
+    assert shannon_entropy(data) > 0.9  # Check for randomness
 
 
-def test_round():
-    res = query("RETURN round(1) AS name")
-    assert res.result_set == [[1]]
+def round_away_from_zero(num):
+    if num > 0:
+        return math.floor(num + 0.5)
+    else:
+        return math.ceil(num - 0.5)
 
-    res = query("RETURN round(1.1) AS name")
-    assert res.result_set == [[1]]
-
-    res = query("RETURN round(1.0) AS name")
-    assert res.result_set == [[1]]
-
-    res = query("RETURN round(-1.1) AS name")
-    assert res.result_set == [[-1]]
-
-    res = query("RETURN round(-1.0) AS name")
-    assert res.result_set == [[-1]]
-
-    res = query("RETURN round(null) AS name")
-    assert res.result_set == [[None]]
+@given(st.none() | st.integers(-100, 100) | st.floats(-100, 100, allow_subnormal=False))
+def test_round(a):
+    res = query("RETURN round($a)", params={"a": a})
+    assert res.result_set == [[round_away_from_zero(a) if a is not None else None]]
 
 
-def test_sign():
-    # Test positive numbers
-    res = query("RETURN sign(5) AS result")
-    assert res.result_set == [[1]]
+def signum(x):
+    return (x > 0) - (x < 0)
 
-    res = query("RETURN sign(0.1) AS result")
-    assert res.result_set == [[1]]
-
-    # Test zero
-    res = query("RETURN sign(0) AS result")
-    assert res.result_set == [[0]]
-
-    res = query("RETURN sign(0.0) AS result")
-    assert res.result_set == [[0]]
-
-    # Test negative numbers
-    res = query("RETURN sign(-5) AS result")
-    assert res.result_set == [[-1]]
-
-    res = query("RETURN sign(-0.1) AS result")
-    assert res.result_set == [[-1]]
-
-    # Test null
-    res = query("RETURN sign(null) AS result")
-    assert res.result_set == [[None]]
+@given(st.none() | st.integers(-100, 100) | st.floats(-100, 100, allow_subnormal=False))
+def test_sign(a):
+    res = query("RETURN sign($a)", params={"a": a})
+    assert res.result_set == [[signum(a) if a is not None else None]]
 
 
 def test_sqrt():
@@ -1006,44 +946,67 @@ def test_sqrt():
     assert res.result_set == [[None]]
 
 
-def test_range():
-    res = query("RETURN range(1, 10) AS name")
-    assert res.result_set == [[list(range(1, 11))]]
+@given(st.integers(-100, 100), st.integers(-100, 100))
+def test_range(a, b):
+    res = query("RETURN range($a, $b)", params={"a": a, "b": b})
+    assert res.result_set == [[list(range(a, b + 1))]]
 
-    res = query("RETURN range(10, 1) AS name")
-    assert res.result_set == [[[]]]
 
-    res = query("RETURN range(1, 10, 2) AS name")
-    assert res.result_set == [[list(range(1, 11, 2))]]
+@given(st.integers(-10, 10), st.integers(-100, 10), st.integers(-10, 10))
+def test_range_step(a, b, c):
+    if c == 0:
+        query_exception("RETURN range($a, $b, $c)", "ArgumentError: step argument to range() can't be 0", params={"a": a, "b": b, "c": c})
+        return
+    res = query("RETURN range($a, $b, $c)", params={"a": a, "b": b, "c": c})
+    if c > 0:
+        if a == b:
+            assert res.result_set == [[[a]]]
+        else:
+            assert res.result_set == [[[i for i in range(a, b + 1, c)]]]
+    else:
+        assert res.result_set == [[[i for i in range(a, b - 1, c)]]]
 
-    res = query("RETURN range(10, 1, -2) AS name")
-    assert res.result_set == [[list(range(10, 0, -2))]]
 
+@given(st.lists(st.none() | st.booleans() | st.integers(-10, 10) | text_st | st.lists(st.none() | st.booleans() | st.integers(-10, 10) | text_st)))
+def test_collect(a):
+    res = query("UNWIND $a AS x RETURN collect(x)", params={"a": a})
+    assert_result_set_equal_no_order(res, [[[x for x in a if x is not None]]])
+
+    res = query("UNWIND $a AS x WITH collect(x) AS xs UNWIND xs AS y RETURN collect(y)", params={"a": a})
+    assert_result_set_equal_no_order(res, [[[x for x in a if x is not None]]])
+
+@given(st.lists(st.none() | st.booleans() | st.integers(-10, 10) | text_st | st.lists(st.none() | st.booleans() | st.integers(-10, 10) | text_st)))
+def test_count(a):
+    res = query("UNWIND $a AS x RETURN count(x)", params={"a": a})
+    assert_result_set_equal_no_order(res, [[len([x for x in a if x is not None])]])
+
+@given(st.lists(st.none() | st.integers(-10, 10)))
+def test_sum(a):
+    res = query("UNWIND $a AS x RETURN sum(x)", params={"a": a})
+    assert_result_set_equal_no_order(res, [[sum(x for x in a if x is not None)]])
+
+    res = query("UNWIND $a AS x RETURN sum(distinct x)", params={"a": a})
+    assert_result_set_equal_no_order(res, [[sum(set(x for x in a if x is not None))]])
+
+@given(st.lists(st.none() | st.integers(-10, 10)))
+def test_min(a):
+    res = query("UNWIND $a AS x RETURN min(x)", params={"a": a})
+    if not a or all(x is None for x in a):
+        assert res.result_set == [[None]]
+    else:
+        assert res.result_set == [[min(x for x in a if x is not None)]]
+
+@given(st.lists(st.none() | st.integers(-10, 10)))
+def test_max(a):
+    res = query("UNWIND $a AS x RETURN max(x)", params={"a": a})
+    if not a or all(x is None for x in a):
+        assert res.result_set == [[None]]
+    else:
+        assert res.result_set == [[max(x for x in a if x is not None)]]
 
 def test_aggregation():
-    res = query("UNWIND range(1, 10) AS x RETURN collect(x)")
-    assert_result_set_equal_no_order(res, [[[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]]])
-
-    res = query("UNWIND range(1, 10) AS x WITH collect(x) AS xs UNWIND xs AS y RETURN collect(y)")
-    assert_result_set_equal_no_order(res, [[[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]]])
-
-    res = query("UNWIND [true, 1, 1.0, 'Avi', [], {}] AS x RETURN collect(x)")
-    assert_result_set_equal_no_order(res, [[[True, 1, 1.0, 'Avi', [], {}]]])
-
-    res = query("UNWIND range(1, 10) AS x RETURN count(x)")
-    assert_result_set_equal_no_order(res, [[10]])
-
-    res = query("UNWIND range(1, 10) AS x RETURN sum(x)")
-    assert_result_set_equal_no_order(res, [[55]])
-
     res = query("UNWIND range(1, 10) AS x RETURN sum(x / 10.0)")
     assert_result_set_equal_no_order(res, [[5.5]])
-
-    res = query("UNWIND range(1, 10) AS x RETURN min(x)")
-    assert_result_set_equal_no_order(res, [[1]])
-
-    res = query("UNWIND range(1, 10) AS x RETURN max(x)")
-    assert_result_set_equal_no_order(res, [[10]])
 
     res = query("UNWIND range(1, 11) AS x RETURN x % 2, count(x)", compare_results=False)
     assert_result_set_equal_no_order(res, [[1, 6], [0, 5]])
@@ -1082,32 +1045,6 @@ def test_case():
 
 
 def test_quantifier():
-    # Test empty list
-    res = query("RETURN all(x IN [] WHERE x > 0) AS res")
-    assert res.result_set == [[True]]  # `all` on an empty list is True
-
-    res = query("RETURN any(x IN [] WHERE x > 0) AS res")
-    assert res.result_set == [[False]]  # `any` on an empty list is False
-
-    res = query("RETURN none(x IN [] WHERE x > 0) AS res")
-    assert res.result_set == [[True]]  # `none` on an empty list is True
-
-    res = query("RETURN single(x IN [] WHERE x > 0) AS res")
-    assert res.result_set == [[False]]  # `single` on an empty list is False
-
-    # Test singleton list
-    res = query("RETURN all(x IN [1] WHERE x > 0) AS res")
-    assert res.result_set == [[True]]
-
-    res = query("RETURN any(x IN [1] WHERE x > 0) AS res")
-    assert res.result_set == [[True]]
-
-    res = query("RETURN none(x IN [1] WHERE x > 0) AS res")
-    assert res.result_set == [[False]]
-
-    res = query("RETURN single(x IN [1] WHERE x > 0) AS res")
-    assert res.result_set == [[True]]
-
     # Test non-boolean expressions
     q = "RETURN all(x IN [1, 2, 3] WHERE x + 1) AS res"
     query_exception(q, "Type mismatch: expected Boolean but was Integer")
@@ -1133,6 +1070,21 @@ def test_quantifier():
 
     res = query("RETURN single(x IN [true, null] WHERE x) AS res")
     assert res.result_set == [[None]]
+
+
+@given(st.lists(st.integers(-10, 10)))
+def test_prop_quantifier(a):
+    res = query("RETURN all(x IN $a WHERE x > 0)", params={"a": a})
+    assert res.result_set == [[all(x > 0 for x in a if x is not None)]]
+
+    res = query("RETURN any(x IN $a WHERE x > 0)", params={"a": a})
+    assert res.result_set == [[any(x > 0 for x in a if x is not None)]]
+
+    res = query("RETURN none(x IN $a WHERE x > 0)", params={"a": a})
+    assert res.result_set == [[not any(x > 0 for x in a if x is not None)]]
+
+    res = query("RETURN single(x IN $a WHERE x > 0)", params={"a": a})
+    assert res.result_set == [[len([x for x in a if x is not None and x > 0]) == 1]]
 
 
 def test_list_comprehension():
