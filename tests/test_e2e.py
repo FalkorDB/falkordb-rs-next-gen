@@ -1045,32 +1045,6 @@ def test_case():
 
 
 def test_quantifier():
-    # Test empty list
-    res = query("RETURN all(x IN [] WHERE x > 0) AS res")
-    assert res.result_set == [[True]]  # `all` on an empty list is True
-
-    res = query("RETURN any(x IN [] WHERE x > 0) AS res")
-    assert res.result_set == [[False]]  # `any` on an empty list is False
-
-    res = query("RETURN none(x IN [] WHERE x > 0) AS res")
-    assert res.result_set == [[True]]  # `none` on an empty list is True
-
-    res = query("RETURN single(x IN [] WHERE x > 0) AS res")
-    assert res.result_set == [[False]]  # `single` on an empty list is False
-
-    # Test singleton list
-    res = query("RETURN all(x IN [1] WHERE x > 0) AS res")
-    assert res.result_set == [[True]]
-
-    res = query("RETURN any(x IN [1] WHERE x > 0) AS res")
-    assert res.result_set == [[True]]
-
-    res = query("RETURN none(x IN [1] WHERE x > 0) AS res")
-    assert res.result_set == [[False]]
-
-    res = query("RETURN single(x IN [1] WHERE x > 0) AS res")
-    assert res.result_set == [[True]]
-
     # Test non-boolean expressions
     q = "RETURN all(x IN [1, 2, 3] WHERE x + 1) AS res"
     query_exception(q, "Type mismatch: expected Boolean but was Integer")
@@ -1096,6 +1070,21 @@ def test_quantifier():
 
     res = query("RETURN single(x IN [true, null] WHERE x) AS res")
     assert res.result_set == [[None]]
+
+
+@given(st.lists(st.integers(-10, 10)))
+def test_prop_quantifier(a):
+    res = query("RETURN all(x IN $a WHERE x > 0)", params={"a": a})
+    assert res.result_set == [[all(x > 0 for x in a if x is not None)]]
+
+    res = query("RETURN any(x IN $a WHERE x > 0)", params={"a": a})
+    assert res.result_set == [[any(x > 0 for x in a if x is not None)]]
+
+    res = query("RETURN none(x IN $a WHERE x > 0)", params={"a": a})
+    assert res.result_set == [[not any(x > 0 for x in a if x is not None)]]
+
+    res = query("RETURN single(x IN $a WHERE x > 0)", params={"a": a})
+    assert res.result_set == [[len([x for x in a if x is not None and x > 0]) == 1]]
 
 
 def test_list_comprehension():
