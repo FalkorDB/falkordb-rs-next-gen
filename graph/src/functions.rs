@@ -487,8 +487,8 @@ pub fn init_functions() -> Result<(), Functions> {
         string_join,
         false,
         vec![
-            Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null]),
-            Type::Optional(Box::new(Type::Union(vec![Type::String, Type::Null]))),
+            Type::Union(vec![Type::List(Box::new(Type::String)), Type::Null]),
+            Type::Optional(Box::new(Type::String)),
         ],
         FnType::Function,
     );
