@@ -1101,15 +1101,17 @@ fn substring(
             if *start < 0 {
                 return Err("start must be a non-negative integer".into());
             }
-            if *length < 0 {
-                return Err("length must be a non-negative integer".into());
-            }
-            let start = *start as usize;
-            let length = *length as usize;
 
+            let start = *start as usize;
             if start >= s.len() {
                 return Ok(RcValue::string(Rc::new(String::new())));
             }
+
+            if *length < 0 {
+                return Err("length must be a non-negative integer".into());
+            }
+
+            let length = *length as usize;
 
             let end = start.saturating_add(length).min(s.len());
             Ok(RcValue::string(Rc::new(String::from(&s[start..end]))))

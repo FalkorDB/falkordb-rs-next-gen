@@ -1315,10 +1315,13 @@ where
         let prev = first?;
         for next in iter {
             let next = next?;
-            match prev.partial_cmp(&next) {
-                None => return Ok(RcValue::null()),
-                Some(Ordering::Less | Ordering::Greater) => return Ok(RcValue::bool(false)),
-                Some(Ordering::Equal) => {}
+            match prev.compare_value(&next) {
+                (_, DisjointOrNull::ComparedNull) => return Ok(RcValue::null()),
+                (_, DisjointOrNull::NaN | DisjointOrNull::Disjoint) => {
+                    return Ok(RcValue::bool(false));
+                }
+                (Ordering::Equal, _) => {}
+                _ => return Ok(RcValue::bool(false)),
             }
         }
         Ok(RcValue::bool(true))

@@ -8,7 +8,7 @@ import pytest
 from redis import ResponseError
 
 text_st = st.text().filter(lambda s: all(0x00 < ord(c) < 0x80 for c in s))
-at_least_1_text_st = st.text(min_size=1).filter(lambda s: all(0x00 < ord(c) < 0x80 for c in s))
+at_least_1_text_st = st.text("abcdefghijklmnopqrstuvwxyz", min_size=1)
 
 def setup_module(module):
     common.start_redis()
@@ -417,7 +417,7 @@ def test_prop_in_list(a, b):
     res = query("RETURN $b IN $a", params={"a": a, "b": b})
     assert res.result_set == [[b in a]]
 
-@given(st.none() |  st.booleans() | st.integers(-10, 10) | text_st | st.lists(st.none() | st.booleans() | st.integers(-10, 10) | text_st) | st.dictionaries(at_least_1_text_st.filter(lambda x: all(ch.isalpha() for ch in x)), st.none() | st.booleans() | st.integers(-10, 10) | text_st))
+@given(st.none() |  st.booleans() | st.integers(-10, 10) | text_st | st.lists(st.none() | st.booleans() | st.integers(-10, 10) | text_st) | st.dictionaries(at_least_1_text_st, st.none() | st.booleans() | st.integers(-10, 10) | text_st))
 def test_equal_null(a):
     res = query("RETURN $a = null", params={"a": a})
     assert res.result_set == [[None]]
@@ -425,13 +425,13 @@ def test_equal_null(a):
     res = query("RETURN null = $a", params={"a": a})
     assert res.result_set == [[None]]
 
-@given(st.booleans() | st.integers(-10, 10) | text_st | st.lists(st.booleans() | st.integers(-10, 10) | text_st) | st.dictionaries(at_least_1_text_st.filter(lambda x: all(ch.isalpha() for ch in x)), st.booleans() | st.integers(-10, 10) | text_st))
+@given(st.booleans() | st.integers(-10, 10) | text_st | st.lists(st.booleans() | st.integers(-10, 10) | text_st) | st.dictionaries(at_least_1_text_st, st.booleans() | st.integers(-10, 10) | text_st))
 def test_prop_equal(a):
     res = query("RETURN $a = $a", params={"a": a})
     assert res.result_set == [[True]]
 
 @pytest.mark.extra
-@given(st.booleans() | st.integers(-10, 10) | text_st | st.lists(st.booleans() | st.integers(-10, 10) | text_st) | st.dictionaries(at_least_1_text_st.filter(lambda x: all(ch.isalpha() for ch in x)), st.booleans() | st.integers(-10, 10) | text_st))
+@given(st.booleans() | st.integers(-10, 10) | text_st | st.lists(st.booleans() | st.integers(-10, 10) | text_st) | st.dictionaries(at_least_1_text_st, st.booleans() | st.integers(-10, 10) | text_st))
 def test_prop_equal_extra(a):
     res = query("RETURN $a = $a = $a AS res", params={"a": a})
     assert res.result_set == [[True]]
@@ -439,10 +439,15 @@ def test_prop_equal_extra(a):
     res = query("RETURN $a = $a = $a = $b AS res", params={"a": a, "b": "foo"})
     assert res.result_set == [[False]]
 
-@given(st.booleans() | st.integers(-10, 10) | text_st | st.lists(st.booleans() | st.integers(-10, 10) | text_st) | st.dictionaries(at_least_1_text_st.filter(lambda x: all(ch.isalpha() for ch in x)), st.booleans() | st.integers(-10, 10) | text_st), st.booleans() | st.integers(-10, 10) | text_st | st.lists(st.booleans() | st.integers(-10, 10) | text_st) | st.dictionaries(at_least_1_text_st.filter(lambda x: all(ch.isalpha() for ch in x)), st.booleans() | st.integers(-10, 10) | text_st))
+@given(st.booleans() | st.integers(-10, 10) | text_st | st.lists(st.booleans() | st.integers(-10, 10) | text_st) | st.dictionaries(at_least_1_text_st, st.booleans() | st.integers(-10, 10) | text_st), st.booleans() | st.integers(-10, 10) | text_st | st.lists(st.booleans() | st.integers(-10, 10) | text_st) | st.dictionaries(at_least_1_text_st, st.booleans() | st.integers(-10, 10) | text_st))
 def test_prop_equal2(a, b):
     res = query("RETURN $a = $b", params={"a": a, "b": b})
-    assert res.result_set == [[a == b and type(a) == type(b)]]
+    if isinstance(a, list) and isinstance(b, list):
+        assert res.result_set == [[a == b and all(type(x) == type(y) for x, y in zip(a, b))]]
+    elif isinstance(a, dict) and isinstance(b, dict):
+        assert res.result_set == [[a == b and all(type(a[k]) == type(b[k]) for k in a.keys())]]
+    else:
+        assert res.result_set == [[a == b and type(a) == type(b)]]
 
 def test_is_equal():
     res = query("RETURN $a = $a AS res", params={"a": None})
@@ -668,7 +673,7 @@ def test_left(a, b):
         query_exception("RETURN left($a, $b)", "length must be a non-negative integer", params={"a": a, "b": b})
     else:
         res = query("RETURN left($a, $b)", params={"a": a, "b": b})
-        assert res.result_set == [[a[:b] if a is not None and b is not None else None]]
+        assert res.result_set == [[a[:b]]]
 
 @given(st.none() | text_st)
 def test_ltrim(a):
@@ -684,7 +689,7 @@ def test_right(a, b):
         query_exception("RETURN right($a, $b)", "length must be a non-negative integer", params={"a": a, "b": b})
     else:
         res = query("RETURN right($a, $b)", params={"a": a, "b": b})
-        assert res.result_set == [[a[-b:]]]
+        assert res.result_set == [[a[-b:] if b > 0 else ""]]
 
 @given(st.none() | text_st, st.integers(-10, 10), st.none() | st.integers(-10, 10))
 def test_substring(a, b, c):
@@ -694,6 +699,9 @@ def test_substring(a, b, c):
         assert res.result_set == [[None]]
     elif b < 0:
         query_exception(q, "start must be a non-negative integer", params={"a": a, "b": b, "c": c})
+    elif b >= len(a):
+        res = query(q, params={"a": a, "b": b, "c": c})
+        assert res.result_set == [[a[b:(b + c if c is not None else None)]]]
     elif c is not None and c < 0:
         query_exception(q, "length must be a non-negative integer", params={"a": a, "b": b, "c": c})
     else:
@@ -701,15 +709,17 @@ def test_substring(a, b, c):
         assert res.result_set == [[a[b:(b + c if c is not None else None)]]]
 
 
-def test_graph_list():
-    for i in range(1000):
-        common.client.select_graph(f"g{i}").query("return 1")
+@given(st.lists(at_least_1_text_st, unique=True))
+def test_graph_list(a):
+    for i in a:
+        common.client.select_graph(i).query("return 1")
         common.client.connection.set(f"ng{i}", "ng")
     graphs = common.client.list_graphs()
 
-    assert len(graphs) == 1000
-    for i in range(1000):
-        assert f'g{i}' in graphs
+    assert len(graphs) == len(a)
+    for i in a:
+        assert i in graphs
+        common.client.select_graph(i).delete()
 
 
 def test_function_with_namespace():
