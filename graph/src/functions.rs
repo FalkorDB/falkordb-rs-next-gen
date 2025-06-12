@@ -954,11 +954,11 @@ fn value_to_integer(
     match args.into_iter().next().as_deref() {
         Some(Value::String(s)) => s.parse::<i64>().map(RcValue::int).or_else(|_| {
             s.parse::<f64>()
-                .map(|f| RcValue::int(f as i64))
+                .map(|f| RcValue::int(f.floor() as i64))
                 .or(Ok(RcValue::null()))
         }),
         Some(Value::Int(i)) => Ok(RcValue::int(*i)),
-        Some(Value::Float(f)) => Ok(RcValue::int(*f as i64)),
+        Some(Value::Float(f)) => Ok(RcValue::int(f.floor() as i64)),
         Some(Value::Bool(b)) => Ok(RcValue::int(i64::from(*b))),
         Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
@@ -1098,13 +1098,19 @@ fn substring(
 
         // Three-argument version: (string, start, length)
         (Some(Value::String(s)), Some(Value::Int(start)), Some(Value::Int(length))) => {
-            if *length < 0 {
-                return Err("length must be a non-negative integer".into());
-            }
             if *start < 0 {
                 return Err("start must be a non-negative integer".into());
             }
+
             let start = *start as usize;
+            if start >= s.len() {
+                return Ok(RcValue::string(Rc::new(String::new())));
+            }
+
+            if *length < 0 {
+                return Err("length must be a non-negative integer".into());
+            }
+
             let length = *length as usize;
 
             let end = start.saturating_add(length).min(s.len());
@@ -1121,7 +1127,9 @@ fn split(
     let mut iter = args.into_iter();
     match (iter.next().as_deref(), iter.next().as_deref()) {
         (Some(Value::String(string)), Some(Value::String(delimiter))) => {
-            if delimiter.is_empty() {
+            if string.is_empty() {
+                Ok(RcValue::list(vec![RcValue::string(Rc::new(String::new()))]))
+            } else if delimiter.is_empty() {
                 // split string to characters
                 let parts = string
                     .chars()
@@ -1211,7 +1219,9 @@ fn string_ltrim(
     args: Vec<RcValue>,
 ) -> Result<RcValue, String> {
     match args.into_iter().next().as_deref() {
-        Some(Value::String(s)) => Ok(RcValue::string(Rc::new(String::from(s.trim_start())))),
+        Some(Value::String(s)) => Ok(RcValue::string(Rc::new(String::from(
+            s.trim_start_matches(" "),
+        )))),
         Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
@@ -1521,9 +1531,11 @@ fn range(
     match (&*start, &*end, &*step) {
         (Value::Int(start), Value::Int(stop), Value::Int(step)) => {
             if *step == 0 {
-                return Err(String::from("Step cannot be zero"));
+                return Err(String::from(
+                    "ArgumentError: step argument to range() can't be 0",
+                ));
             }
-            if start > stop && step > &0 {
+            if (start > stop && step > &0) || (start < stop && step < &0) {
                 return Ok(RcValue::list(vec![]));
             }
             let mut curr = *start;

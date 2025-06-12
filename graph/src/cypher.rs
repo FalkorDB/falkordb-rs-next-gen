@@ -12,6 +12,7 @@ use std::collections::HashSet;
 use std::num::IntErrorKind;
 use std::rc::Rc;
 use std::str::Chars;
+use unescaper::unescape;
 
 #[derive(Debug, PartialEq, Clone)]
 enum Keyword {
@@ -257,16 +258,37 @@ impl<'a> Lexer<'a> {
                             len + 1,
                         );
                     }
-                    (
-                        Token::String(Rc::new(String::from(&str[pos + 1..pos + len]))),
-                        len + 1,
+                    unescape(&str[pos + 1..pos + len]).map_or_else(
+                        |e| match e {
+                            unescaper::Error::InvalidChar { .. } => (
+                                Token::String(Rc::new(String::from(&str[pos + 1..pos + len]))),
+                                len + 1,
+                            ),
+                            _ => (
+                                Token::Error(String::from(&str[pos + 1..pos + len])),
+                                len + 1,
+                            ),
+                        },
+                        |unescaped| (Token::String(Rc::new(unescaped)), len + 1),
                     )
                 }
                 '\"' => {
                     let mut len = 1;
                     let mut end = false;
-                    for c in chars.by_ref() {
-                        if c == '\"' {
+                    while let Some(c) = chars.next() {
+                        if c == '\\' {
+                            match chars.next() {
+                                Some(c) => {
+                                    len += c.len_utf8();
+                                }
+                                None => {
+                                    return (
+                                        Token::Error(String::from(&str[pos + 1..pos + len])),
+                                        len + 1,
+                                    );
+                                }
+                            }
+                        } else if c == '\"' {
                             end = true;
                             break;
                         }
@@ -278,9 +300,18 @@ impl<'a> Lexer<'a> {
                             len + 1,
                         );
                     }
-                    (
-                        Token::String(Rc::new(String::from(&str[pos + 1..pos + len]))),
-                        len + 1,
+                    unescape(&str[pos + 1..pos + len]).map_or_else(
+                        |e| match e {
+                            unescaper::Error::InvalidChar { .. } => (
+                                Token::String(Rc::new(String::from(&str[pos + 1..pos + len]))),
+                                len + 1,
+                            ),
+                            _ => (
+                                Token::Error(String::from(&str[pos + 1..pos + len])),
+                                len + 1,
+                            ),
+                        },
+                        |unescaped| (Token::String(Rc::new(unescaped)), len + 1),
                     )
                 }
                 '0'..='9' => Self::lex_numeric(str, chars, pos, 1),
@@ -375,7 +406,7 @@ impl<'a> Lexer<'a> {
     fn str2number_token(str: &str) -> Token {
         if Lexer::is_str_float(str) {
             return match str.parse::<f64>() {
-                Ok(f) if f.is_finite() => Token::Float(f),
+                Ok(f) if f.is_finite() && !f.is_subnormal() => Token::Float(f),
                 Ok(_) => Token::Error(format!("Float overflow '{str}'")),
                 Err(_) => Token::Error(format!("Invalid float: {str}")),
             };

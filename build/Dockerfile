@@ -13,9 +13,9 @@ RUN apt install -y git make cmake curl zlib1g zlib1g-dev libpolly-20-dev libomp-
 
 RUN python3 -m venv venv
 
-RUN venv/bin/pip install falkordb pytest pytest-benchmark behave
+RUN venv/bin/pip install behave falkordb hypothesis pytest pytest-benchmark
 
-RUN git clone --branch v10.0.3 --single-branch https://github.com/DrTimothyAldenDavis/GraphBLAS.git
+RUN git clone --branch v10.1.0 --single-branch https://github.com/DrTimothyAldenDavis/GraphBLAS.git
 
 RUN cd GraphBLAS && \
     make static CMAKE_OPTIONS='-DGRAPHBLAS_COMPACT=1 -DCMAKE_POSITION_INDEPENDENT_CODE=on' JOBS=2 CC=clang-20 CXX=clang++-20 && \

@@ -2,6 +2,8 @@ from itertools import product
 from random import choice
 import string
 from typing import Optional
+
+from redis import ResponseError
 import common
 from enum import IntFlag
 import pytest
@@ -157,3 +159,15 @@ def test_functions(name, types):
 def test_extra_functions():
     validate_function("string.matchRegEx", [Type.STRING | Type.NULL, Type.STRING | Type.NULL])
     validate_function("string.replaceRegEx", [Type.STRING | Type.NULL, Type.STRING | Type.NULL, Type.STRING | Type.NULL])
+
+def query_exception(query: str, message: str, params=None):
+    try:
+        common.g.query(query, params)
+        assert False, "Expected an error"
+    except ResponseError as e:
+        assert message in str(e)
+
+def test_string_functions():
+    query_exception("RETURN [1, 2] STARTS WITH 'a' AS name", "Type mismatch: expected String or Null but was")
+    query_exception("RETURN [1, 2] ENDS WITH 'a' AS name", "Type mismatch: expected String or Null but was")
+    query_exception("RETURN [1, 2] CONTAINS 'a' AS name", "Type mismatch: expected String or Null but was")

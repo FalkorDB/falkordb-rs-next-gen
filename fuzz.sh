@@ -2,7 +2,7 @@
 cargo build --features fuzz
 
 # run tck tests to generate the corpus
-TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -v
+TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
 
 # run fuzz test
 cargo fuzz run fuzz_target_runtime -- -max_total_time=30

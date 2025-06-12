@@ -27,18 +27,18 @@ dependencies:
 
 - build with `cargo build`
 - run e2e tests with `pytest tests/test_e2e.py tests/test_functions.py -vv`
-- run tck tests with `pytest tests/tck/test_tck.py -vv`
+- run tck tests with `pytest tests/tck/test_tck.py -s`
 
 There is an option to run only part of the TCK tests and stop on the first fail
 
 ```bash
-TCK_INCLUDE=tests/tck/features/expressions/list pytest tests/tck/test_tck.py -vv
+TCK_INCLUDE=tests/tck/features/expressions/list pytest tests/tck/test_tck.py -s
 ```
 
 To run all passing TCK tests use:
 
 ```bash
-TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -vv
+TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
 ```
 
 - run unit tests with `cargo test -p graph`

@@ -539,7 +539,12 @@ impl<'a> Runtime<'a> {
                         func.validate_args_type(&[start.clone(), stop.clone(), step.clone()])?;
                         match (&*start, &*stop, &*step) {
                             (Value::Int(start), Value::Int(stop), Value::Int(step)) => {
-                                if start > stop && step > &0 {
+                                if step == &0 {
+                                    return Err(String::from(
+                                        "ArgumentError: step argument to range() can't be 0",
+                                    ));
+                                }
+                                if (start > stop && step > &0) || (start < stop && step < &0) {
                                     return Ok(Box::new(empty()));
                                 }
                                 let mut curr = *start;
@@ -1310,10 +1315,13 @@ where
         let prev = first?;
         for next in iter {
             let next = next?;
-            match prev.partial_cmp(&next) {
-                None => return Ok(RcValue::null()),
-                Some(Ordering::Less | Ordering::Greater) => return Ok(RcValue::bool(false)),
-                Some(Ordering::Equal) => {}
+            match prev.compare_value(&next) {
+                (_, DisjointOrNull::ComparedNull) => return Ok(RcValue::null()),
+                (_, DisjointOrNull::NaN | DisjointOrNull::Disjoint) => {
+                    return Ok(RcValue::bool(false));
+                }
+                (Ordering::Equal, _) => {}
+                _ => return Ok(RcValue::bool(false)),
             }
         }
         Ok(RcValue::bool(true))
