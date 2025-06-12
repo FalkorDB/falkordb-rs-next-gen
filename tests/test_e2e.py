@@ -886,12 +886,14 @@ def test_pow():
     res = query("RETURN pow(3, null) AS name")
     assert res.result_set == [[None]]
 
+
 def shannon_entropy(data):
     n = len(data)
     counts = Counter(data)
     probabilities = [count / n for count in counts.values()]
 
     return -sum(p * math.log2(p) for p in probabilities if p > 0)
+
 
 def test_rand():
     data = []
@@ -901,6 +903,7 @@ def test_rand():
         assert res.result_set[0][0] >= 0.0
         assert res.result_set[0][0] < 1.0
     assert shannon_entropy(data) > 0.9  # Check for randomness
+
 
 def round_away_from_zero(num):
     if num > 0:
@@ -912,6 +915,7 @@ def round_away_from_zero(num):
 def test_round(a):
     res = query("RETURN round($a)", params={"a": a})
     assert res.result_set == [[round_away_from_zero(a) if a is not None else None]]
+
 
 def signum(x):
     return (x > 0) - (x < 0)
@@ -947,6 +951,7 @@ def test_range(a, b):
     res = query("RETURN range($a, $b)", params={"a": a, "b": b})
     assert res.result_set == [[list(range(a, b + 1))]]
 
+
 @given(st.integers(-10, 10), st.integers(-100, 10), st.integers(-10, 10))
 def test_range_step(a, b, c):
     if c == 0:
@@ -961,30 +966,47 @@ def test_range_step(a, b, c):
     else:
         assert res.result_set == [[[i for i in range(a, b - 1, c)]]]
 
+
+@given(st.lists(st.none() | st.booleans() | st.integers(-10, 10) | text_st | st.lists(st.none() | st.booleans() | st.integers(-10, 10) | text_st)))
+def test_collect(a):
+    res = query("UNWIND $a AS x RETURN collect(x)", params={"a": a})
+    assert_result_set_equal_no_order(res, [[[x for x in a if x is not None]]])
+
+    res = query("UNWIND $a AS x WITH collect(x) AS xs UNWIND xs AS y RETURN collect(y)", params={"a": a})
+    assert_result_set_equal_no_order(res, [[[x for x in a if x is not None]]])
+
+@given(st.lists(st.none() | st.booleans() | st.integers(-10, 10) | text_st | st.lists(st.none() | st.booleans() | st.integers(-10, 10) | text_st)))
+def test_count(a):
+    res = query("UNWIND $a AS x RETURN count(x)", params={"a": a})
+    assert_result_set_equal_no_order(res, [[len([x for x in a if x is not None])]])
+
+@given(st.lists(st.none() | st.integers(-10, 10)))
+def test_sum(a):
+    res = query("UNWIND $a AS x RETURN sum(x)", params={"a": a})
+    assert_result_set_equal_no_order(res, [[sum(x for x in a if x is not None)]])
+
+    res = query("UNWIND $a AS x RETURN sum(distinct x)", params={"a": a})
+    assert_result_set_equal_no_order(res, [[sum(set(x for x in a if x is not None))]])
+
+@given(st.lists(st.none() | st.integers(-10, 10)))
+def test_min(a):
+    res = query("UNWIND $a AS x RETURN min(x)", params={"a": a})
+    if not a or all(x is None for x in a):
+        assert res.result_set == [[None]]
+    else:
+        assert res.result_set == [[min(x for x in a if x is not None)]]
+
+@given(st.lists(st.none() | st.integers(-10, 10)))
+def test_max(a):
+    res = query("UNWIND $a AS x RETURN max(x)", params={"a": a})
+    if not a or all(x is None for x in a):
+        assert res.result_set == [[None]]
+    else:
+        assert res.result_set == [[max(x for x in a if x is not None)]]
+
 def test_aggregation():
-    res = query("UNWIND range(1, 10) AS x RETURN collect(x)")
-    assert_result_set_equal_no_order(res, [[[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]]])
-
-    res = query("UNWIND range(1, 10) AS x WITH collect(x) AS xs UNWIND xs AS y RETURN collect(y)")
-    assert_result_set_equal_no_order(res, [[[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]]])
-
-    res = query("UNWIND [true, 1, 1.0, 'Avi', [], {}] AS x RETURN collect(x)")
-    assert_result_set_equal_no_order(res, [[[True, 1, 1.0, 'Avi', [], {}]]])
-
-    res = query("UNWIND range(1, 10) AS x RETURN count(x)")
-    assert_result_set_equal_no_order(res, [[10]])
-
-    res = query("UNWIND range(1, 10) AS x RETURN sum(x)")
-    assert_result_set_equal_no_order(res, [[55]])
-
     res = query("UNWIND range(1, 10) AS x RETURN sum(x / 10.0)")
     assert_result_set_equal_no_order(res, [[5.5]])
-
-    res = query("UNWIND range(1, 10) AS x RETURN min(x)")
-    assert_result_set_equal_no_order(res, [[1]])
-
-    res = query("UNWIND range(1, 10) AS x RETURN max(x)")
-    assert_result_set_equal_no_order(res, [[10]])
 
     res = query("UNWIND range(1, 11) AS x RETURN x % 2, count(x)", compare_results=False)
     assert_result_set_equal_no_order(res, [[1, 6], [0, 5]])
