@@ -1098,14 +1098,18 @@ fn substring(
 
         // Three-argument version: (string, start, length)
         (Some(Value::String(s)), Some(Value::Int(start)), Some(Value::Int(length))) => {
-            if *length < 0 {
-                return Err("length must be a non-negative integer".into());
-            }
             if *start < 0 {
                 return Err("start must be a non-negative integer".into());
             }
+            if *length < 0 {
+                return Err("length must be a non-negative integer".into());
+            }
             let start = *start as usize;
             let length = *length as usize;
+
+            if start >= s.len() {
+                return Ok(RcValue::string(Rc::new(String::new())));
+            }
 
             let end = start.saturating_add(length).min(s.len());
             Ok(RcValue::string(Rc::new(String::from(&s[start..end]))))
@@ -1122,7 +1126,7 @@ fn split(
     match (iter.next().as_deref(), iter.next().as_deref()) {
         (Some(Value::String(string)), Some(Value::String(delimiter))) => {
             if string.is_empty() {
-                Ok(RcValue::list(vec![]))
+                Ok(RcValue::list(vec![RcValue::string(Rc::new(String::new()))]))
             } else if delimiter.is_empty() {
                 // split string to characters
                 let parts = string
@@ -1213,7 +1217,9 @@ fn string_ltrim(
     args: Vec<RcValue>,
 ) -> Result<RcValue, String> {
     match args.into_iter().next().as_deref() {
-        Some(Value::String(s)) => Ok(RcValue::string(Rc::new(String::from(s.trim_start())))),
+        Some(Value::String(s)) => Ok(RcValue::string(Rc::new(String::from(
+            s.trim_start_matches(" "),
+        )))),
         Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }

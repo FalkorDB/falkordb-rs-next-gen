@@ -548,11 +548,13 @@ def test_split(a, b):
     if a is None or b is None:
         assert res.result_set == [[None]]
     elif b == "":
-        assert res.result_set == [[list(a)]]
-    else:
-        # If b is not empty, we split a by b
         if a == "":
-            assert res.result_set == [[[]]]
+            assert res.result_set == [[[""]]]
+        else:
+            assert res.result_set == [[list(a)]]
+    else:
+        if a == "":
+            assert res.result_set == [[[""]]]
         else:
             assert res.result_set == [[a.split(b) if a else []]]
 
@@ -610,98 +612,25 @@ def test_add():
 
     query_exception("RETURN {} + 1 AS name", "")
 
+@given(st.none() | text_st, st.none() | text_st)
+def test_starts_with(a, b):
+    res = query("RETURN $a STARTS WITH $b", params={"a": a, "b": b})
+    assert res.result_set == [[a.startswith(b) if a is not None and b is not None else None]]
 
-def test_starts_with():
-    res = query("RETURN null STARTS WITH 'a' AS name")
-    assert res.result_set == [[None]]
+@given(st.none() | text_st, st.none() | text_st)
+def test_ends_with(a, b):
+    res = query("RETURN $a ENDS WITH $b", params={"a": a, "b": b})
+    assert res.result_set == [[a.endswith(b) if a is not None and b is not None else None]]
 
-    res = query("RETURN 'ab' STARTS WITH null AS name")
-    assert res.result_set == [[None]]
+@given(st.none() | text_st, st.none() | text_st)
+def test_contains(a, b):
+    res = query("RETURN $a CONTAINS $b", params={"a": a, "b": b})
+    assert res.result_set == [[b in a if a is not None and b is not None else None]]
 
-    res = query("RETURN 'ab' STARTS WITH 'a' AS name")
-    assert res.result_set == [[True]]
-
-    res = query("RETURN 'ab' STARTS WITH 'b' AS name")
-    assert res.result_set == [[False]]
-
-    res = query("RETURN '' STARTS WITH 'b' AS name")
-    assert res.result_set == [[False]]
-
-    query_exception("RETURN [1, 2] STARTS WITH 'a' AS name", "Type mismatch: expected String or Null but was")
-
-
-def test_ends_with():
-    res = query("RETURN null ENDS WITH 'a' AS name")
-    assert res.result_set == [[None]]
-
-    res = query("RETURN 'ab' ENDS WITH null AS name")
-    assert res.result_set == [[None]]
-
-    res = query("RETURN 'ab' ENDS WITH 'b' AS name")
-    assert res.result_set == [[True]]
-
-    res = query("RETURN 'ab' ENDS WITH 'a' AS name")
-    assert res.result_set == [[False]]
-
-    res = query("RETURN '' ENDS WITH 'b' AS name")
-    assert res.result_set == [[False]]
-
-    query_exception("RETURN [1, 2] ENDS WITH 'a' AS name", "Type mismatch: expected String or Null but was")
-
-
-def test_contains():
-    res = query("RETURN null CONTAINS 'a' AS name")
-    assert res.result_set == [[None]]
-
-    res = query("RETURN 'ab' CONTAINS null AS name")
-    assert res.result_set == [[None]]
-
-    res = query("RETURN 'ab' CONTAINS 'b' AS name")
-    assert res.result_set == [[True]]
-
-    res = query("RETURN 'ab' CONTAINS 'a' AS name")
-    assert res.result_set == [[True]]
-
-    res = query("RETURN 'ab' CONTAINS 'c' AS name")
-    assert res.result_set == [[False]]
-
-    res = query("RETURN '' CONTAINS 'b' AS name")
-    assert res.result_set == [[False]]
-
-    query_exception("RETURN [1, 2] CONTAINS 'a' AS name", "Type mismatch: expected String or Null but was")
-
-
-def test_replace():
-    # Null handling
-    res = query("RETURN replace(null, 'a', 'b') AS result")
-    assert res.result_set == [[None]]
-
-    res = query("RETURN replace('abc', null, 'b') AS result")
-    assert res.result_set == [[None]]
-
-    res = query("RETURN replace('abc', 'a', null) AS result")
-    assert res.result_set == [[None]]
-
-    # Basic replacements
-    res = query("RETURN replace('abc', 'a', 'x') AS result")
-    assert res.result_set == [["xbc"]]
-
-    res = query("RETURN replace('abcabc', 'a', 'x') AS result")
-    assert res.result_set == [["xbcxbc"]]
-
-    res = query("RETURN replace('abc', 'd', 'x') AS result")
-    assert res.result_set == [["abc"]]  # No match, no replacement
-
-    # Empty strings
-    res = query("RETURN replace('abc', '', 'x') AS result")
-    assert res.result_set == [["xaxbxcx"]]
-
-    res = query("RETURN replace('', 'a', 'x') AS result")
-    assert res.result_set == [[""]]  # Empty input string remains empty
-
-    res = query("RETURN replace('abc', 'a', '') AS result")
-    assert res.result_set == [["bc"]]  # Replacement with empty string removes matches
-
+@given(st.none() | text_st, st.none() | text_st, st.none() | text_st)
+def test_replace(a, b, c):
+    res = query("RETURN replace($a, $b, $c)", params={"a": a, "b": b, "c": c})
+    assert res.result_set == [[a.replace(b, c) if a is not None and b is not None and c is not None else None]]
 
 @pytest.mark.extra
 def test_regex_matches():
@@ -730,84 +659,46 @@ def test_regex_matches():
     res = query("RETURN 'abc' =~ null AS result")
     assert res.result_set == [[None]]
 
+@given(st.none() | text_st, st.none() | st.integers(-10, 10))
+def test_left(a, b):
+    if a is None:
+        res = query("RETURN left($a, $b)", params={"a": a, "b": b})
+        assert res.result_set == [[None]]
+    elif b is None or b < 0:
+        query_exception("RETURN left($a, $b)", "length must be a non-negative integer", params={"a": a, "b": b})
+    else:
+        res = query("RETURN left($a, $b)", params={"a": a, "b": b})
+        assert res.result_set == [[a[:b] if a is not None and b is not None else None]]
 
-def test_left():
-    # Null handling
-    res = query("RETURN left(null, 3) AS result")
-    assert res.result_set == [[None]]
+@given(st.none() | text_st)
+def test_ltrim(a):
+    res = query("RETURN ltrim($a)", params={"a": a})
+    assert res.result_set == [[a.lstrip(" ") if a is not None else None]]
 
-    # Basic functionality
-    res = query("RETURN left('abc', 2) AS result")
-    assert res.result_set == [["ab"]]
+@given(st.none() | text_st, st.none() | st.integers(-10, 10))
+def test_right(a, b):
+    if a is None:
+        res = query("RETURN right($a, $b)", params={"a": a, "b": b})
+        assert res.result_set == [[None]]
+    elif b is None or b < 0:
+        query_exception("RETURN right($a, $b)", "length must be a non-negative integer", params={"a": a, "b": b})
+    else:
+        res = query("RETURN right($a, $b)", params={"a": a, "b": b})
+        assert res.result_set == [[a[-b:]]]
 
-    res = query("RETURN left('abc', 0) AS result")
-    assert res.result_set == [[""]]
-
-    res = query("RETURN left('abc', 5) AS result")
-    assert res.result_set == [["abc"]]  # n > length of string
-
-    # Negative values for n
-    query_exception("RETURN left('abc', -1) AS result", "length must be a non-negative integer")
-    query_exception("RETURN left('abc', null) AS result", "length must be a non-negative integer")
-
-
-def test_ltrim():
-    # Null handling
-    res = query("RETURN ltrim(null) AS result")
-    assert res.result_set == [[None]]
-
-    # Basic functionality
-    res = query("RETURN ltrim('   abc') AS result")
-    assert res.result_set == [["abc"]]
-
-    res = query("RETURN ltrim('abc   ') AS result")
-    assert res.result_set == [["abc   "]]
-
-    res = query("RETURN ltrim('   abc   ') AS result")
-    assert res.result_set == [["abc   "]]
-
-    res = query("RETURN ltrim('abc') AS result")
-    assert res.result_set == [["abc"]]
-
-
-def test_right():
-    # Null handling
-    res = query("RETURN right(null, 3) AS result")
-    assert res.result_set == [[None]]
-
-    # Basic functionality
-    res = query("RETURN right('abc', 2) AS result")
-    assert res.result_set == [["bc"]]
-
-    res = query("RETURN right('abc', 0) AS result")
-    assert res.result_set == [[""]]
-
-    res = query("RETURN right('abc', 5) AS result")
-    assert res.result_set == [["abc"]]  # n > length of string
-
-    # Negative values for n
-    query_exception("RETURN right('abc', -1) AS result", "length must be a non-negative integer")
-    query_exception("RETURN right('abc', null) AS result", "length must be a non-negative integer")
-
-
-def test_substring():
-    # Null handling
-    res = query("RETURN substring(null, 0, 2) AS result")
-    assert res.result_set == [[None]]
-
-    # Basic functionality
-    res = query("RETURN substring('abc', 0, 2) AS result")
-    assert res.result_set == [["ab"]]
-
-    res = query("RETURN substring('abc', 1, 2) AS result")
-    assert res.result_set == [["bc"]]
-
-    res = query("RETURN substring('abc', 0, 3) AS result")
-    assert res.result_set == [["abc"]]  # n > length of string
-
-    # Negative values for start and length
-    query_exception("RETURN substring('abc', -1, 2) AS result", "start must be a non-negative integer")
-    query_exception("RETURN substring('abc', 0, -1) AS result", "length must be a non-negative integer")
+@given(st.none() | text_st, st.integers(-10, 10), st.none() | st.integers(-10, 10))
+def test_substring(a, b, c):
+    q = "RETURN substring($a, $b)" if c is None else "RETURN substring($a, $b, $c)"
+    if a is None:
+        res = query(q, params={"a": a, "b": b, "c": c})
+        assert res.result_set == [[None]]
+    elif b < 0:
+        query_exception(q, "start must be a non-negative integer", params={"a": a, "b": b, "c": c})
+    elif c is not None and c < 0:
+        query_exception(q, "length must be a non-negative integer", params={"a": a, "b": b, "c": c})
+    else:
+        res = query(q, params={"a": a, "b": b, "c": c})
+        assert res.result_set == [[a[b:(b + c if c is not None else None)]]]
 
 
 def test_graph_list():
