@@ -468,8 +468,20 @@ pub enum QueryIR {
     Where(DynTree<ExprIR>),
     Create(Pattern),
     Delete(Vec<DynTree<ExprIR>>, bool),
-    With(Vec<(VarId, DynTree<ExprIR>)>, bool),
-    Return(Vec<(VarId, DynTree<ExprIR>)>, bool),
+    With {
+        exprs: Vec<(VarId, DynTree<ExprIR>)>,
+        orderby: Vec<(DynTree<ExprIR>, bool)>,
+        skip: DynTree<ExprIR>,
+        limit: DynTree<ExprIR>,
+        write: bool,
+    },
+    Return {
+        exprs: Vec<(VarId, DynTree<ExprIR>)>,
+        orderby: Vec<(DynTree<ExprIR>, bool)>,
+        skip: DynTree<ExprIR>,
+        limit: DynTree<ExprIR>,
+        write: bool,
+    },
     Query(Vec<QueryIR>, bool),
 }
 
@@ -504,14 +516,14 @@ impl Display for QueryIR {
                 }
                 Ok(())
             }
-            Self::With(exprs, _) => {
+            Self::With { exprs, .. } => {
                 writeln!(f, "WITH:")?;
                 for (name, _) in exprs {
                     write!(f, "{}", name.as_str())?;
                 }
                 Ok(())
             }
-            Self::Return(exprs, _) => {
+            Self::Return { exprs, .. } => {
                 writeln!(f, "RETURN:")?;
                 for (name, _) in exprs {
                     write!(f, "{}", name.as_str())?;
@@ -671,7 +683,7 @@ impl QueryIR {
                 iter.next()
                     .map_or(Ok(()), |first| first.inner_validate(iter, env))
             }
-            Self::With(exprs, _) | Self::Return(exprs, _) => {
+            Self::With { exprs, .. } | Self::Return { exprs, .. } => {
                 for (_, expr) in exprs.iter() {
                     expr.root().validate(env)?;
                 }
