@@ -190,7 +190,7 @@ impl Planner {
             QueryIR::Where(expr) => tree!(IR::Filter(expr)),
             QueryIR::Create(pattern) => tree!(IR::Create(pattern)),
             QueryIR::Delete(exprs, is_detach) => tree!(IR::Delete(exprs, is_detach)),
-            QueryIR::With(exprs, write) | QueryIR::Return(exprs, write) => {
+            QueryIR::With { exprs, write, .. } | QueryIR::Return { exprs, write, .. } => {
                 self.plan_project(exprs, write)
             }
             QueryIR::Query(q, write) => self.plan_query(q, write),

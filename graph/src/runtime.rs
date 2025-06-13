@@ -572,7 +572,7 @@ impl<'a> Runtime<'a> {
                 let res = self.run_expr(ir, env, false)?;
                 match &*res {
                     Value::List(arr) => Ok(Box::new(arr.clone().into_iter())),
-                    _ => Err(String::from("Expr must return a list")),
+                    _ => Ok(Box::new(once(res))),
                 }
             }
         }
