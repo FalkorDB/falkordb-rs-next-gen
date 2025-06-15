@@ -18,6 +18,30 @@ use crate::{
     value::{RcValue, Value},
 };
 
+pub struct Plan {
+    pub plan: Rc<DynTree<IR>>,
+    pub parameters: HashMap<String, DynTree<ExprIR>>,
+    pub parse_duration: Duration,
+    pub plan_duration: Duration,
+}
+
+impl Plan {
+    #[must_use]
+    pub const fn new(
+        plan: Rc<DynTree<IR>>,
+        parameters: HashMap<String, DynTree<ExprIR>>,
+        parse_duration: Duration,
+        plan_duration: Duration,
+    ) -> Self {
+        Self {
+            plan,
+            parameters,
+            parse_duration,
+            plan_duration,
+        }
+    }
+}
+
 pub struct Graph {
     node_cap: u64,
     relationship_cap: u64,
@@ -123,15 +147,7 @@ impl Graph {
     pub fn get_plan(
         &self,
         query: &str,
-    ) -> Result<
-        (
-            Rc<DynTree<IR>>,
-            HashMap<String, DynTree<ExprIR>>,
-            Duration,
-            Duration,
-        ),
-        String,
-    > {
+    ) -> Result<Plan, String> {
         let mut parse_duration = Duration::ZERO;
         let mut plan_duration = Duration::ZERO;
 
@@ -141,7 +157,12 @@ impl Graph {
         match self.cache.lock() {
             Ok(mut cache) => {
                 if let Some(f) = cache.get(query) {
-                    Ok((f.clone(), parameters, parse_duration, plan_duration))
+                    Ok(Plan::new(
+                        f.clone(),
+                        parameters,
+                        parse_duration,
+                        plan_duration,
+                    ))
                 } else {
                     let start = Instant::now();
                     let ir = parser.parse()?;
@@ -153,7 +174,7 @@ impl Graph {
                     plan_duration = start.elapsed();
 
                     cache.insert(query.to_string(), value.clone());
-                    Ok((value, parameters, parse_duration, plan_duration))
+                    Ok(Plan::new(value, parameters, parse_duration, plan_duration))
                 }
             }
             Err(_) => Err("Failed to acquire read lock on cache".to_string()),

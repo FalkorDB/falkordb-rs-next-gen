@@ -2,6 +2,7 @@
 
 use graph::ast::VarId;
 use graph::functions::init_functions;
+use graph::graph::Plan;
 use graph::runtime::{ResultSummary, ReturnCallback, Runtime, evaluate_param};
 use graph::value::{Env, RcValue};
 use graph::{cypher::Parser, graph::Graph, matrix::init, planner::Planner, value::Value};
@@ -375,8 +376,9 @@ fn query_mut(
 ) -> Result<RedisValue, RedisError> {
     // Create a child span for parsing and execution
     tracing::debug_span!("query_execution", query = %query).in_scope(|| {
-        let (plan, parameters, _, _) =
-            graph.borrow().get_plan(query).map_err(RedisError::String)?;
+        let Plan {
+            plan, parameters, ..
+        } = graph.borrow().get_plan(query).map_err(RedisError::String)?;
         let parameters = parameters
             .into_iter()
             .map(|(k, v)| Ok((k, evaluate_param(v.root())?)))
@@ -515,8 +517,9 @@ fn graph_ro_query(
         // If the key does not exist, we return an error
         EMPTY_KEY_ERR,
         |graph| {
-            let (plan, parameters, _, _) =
-                graph.borrow().get_plan(query).map_err(RedisError::String)?;
+            let Plan {
+                plan, parameters, ..
+            } = graph.borrow().get_plan(query).map_err(RedisError::String)?;
             let parameters = parameters
                 .into_iter()
                 .map(|(k, v)| Ok((k, evaluate_param(v.root())?)))

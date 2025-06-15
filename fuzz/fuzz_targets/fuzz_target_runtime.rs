@@ -6,7 +6,7 @@ use graph::{
     GraphBLAS::{GrB_Mode, GrB_init},
     ast::VarId,
     functions::init_functions,
-    graph::Graph,
+    graph::{Graph, Plan},
     runtime::{ReturnCallback, Runtime, evaluate_param},
     value::Env,
 };
@@ -34,7 +34,10 @@ fuzz_target!(|data: &[u8]| -> Corpus {
     let g = RefCell::new(Graph::new(1024, 1024));
 
     std::str::from_utf8(data).map_or(Corpus::Reject, |query| {
-        let Ok((plan, parameters, _, _)) = g.borrow().get_plan(query) else {
+        let Ok(Plan {
+            plan, parameters, ..
+        }) = g.borrow().get_plan(query)
+        else {
             return Corpus::Reject;
         };
         let Ok(parameters) = parameters
