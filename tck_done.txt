@@ -7,6 +7,11 @@ expressions/list/List2.feature
 expressions/list/List3.feature
 expressions/list/List4.feature
 expressions/list/List5.feature
+expressions/list/List7.feature
+expressions/list/List8.feature
+expressions/list/List9.feature
+expressions/list/List10.feature
+expressions/list/List11.feature
 expressions/literals
 expressions/map
 expressions/mathematical
@@ -33,6 +38,8 @@ clauses/return-orderby/ReturnOrderBy1.feature
 clauses/return-orderby/ReturnOrderBy5.feature
 clauses/return-skip-limit/ReturnSkipLimit1.feature
 clauses/return-skip-limit/ReturnSkipLimit3.feature
+clauses/set/Set1.feature
+clauses/set/Set2.feature
 clauses/with-orderBy/WithOrderBy1.feature
 clauses/with-skip-limit/WithSkipLimit1.feature
 clauses/with-skip-limit/WithSkipLimit3.feature

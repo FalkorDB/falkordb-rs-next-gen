@@ -469,6 +469,8 @@ pub enum QueryIR {
     Where(DynTree<ExprIR>),
     Create(Pattern),
     Delete(Vec<DynTree<ExprIR>>, bool),
+    Set(Vec<(DynTree<ExprIR>, DynTree<ExprIR>, bool)>),
+    Remove(DynTree<ExprIR>),
     With {
         exprs: Vec<(VarId, DynTree<ExprIR>)>,
         orderby: Vec<(DynTree<ExprIR>, bool)>,
@@ -516,6 +518,17 @@ impl Display for QueryIR {
                     write!(f, "{expr}")?;
                 }
                 Ok(())
+            }
+            Self::Set(items) => {
+                writeln!(f, "SET:")?;
+                for (target, value, _) in items {
+                    write!(f, "{target} = {value}")?;
+                }
+                Ok(())
+            }
+            Self::Remove(expr) => {
+                writeln!(f, "REMOVE:")?;
+                write!(f, "{expr}")
             }
             Self::With { exprs, .. } => {
                 writeln!(f, "WITH:")?;
@@ -681,6 +694,19 @@ impl QueryIR {
                 for expr in exprs {
                     expr.root().validate(env)?;
                 }
+                iter.next()
+                    .map_or(Ok(()), |first| first.inner_validate(iter, env))
+            }
+            Self::Set(items) => {
+                for (target, value, _) in items {
+                    target.root().validate(env)?;
+                    value.root().validate(env)?;
+                }
+                iter.next()
+                    .map_or(Ok(()), |first| first.inner_validate(iter, env))
+            }
+            Self::Remove(expr) => {
+                expr.root().validate(env)?;
                 iter.next()
                     .map_or(Ok(()), |first| first.inner_validate(iter, env))
             }

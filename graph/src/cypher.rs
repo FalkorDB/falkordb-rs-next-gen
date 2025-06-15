@@ -24,6 +24,8 @@ enum Keyword {
     Create,
     Detach,
     Delete,
+    Set,
+    Remove,
     Where,
     With,
     Return,
@@ -81,6 +83,7 @@ enum Token {
     Plus,
     Dash,
     Equal,
+    PlusEqual,
     NotEqual,
     LessThan,
     LessThanOrEqual,
@@ -105,6 +108,8 @@ const KEYWORDS: &[(&str, Keyword)] = &[
     ("CREATE", Keyword::Create),
     ("DETACH", Keyword::Detach),
     ("DELETE", Keyword::Delete),
+    ("SET", Keyword::Set),
+    ("REMOVE", Keyword::Remove),
     ("WHERE", Keyword::Where),
     ("WITH", Keyword::With),
     ("RETURN", Keyword::Return),
@@ -223,7 +228,10 @@ impl<'a> Lexer<'a> {
                 '^' => (Token::Power, 1),
                 '*' => (Token::Star, 1),
                 '/' => (Token::Slash, 1),
-                '+' => (Token::Plus, 1),
+                '+' => match chars.next() {
+                    Some('=') => (Token::PlusEqual, 2),
+                    _ => (Token::Plus, 1),
+                },
                 '-' => (Token::Dash, 1),
                 '=' => match chars.next() {
                     Some('~') => (Token::RegexMatches, 2),
@@ -620,7 +628,12 @@ impl<'a> Parser<'a> {
                 clauses.push(self.parse_reading_clasue()?);
             }
             while let Token::Keyword(
-                Keyword::Create | Keyword::Merge | Keyword::Delete | Keyword::Detach,
+                Keyword::Create
+                | Keyword::Merge
+                | Keyword::Delete
+                | Keyword::Detach
+                | Keyword::Set
+                | Keyword::Remove,
                 _,
             ) = self.lexer.current()
             {
@@ -687,6 +700,14 @@ impl<'a> Parser<'a> {
                 let is_detach = optional_match_token!(self.lexer => Detach);
                 match_token!(self.lexer => Delete);
                 self.parse_delete_clause(is_detach)
+            }
+            Token::Keyword(Keyword::Set, _) => {
+                self.lexer.next();
+                self.parse_set_clause()
+            }
+            Token::Keyword(Keyword::Remove, _) => {
+                self.lexer.next();
+                self.parse_remove_clause()
             }
             token => Err(self.lexer.format_error(&format!("Invalid input {token:?}"))),
         }
@@ -1176,18 +1197,16 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_non_arithmetic_operator_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
-        let mut res = vec![self.parse_primary_expr()?];
+        let mut lhs = self.parse_primary_expr()?;
         loop {
             match self.lexer.current() {
                 Token::LBrace => {
                     self.lexer.next();
-                    let lhs = res.pop().unwrap();
-                    res.push(self.parse_list_operator_expression(lhs)?);
+                    lhs = self.parse_list_operator_expression(lhs)?;
                 }
                 Token::Dot => {
                     self.lexer.next();
-                    let lhs = res.pop().unwrap();
-                    res.push(self.parse_property_lookup(lhs)?);
+                    lhs = self.parse_property_lookup(lhs)?;
                 }
                 _ => break,
             }
@@ -1203,11 +1222,11 @@ impl<'a> Parser<'a> {
                         .get("node_has_labels", &FnType::Internal)
                         .unwrap(),
                 ),
-                res.pop().unwrap(),
+                lhs,
                 labels
             ));
         }
-        Ok(res.pop().unwrap())
+        Ok(lhs)
     }
 
     fn parse_property_lookup(
@@ -1670,5 +1689,33 @@ impl<'a> Parser<'a> {
             }
         }
         Ok(orderby)
+    }
+
+    fn parse_set_clause(&mut self) -> Result<QueryIR, String> {
+        let mut set_items = vec![];
+        loop {
+            let mut expr = self.parse_primary_expr()?;
+            while self.lexer.current() == Token::Dot {
+                self.lexer.next();
+                expr = self.parse_property_lookup(expr)?;
+            }
+            let equals = optional_match_token!(self.lexer, Equal);
+            let plus_equals = if equals {
+                false
+            } else {
+                match_token!(self.lexer, PlusEqual);
+                true
+            };
+            let value = self.parse_expr()?;
+            set_items.push((expr, value, plus_equals));
+            if !optional_match_token!(self.lexer, Comma) {
+                break;
+            }
+        }
+        Ok(QueryIR::Set(set_items))
+    }
+
+    fn parse_remove_clause(&self) -> Result<QueryIR, String> {
+        todo!()
     }
 }

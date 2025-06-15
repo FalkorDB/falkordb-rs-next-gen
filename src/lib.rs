@@ -438,6 +438,12 @@ fn stats_to_redis_value<CB: ReturnCallback>(summary: &ResultSummary<CB>) -> Vec<
             summary.properties_set
         )));
     }
+    if summary.properties_removed > 0 {
+        stats.push(RedisValue::SimpleString(format!(
+            "Properties removed: {}",
+            summary.properties_removed
+        )));
+    }
     if summary.relationships_created > 0 {
         stats.push(RedisValue::SimpleString(format!(
             "Relationships created: {}",

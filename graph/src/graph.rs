@@ -5,6 +5,7 @@ use std::{
 };
 
 use hashbrown::HashMap;
+use ordermap::OrderMap;
 use orx_tree::DynTree;
 use roaring::RoaringTreemap;
 
@@ -58,8 +59,8 @@ pub struct Graph {
     all_nodes_matrix: Matrix<bool>,
     labels_matices: HashMap<usize, Matrix<bool>>,
     relationship_matrices: HashMap<usize, Tensor>,
-    node_properties_map: HashMap<u64, HashMap<u64, RcValue>>,
-    relationship_properties_map: HashMap<u64, HashMap<u64, RcValue>>,
+    node_properties_map: HashMap<u64, OrderMap<u64, RcValue>>,
+    relationship_properties_map: HashMap<u64, OrderMap<u64, RcValue>>,
     node_labels: Vec<Rc<String>>,
     relationship_types: Vec<Rc<String>>,
     node_properties: Vec<Rc<String>>,
@@ -346,7 +347,7 @@ impl Graph {
                 self.node_labels_matrix.set(*id, label_id, true);
             }
 
-            let mut map = HashMap::new();
+            let mut map = OrderMap::new();
             for (key, value) in properties {
                 if **value == Value::Null {
                     continue;
@@ -355,6 +356,24 @@ impl Graph {
                 map.insert(property_id, value.clone());
             }
             self.node_properties_map.insert(*id, map);
+        }
+    }
+
+    pub fn set_node_property(
+        &mut self,
+        id: u64,
+        property_id: u64,
+        value: RcValue,
+    ) -> bool {
+        if !self.node_properties_map.contains_key(&id) {
+            self.node_properties_map.insert(id, OrderMap::new());
+        }
+        let properties = self.node_properties_map.get_mut(&id).unwrap();
+        if *value == Value::Null {
+            properties.remove(&property_id);
+            true
+        } else {
+            properties.insert(property_id, value).is_some()
         }
     }
 
@@ -497,7 +516,7 @@ impl Graph {
                 true,
             );
 
-            let mut map = HashMap::new();
+            let mut map = OrderMap::new();
             for (key, value) in properties {
                 if **value == Value::Null {
                     continue;
@@ -506,6 +525,24 @@ impl Graph {
                 map.insert(property_id, value.clone());
             }
             self.relationship_properties_map.insert(*id, map);
+        }
+    }
+
+    pub fn set_relationship_property(
+        &mut self,
+        id: u64,
+        property_id: u64,
+        value: RcValue,
+    ) -> bool {
+        if !self.relationship_properties_map.contains_key(&id) {
+            self.relationship_properties_map.insert(id, OrderMap::new());
+        }
+        let properties = self.relationship_properties_map.get_mut(&id).unwrap();
+        if *value == Value::Null {
+            properties.remove(&property_id);
+            true
+        } else {
+            properties.insert(property_id, value).is_some()
         }
     }
 
@@ -665,7 +702,7 @@ impl Graph {
     pub fn get_node_properties(
         &self,
         id: u64,
-    ) -> &HashMap<u64, RcValue> {
+    ) -> &OrderMap<u64, RcValue> {
         self.node_properties_map
             .get(&id)
             .unwrap_or_else(|| panic!("Node with id {id} not found"))
@@ -674,7 +711,7 @@ impl Graph {
     pub fn get_relationship_properties(
         &self,
         id: u64,
-    ) -> &HashMap<u64, RcValue> {
+    ) -> &OrderMap<u64, RcValue> {
         self.relationship_properties_map
             .get(&id)
             .unwrap_or_else(|| panic!("Relationship with id {id} not found"))

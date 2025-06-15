@@ -772,6 +772,11 @@ fn property(
                     return Ok(value.clone());
                 }
             }
+            if let Some(properties) = runtime.pending.borrow().set_nodes_properties.get(node_id) {
+                if let Some(value) = properties.get(property) {
+                    return Ok(value.clone());
+                }
+            }
             runtime.g.borrow().get_node_property_id(property).map_or(
                 Ok(RcValue::null()),
                 |property_id| {
