@@ -802,8 +802,10 @@ impl<'a> Runtime<'a> {
                                 as Box<dyn Iterator<Item = Result<Env, String>>>)
                                 .lazy_replace(move || {
                                     let mut vars = cvars.clone();
-                                    self.create(pattern, &mut vars);
-                                    Box::new(vec![Ok(vars)].into_iter())
+                                    match self.create(pattern, &mut vars) {
+                                        Ok(()) => Box::new(vec![Ok(vars)].into_iter()),
+                                        Err(e) => Box::new(once(Err(e))),
+                                    }
                                 });
                         Box::new(iter) as Box<dyn Iterator<Item = Result<Env, String>>>
                     })));

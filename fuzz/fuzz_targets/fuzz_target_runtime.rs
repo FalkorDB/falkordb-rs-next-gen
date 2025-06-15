@@ -7,7 +7,6 @@ use graph::{
     ast::VarId,
     functions::init_functions,
     graph::Graph,
-    matrix,
     runtime::{ReturnCallback, Runtime, evaluate_param},
     value::Env,
 };
@@ -50,7 +49,5 @@ fuzz_target!(|data: &[u8]| -> Corpus {
             _ => Corpus::Reject,
         }
     });
-    drop(g);
-    matrix::shutdown();
     res
 });
