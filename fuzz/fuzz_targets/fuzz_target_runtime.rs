@@ -31,8 +31,8 @@ fuzz_target!(init: {
             GrB_init(GrB_Mode::GrB_NONBLOCKING as _);
         }
         init_functions().expect("Failed to init functions");
-        let g = RefCell::new(Graph::new(1024, 1024));
     },|data: &[u8]| -> Corpus {
+        let g = RefCell::new(Graph::new(1024, 1024));
     std::str::from_utf8(data).map_or(Corpus::Reject, |query| {
         let Ok(Plan {
             plan, parameters, ..
