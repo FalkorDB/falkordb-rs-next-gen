@@ -42,7 +42,7 @@ fuzz_target!(|data: &[u8]| -> Corpus {
         };
         let Ok(parameters) = parameters
             .into_iter()
-            .map(|(k, v)| Ok((k, evaluate_param(v.root())?)))
+            .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
             .collect::<Result<HashMap<_, _>, String>>()
         else {
             return Corpus::Reject;

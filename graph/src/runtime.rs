@@ -1281,7 +1281,7 @@ impl<'a> Runtime<'a> {
     }
 }
 
-pub fn evaluate_param(expr: DynNode<ExprIR>) -> Result<RcValue, String> {
+pub fn evaluate_param(expr: &DynNode<ExprIR>) -> Result<RcValue, String> {
     match expr.data() {
         ExprIR::Null => Ok(RcValue::null()),
         ExprIR::Bool(x) => Ok(RcValue::bool(*x)),
@@ -1290,21 +1290,21 @@ pub fn evaluate_param(expr: DynNode<ExprIR>) -> Result<RcValue, String> {
         ExprIR::String(x) => Ok(RcValue::string(x.clone())),
         ExprIR::List => Ok(RcValue::list(
             expr.children()
-                .map(evaluate_param)
+                .map(|c| evaluate_param(&c))
                 .collect::<Result<Vec<_>, _>>()?,
         )),
         ExprIR::Map => Ok(RcValue::map(
             expr.children()
                 .map(|ir| match ir.data() {
                     ExprIR::String(key) => {
-                        Ok::<_, String>((key.clone(), evaluate_param(ir.child(0))?))
+                        Ok::<_, String>((key.clone(), evaluate_param(&ir.child(0))?))
                     }
                     _ => todo!(),
                 })
                 .collect::<Result<OrderMap<_, _>, _>>()?,
         )),
         ExprIR::Negate => {
-            let v = evaluate_param(expr.child(0))?;
+            let v = evaluate_param(&expr.child(0))?;
             match *v {
                 Value::Int(i) => Ok(RcValue::int(-i)),
                 Value::Float(f) => Ok(RcValue::float(-f)),

@@ -381,7 +381,7 @@ fn query_mut(
         } = graph.borrow().get_plan(query).map_err(RedisError::String)?;
         let parameters = parameters
             .into_iter()
-            .map(|(k, v)| Ok((k, evaluate_param(v.root())?)))
+            .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
             .collect::<Result<HashMap<_, _>, String>>()
             .map_err(RedisError::String)?;
         let mut runtime = Runtime::new(graph, parameters, true, plan);
@@ -522,7 +522,7 @@ fn graph_ro_query(
             } = graph.borrow().get_plan(query).map_err(RedisError::String)?;
             let parameters = parameters
                 .into_iter()
-                .map(|(k, v)| Ok((k, evaluate_param(v.root())?)))
+                .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
                 .collect::<Result<HashMap<_, _>, String>>()
                 .map_err(RedisError::String)?;
             let mut runtime = Runtime::new(graph, parameters, false, plan);
