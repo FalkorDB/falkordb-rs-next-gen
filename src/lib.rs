@@ -1,3 +1,5 @@
+#![allow(clippy::cast_possible_wrap)]
+
 use graph::ast::VarId;
 use graph::functions::init_functions;
 use graph::runtime::{ResultSummary, ReturnCallback, Runtime, evaluate_param};
@@ -95,9 +97,9 @@ unsafe extern "C" fn my_free(value: *mut c_void) {
 
 fn compact_value_to_redis_value(
     g: &RefCell<Graph>,
-    r: RcValue,
+    r: &RcValue,
 ) -> RedisValue {
-    match &*r {
+    match &**r {
         Value::Null => RedisValue::Array(vec![RedisValue::Integer(1), RedisValue::Null]),
         Value::Bool(x) => RedisValue::Array(vec![
             RedisValue::Integer(4),
@@ -117,7 +119,7 @@ fn compact_value_to_redis_value(
             RedisValue::Array(
                 values
                     .iter()
-                    .map(|v| compact_value_to_redis_value(g, v.clone()))
+                    .map(|v| compact_value_to_redis_value(g, v))
                     .collect(),
             ),
         ]),
@@ -125,7 +127,7 @@ fn compact_value_to_redis_value(
             let mut vec = vec![];
             for (key, value) in map {
                 vec.push(RedisValue::BulkString(key.to_string()));
-                vec.push(compact_value_to_redis_value(g, value.clone()));
+                vec.push(compact_value_to_redis_value(g, value));
             }
             RedisValue::Array(vec![RedisValue::Integer(10), RedisValue::Array(vec)])
         }
@@ -134,7 +136,7 @@ fn compact_value_to_redis_value(
             for (key, value) in g.borrow().get_node_properties(*id) {
                 let mut prop = Vec::new();
                 prop.push(RedisValue::Integer(*key as _));
-                if let RedisValue::Array(mut v) = compact_value_to_redis_value(g, value.clone()) {
+                if let RedisValue::Array(mut v) = compact_value_to_redis_value(g, value) {
                     prop.append(&mut v);
                 }
                 props.push(RedisValue::Array(prop));
@@ -158,7 +160,7 @@ fn compact_value_to_redis_value(
             for (key, value) in g.borrow().get_relationship_properties(*id) {
                 let mut prop = Vec::new();
                 prop.push(RedisValue::Integer(*key as _));
-                if let RedisValue::Array(mut v) = compact_value_to_redis_value(g, value.clone()) {
+                if let RedisValue::Array(mut v) = compact_value_to_redis_value(g, value) {
                     prop.append(&mut v);
                 }
                 props.push(RedisValue::Array(prop));
@@ -200,9 +202,9 @@ fn compact_value_to_redis_value(
 
 fn verbose_value_to_redis_value(
     g: &RefCell<Graph>,
-    r: RcValue,
+    r: &RcValue,
 ) -> RedisValue {
-    match &*r {
+    match &**r {
         Value::Null => RedisValue::Null,
         Value::Bool(x) => RedisValue::Bool(*x),
         Value::Int(x) => RedisValue::Integer(*x),
@@ -211,14 +213,14 @@ fn verbose_value_to_redis_value(
         Value::List(values) => RedisValue::Array(
             values
                 .iter()
-                .map(|v| verbose_value_to_redis_value(g, v.clone()))
+                .map(|v| verbose_value_to_redis_value(g, v))
                 .collect(),
         ),
         Value::Map(map) => {
             let mut vec = vec![];
             for (key, value) in map {
                 vec.push(RedisValue::BulkString(key.to_string()));
-                vec.push(verbose_value_to_redis_value(g, value.clone()));
+                vec.push(verbose_value_to_redis_value(g, value));
             }
             RedisValue::Array(vec)
         }
@@ -227,7 +229,7 @@ fn verbose_value_to_redis_value(
             for (key, value) in g.borrow().get_node_properties(*id) {
                 let mut prop = Vec::new();
                 prop.push(RedisValue::Integer(*key as _));
-                if let RedisValue::Array(mut v) = verbose_value_to_redis_value(g, value.clone()) {
+                if let RedisValue::Array(mut v) = verbose_value_to_redis_value(g, value) {
                     prop.append(&mut v);
                 }
                 props.push(RedisValue::Array(prop));
@@ -248,7 +250,7 @@ fn verbose_value_to_redis_value(
             for (key, value) in g.borrow().get_relationship_properties(*id) {
                 let mut prop = Vec::new();
                 prop.push(RedisValue::Integer(*key as _));
-                if let RedisValue::Array(mut v) = verbose_value_to_redis_value(g, value.clone()) {
+                if let RedisValue::Array(mut v) = verbose_value_to_redis_value(g, value) {
                     prop.append(&mut v);
                 }
                 props.push(RedisValue::Array(prop));
@@ -313,7 +315,7 @@ impl ReturnCallback for RedisValuesCollector<Compact> {
         self.res.borrow_mut().push(
             return_names
                 .iter()
-                .map(|v| compact_value_to_redis_value(graph, env.get(v).unwrap()))
+                .map(|v| compact_value_to_redis_value(graph, &env.get(v).unwrap()))
                 .collect::<Vec<RedisValue>>()
                 .into(),
         );
@@ -330,7 +332,7 @@ impl ReturnCallback for RedisValuesCollector<Verbose> {
         self.res.borrow_mut().push(
             return_names
                 .iter()
-                .map(|v| verbose_value_to_redis_value(graph, env.get(v).unwrap()))
+                .map(|v| verbose_value_to_redis_value(graph, &env.get(v).unwrap()))
                 .collect::<Vec<RedisValue>>()
                 .into(),
         );
@@ -339,7 +341,7 @@ impl ReturnCallback for RedisValuesCollector<Verbose> {
 
 /// This function is used to delete a graph
 ///
-/// See: https://docs.falkordb.com/commands/graph.delete.html
+/// See: <https://docs.falkordb.com/commands/graph.delete.html>
 ///
 /// # Example
 ///
@@ -490,7 +492,7 @@ fn graph_query(
 
 /// This function is used to execute a read only query on a graph
 ///
-/// See: https://docs.falkordb.com/commands/graph.ro_query.html
+/// See: <https://docs.falkordb.com/commands/graph.ro_query.html>
 ///
 /// # Example
 ///
@@ -554,7 +556,7 @@ fn graph_ro_query(
 /// in the database. It returns a list of graphs IDs
 /// that are currently stored in the database.
 ///
-/// See: https://docs.falkordb.com/commands/graph.list.html
+/// See: <https://docs.falkordb.com/commands/graph.list.html>
 ///
 /// # Example
 ///
@@ -564,6 +566,7 @@ fn graph_ro_query(
 /// 3) resources
 /// 4) players
 /// ```
+#[allow(clippy::needless_pass_by_value)]
 fn graph_list(
     ctx: &Context,
     args: Vec<RedisString>,

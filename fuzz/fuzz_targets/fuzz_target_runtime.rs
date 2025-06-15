@@ -32,7 +32,8 @@ fuzz_target!(|data: &[u8]| -> Corpus {
     }
     let _ = init_functions();
     let g = RefCell::new(Graph::new(1024, 1024));
-    let res = std::str::from_utf8(data).map_or(Corpus::Reject, |query| {
+
+    std::str::from_utf8(data).map_or(Corpus::Reject, |query| {
         let Ok((plan, parameters, _, _)) = g.borrow().get_plan(query) else {
             return Corpus::Reject;
         };
@@ -48,6 +49,5 @@ fuzz_target!(|data: &[u8]| -> Corpus {
             Ok(_) => Corpus::Keep,
             _ => Corpus::Reject,
         }
-    });
-    res
+    })
 });

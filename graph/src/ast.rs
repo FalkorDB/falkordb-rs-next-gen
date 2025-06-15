@@ -159,6 +159,7 @@ pub trait Validate {
 
 impl Validate for DynNode<'_, ExprIR> {
     #[allow(clippy::too_many_lines)]
+    #[allow(clippy::cognitive_complexity)]
     fn validate(
         self,
         env: &mut HashSet<u32>,

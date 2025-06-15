@@ -197,7 +197,7 @@ impl<'a> Runtime<'a> {
     }
 
     fn set_agg_expr_zero(
-        ir: DynNode<ExprIR>,
+        ir: &DynNode<ExprIR>,
         env: &mut Env,
     ) {
         match ir.data() {
@@ -211,7 +211,7 @@ impl<'a> Runtime<'a> {
             }
             _ => {
                 for child in ir.children() {
-                    Self::set_agg_expr_zero(child, env);
+                    Self::set_agg_expr_zero(&child, env);
                 }
             }
         }
@@ -301,7 +301,7 @@ impl<'a> Runtime<'a> {
                 let arr = self.run_expr(ir.child(0), env, finalize_agg)?;
                 let a = self.run_expr(ir.child(1), env, finalize_agg)?;
                 let b = self.run_expr(ir.child(2), env, finalize_agg)?;
-                get_elements(arr, a, b)
+                get_elements(&arr, &a, &b)
             }
             ExprIR::IsNode => match *self.run_expr(ir.child(0), env, finalize_agg)? {
                 Value::Node(_) => Ok(RcValue::bool(true)),
@@ -414,7 +414,7 @@ impl<'a> Runtime<'a> {
             ExprIR::In => {
                 let value = self.run_expr(ir.child(0), env, finalize_agg)?;
                 let list = self.run_expr(ir.child(1), env, finalize_agg)?;
-                list_contains(list, value)
+                list_contains(&list, value)
             }
             ExprIR::Add => ir
                 .children()
@@ -900,7 +900,7 @@ impl<'a> Runtime<'a> {
                 let mut cache = std::collections::HashMap::new();
                 let mut env = Env::default();
                 for (_var, t) in agg {
-                    Self::set_agg_expr_zero(t.root(), &mut env);
+                    Self::set_agg_expr_zero(&t.root(), &mut env);
                 }
                 // in case there are no aggregation keys the aggregator will return
                 // default value for empty iterator
@@ -1127,7 +1127,7 @@ impl<'a> Runtime<'a> {
     ) -> Result<(), String> {
         for tree in trees {
             let value = self.run_expr(tree.root(), vars, false)?;
-            if let Some(value) = self.delete_entity(value) {
+            if let Some(value) = self.delete_entity(&value) {
                 return value;
             }
         }
@@ -1136,9 +1136,9 @@ impl<'a> Runtime<'a> {
 
     fn delete_entity(
         &self,
-        value: RcValue,
+        value: &RcValue,
     ) -> Option<Result<(), String>> {
-        match &*value {
+        match &**value {
             Value::Node(id) => {
                 for (src, dest, id) in self.g.borrow().get_node_relationships(*id) {
                     self.pending
@@ -1156,7 +1156,7 @@ impl<'a> Runtime<'a> {
             }
             Value::Path(values) => {
                 for value in values {
-                    let _ = self.delete_entity(value.clone())?;
+                    let _ = self.delete_entity(value)?;
                 }
             }
             Value::Null => {}
@@ -1316,11 +1316,11 @@ pub fn evaluate_param(expr: DynNode<ExprIR>) -> Result<RcValue, String> {
 }
 
 fn get_elements(
-    arr: RcValue,
-    start: RcValue,
-    end: RcValue,
+    arr: &RcValue,
+    start: &RcValue,
+    end: &RcValue,
 ) -> Result<RcValue, String> {
-    match (&*arr, &*start, &*end) {
+    match (&**arr, &**start, &**end) {
         (Value::List(values), Value::Int(start), Value::Int(end)) => {
             let mut start = *start;
             let mut end = *end;
@@ -1343,10 +1343,10 @@ fn get_elements(
 }
 
 fn list_contains(
-    list: RcValue,
+    list: &RcValue,
     value: RcValue,
 ) -> Result<RcValue, String> {
-    match &*list {
+    match &**list {
         Value::List(l) => Ok(Contains::contains(l, value)),
         Value::Null => Ok(RcValue::null()),
         _ => Err(format!(
