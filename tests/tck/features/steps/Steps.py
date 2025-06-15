@@ -120,7 +120,7 @@ def step_impl(context):
 def step_impl(context):
     global exception
     assert exception != None
-    assert ("The alias" in str(exception)) or ("return of variable-length" in str(exception))
+    assert ("T" in str(exception)) or ("return of variable-length" in str(exception))
 
 @then(u'a SyntaxError should be raised at compile time: InvalidRelationshipPattern')
 def step_impl(context):

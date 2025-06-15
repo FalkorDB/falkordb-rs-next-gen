@@ -30,3 +30,7 @@ clauses/return/Return1.feature
 clauses/return/Return2.feature
 clauses/return/Return3.feature
 clauses/return-orderby/ReturnOrderBy1.feature
+clauses/return-orderby/ReturnOrderBy5.feature
+clauses/return-skip-limit/ReturnSkipLimit1.feature
+clauses/with-orderBy/WithOrderBy1.feature
+clauses/with-skip-limit/WithSkipLimit1.feature

@@ -96,6 +96,7 @@ unsafe extern "C" fn my_free(value: *mut c_void) {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn compact_value_to_redis_value(
     g: &RefCell<Graph>,
     r: &RcValue,
@@ -182,20 +183,20 @@ fn compact_value_to_redis_value(
             let mut rels = Vec::new();
             for node in path {
                 match **node {
-                    Value::Node(id) => nodes.push(RedisValue::Integer(id as _)),
-                    Value::Relationship(id, from, to) => {
-                        rels.push(RedisValue::Array(vec![
-                            RedisValue::Integer(id as _),
-                            RedisValue::Integer(from as _),
-                            RedisValue::Integer(to as _),
-                        ]));
+                    Value::Node(_) => nodes.push(compact_value_to_redis_value(g, node)),
+                    Value::Relationship(_, _, _) => {
+                        rels.push(compact_value_to_redis_value(g, node));
                     }
                     _ => unreachable!("Path should only contain nodes and relationships"),
                 }
             }
+
             RedisValue::Array(vec![
                 RedisValue::Integer(9),
-                RedisValue::Array(vec![RedisValue::Array(nodes), RedisValue::Array(rels)]),
+                RedisValue::Array(vec![
+                    RedisValue::Array(vec![RedisValue::Integer(6), RedisValue::Array(nodes)]),
+                    RedisValue::Array(vec![RedisValue::Integer(6), RedisValue::Array(rels)]),
+                ]),
             ])
         }
     }

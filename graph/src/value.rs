@@ -297,7 +297,7 @@ impl Div for RcValue {
             }
             (Value::Float(a), Value::Float(b)) => {
                 if *b == 0.0 {
-                    Err(String::from("Division by zero"))
+                    Ok(Self::float(f64::NAN))
                 } else {
                     Ok(Self::float(a / b))
                 }

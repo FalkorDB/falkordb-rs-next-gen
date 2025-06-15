@@ -128,7 +128,7 @@ impl ReturnNames for DynNode<'_, IR> {
                 id: 0,
                 ty: Type::Any,
             }],
-            IR::Sort(_) => self.child(0).get_return_names(),
+            IR::Sort(_) | IR::Skip(_) | IR::Limit(_) => self.child(0).get_return_names(),
             IR::Aggregate(names, _, _) => names.clone(),
             _ => vec![],
         }
@@ -915,6 +915,25 @@ impl<'a> Runtime<'a> {
                         })
                     });
                     return Ok(Box::new(items.into_iter().map(Ok)));
+                }
+                unreachable!();
+            }
+            IR::Skip(skip) => {
+                let Value::Int(skip) = *self.run_expr(skip.root(), &Env::default(), false)? else {
+                    return Err(String::from("Skip operator requires an integer argument"));
+                };
+                if let Some(child_idx) = child0_idx {
+                    return Ok(Box::new(self.run(&child_idx)?.skip(skip as usize)));
+                }
+                unreachable!();
+            }
+            IR::Limit(limit) => {
+                let Value::Int(limit) = *self.run_expr(limit.root(), &Env::default(), false)?
+                else {
+                    return Err(String::from("Limit operator requires an integer argument"));
+                };
+                if let Some(child_idx) = child0_idx {
+                    return Ok(Box::new(self.run(&child_idx)?.take(limit as usize)));
                 }
                 unreachable!();
             }

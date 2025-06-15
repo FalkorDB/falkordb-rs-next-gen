@@ -544,8 +544,8 @@ impl<'a> Parser<'a> {
     ) -> Result<VarId, String> {
         if let Some(name) = &name {
             if let Some(id) = self.vars.get(name) {
-                if (ty == Type::Relationship && id.ty == Type::Node)
-                    || (ty == Type::Node && id.ty == Type::Relationship)
+                if (ty == Type::Relationship && (id.ty == Type::Node || id.ty == Type::Path))
+                    || (ty == Type::Node && (id.ty == Type::Relationship || id.ty == Type::Path))
                 {
                     return Err(format!(
                         "The alias '{}' was specified for both a node and a relationship.",
@@ -773,14 +773,46 @@ impl<'a> Parser<'a> {
             vec![]
         };
         let skip = if optional_match_token!(self.lexer => Skip) {
-            self.parse_expr()?
+            let skip = self.parse_expr()?;
+            match skip.root().data() {
+                ExprIR::Integer(i) => {
+                    if *i < 0 {
+                        return Err(self.lexer.format_error(
+                            "SKIP specified value of invalid type, must be a positive integer",
+                        ));
+                    }
+                }
+                ExprIR::Parameter(_) => {}
+                _ => {
+                    return Err(self.lexer.format_error(
+                        "SKIP specified value of invalid type, must be a positive integer",
+                    ));
+                }
+            }
+            Some(skip)
         } else {
-            tree!(ExprIR::Integer(0))
+            None
         };
         let limit = if optional_match_token!(self.lexer => Limit) {
-            self.parse_expr()?
+            let limit = self.parse_expr()?;
+            match limit.root().data() {
+                ExprIR::Integer(i) => {
+                    if *i < 0 {
+                        return Err(self.lexer.format_error(
+                            "LIMIT specified value of invalid type, must be a positive integer",
+                        ));
+                    }
+                }
+                ExprIR::Parameter(_) => {}
+                _ => {
+                    return Err(self.lexer.format_error(
+                        "LIMIT specified value of invalid type, must be a positive integer",
+                    ));
+                }
+            }
+            Some(limit)
         } else {
-            tree!(ExprIR::Integer(0))
+            None
         };
         Ok(QueryIR::With {
             exprs,
@@ -806,14 +838,46 @@ impl<'a> Parser<'a> {
             vec![]
         };
         let skip = if optional_match_token!(self.lexer => Skip) {
-            self.parse_expr()?
+            let skip = self.parse_expr()?;
+            match skip.root().data() {
+                ExprIR::Integer(i) => {
+                    if *i < 0 {
+                        return Err(self.lexer.format_error(
+                            "SKIP specified value of invalid type, must be a positive integer",
+                        ));
+                    }
+                }
+                ExprIR::Parameter(_) => {}
+                _ => {
+                    return Err(self.lexer.format_error(
+                        "SKIP specified value of invalid type, must be a positive integer",
+                    ));
+                }
+            }
+            Some(skip)
         } else {
-            tree!(ExprIR::Integer(0))
+            None
         };
         let limit = if optional_match_token!(self.lexer => Limit) {
-            self.parse_expr()?
+            let limit = self.parse_expr()?;
+            match limit.root().data() {
+                ExprIR::Integer(i) => {
+                    if *i < 0 {
+                        return Err(self.lexer.format_error(
+                            "LIMIT specified value of invalid type, must be a positive integer",
+                        ));
+                    }
+                }
+                ExprIR::Parameter(_) => {}
+                _ => {
+                    return Err(self.lexer.format_error(
+                        "LIMIT specified value of invalid type, must be a positive integer",
+                    ));
+                }
+            }
+            Some(limit)
         } else {
-            tree!(ExprIR::Integer(0))
+            None
         };
         Ok(QueryIR::Return {
             exprs,

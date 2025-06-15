@@ -1,7 +1,7 @@
 from decimal import Decimal
 from typing import Counter
 import common
-from falkordb import Node, Edge
+from falkordb import Node, Edge, Path
 from hypothesis import given, strategies as st
 import itertools
 import math
@@ -273,6 +273,9 @@ def test_graph_crud():
     res = query("MATCH (n) RETURN n")
     assert res.result_set == [[Node(0)]]
 
+    res = query("MATCH p=() RETURN p")
+    assert res.result_set == [[Path([Node(0)], [])]]
+
     res = query("MATCH (n) DELETE n", write=True)
     assert res.nodes_deleted == 1
 
@@ -324,6 +327,11 @@ def test_graph_crud():
                                Node(3, labels="M", properties={"v": 1})],
                               [Node(4, labels="N", properties={"v": 2}), Edge(4, "R", 5, 2, properties={"v": 2}),
                                Node(5, labels="M", properties={"v": 2})]]
+    
+    res = query("MATCH p=()-[:R]->() RETURN p")
+    assert res.result_set == [[Path([Node(0, labels="N", properties={"v": 0}), Node(1, labels="M", properties={"v": 0})], [Edge(0, "R", 1, 0, properties={"v": 0})])],
+                               [Path([Node(2, labels="N", properties={"v": 1}), Node(3, labels="M", properties={"v": 1})], [Edge(2, "R", 3, 1, properties={"v": 1})])],
+                               [Path([Node(4, labels="N", properties={"v": 2}), Node(5, labels="M", properties={"v": 2})], [Edge(4, "R", 5, 2, properties={"v": 2})])]]
 
     res = query("MATCH (n:N) RETURN n.v")
     assert res.result_set == [[0], [1], [2]]

@@ -5,6 +5,16 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "TCK",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "pytest",
+            "args": ["${workspaceFolder}/tests/tck/test_tck.py", "-s"],
+            "env": {
+                "TCK_DONE": "tck_done.txt"
+            }
+        },
+        {
             "type": "antlr-debug",
             "request": "launch",
             "name": "Debug Current Grammar",
@@ -22,7 +32,9 @@
                 "${workspaceFolder}/target/debug/libfalkordb.dylib"
             ],
             "cwd": "${workspaceFolder}",
-            "sourceLanguages": ["rust"],
+            "sourceLanguages": [
+                "rust"
+            ],
         },
         {
             "type": "lldb",
@@ -34,7 +46,9 @@
                 "${workspaceFolder}/target/debug/libfalkordb.so"
             ],
             "cwd": "${workspaceFolder}",
-            "sourceLanguages": ["rust"],
+            "sourceLanguages": [
+                "rust"
+            ],
         }
     ]
 }
