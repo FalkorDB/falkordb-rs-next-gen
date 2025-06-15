@@ -270,13 +270,9 @@ fn verbose_value_to_redis_value(
             let mut rels = Vec::new();
             for node in path {
                 match **node {
-                    Value::Node(id) => nodes.push(RedisValue::Integer(id as _)),
-                    Value::Relationship(id, from, to) => {
-                        rels.push(RedisValue::Array(vec![
-                            RedisValue::Integer(id as _),
-                            RedisValue::Integer(from as _),
-                            RedisValue::Integer(to as _),
-                        ]));
+                    Value::Node(_) => nodes.push(verbose_value_to_redis_value(g, node)),
+                    Value::Relationship(_, _, _) => {
+                        rels.push(verbose_value_to_redis_value(g, node));
                     }
                     _ => unreachable!("Path should only contain nodes and relationships"),
                 }
