@@ -1,3 +1,5 @@
+#![allow(clippy::doc_markdown)]
+
 use std::{marker::PhantomData, mem::MaybeUninit, os::raw::c_void, ptr::null_mut, rc::Rc};
 
 use crate::GraphBLAS::{
@@ -504,7 +506,6 @@ impl Get<bool> for Matrix<bool> {
     /// # Returns
     /// - `Some(bool)`: The boolean value at the specified position.
     /// - `None`: The element does not exist.
-    #[must_use]
     fn get(
         &self,
         i: u64,
@@ -576,7 +577,6 @@ where
     ///
     /// # Returns
     /// A new matrix that is the transpose of the original.
-    #[must_use]
     fn transpose(&self) -> Self {
         let transpose = Self::new(self.ncols(), self.nrows());
         unsafe {
@@ -590,7 +590,7 @@ where
 pub struct Iter<T> {
     m: Rc<GrB_Matrix>,
     /// The underlying GraphBLAS iterator.
-    iter: GxB_Iterator,
+    inner: GxB_Iterator,
     /// Indicates whether the iterator is depleted.
     depleted: bool,
     /// The maximum row index for the iterator.
@@ -607,7 +607,7 @@ impl<T> Drop for Iter<T> {
                 let info = GrB_Matrix_free(m);
                 debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             }
-            GxB_Iterator_free(&mut self.iter);
+            GxB_Iterator_free(&mut self.inner);
         }
     }
 }
@@ -633,7 +633,7 @@ impl<T> Iter<T> {
             let info = GxB_rowIterator_seekRow(iter, min_row);
             Self {
                 m: m.m.clone(),
-                iter,
+                inner: iter,
                 depleted: info == GrB_Info::GxB_EXHAUSTED,
                 max_row,
                 phantom: PhantomData,
@@ -657,12 +657,12 @@ impl Iterator for Iter<bool> {
         unsafe {
             let mut row = 0u64;
             let mut col = 0u64;
-            GxB_Matrix_Iterator_getIndex(self.iter, &mut row, &mut col);
+            GxB_Matrix_Iterator_getIndex(self.inner, &mut row, &mut col);
             if row > self.max_row {
                 self.depleted = true;
                 return None;
             }
-            self.depleted = GxB_Matrix_Iterator_next(self.iter) == GrB_Info::GxB_EXHAUSTED;
+            self.depleted = GxB_Matrix_Iterator_next(self.inner) == GrB_Info::GxB_EXHAUSTED;
             Some((row, col))
         }
     }
@@ -678,13 +678,13 @@ impl Iterator for Iter<u64> {
         unsafe {
             let mut row = 0u64;
             let mut col = 0u64;
-            let value = GxB_Iterator_get_UINT64(self.iter);
-            GxB_Matrix_Iterator_getIndex(self.iter, &mut row, &mut col);
+            let value = GxB_Iterator_get_UINT64(self.inner);
+            GxB_Matrix_Iterator_getIndex(self.inner, &mut row, &mut col);
             if row > self.max_row {
                 self.depleted = true;
                 return None;
             }
-            self.depleted = GxB_Matrix_Iterator_next(self.iter) == GrB_Info::GxB_EXHAUSTED;
+            self.depleted = GxB_Matrix_Iterator_next(self.inner) == GrB_Info::GxB_EXHAUSTED;
             Some((row, col, value))
         }
     }

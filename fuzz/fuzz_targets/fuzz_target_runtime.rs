@@ -20,9 +20,9 @@ struct FuzzValuesCollector;
 impl ReturnCallback for FuzzValuesCollector {
     fn return_value(
         &self,
-        graph: &RefCell<Graph>,
-        env: Env,
-        return_names: &Vec<VarId>,
+        _: &RefCell<Graph>,
+        _: Env,
+        _: &Vec<VarId>,
     ) {
     }
 }
@@ -31,7 +31,7 @@ fuzz_target!(|data: &[u8]| -> Corpus {
     unsafe {
         GrB_init(GrB_Mode::GrB_NONBLOCKING as _);
     }
-    init_functions();
+    let _ = init_functions();
     let g = RefCell::new(Graph::new(1024, 1024));
     let res = std::str::from_utf8(data).map_or(Corpus::Reject, |query| {
         let Ok((plan, parameters, _, _)) = g.borrow().get_plan(query) else {
@@ -50,6 +50,7 @@ fuzz_target!(|data: &[u8]| -> Corpus {
             _ => Corpus::Reject,
         }
     });
-    // matrix::shutdown();
+    drop(g);
+    matrix::shutdown();
     res
 });

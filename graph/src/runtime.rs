@@ -49,10 +49,47 @@ pub struct Stats {
     pub properties_removed: usize,
 }
 
+pub struct PendingNode {
+    pub labels: Vec<Rc<String>>,
+    pub properties: OrderMap<Rc<String>, RcValue>,
+}
+
+impl PendingNode {
+    pub fn new(
+        labels: Vec<Rc<String>>,
+        properties: OrderMap<Rc<String>, RcValue>,
+    ) -> Self {
+        Self { labels, properties }
+    }
+}
+
+pub struct PendingRelationship {
+    pub from: u64,
+    pub to: u64,
+    pub type_name: Rc<String>,
+    pub attrs: OrderMap<Rc<String>, RcValue>,
+}
+
+impl PendingRelationship {
+    pub fn new(
+        from: u64,
+        to: u64,
+        type_name: Rc<String>,
+        attrs: OrderMap<Rc<String>, RcValue>,
+    ) -> Self {
+        Self {
+            from,
+            to,
+            type_name,
+            attrs,
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct Pending {
-    pub created_nodes: HashMap<u64, (Vec<Rc<String>>, OrderMap<Rc<String>, RcValue>)>,
-    pub created_relationships: HashMap<u64, (Rc<String>, u64, u64, OrderMap<Rc<String>, RcValue>)>,
+    pub created_nodes: HashMap<u64, PendingNode>,
+    pub created_relationships: HashMap<u64, PendingRelationship>,
     pub deleted_nodes: HashSet<u64>,
     pub deleted_relationships: HashSet<(u64, u64, u64)>,
 }
@@ -950,9 +987,12 @@ impl<'a> Runtime<'a> {
         relationship_pattern: &'a RelationshipPattern,
         vars: Env,
     ) -> Box<dyn Iterator<Item = Result<Env, String>> + '_> {
-        let attrs = self
-            .run_expr(relationship_pattern.attrs.root(), &vars, false)
-            .unwrap();
+        let attrs = match self.run_expr(relationship_pattern.attrs.root(), &vars, false) {
+            Ok(attrs) => attrs,
+            Err(e) => {
+                return Box::new(once(Err(e)));
+            }
+        };
         let iter = self.g.borrow().get_relationships(
             &relationship_pattern.types,
             &relationship_pattern.from.labels,
@@ -1043,9 +1083,12 @@ impl<'a> Runtime<'a> {
         node_pattern: &'a NodePattern,
         vars: Env,
     ) -> Box<dyn Iterator<Item = Result<Env, String>> + '_> {
-        let attrs = self
-            .run_expr(node_pattern.attrs.root(), &vars, false)
-            .unwrap();
+        let attrs = match self.run_expr(node_pattern.attrs.root(), &vars, false) {
+            Ok(attrs) => attrs,
+            Err(e) => {
+                return Box::new(once(Err(e)));
+            }
+        };
         let iter = self.g.borrow().get_nodes(&node_pattern.labels);
         Box::new(iter.filter_map(move |(v, _)| {
             let mut vars = vars.clone();
@@ -1127,10 +1170,10 @@ impl<'a> Runtime<'a> {
             match &*properties {
                 Value::Map(properties) => {
                     let id = self.g.borrow_mut().reserve_node();
-                    self.pending
-                        .borrow_mut()
-                        .created_nodes
-                        .insert(id, (node.labels.clone(), properties.clone()));
+                    self.pending.borrow_mut().created_nodes.insert(
+                        id,
+                        PendingNode::new(node.labels.clone(), properties.clone()),
+                    );
                     vars.insert(&node.alias, RcValue::node(id));
                 }
                 _ => return Err(String::from("Invalid node properties")),
@@ -1158,10 +1201,10 @@ impl<'a> Runtime<'a> {
                     let id = self.g.borrow_mut().reserve_relationship();
                     self.pending.borrow_mut().created_relationships.insert(
                         id,
-                        (
-                            rel.types.first().unwrap().clone(),
+                        PendingRelationship::new(
                             from_id,
                             to_id,
+                            rel.types.first().unwrap().clone(),
                             properties.clone(),
                         ),
                     );
@@ -1183,7 +1226,7 @@ impl<'a> Runtime<'a> {
                 .borrow()
                 .created_nodes
                 .iter()
-                .flat_map(|v| v.1.1.values())
+                .flat_map(|v| v.1.properties.values())
                 .map(|v| match **v {
                     Value::Null => 0,
                     _ => 1,
@@ -1202,7 +1245,7 @@ impl<'a> Runtime<'a> {
                 .borrow()
                 .created_relationships
                 .iter()
-                .flat_map(|v| v.1.3.values())
+                .flat_map(|v| v.1.attrs.values())
                 .map(|v| match **v {
                     Value::Null => 0,
                     _ => 1,

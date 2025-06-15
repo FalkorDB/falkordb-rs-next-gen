@@ -5,7 +5,6 @@ use std::{
 };
 
 use hashbrown::HashMap;
-use ordermap::OrderMap;
 use orx_tree::DynTree;
 use roaring::RoaringTreemap;
 
@@ -14,6 +13,7 @@ use crate::{
     cypher::Parser,
     matrix::{self, Dup, ElementWiseAdd, ElementWiseMultiply, Matrix, MxM, New, Remove, Set, Size},
     planner::{IR, Planner},
+    runtime::{PendingNode, PendingRelationship},
     tensor::Tensor,
     value::{RcValue, Value},
 };
@@ -28,7 +28,6 @@ pub struct Graph {
     deleted_nodes: RoaringTreemap,
     deleted_relationships: RoaringTreemap,
     zero_matrix: Matrix<bool>,
-    zero_tensor: Tensor,
     adjacancy_matrix: Matrix<bool>,
     node_labels_matrix: Matrix<bool>,
     relationship_type_matrix: Matrix<bool>,
@@ -60,7 +59,6 @@ impl Graph {
             deleted_nodes: RoaringTreemap::new(),
             deleted_relationships: RoaringTreemap::new(),
             zero_matrix: Matrix::<bool>::new(0, 0),
-            zero_tensor: Tensor::new(0, 0),
             adjacancy_matrix: Matrix::<bool>::new(n, n),
             node_labels_matrix: Matrix::<bool>::new(0, 0),
             relationship_type_matrix: Matrix::<bool>::new(0, 0),
@@ -302,7 +300,7 @@ impl Graph {
 
     pub fn create_nodes(
         &mut self,
-        nodes: &HashMap<u64, (Vec<Rc<String>>, OrderMap<Rc<String>, RcValue>)>,
+        nodes: &HashMap<u64, PendingNode>,
     ) {
         self.node_count += nodes.len() as u64;
         self.reserved_node_count -= nodes.len() as u64;
@@ -316,7 +314,7 @@ impl Graph {
 
         self.resize();
 
-        for (id, (labels, attrs)) in nodes {
+        for (id, PendingNode { labels, properties }) in nodes {
             self.all_nodes_matrix.set(*id, *id, true);
 
             for label in labels {
@@ -328,7 +326,7 @@ impl Graph {
             }
 
             let mut map = HashMap::new();
-            for (key, value) in attrs {
+            for (key, value) in properties {
                 if **value == Value::Null {
                     continue;
                 }
@@ -430,7 +428,7 @@ impl Graph {
 
     pub fn create_relationships(
         &mut self,
-        relationships: &HashMap<u64, (Rc<String>, u64, u64, OrderMap<Rc<String>, RcValue>)>,
+        relationships: &HashMap<u64, PendingRelationship>,
     ) {
         self.relationship_count += relationships.len() as u64;
         self.reserved_relationship_count -= relationships.len() as u64;
@@ -442,26 +440,44 @@ impl Graph {
             self.deleted_relationships.remove(*id);
         }
 
-        for (id, (relationship_type, from, to, _)) in relationships {
-            let relationship_type_matrix = self.get_relationship_matrix_mut(relationship_type);
-            relationship_type_matrix.set(*from, *to, *id);
+        for (
+            id,
+            PendingRelationship {
+                type_name,
+                from: start,
+                to: end,
+                ..
+            },
+        ) in relationships
+        {
+            let relationship_type_matrix = self.get_relationship_matrix_mut(type_name);
+            relationship_type_matrix.set(*start, *end, *id);
         }
 
         self.resize();
 
-        for (id, (relationship_type, src, dest, attrs)) in relationships {
-            self.adjacancy_matrix.set(*src, *dest, true);
+        for (
+            id,
+            PendingRelationship {
+                type_name,
+                from: start,
+                to: end,
+                attrs: properties,
+            },
+        ) in relationships
+        {
+            self.adjacancy_matrix.set(*start, *end, true);
             self.relationship_type_matrix.set(
                 *id,
                 self.relationship_types
                     .iter()
-                    .position(|p| p.as_str() == relationship_type.as_str())
+                    .position(|p| p.as_str() == type_name.as_str())
                     .unwrap() as u64,
                 true,
             );
 
             let mut map = HashMap::new();
-            for (key, value) in attrs {
+            for (key, value) in properties {
                 if **value == Value::Null {
                     continue;
                 }

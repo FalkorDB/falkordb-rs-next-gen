@@ -1,6 +1,10 @@
 #![allow(clippy::unnecessary_wraps)]
+#![allow(clippy::cast_precision_loss)]
+#![allow(clippy::cast_possible_truncation)]
+#![allow(clippy::cast_possible_wrap)]
+#![allow(clippy::cast_sign_loss)]
 
-use crate::runtime::Runtime;
+use crate::runtime::{PendingNode, PendingRelationship, Runtime};
 use crate::value::{RcValue, Value};
 use hashbrown::{HashMap, HashSet};
 use rand::Rng;
@@ -199,6 +203,7 @@ pub struct Functions {
     functions: HashMap<String, Rc<GraphFn>>,
 }
 
+#[allow(clippy::non_send_fields_in_send_ty)]
 unsafe impl Send for Functions {}
 unsafe impl Sync for Functions {}
 
@@ -763,7 +768,7 @@ fn property(
     match (iter.next().as_deref(), iter.next().as_deref()) {
         (Some(Value::Node(node_id)), Some(Value::String(property))) => {
             if let Some(node) = runtime.pending.borrow().created_nodes.get(node_id) {
-                if let Some(value) = node.1.get(property) {
+                if let Some(value) = node.properties.get(property) {
                     return Ok(value.clone());
                 }
             }
@@ -780,7 +785,7 @@ fn property(
         }
         (Some(Value::Relationship(id, _, _)), Some(Value::String(property))) => {
             if let Some(rel) = runtime.pending.borrow().created_relationships.get(id) {
-                if let Some(value) = rel.3.get(property) {
+                if let Some(value) = rel.attrs.get(property) {
                     return Ok(value.clone());
                 }
             }
@@ -818,7 +823,7 @@ fn labels(
                         .created_nodes
                         .get(node_id)
                         .unwrap()
-                        .0
+                        .labels
                         .iter()
                         .map(|label| RcValue::string(label.clone()))
                         .collect(),
@@ -1220,7 +1225,7 @@ fn string_ltrim(
 ) -> Result<RcValue, String> {
     match args.into_iter().next().as_deref() {
         Some(Value::String(s)) => Ok(RcValue::string(Rc::new(String::from(
-            s.trim_start_matches(" "),
+            s.trim_start_matches(' '),
         )))),
         Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
@@ -1609,7 +1614,7 @@ fn relationship_type(
     let mut iter = args.into_iter();
     match iter.next().as_deref() {
         Some(Value::Relationship(id, _from, _to)) => {
-            if let Some((type_name, _, _, _)) =
+            if let Some(PendingRelationship { type_name, .. }) =
                 runtime.pending.borrow().created_relationships.get(id)
             {
                 return Ok(RcValue::string(type_name.clone()));
@@ -1704,19 +1709,20 @@ fn internal_node_has_labels(
     let mut iter = args.into_iter();
     match (iter.next().as_deref(), iter.next().as_deref()) {
         (Some(Value::Node(node_id)), Some(Value::List(required_labels))) => {
-            let actual_labels =
-                if let Some((labels, _)) = runtime.pending.borrow().created_nodes.get(node_id) {
-                    labels
-                        .iter()
-                        .map(std::clone::Clone::clone)
-                        .collect::<HashSet<_>>()
-                } else {
-                    runtime
-                        .g
-                        .borrow()
-                        .get_node_labels(*node_id)
-                        .collect::<HashSet<_>>()
-                };
+            let actual_labels = if let Some(PendingNode { labels, .. }) =
+                runtime.pending.borrow().created_nodes.get(node_id)
+            {
+                labels
+                    .iter()
+                    .map(std::clone::Clone::clone)
+                    .collect::<HashSet<_>>()
+            } else {
+                runtime
+                    .g
+                    .borrow()
+                    .get_node_labels(*node_id)
+                    .collect::<HashSet<_>>()
+            };
             let all_labels_present = required_labels.iter().all(|label| {
                 if let Value::String(label_str) = &**label {
                     actual_labels.contains(label_str)
