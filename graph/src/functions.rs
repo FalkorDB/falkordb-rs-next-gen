@@ -1534,13 +1534,13 @@ fn range(
     let end = iter.next().ok_or("Missing end value")?;
     let step = iter.next().unwrap_or_else(|| RcValue::int(1));
     match (&*start, &*end, &*step) {
-        (Value::Int(start), Value::Int(stop), Value::Int(step)) => {
+        (Value::Int(start), Value::Int(end), Value::Int(step)) => {
             if *step == 0 {
                 return Err(String::from(
                     "ArgumentError: step argument to range() can't be 0",
                 ));
             }
-            if (start > stop && step > &0) || (start < stop && step < &0) {
+            if (start > end && step > &0) || (start < end && step < &0) {
                 return Ok(RcValue::list(vec![]));
             }
             let mut curr = *start;
@@ -1551,7 +1551,7 @@ fn range(
                     curr += step;
                     RcValue::int(tmp)
                 })
-                .take(((stop - start) / step + 1) as usize)
+                .take(((end - start) / step + 1) as usize)
                 .collect(),
             ))
         }

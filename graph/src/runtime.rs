@@ -573,21 +573,21 @@ impl<'a> Runtime<'a> {
         match ir.data() {
             ExprIR::FuncInvocation(func) if func.name == "range" => {
                 let start = self.run_expr(ir.child(0), env, false);
-                let stop = self.run_expr(ir.child(1), env, false);
+                let end = self.run_expr(ir.child(1), env, false);
                 let step = ir
                     .get_child(2)
                     .map_or_else(|| Ok(RcValue::int(1)), |c| self.run_expr(c, env, false));
-                match (start, stop, step) {
-                    (Ok(start), Ok(stop), Ok(step)) => {
-                        func.validate_args_type(&[start.clone(), stop.clone(), step.clone()])?;
-                        match (&*start, &*stop, &*step) {
-                            (Value::Int(start), Value::Int(stop), Value::Int(step)) => {
+                match (start, end, step) {
+                    (Ok(start), Ok(end), Ok(step)) => {
+                        func.validate_args_type(&[start.clone(), end.clone(), step.clone()])?;
+                        match (&*start, &*end, &*step) {
+                            (Value::Int(start), Value::Int(end), Value::Int(step)) => {
                                 if step == &0 {
                                     return Err(String::from(
                                         "ArgumentError: step argument to range() can't be 0",
                                     ));
                                 }
-                                if (start > stop && step > &0) || (start < stop && step < &0) {
+                                if (start > end && step > &0) || (start < end && step < &0) {
                                     return Ok(Box::new(empty()));
                                 }
                                 let mut curr = *start;
@@ -598,7 +598,7 @@ impl<'a> Runtime<'a> {
                                         curr += step;
                                         RcValue::int(tmp)
                                     })
-                                    .take(((stop - start) / step + 1) as usize),
+                                    .take(((end - start) / step + 1) as usize),
                                 ));
                             }
                             _ => {

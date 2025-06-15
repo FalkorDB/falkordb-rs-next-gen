@@ -82,18 +82,18 @@ impl Planner {
             return res;
         }
         if pattern.relationships.len() == 1 {
-            let rel = pattern.relationships[0].clone();
-            if rel.from.alias.id == rel.to.alias.id {
+            let relationship = pattern.relationships[0].clone();
+            if relationship.from.alias.id == relationship.to.alias.id {
                 let mut res = tree!(
-                    IR::ExpandInto(rel.clone()),
-                    tree!(IR::NodeScan(rel.from.clone()))
+                    IR::ExpandInto(relationship.clone()),
+                    tree!(IR::NodeScan(relationship.from.clone()))
                 );
                 if !pattern.paths.is_empty() {
                     res = tree!(IR::PathBuilder(pattern.paths), res);
                 }
                 return res;
             }
-            let mut res = tree!(IR::RelationshipScan(rel));
+            let mut res = tree!(IR::RelationshipScan(relationship));
             if !pattern.paths.is_empty() {
                 res = tree!(IR::PathBuilder(pattern.paths), res);
             }
