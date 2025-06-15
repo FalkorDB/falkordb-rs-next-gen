@@ -26,13 +26,13 @@ impl ReturnCallback for FuzzValuesCollector {
     }
 }
 
-fuzz_target!(|data: &[u8]| -> Corpus {
-    unsafe {
-        GrB_init(GrB_Mode::GrB_NONBLOCKING as _);
-    }
-    init_functions().expect("Failed to init functions");
-    let g = RefCell::new(Graph::new(1024, 1024));
-
+fuzz_target!(init: {
+        unsafe {
+            GrB_init(GrB_Mode::GrB_NONBLOCKING as _);
+        }
+        init_functions().expect("Failed to init functions");
+        let g = RefCell::new(Graph::new(1024, 1024));
+    },|data: &[u8]| -> Corpus {
     std::str::from_utf8(data).map_or(Corpus::Reject, |query| {
         let Ok(Plan {
             plan, parameters, ..
