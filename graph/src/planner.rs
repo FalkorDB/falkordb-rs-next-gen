@@ -24,6 +24,7 @@ pub enum IR {
     ExpandInto(Rc<RelationshipPattern>),
     PathBuilder(Vec<Rc<PathPattern>>),
     Filter(DynTree<ExprIR>),
+    Sort(Vec<(DynTree<ExprIR>, bool)>),
     Aggregate(
         Vec<VarId>,
         Vec<(VarId, DynTree<ExprIR>)>,
@@ -53,6 +54,7 @@ impl Display for IR {
             Self::ExpandInto(rel) => write!(f, "ExpandInto {rel}"),
             Self::PathBuilder(_) => write!(f, "PathBuilder"),
             Self::Filter(_) => write!(f, "Filter"),
+            Self::Sort(_) => write!(f, "Sort"),
             Self::Aggregate(_, _, _) => write!(f, "Aggregate"),
             Self::Project(_) => write!(f, "Project"),
             Self::Commit => write!(f, "Commit"),
@@ -104,6 +106,7 @@ impl Planner {
 
     fn plan_project(
         exprs: Vec<(VarId, DynTree<ExprIR>)>,
+        orderby: Vec<(DynTree<ExprIR>, bool)>,
         write: bool,
     ) -> DynTree<IR> {
         let mut res = if exprs.iter().any(|e| e.1.is_aggregation()) {
@@ -122,6 +125,9 @@ impl Planner {
         } else {
             tree!(IR::Project(exprs))
         };
+        if !orderby.is_empty() {
+            res = tree!(IR::Sort(orderby), res);
+        }
         if write {
             res = tree!(IR::Commit, res);
         }
@@ -136,13 +142,17 @@ impl Planner {
         let iter = &mut q.into_iter().rev();
         let mut res = self.plan(iter.next().unwrap());
         let mut idx = res.root().idx();
-        if matches!(res.node(&idx).data(), IR::Commit) {
+        if matches!(res.node(&idx).data(), IR::Commit)
+            || matches!(res.node(&idx).data(), IR::Sort(_))
+        {
             idx = res.node(&idx).child(0).idx();
         }
         for e in iter {
             let n = self.plan(e);
             idx = res.node_mut(&idx).push_child_tree(n);
-            if matches!(res.node(&idx).data(), IR::Commit) {
+            if matches!(res.node(&idx).data(), IR::Commit)
+                || matches!(res.node(&idx).data(), IR::Sort(_))
+            {
                 idx = res.node(&idx).child(0).idx();
             }
         }
@@ -181,9 +191,18 @@ impl Planner {
             QueryIR::Where(expr) => tree!(IR::Filter(expr)),
             QueryIR::Create(pattern) => tree!(IR::Create(pattern)),
             QueryIR::Delete(exprs, is_detach) => tree!(IR::Delete(exprs, is_detach)),
-            QueryIR::With { exprs, write, .. } | QueryIR::Return { exprs, write, .. } => {
-                Self::plan_project(exprs, write)
+            QueryIR::With {
+                exprs,
+                write,
+                orderby,
+                ..
             }
+            | QueryIR::Return {
+                exprs,
+                orderby,
+                write,
+                ..
+            } => Self::plan_project(exprs, orderby, write),
             QueryIR::Query(q, write) => self.plan_query(q, write),
         }
     }

@@ -128,6 +128,7 @@ impl ReturnNames for DynNode<'_, IR> {
                 id: 0,
                 ty: Type::Any,
             }],
+            IR::Sort(_) => self.child(0).get_return_names(),
             IR::Aggregate(names, _, _) => names.clone(),
             _ => vec![],
         }
@@ -873,7 +874,7 @@ impl<'a> Runtime<'a> {
                         Ok(vars)
                     })));
                 }
-                Err(String::from("PathBuilder operator requires a child node"))
+                unreachable!();
             }
             IR::Filter(tree) => {
                 if let Some(child_idx) = child0_idx {
@@ -892,9 +893,30 @@ impl<'a> Runtime<'a> {
                         },
                     )));
                 }
-                Err(String::from(
-                    "Filter operator requires a boolean expression",
-                ))
+                unreachable!();
+            }
+            IR::Sort(trees) => {
+                if let Some(child_idx) = child0_idx {
+                    let mut items = self.run(&child_idx)?.collect::<Result<Vec<_>, String>>()?;
+                    items.sort_by(|a, b| {
+                        trees.iter().fold(Ordering::Equal, |acc, (tree, desc)| {
+                            if acc != Ordering::Equal {
+                                return acc;
+                            }
+                            let a_value = self.run_expr(tree.root(), a, false);
+                            let b_value = self.run_expr(tree.root(), b, false);
+                            match (a_value, b_value) {
+                                (Ok(a_value), Ok(b_value)) => {
+                                    let ordering = a_value.compare_value(&b_value).0;
+                                    if *desc { ordering.reverse() } else { ordering }
+                                }
+                                (Err(_), _) | (_, Err(_)) => Ordering::Equal,
+                            }
+                        })
+                    });
+                    return Ok(Box::new(items.into_iter().map(Ok)));
+                }
+                unreachable!();
             }
             IR::Aggregate(_, keys, agg) => {
                 let mut cache = std::collections::HashMap::new();
