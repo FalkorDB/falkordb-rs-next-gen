@@ -1,3 +1,8 @@
+#![allow(clippy::cast_sign_loss)]
+#![allow(clippy::cast_possible_wrap)]
+#![allow(clippy::cast_possible_truncation)]
+#![allow(clippy::cast_precision_loss)]
+
 use crate::ast::{NodePattern, Pattern, QuantifierType, RelationshipPattern, VarId};
 use crate::functions::{FnType, Functions, Type, get_functions};
 use crate::iter::{Aggregate, LazyReplace, TryFlatMap, TryMap};
@@ -21,7 +26,7 @@ pub trait ReturnCallback {
         &self,
         graph: &RefCell<Graph>,
         env: Env,
-        return_names: &Vec<VarId>,
+        return_names: &[VarId],
     );
 }
 
@@ -55,7 +60,8 @@ pub struct PendingNode {
 }
 
 impl PendingNode {
-    pub fn new(
+    #[must_use]
+    pub const fn new(
         labels: Vec<Rc<String>>,
         properties: OrderMap<Rc<String>, RcValue>,
     ) -> Self {
@@ -71,7 +77,8 @@ pub struct PendingRelationship {
 }
 
 impl PendingRelationship {
-    pub fn new(
+    #[must_use]
+    pub const fn new(
         from: u64,
         to: u64,
         type_name: Rc<String>,
@@ -190,7 +197,6 @@ impl<'a> Runtime<'a> {
     }
 
     fn set_agg_expr_zero(
-        &self,
         ir: DynNode<ExprIR>,
         env: &mut Env,
     ) {
@@ -205,7 +211,7 @@ impl<'a> Runtime<'a> {
             }
             _ => {
                 for child in ir.children() {
-                    self.set_agg_expr_zero(child, env);
+                    Self::set_agg_expr_zero(child, env);
                 }
             }
         }
@@ -532,7 +538,7 @@ impl<'a> Runtime<'a> {
                             }
                         }
 
-                        Ok(self.eval_quantifier(quantifier, t, f, n))
+                        Ok(Self::eval_quantifier(quantifier, t, f, n))
                     }
                     value => Err(format!(
                         "Type mismatch: expected List but was {}",
@@ -616,7 +622,6 @@ impl<'a> Runtime<'a> {
     }
 
     fn eval_quantifier(
-        &self,
         quantifier_type: &QuantifierType,
         true_count: usize,
         false_count: usize,
@@ -893,7 +898,7 @@ impl<'a> Runtime<'a> {
                 let mut cache = std::collections::HashMap::new();
                 let mut env = Env::default();
                 for (_var, t) in agg {
-                    self.set_agg_expr_zero(t.root(), &mut env);
+                    Self::set_agg_expr_zero(t.root(), &mut env);
                 }
                 // in case there are no aggregation keys the aggregator will return
                 // default value for empty iterator

@@ -308,7 +308,7 @@ impl ReturnCallback for RedisValuesCollector<Compact> {
         &self,
         graph: &RefCell<Graph>,
         env: Env,
-        return_names: &Vec<VarId>,
+        return_names: &[VarId],
     ) {
         self.res.borrow_mut().push(
             return_names
@@ -325,7 +325,7 @@ impl ReturnCallback for RedisValuesCollector<Verbose> {
         &self,
         graph: &RefCell<Graph>,
         env: Env,
-        return_names: &Vec<VarId>,
+        return_names: &[VarId],
     ) {
         self.res.borrow_mut().push(
             return_names

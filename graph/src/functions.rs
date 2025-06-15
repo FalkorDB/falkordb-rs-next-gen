@@ -1,8 +1,8 @@
+#![allow(clippy::cast_sign_loss)]
 #![allow(clippy::unnecessary_wraps)]
+#![allow(clippy::cast_possible_wrap)]
 #![allow(clippy::cast_precision_loss)]
 #![allow(clippy::cast_possible_truncation)]
-#![allow(clippy::cast_possible_wrap)]
-#![allow(clippy::cast_sign_loss)]
 
 use crate::runtime::{PendingNode, PendingRelationship, Runtime};
 use crate::value::{RcValue, Value};

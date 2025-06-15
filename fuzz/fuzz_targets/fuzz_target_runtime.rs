@@ -22,7 +22,7 @@ impl ReturnCallback for FuzzValuesCollector {
         &self,
         _: &RefCell<Graph>,
         _: Env,
-        _: &Vec<VarId>,
+        _: &[VarId],
     ) {
     }
 }
