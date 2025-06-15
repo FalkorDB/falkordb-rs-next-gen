@@ -159,6 +159,7 @@ pub trait Validate {
 
 impl Validate for DynNode<'_, ExprIR> {
     #[allow(clippy::too_many_lines)]
+    #[allow(clippy::cognitive_complexity)]
     fn validate(
         self,
         env: &mut HashSet<u32>,
@@ -468,8 +469,20 @@ pub enum QueryIR {
     Where(DynTree<ExprIR>),
     Create(Pattern),
     Delete(Vec<DynTree<ExprIR>>, bool),
-    With(Vec<(VarId, DynTree<ExprIR>)>, bool),
-    Return(Vec<(VarId, DynTree<ExprIR>)>, bool),
+    With {
+        exprs: Vec<(VarId, DynTree<ExprIR>)>,
+        orderby: Vec<(DynTree<ExprIR>, bool)>,
+        skip: Option<DynTree<ExprIR>>,
+        limit: Option<DynTree<ExprIR>>,
+        write: bool,
+    },
+    Return {
+        exprs: Vec<(VarId, DynTree<ExprIR>)>,
+        orderby: Vec<(DynTree<ExprIR>, bool)>,
+        skip: Option<DynTree<ExprIR>>,
+        limit: Option<DynTree<ExprIR>>,
+        write: bool,
+    },
     Query(Vec<QueryIR>, bool),
 }
 
@@ -504,14 +517,14 @@ impl Display for QueryIR {
                 }
                 Ok(())
             }
-            Self::With(exprs, _) => {
+            Self::With { exprs, .. } => {
                 writeln!(f, "WITH:")?;
                 for (name, _) in exprs {
                     write!(f, "{}", name.as_str())?;
                 }
                 Ok(())
             }
-            Self::Return(exprs, _) => {
+            Self::Return { exprs, .. } => {
                 writeln!(f, "RETURN:")?;
                 for (name, _) in exprs {
                     write!(f, "{}", name.as_str())?;
@@ -671,7 +684,7 @@ impl QueryIR {
                 iter.next()
                     .map_or(Ok(()), |first| first.inner_validate(iter, env))
             }
-            Self::With(exprs, _) | Self::Return(exprs, _) => {
+            Self::With { exprs, .. } | Self::Return { exprs, .. } => {
                 for (_, expr) in exprs.iter() {
                     expr.root().validate(env)?;
                 }

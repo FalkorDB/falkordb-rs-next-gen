@@ -24,6 +24,9 @@ pub enum IR {
     ExpandInto(Rc<RelationshipPattern>),
     PathBuilder(Vec<Rc<PathPattern>>),
     Filter(DynTree<ExprIR>),
+    Sort(Vec<(DynTree<ExprIR>, bool)>),
+    Skip(DynTree<ExprIR>),
+    Limit(DynTree<ExprIR>),
     Aggregate(
         Vec<VarId>,
         Vec<(VarId, DynTree<ExprIR>)>,
@@ -53,6 +56,9 @@ impl Display for IR {
             Self::ExpandInto(rel) => write!(f, "ExpandInto {rel}"),
             Self::PathBuilder(_) => write!(f, "PathBuilder"),
             Self::Filter(_) => write!(f, "Filter"),
+            Self::Sort(_) => write!(f, "Sort"),
+            Self::Skip(_) => write!(f, "Skip"),
+            Self::Limit(_) => write!(f, "Limit"),
             Self::Aggregate(_, _, _) => write!(f, "Aggregate"),
             Self::Project(_) => write!(f, "Project"),
             Self::Commit => write!(f, "Commit"),
@@ -60,13 +66,8 @@ impl Display for IR {
     }
 }
 
+#[derive(Default)]
 pub struct Planner {}
-
-impl Default for Planner {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 impl Planner {
     #[must_use]
@@ -74,10 +75,7 @@ impl Planner {
         Self {}
     }
 
-    fn plan_match(
-        &self,
-        pattern: Pattern,
-    ) -> DynTree<IR> {
+    fn plan_match(pattern: Pattern) -> DynTree<IR> {
         if pattern.relationships.is_empty() && !pattern.nodes.is_empty() {
             let mut iter = pattern.nodes.into_iter().rev();
             let mut res = tree!(IR::NodeScan(iter.next().unwrap()));
@@ -90,18 +88,18 @@ impl Planner {
             return res;
         }
         if pattern.relationships.len() == 1 {
-            let rel = pattern.relationships[0].clone();
-            if rel.from.alias.id == rel.to.alias.id {
+            let relationship = pattern.relationships[0].clone();
+            if relationship.from.alias.id == relationship.to.alias.id {
                 let mut res = tree!(
-                    IR::ExpandInto(rel.clone()),
-                    tree!(IR::NodeScan(rel.from.clone()))
+                    IR::ExpandInto(relationship.clone()),
+                    tree!(IR::NodeScan(relationship.from.clone()))
                 );
                 if !pattern.paths.is_empty() {
                     res = tree!(IR::PathBuilder(pattern.paths), res);
                 }
                 return res;
             }
-            let mut res = tree!(IR::RelationshipScan(rel));
+            let mut res = tree!(IR::RelationshipScan(relationship));
             if !pattern.paths.is_empty() {
                 res = tree!(IR::PathBuilder(pattern.paths), res);
             }
@@ -111,8 +109,10 @@ impl Planner {
     }
 
     fn plan_project(
-        &self,
         exprs: Vec<(VarId, DynTree<ExprIR>)>,
+        orderby: Vec<(DynTree<ExprIR>, bool)>,
+        skip: Option<DynTree<ExprIR>>,
+        limit: Option<DynTree<ExprIR>>,
         write: bool,
     ) -> DynTree<IR> {
         let mut res = if exprs.iter().any(|e| e.1.is_aggregation()) {
@@ -131,6 +131,15 @@ impl Planner {
         } else {
             tree!(IR::Project(exprs))
         };
+        if !orderby.is_empty() {
+            res = tree!(IR::Sort(orderby), res);
+        }
+        if let Some(skip_expr) = skip {
+            res = tree!(IR::Skip(skip_expr), res);
+        }
+        if let Some(limit_expr) = limit {
+            res = tree!(IR::Limit(limit_expr), res);
+        }
         if write {
             res = tree!(IR::Commit, res);
         }
@@ -145,13 +154,21 @@ impl Planner {
         let iter = &mut q.into_iter().rev();
         let mut res = self.plan(iter.next().unwrap());
         let mut idx = res.root().idx();
-        if matches!(res.node(&idx).data(), IR::Commit) {
+        while matches!(res.node(&idx).data(), IR::Commit)
+            || matches!(res.node(&idx).data(), IR::Sort(_))
+            || matches!(res.node(&idx).data(), IR::Skip(_))
+            || matches!(res.node(&idx).data(), IR::Limit(_))
+        {
             idx = res.node(&idx).child(0).idx();
         }
         for e in iter {
             let n = self.plan(e);
             idx = res.node_mut(&idx).push_child_tree(n);
-            if matches!(res.node(&idx).data(), IR::Commit) {
+            while matches!(res.node(&idx).data(), IR::Commit)
+                || matches!(res.node(&idx).data(), IR::Sort(_))
+                || matches!(res.node(&idx).data(), IR::Skip(_))
+                || matches!(res.node(&idx).data(), IR::Limit(_))
+            {
                 idx = res.node(&idx).child(0).idx();
             }
         }
@@ -179,20 +196,33 @@ impl Planner {
                                 .chain(pattern.relationships.iter().map(|r| r.alias.clone()))
                                 .collect()
                         ),
-                        self.plan_match(pattern)
+                        Self::plan_match(pattern)
                     )
                 } else {
-                    self.plan_match(pattern)
+                    Self::plan_match(pattern)
                 }
             }
             QueryIR::Unwind(expr, alias) => tree!(IR::Unwind(expr, alias)),
-            QueryIR::Merge(pattern) => tree!(IR::Merge(pattern.clone()), self.plan_match(pattern)),
+            QueryIR::Merge(pattern) => tree!(IR::Merge(pattern.clone()), Self::plan_match(pattern)),
             QueryIR::Where(expr) => tree!(IR::Filter(expr)),
             QueryIR::Create(pattern) => tree!(IR::Create(pattern)),
             QueryIR::Delete(exprs, is_detach) => tree!(IR::Delete(exprs, is_detach)),
-            QueryIR::With(exprs, write) | QueryIR::Return(exprs, write) => {
-                self.plan_project(exprs, write)
+            QueryIR::With {
+                exprs,
+                orderby,
+                skip,
+                limit,
+                write,
+                ..
             }
+            | QueryIR::Return {
+                exprs,
+                orderby,
+                skip,
+                limit,
+                write,
+                ..
+            } => Self::plan_project(exprs, orderby, skip, limit, write),
             QueryIR::Query(q, write) => self.plan_query(q, write),
         }
     }

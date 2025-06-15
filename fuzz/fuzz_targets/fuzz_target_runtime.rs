@@ -6,8 +6,7 @@ use graph::{
     GraphBLAS::{GrB_Mode, GrB_init},
     ast::VarId,
     functions::init_functions,
-    graph::Graph,
-    matrix,
+    graph::{Graph, Plan},
     runtime::{ReturnCallback, Runtime, evaluate_param},
     value::Env,
 };
@@ -20,26 +19,30 @@ struct FuzzValuesCollector;
 impl ReturnCallback for FuzzValuesCollector {
     fn return_value(
         &self,
-        graph: &RefCell<Graph>,
-        env: Env,
-        return_names: &Vec<VarId>,
+        _: &RefCell<Graph>,
+        _: Env,
+        _: &[VarId],
     ) {
     }
 }
 
-fuzz_target!(|data: &[u8]| -> Corpus {
-    unsafe {
-        GrB_init(GrB_Mode::GrB_NONBLOCKING as _);
-    }
-    init_functions();
-    let g = RefCell::new(Graph::new(1024, 1024));
-    let res = std::str::from_utf8(data).map_or(Corpus::Reject, |query| {
-        let Ok((plan, parameters, _, _)) = g.borrow().get_plan(query) else {
+fuzz_target!(init: {
+        unsafe {
+            GrB_init(GrB_Mode::GrB_NONBLOCKING as _);
+        }
+        init_functions().expect("Failed to init functions");
+    },|data: &[u8]| -> Corpus {
+        let g = RefCell::new(Graph::new(1024, 1024));
+    std::str::from_utf8(data).map_or(Corpus::Reject, |query| {
+        let Ok(Plan {
+            plan, parameters, ..
+        }) = g.borrow().get_plan(query)
+        else {
             return Corpus::Reject;
         };
         let Ok(parameters) = parameters
             .into_iter()
-            .map(|(k, v)| Ok((k, evaluate_param(v.root())?)))
+            .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
             .collect::<Result<HashMap<_, _>, String>>()
         else {
             return Corpus::Reject;
@@ -49,7 +52,5 @@ fuzz_target!(|data: &[u8]| -> Corpus {
             Ok(_) => Corpus::Keep,
             _ => Corpus::Reject,
         }
-    });
-    // matrix::shutdown();
-    res
+    })
 });

@@ -1,3 +1,5 @@
+#![allow(clippy::cast_precision_loss)]
+
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::HashSet;
@@ -295,7 +297,7 @@ impl Div for RcValue {
             }
             (Value::Float(a), Value::Float(b)) => {
                 if *b == 0.0 {
-                    Err(String::from("Division by zero"))
+                    Ok(Self::float(f64::NAN))
                 } else {
                     Ok(Self::float(a / b))
                 }

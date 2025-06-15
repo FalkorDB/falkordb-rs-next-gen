@@ -149,7 +149,7 @@ impl Remove<bool> for Vector<bool> {
 }
 
 pub struct Iter<T> {
-    iter: GxB_Iterator,
+    inner: GxB_Iterator,
     depleted: bool,
     phantom: PhantomData<T>,
 }
@@ -157,7 +157,7 @@ pub struct Iter<T> {
 impl<T> Drop for Iter<T> {
     fn drop(&mut self) {
         unsafe {
-            let info = GxB_Iterator_free(addr_of_mut!(self.iter));
+            let info = GxB_Iterator_free(addr_of_mut!(self.inner));
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }
@@ -175,7 +175,7 @@ impl<T> Iter<T> {
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             let info = GxB_Vector_Iterator_seek(iter, 0);
             Self {
-                iter,
+                inner: iter,
                 depleted: info == GrB_Info::GxB_EXHAUSTED,
                 phantom: PhantomData,
             }
@@ -191,8 +191,8 @@ impl Iterator for Iter<bool> {
             return None;
         }
         unsafe {
-            let row = GxB_Vector_Iterator_getIndex(self.iter);
-            self.depleted = GxB_Vector_Iterator_next(self.iter) == GrB_Info::GxB_EXHAUSTED;
+            let row = GxB_Vector_Iterator_getIndex(self.inner);
+            self.depleted = GxB_Vector_Iterator_next(self.inner) == GrB_Info::GxB_EXHAUSTED;
             Some(row)
         }
     }

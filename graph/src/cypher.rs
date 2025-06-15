@@ -50,6 +50,14 @@ enum Keyword {
     None,
     Single,
     Distinct,
+    Order,
+    By,
+    Asc,
+    Ascending,
+    Desc,
+    Descending,
+    Skip,
+    Limit,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -123,6 +131,14 @@ const KEYWORDS: &[(&str, Keyword)] = &[
     ("NONE", Keyword::None),
     ("SINGLE", Keyword::Single),
     ("DISTINCT", Keyword::Distinct),
+    ("ORDER", Keyword::Order),
+    ("BY", Keyword::By),
+    ("ASC", Keyword::Asc),
+    ("ASCENDING", Keyword::Ascending),
+    ("DESC", Keyword::Desc),
+    ("DESCENDING", Keyword::Descending),
+    ("SKIP", Keyword::Skip),
+    ("LIMIT", Keyword::Limit),
 ];
 
 const MIN_I64: [&str; 5] = [
@@ -528,8 +544,8 @@ impl<'a> Parser<'a> {
     ) -> Result<VarId, String> {
         if let Some(name) = &name {
             if let Some(id) = self.vars.get(name) {
-                if (ty == Type::Relationship && id.ty == Type::Node)
-                    || (ty == Type::Node && id.ty == Type::Relationship)
+                if (ty == Type::Relationship && (id.ty == Type::Node || id.ty == Type::Path))
+                    || (ty == Type::Node && (id.ty == Type::Relationship || id.ty == Type::Path))
                 {
                     return Err(format!(
                         "The alias '{}' was specified for both a node and a relationship.",
@@ -746,17 +762,130 @@ impl<'a> Parser<'a> {
         &mut self,
         write: bool,
     ) -> Result<QueryIR, String> {
-        if optional_match_token!(self.lexer, Star) {
-            return Ok(QueryIR::With(vec![], write));
-        }
-        Ok(QueryIR::With(self.parse_named_exprs()?, write))
+        let exprs = if optional_match_token!(self.lexer, Star) {
+            vec![]
+        } else {
+            self.parse_named_exprs()?
+        };
+        let orderby = if optional_match_token!(self.lexer => Order) {
+            self.parse_orderby()?
+        } else {
+            vec![]
+        };
+        let skip = if optional_match_token!(self.lexer => Skip) {
+            let skip = self.parse_expr()?;
+            match skip.root().data() {
+                ExprIR::Integer(i) => {
+                    if *i < 0 {
+                        return Err(self.lexer.format_error(
+                            "SKIP specified value of invalid type, must be a positive integer",
+                        ));
+                    }
+                }
+                ExprIR::Parameter(_) => {}
+                _ => {
+                    return Err(self.lexer.format_error(
+                        "SKIP specified value of invalid type, must be a positive integer",
+                    ));
+                }
+            }
+            Some(skip)
+        } else {
+            None
+        };
+        let limit = if optional_match_token!(self.lexer => Limit) {
+            let limit = self.parse_expr()?;
+            match limit.root().data() {
+                ExprIR::Integer(i) => {
+                    if *i < 0 {
+                        return Err(self.lexer.format_error(
+                            "LIMIT specified value of invalid type, must be a positive integer",
+                        ));
+                    }
+                }
+                ExprIR::Parameter(_) => {}
+                _ => {
+                    return Err(self.lexer.format_error(
+                        "LIMIT specified value of invalid type, must be a positive integer",
+                    ));
+                }
+            }
+            Some(limit)
+        } else {
+            None
+        };
+        Ok(QueryIR::With {
+            exprs,
+            orderby,
+            skip,
+            limit,
+            write,
+        })
     }
 
     fn parse_return_clause(
         &mut self,
         write: bool,
     ) -> Result<QueryIR, String> {
-        Ok(QueryIR::Return(self.parse_named_exprs()?, write))
+        let exprs = if optional_match_token!(self.lexer, Star) {
+            vec![]
+        } else {
+            self.parse_named_exprs()?
+        };
+        let orderby = if optional_match_token!(self.lexer => Order) {
+            self.parse_orderby()?
+        } else {
+            vec![]
+        };
+        let skip = if optional_match_token!(self.lexer => Skip) {
+            let skip = self.parse_expr()?;
+            match skip.root().data() {
+                ExprIR::Integer(i) => {
+                    if *i < 0 {
+                        return Err(self.lexer.format_error(
+                            "SKIP specified value of invalid type, must be a positive integer",
+                        ));
+                    }
+                }
+                ExprIR::Parameter(_) => {}
+                _ => {
+                    return Err(self.lexer.format_error(
+                        "SKIP specified value of invalid type, must be a positive integer",
+                    ));
+                }
+            }
+            Some(skip)
+        } else {
+            None
+        };
+        let limit = if optional_match_token!(self.lexer => Limit) {
+            let limit = self.parse_expr()?;
+            match limit.root().data() {
+                ExprIR::Integer(i) => {
+                    if *i < 0 {
+                        return Err(self.lexer.format_error(
+                            "LIMIT specified value of invalid type, must be a positive integer",
+                        ));
+                    }
+                }
+                ExprIR::Parameter(_) => {}
+                _ => {
+                    return Err(self.lexer.format_error(
+                        "LIMIT specified value of invalid type, must be a positive integer",
+                    ));
+                }
+            }
+            Some(limit)
+        } else {
+            None
+        };
+        Ok(QueryIR::Return {
+            exprs,
+            orderby,
+            skip,
+            limit,
+            write,
+        })
     }
 
     fn parse_pattern(
@@ -1356,7 +1485,7 @@ impl<'a> Parser<'a> {
             condition.unwrap_or_else(|| tree!(ExprIR::Bool(true))),
             expression.map_or_else(
                 || Ok::<_, String>(tree!(ExprIR::Var(self.create_var(Some(var), Type::Any)?))),
-                |v| Ok(v)
+                Ok
             )?
         ))
     }
@@ -1523,5 +1652,23 @@ impl<'a> Parser<'a> {
                 }
             }
         }
+    }
+
+    fn parse_orderby(&mut self) -> Result<Vec<(DynTree<ExprIR>, bool)>, String> {
+        match_token!(self.lexer => By);
+        let mut orderby = vec![];
+        loop {
+            let expr = self.parse_expr()?;
+            let is_ascending = optional_match_token!(self.lexer => Asc)
+                || optional_match_token!(self.lexer => Ascending);
+            let is_descending = !is_ascending
+                && (optional_match_token!(self.lexer => Desc)
+                    || optional_match_token!(self.lexer => Descending));
+            orderby.push((expr, is_descending));
+            if !optional_match_token!(self.lexer, Comma) {
+                break;
+            }
+        }
+        Ok(orderby)
     }
 }

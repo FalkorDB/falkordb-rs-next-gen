@@ -5,7 +5,6 @@ use std::{
 };
 
 use hashbrown::HashMap;
-use ordermap::OrderMap;
 use orx_tree::DynTree;
 use roaring::RoaringTreemap;
 
@@ -14,9 +13,34 @@ use crate::{
     cypher::Parser,
     matrix::{self, Dup, ElementWiseAdd, ElementWiseMultiply, Matrix, MxM, New, Remove, Set, Size},
     planner::{IR, Planner},
+    runtime::{PendingNode, PendingRelationship},
     tensor::Tensor,
     value::{RcValue, Value},
 };
+
+pub struct Plan {
+    pub plan: Rc<DynTree<IR>>,
+    pub parameters: HashMap<String, DynTree<ExprIR>>,
+    pub parse_duration: Duration,
+    pub plan_duration: Duration,
+}
+
+impl Plan {
+    #[must_use]
+    pub const fn new(
+        plan: Rc<DynTree<IR>>,
+        parameters: HashMap<String, DynTree<ExprIR>>,
+        parse_duration: Duration,
+        plan_duration: Duration,
+    ) -> Self {
+        Self {
+            plan,
+            parameters,
+            parse_duration,
+            plan_duration,
+        }
+    }
+}
 
 pub struct Graph {
     node_cap: u64,
@@ -28,7 +52,6 @@ pub struct Graph {
     deleted_nodes: RoaringTreemap,
     deleted_relationships: RoaringTreemap,
     zero_matrix: Matrix<bool>,
-    zero_tensor: Tensor,
     adjacancy_matrix: Matrix<bool>,
     node_labels_matrix: Matrix<bool>,
     relationship_type_matrix: Matrix<bool>,
@@ -60,7 +83,6 @@ impl Graph {
             deleted_nodes: RoaringTreemap::new(),
             deleted_relationships: RoaringTreemap::new(),
             zero_matrix: Matrix::<bool>::new(0, 0),
-            zero_tensor: Tensor::new(0, 0),
             adjacancy_matrix: Matrix::<bool>::new(n, n),
             node_labels_matrix: Matrix::<bool>::new(0, 0),
             relationship_type_matrix: Matrix::<bool>::new(0, 0),
@@ -125,15 +147,7 @@ impl Graph {
     pub fn get_plan(
         &self,
         query: &str,
-    ) -> Result<
-        (
-            Rc<DynTree<IR>>,
-            HashMap<String, DynTree<ExprIR>>,
-            Duration,
-            Duration,
-        ),
-        String,
-    > {
+    ) -> Result<Plan, String> {
         let mut parse_duration = Duration::ZERO;
         let mut plan_duration = Duration::ZERO;
 
@@ -143,7 +157,12 @@ impl Graph {
         match self.cache.lock() {
             Ok(mut cache) => {
                 if let Some(f) = cache.get(query) {
-                    Ok((f.clone(), parameters, parse_duration, plan_duration))
+                    Ok(Plan::new(
+                        f.clone(),
+                        parameters,
+                        parse_duration,
+                        plan_duration,
+                    ))
                 } else {
                     let start = Instant::now();
                     let ir = parser.parse()?;
@@ -155,7 +174,7 @@ impl Graph {
                     plan_duration = start.elapsed();
 
                     cache.insert(query.to_string(), value.clone());
-                    Ok((value, parameters, parse_duration, plan_duration))
+                    Ok(Plan::new(value, parameters, parse_duration, plan_duration))
                 }
             }
             Err(_) => Err("Failed to acquire read lock on cache".to_string()),
@@ -302,7 +321,7 @@ impl Graph {
 
     pub fn create_nodes(
         &mut self,
-        nodes: &HashMap<u64, (Vec<Rc<String>>, OrderMap<Rc<String>, RcValue>)>,
+        nodes: &HashMap<u64, PendingNode>,
     ) {
         self.node_count += nodes.len() as u64;
         self.reserved_node_count -= nodes.len() as u64;
@@ -316,7 +335,7 @@ impl Graph {
 
         self.resize();
 
-        for (id, (labels, attrs)) in nodes {
+        for (id, PendingNode { labels, properties }) in nodes {
             self.all_nodes_matrix.set(*id, *id, true);
 
             for label in labels {
@@ -328,7 +347,7 @@ impl Graph {
             }
 
             let mut map = HashMap::new();
-            for (key, value) in attrs {
+            for (key, value) in properties {
                 if **value == Value::Null {
                     continue;
                 }
@@ -430,7 +449,7 @@ impl Graph {
 
     pub fn create_relationships(
         &mut self,
-        relationships: &HashMap<u64, (Rc<String>, u64, u64, OrderMap<Rc<String>, RcValue>)>,
+        relationships: &HashMap<u64, PendingRelationship>,
     ) {
         self.relationship_count += relationships.len() as u64;
         self.reserved_relationship_count -= relationships.len() as u64;
@@ -442,26 +461,44 @@ impl Graph {
             self.deleted_relationships.remove(*id);
         }
 
-        for (id, (relationship_type, from, to, _)) in relationships {
-            let relationship_type_matrix = self.get_relationship_matrix_mut(relationship_type);
-            relationship_type_matrix.set(*from, *to, *id);
+        for (
+            id,
+            PendingRelationship {
+                type_name,
+                from: start,
+                to: end,
+                ..
+            },
+        ) in relationships
+        {
+            let relationship_type_matrix = self.get_relationship_matrix_mut(type_name);
+            relationship_type_matrix.set(*start, *end, *id);
         }
 
         self.resize();
 
-        for (id, (relationship_type, src, dest, attrs)) in relationships {
-            self.adjacancy_matrix.set(*src, *dest, true);
+        for (
+            id,
+            PendingRelationship {
+                type_name,
+                from: start,
+                to: end,
+                attrs: properties,
+            },
+        ) in relationships
+        {
+            self.adjacancy_matrix.set(*start, *end, true);
             self.relationship_type_matrix.set(
                 *id,
                 self.relationship_types
                     .iter()
-                    .position(|p| p.as_str() == relationship_type.as_str())
+                    .position(|p| p.as_str() == type_name.as_str())
                     .unwrap() as u64,
                 true,
             );
 
             let mut map = HashMap::new();
-            for (key, value) in attrs {
+            for (key, value) in properties {
                 if **value == Value::Null {
                     continue;
                 }
