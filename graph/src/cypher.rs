@@ -6,9 +6,9 @@ use crate::functions::{FnType, Type, get_functions};
 use crate::tree;
 use crate::value::RcValue;
 use falkordb_macro::parse_binary_expr;
-use hashbrown::HashMap;
+use hashbrown::{HashMap, HashSet};
+use ordermap::OrderSet;
 use orx_tree::{DynTree, NodeRef};
-use std::collections::HashSet;
 use std::num::IntErrorKind;
 use std::rc::Rc;
 use std::str::Chars;
@@ -1213,7 +1213,7 @@ impl<'a> Parser<'a> {
         }
         if self.lexer.current() == Token::Colon {
             let labels = tree!(ExprIR::List; self
-                .parse_node_labels()?
+                .parse_labels()?
                 .into_iter()
                 .map(|l| tree!(ExprIR::String(l))));
             return Ok(tree!(
@@ -1241,19 +1241,6 @@ impl<'a> Parser<'a> {
         ))
     }
 
-    fn parse_node_labels(&mut self) -> Result<Vec<Rc<String>>, String> {
-        let mut labels = Vec::new();
-
-        while optional_match_token!(self.lexer, Colon) {
-            labels.push(self.parse_ident()?);
-        }
-
-        if labels.is_empty() {
-            Err(self.lexer.format_error("Invalid input for node labels"))
-        } else {
-            Ok(labels)
-        }
-    }
     fn parse_power_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
         parse_binary_expr!(self.parse_unary_add_or_subtract_expr()?, Token::Power => Pow);
     }
@@ -1626,11 +1613,11 @@ impl<'a> Parser<'a> {
         Ok((Rc::new(relationship), dst))
     }
 
-    fn parse_labels(&mut self) -> Result<Vec<Rc<String>>, String> {
-        let mut labels = Vec::new();
+    fn parse_labels(&mut self) -> Result<OrderSet<Rc<String>>, String> {
+        let mut labels = OrderSet::new();
         while self.lexer.current() == Token::Colon {
             self.lexer.next();
-            labels.push(self.parse_ident()?);
+            labels.insert(self.parse_ident()?);
         }
         Ok(labels)
     }
@@ -1695,19 +1682,34 @@ impl<'a> Parser<'a> {
         let mut set_items = vec![];
         loop {
             let mut expr = self.parse_primary_expr()?;
-            while self.lexer.current() == Token::Dot {
-                self.lexer.next();
-                expr = self.parse_property_lookup(expr)?;
+            if self.lexer.current() == Token::Dot {
+                while self.lexer.current() == Token::Dot {
+                    self.lexer.next();
+                    expr = self.parse_property_lookup(expr)?;
+                }
+
+                let equals = optional_match_token!(self.lexer, Equal);
+                let plus_equals = if equals {
+                    false
+                } else {
+                    match_token!(self.lexer, PlusEqual);
+                    true
+                };
+                let value = self.parse_expr()?;
+                set_items.push((expr, value, plus_equals));
+            } else if self.lexer.current() == Token::Colon {
+                expr = tree!(
+                    ExprIR::FuncInvocation(
+                        get_functions()
+                            .get("node_set_labels", &FnType::Internal)
+                            .unwrap()
+                    ),
+                    expr,
+                    tree!(ExprIR::List; self.parse_labels()?.into_iter().map(|l| tree!(ExprIR::String(l))))
+                );
+                set_items.push((expr, tree!(ExprIR::Null), false));
             }
-            let equals = optional_match_token!(self.lexer, Equal);
-            let plus_equals = if equals {
-                false
-            } else {
-                match_token!(self.lexer, PlusEqual);
-                true
-            };
-            let value = self.parse_expr()?;
-            set_items.push((expr, value, plus_equals));
+
             if !optional_match_token!(self.lexer, Comma) {
                 break;
             }

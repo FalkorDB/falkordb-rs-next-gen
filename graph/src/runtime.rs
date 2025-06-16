@@ -10,7 +10,7 @@ use crate::value::{DisjointOrNull, Env, RcValue, ValuesDeduper};
 use crate::{ast::ExprIR, graph::Graph, planner::IR, value::Contains, value::Value};
 use hashbrown::{HashMap, HashSet};
 use once_cell::unsync::Lazy;
-use ordermap::OrderMap;
+use ordermap::{OrderMap, OrderSet};
 use orx_tree::{Dyn, DynNode, DynTree, NodeIdx, NodeRef};
 use std::cell::RefCell;
 use std::cmp::Ordering;
@@ -54,21 +54,6 @@ pub struct Stats {
     pub properties_removed: usize,
 }
 
-pub struct PendingNode {
-    pub labels: Vec<Rc<String>>,
-    pub properties: OrderMap<Rc<String>, RcValue>,
-}
-
-impl PendingNode {
-    #[must_use]
-    pub const fn new(
-        labels: Vec<Rc<String>>,
-        properties: OrderMap<Rc<String>, RcValue>,
-    ) -> Self {
-        Self { labels, properties }
-    }
-}
-
 pub struct PendingRelationship {
     pub from: u64,
     pub to: u64,
@@ -95,12 +80,13 @@ impl PendingRelationship {
 
 #[derive(Default)]
 pub struct Pending {
-    pub created_nodes: HashMap<u64, PendingNode>,
+    pub created_nodes: Vec<u64>,
     pub created_relationships: HashMap<u64, PendingRelationship>,
     pub deleted_nodes: HashSet<u64>,
     pub deleted_relationships: HashSet<(u64, u64, u64)>,
     pub set_nodes_properties: HashMap<u64, OrderMap<Rc<String>, RcValue>>,
     pub set_relationships_properties: HashMap<u64, OrderMap<Rc<String>, RcValue>>,
+    pub set_node_labels: HashMap<u64, OrderSet<Rc<String>>>,
 }
 
 impl Pending {
@@ -114,6 +100,14 @@ impl Pending {
             .entry(node_id)
             .or_default()
             .insert(key, value);
+    }
+
+    pub fn set_node_labels(
+        &mut self,
+        node_id: u64,
+        labels: OrderSet<Rc<String>>,
+    ) {
+        self.set_node_labels.insert(node_id, labels);
     }
 
     pub fn set_relationship_property(
@@ -862,8 +856,8 @@ impl<'a> Runtime<'a> {
                     return Ok(Box::new(self.run(&child_idx)?.try_map(move |vars| {
                         for (entity, value, _) in trees {
                             let value = self.run_expr(value.root(), &vars, false)?;
-                            let (entity, property) = match entity.root().data() {
-                                ExprIR::Var(name) => (vars.get(name).unwrap(), None),
+                            let (entity, property, labels) = match entity.root().data() {
+                                ExprIR::Var(name) => (vars.get(name).unwrap(), None, None),
                                 ExprIR::FuncInvocation(func) if func.name == "property" => {
                                     let ExprIR::String(property) = entity.root().child(1).data()
                                     else {
@@ -872,6 +866,24 @@ impl<'a> Runtime<'a> {
                                     (
                                         self.run_expr(entity.root().child(0), &vars, false)?,
                                         Some(property),
+                                        None,
+                                    )
+                                }
+                                ExprIR::FuncInvocation(func) if func.name == "node_set_labels" => {
+                                    let labels = entity
+                                        .root()
+                                        .child(1)
+                                        .children()
+                                        .filter_map(|c| match c.data() {
+                                            ExprIR::String(label) => Some(label.clone()),
+                                            _ => None,
+                                        })
+                                        .collect::<OrderSet<_>>();
+
+                                    (
+                                        self.run_expr(entity.root().child(0), &vars, false)?,
+                                        None,
+                                        Some(labels),
                                     )
                                 }
                                 _ => {
@@ -880,11 +892,16 @@ impl<'a> Runtime<'a> {
                             };
                             match &*entity {
                                 Value::Node(node) => {
-                                    self.pending.borrow_mut().set_node_property(
-                                        *node,
-                                        property.unwrap().clone(),
-                                        value,
-                                    );
+                                    if let Some(property) = property {
+                                        self.pending.borrow_mut().set_node_property(
+                                            *node,
+                                            property.clone(),
+                                            value,
+                                        );
+                                    }
+                                    if let Some(labels) = labels {
+                                        self.pending.borrow_mut().set_node_labels(*node, labels);
+                                    }
                                 }
                                 Value::Relationship(relationship, _, _) => {
                                     self.pending.borrow_mut().set_relationship_property(
@@ -1309,18 +1326,22 @@ impl<'a> Runtime<'a> {
         vars: &mut Env,
     ) -> Result<(), String> {
         for node in &pattern.nodes {
+            let id = self.g.borrow_mut().reserve_node();
+            self.pending.borrow_mut().created_nodes.push(id);
+            self.pending
+                .borrow_mut()
+                .set_node_labels(id, node.labels.clone());
             let properties = self.run_expr(node.attrs.root(), vars, false)?;
             match &*properties {
                 Value::Map(properties) => {
-                    let id = self.g.borrow_mut().reserve_node();
-                    self.pending.borrow_mut().created_nodes.insert(
-                        id,
-                        PendingNode::new(node.labels.clone(), properties.clone()),
-                    );
-                    vars.insert(&node.alias, RcValue::node(id));
+                    self.pending
+                        .borrow_mut()
+                        .set_nodes_properties
+                        .insert(id, properties.clone());
                 }
-                _ => return Err(String::from("Invalid node properties")),
+                _ => unreachable!(),
             }
+            vars.insert(&node.alias, RcValue::node(id));
         }
         for rel in &pattern.relationships {
             let (from_id, to_id) = {
@@ -1365,17 +1386,6 @@ impl<'a> Runtime<'a> {
     fn commit(&self) {
         if !self.pending.borrow().created_nodes.is_empty() {
             self.stats.borrow_mut().nodes_created += self.pending.borrow().created_nodes.len();
-            self.stats.borrow_mut().properties_set += self
-                .pending
-                .borrow()
-                .created_nodes
-                .iter()
-                .flat_map(|v| v.1.properties.values())
-                .map(|v| match **v {
-                    Value::Null => 0,
-                    _ => 1,
-                })
-                .sum::<usize>();
             self.g
                 .borrow_mut()
                 .create_nodes(&self.pending.borrow().created_nodes);
@@ -1421,7 +1431,11 @@ impl<'a> Runtime<'a> {
                 .borrow()
                 .set_nodes_properties
                 .values()
-                .map(ordermap::OrderMap::len)
+                .flat_map(|v| v.values())
+                .map(|v| match **v {
+                    Value::Null => 0,
+                    _ => 1,
+                })
                 .sum::<usize>();
             for (id, attrs) in &self.pending.borrow().set_nodes_properties {
                 for (key, value) in attrs {
@@ -1436,6 +1450,12 @@ impl<'a> Runtime<'a> {
                 }
             }
             self.pending.borrow_mut().set_nodes_properties.clear();
+        }
+        if !self.pending.borrow().set_node_labels.is_empty() {
+            for (id, labels) in &self.pending.borrow().set_node_labels {
+                self.g.borrow_mut().set_node_labels(*id, labels);
+            }
+            self.pending.borrow_mut().set_node_labels.clear();
         }
         if !self
             .pending

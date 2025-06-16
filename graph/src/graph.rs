@@ -5,7 +5,7 @@ use std::{
 };
 
 use hashbrown::HashMap;
-use ordermap::OrderMap;
+use ordermap::{OrderMap, OrderSet};
 use orx_tree::DynTree;
 use roaring::RoaringTreemap;
 
@@ -14,7 +14,7 @@ use crate::{
     cypher::Parser,
     matrix::{self, Dup, ElementWiseAdd, ElementWiseMultiply, Matrix, MxM, New, Remove, Set, Size},
     planner::{IR, Planner},
-    runtime::{PendingNode, PendingRelationship},
+    runtime::PendingRelationship,
     tensor::Tensor,
     value::{RcValue, Value},
 };
@@ -59,6 +59,7 @@ pub struct Graph {
     all_nodes_matrix: Matrix<bool>,
     labels_matices: HashMap<usize, Matrix<bool>>,
     relationship_matrices: HashMap<usize, Tensor>,
+    empty_map: OrderMap<u64, RcValue>,
     node_properties_map: HashMap<u64, OrderMap<u64, RcValue>>,
     relationship_properties_map: HashMap<u64, OrderMap<u64, RcValue>>,
     node_labels: Vec<Rc<String>>,
@@ -90,6 +91,7 @@ impl Graph {
             all_nodes_matrix: Matrix::<bool>::new(n, n),
             labels_matices: HashMap::new(),
             relationship_matrices: HashMap::new(),
+            empty_map: OrderMap::new(),
             node_properties_map: HashMap::new(),
             relationship_properties_map: HashMap::new(),
             node_labels: Vec::new(),
@@ -322,12 +324,12 @@ impl Graph {
 
     pub fn create_nodes(
         &mut self,
-        nodes: &HashMap<u64, PendingNode>,
+        nodes: &Vec<u64>,
     ) {
         self.node_count += nodes.len() as u64;
         self.reserved_node_count -= nodes.len() as u64;
 
-        for (id, _) in nodes {
+        for id in nodes {
             if self.deleted_nodes.is_empty() {
                 break;
             }
@@ -336,26 +338,8 @@ impl Graph {
 
         self.resize();
 
-        for (id, PendingNode { labels, properties }) in nodes {
+        for id in nodes {
             self.all_nodes_matrix.set(*id, *id, true);
-
-            for label in labels {
-                let label_matrix = self.get_label_matrix_mut(label);
-                label_matrix.set(*id, *id, true);
-                let label_id = self.get_label_id(label).unwrap();
-                self.resize();
-                self.node_labels_matrix.set(*id, label_id, true);
-            }
-
-            let mut map = OrderMap::new();
-            for (key, value) in properties {
-                if **value == Value::Null {
-                    continue;
-                }
-                let property_id = self.get_or_add_node_property_id(key);
-                map.insert(property_id, value.clone());
-            }
-            self.node_properties_map.insert(*id, map);
         }
     }
 
@@ -365,15 +349,26 @@ impl Graph {
         property_id: u64,
         value: RcValue,
     ) -> bool {
-        if !self.node_properties_map.contains_key(&id) {
-            self.node_properties_map.insert(id, OrderMap::new());
-        }
-        let properties = self.node_properties_map.get_mut(&id).unwrap();
+        let properties = self.node_properties_map.entry(id).or_default();
         if *value == Value::Null {
             properties.remove(&property_id);
             true
         } else {
             properties.insert(property_id, value).is_some()
+        }
+    }
+
+    pub fn set_node_labels(
+        &mut self,
+        id: u64,
+        labels: &OrderSet<Rc<String>>,
+    ) {
+        for label in labels {
+            let label_matrix = self.get_label_matrix_mut(label);
+            label_matrix.set(id, id, true);
+            let label_id = self.get_label_id(label).unwrap();
+            self.resize();
+            self.node_labels_matrix.set(id, label_id, true);
         }
     }
 
@@ -404,7 +399,7 @@ impl Graph {
 
     pub fn get_nodes(
         &self,
-        labels: &[Rc<String>],
+        labels: &OrderSet<Rc<String>>,
     ) -> matrix::Iter<bool> {
         if labels.is_empty() {
             return self.all_nodes_matrix.iter(0, u64::MAX);
@@ -450,9 +445,7 @@ impl Graph {
     ) -> Option<RcValue> {
         self.node_properties_map
             .get(&node_id)
-            .unwrap()
-            .get(&property_id)
-            .cloned()
+            .map_or_else(|| None, |properties| properties.get(&property_id).cloned())
     }
 
     pub fn reserve_relationship(&mut self) -> u64 {
@@ -583,8 +576,8 @@ impl Graph {
     pub fn get_relationships(
         &self,
         types: &[Rc<String>],
-        src_lables: &[Rc<String>],
-        dest_labels: &[Rc<String>],
+        src_lables: &OrderSet<Rc<String>>,
+        dest_labels: &OrderSet<Rc<String>>,
     ) -> matrix::Iter<bool> {
         let mut iter = types.iter();
         let mut m = if let Some(relationship_type) = iter.next() {
@@ -703,9 +696,7 @@ impl Graph {
         &self,
         id: u64,
     ) -> &OrderMap<u64, RcValue> {
-        self.node_properties_map
-            .get(&id)
-            .unwrap_or_else(|| panic!("Node with id {id} not found"))
+        self.node_properties_map.get(&id).unwrap_or(&self.empty_map)
     }
 
     pub fn get_relationship_properties(

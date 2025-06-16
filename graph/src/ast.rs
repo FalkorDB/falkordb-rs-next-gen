@@ -1,5 +1,7 @@
-use std::{collections::HashSet, fmt::Display, hash::Hash, rc::Rc};
+use std::{fmt::Display, hash::Hash, rc::Rc};
 
+use hashbrown::HashSet;
+use ordermap::OrderSet;
 use orx_tree::{Dfs, DynNode, DynTree, NodeRef};
 
 use crate::functions::{GraphFn, Type};
@@ -301,7 +303,7 @@ impl SupportAggregation for DynTree<ExprIR> {
 #[derive(Debug)]
 pub struct NodePattern {
     pub alias: VarId,
-    pub labels: Vec<Rc<String>>,
+    pub labels: OrderSet<Rc<String>>,
     pub attrs: Rc<DynTree<ExprIR>>,
 }
 
@@ -330,7 +332,7 @@ impl NodePattern {
     #[must_use]
     pub const fn new(
         alias: VarId,
-        labels: Vec<Rc<String>>,
+        labels: OrderSet<Rc<String>>,
         attrs: Rc<DynTree<ExprIR>>,
     ) -> Self {
         Self {

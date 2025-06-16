@@ -4,7 +4,7 @@
 #![allow(clippy::cast_precision_loss)]
 #![allow(clippy::cast_possible_truncation)]
 
-use crate::runtime::{PendingNode, PendingRelationship, Runtime};
+use crate::runtime::{PendingRelationship, Runtime};
 use crate::value::{RcValue, Value};
 use hashbrown::{HashMap, HashSet};
 use rand::Rng;
@@ -711,6 +711,13 @@ pub fn init_functions() -> Result<(), Functions> {
         FnType::Internal,
     );
     funcs.add(
+        "node_set_labels",
+        internal_node_has_labels,
+        false,
+        vec![Type::Node, Type::List(Box::new(Type::Any))],
+        FnType::Internal,
+    );
+    funcs.add(
         "regex_matches",
         internal_regex_matches,
         false,
@@ -767,11 +774,6 @@ fn property(
     let mut iter = args.into_iter();
     match (iter.next().as_deref(), iter.next().as_deref()) {
         (Some(Value::Node(node_id)), Some(Value::String(property))) => {
-            if let Some(node) = runtime.pending.borrow().created_nodes.get(node_id) {
-                if let Some(value) = node.properties.get(property) {
-                    return Ok(value.clone());
-                }
-            }
             if let Some(properties) = runtime.pending.borrow().set_nodes_properties.get(node_id) {
                 if let Some(value) = properties.get(property) {
                     return Ok(value.clone());
@@ -820,15 +822,9 @@ fn labels(
 ) -> Result<RcValue, String> {
     match args.into_iter().next().as_deref() {
         Some(Value::Node(node_id)) => {
-            if runtime.pending.borrow().created_nodes.contains_key(node_id) {
+            if let Some(labels) = runtime.pending.borrow().set_node_labels.get(node_id) {
                 return Ok(RcValue::list(
-                    runtime
-                        .pending
-                        .borrow()
-                        .created_nodes
-                        .get(node_id)
-                        .unwrap()
-                        .labels
+                    labels
                         .iter()
                         .map(|label| RcValue::string(label.clone()))
                         .collect(),
@@ -1714,20 +1710,27 @@ fn internal_node_has_labels(
     let mut iter = args.into_iter();
     match (iter.next().as_deref(), iter.next().as_deref()) {
         (Some(Value::Node(node_id)), Some(Value::List(required_labels))) => {
-            let actual_labels = if let Some(PendingNode { labels, .. }) =
-                runtime.pending.borrow().created_nodes.get(node_id)
-            {
-                labels
-                    .iter()
-                    .map(std::clone::Clone::clone)
-                    .collect::<HashSet<_>>()
-            } else {
-                runtime
-                    .g
-                    .borrow()
-                    .get_node_labels(*node_id)
-                    .collect::<HashSet<_>>()
-            };
+            let actual_labels = runtime
+                .pending
+                .borrow()
+                .set_node_labels
+                .get(node_id)
+                .map_or_else(
+                    || {
+                        runtime
+                            .g
+                            .borrow()
+                            .get_node_labels(*node_id)
+                            .collect::<HashSet<_>>()
+                    },
+                    |labels| {
+                        labels
+                            .iter()
+                            .map(std::clone::Clone::clone)
+                            .chain(runtime.g.borrow().get_node_labels(*node_id))
+                            .collect::<HashSet<_>>()
+                    },
+                );
             let all_labels_present = required_labels.iter().all(|label| {
                 if let Value::String(label_str) = &**label {
                     actual_labels.contains(label_str)
