@@ -1034,6 +1034,8 @@ def test_aggregation():
     res = query("UNWIND [1, 2, 3, 1, 2, 3] AS x RETURN sum(x), sum(distinct x)", compare_results=False)
     assert_result_set_equal_no_order(res, [[12, 6]])
     
+    res = query("UNWIND [[1, 1], [1, 2], [1, 3], [1, 1], [2, 1], [2, 2], [2, 3], [2, 1]] AS x RETURN x[0], sum(x[1]), sum(distinct x[1])", compare_results=False)
+    assert_result_set_equal_no_order(res, [[1, 7.0, 6.0], [2, 7.0, 6.0]])
 
 def test_case():
     res = query("RETURN CASE 1 + 2 WHEN 'a' THEN 1 END")

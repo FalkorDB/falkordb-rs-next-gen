@@ -246,12 +246,13 @@ impl<'a> Runtime<'a> {
         }
     }
 
-    #[instrument(name = "run_agg_expr", level = "debug", skip(self, ir), fields(expr_type = ?ir.data()))]
+    #[instrument(name = "run_agg_expr", level = "debug", skip(self, ir, group_key), fields(expr_type = ?ir.data()))]
     fn run_agg_expr(
         &self,
         ir: DynNode<ExprIR>,
         curr: &mut Env,
         acc: &mut Env,
+        group_key: u64,
     ) -> Result<(), String> {
         match ir.data() {
             ExprIR::FuncInvocation(func) if func.is_aggregate() => {
@@ -263,12 +264,17 @@ impl<'a> Runtime<'a> {
                         ));
                     }
                 };
+
+                if let ExprIR::Distinct(var) = ir.child(0).data() {
+                    curr.insert(var, RcValue::string(Rc::new(group_key.to_string())));
+                }
+
                 curr.insert(&key, acc.get(&key).unwrap_or_else(RcValue::null));
                 acc.insert(&key, self.run_expr(ir, curr, false)?);
             }
             _ => {
                 for child in ir.children() {
-                    self.run_agg_expr(child, curr, acc)?;
+                    self.run_agg_expr(child, curr, acc, group_key)?;
                 }
             }
         }
@@ -478,13 +484,22 @@ impl<'a> Runtime<'a> {
                     _ => RcValue::null(),
                 })
                 .ok_or_else(|| String::from("Pow operator requires at least one argument")),
-            ExprIR::Distinct => {
+            ExprIR::Distinct(v) => {
+                let group_id = env
+                    .get(v)
+                    .and_then(|rc| match &*rc {
+                        Value::String(s) => Some(s.clone()),
+                        _ => unreachable!(),
+                    })
+                    .unwrap();
                 let values = ir
                     .children()
                     .map(|ir| self.run_expr(ir, env, finalize_agg))
                     .collect::<Result<Vec<_>, _>>()?;
                 let mut value_dedupers = self.value_dedupers.borrow_mut();
-                let value_deduper = value_dedupers.entry(format!("{:?}", ir.idx())).or_default();
+                let value_deduper = value_dedupers
+                    .entry(format!("{:?}{}", ir.idx(), group_id))
+                    .or_default();
                 if value_deduper.is_seen(&values) {
                     return Ok(RcValue::list(vec![RcValue::null()]));
                 }
@@ -508,7 +523,7 @@ impl<'a> Runtime<'a> {
                     .children()
                     .map(|ir| self.run_expr(ir, env, finalize_agg))
                     .collect::<Result<Vec<_>, _>>()?;
-                if ir.num_children() == 2 && matches!(ir.child(0).data(), ExprIR::Distinct) {
+                if ir.num_children() == 2 && matches!(ir.child(0).data(), ExprIR::Distinct(_)) {
                     let arg = &args[0];
                     if let Value::List(values) = &**arg {
                         let mut values = values.clone();
@@ -1152,11 +1167,11 @@ impl<'a> Runtime<'a> {
                                 Ok::<Env, String>(return_vars)
                             },
                             Ok(env),
-                            move |x, acc| {
+                            move |group_key, x, acc| {
                                 let mut x = x?;
                                 let mut acc: Env = acc?;
                                 for (_, tree) in agg {
-                                    self.run_agg_expr(tree.root(), &mut x, &mut acc)?;
+                                    self.run_agg_expr(tree.root(), &mut x, &mut acc, group_key)?;
                                 }
                                 Ok(acc)
                             },

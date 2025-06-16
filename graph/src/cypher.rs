@@ -1083,7 +1083,10 @@ impl<'a> Parser<'a> {
                         if optional_match_token!(self.lexer, Star) {
                             let mut arg = tree!(ExprIR::Var(self.create_var(None, Type::Any)?));
                             if distinct {
-                                arg = tree!(ExprIR::Distinct, arg);
+                                arg = tree!(
+                                    ExprIR::Distinct(self.create_var(None, Type::String)?),
+                                    arg
+                                );
                             }
                             match_token!(self.lexer, RParen);
                             return Ok(tree!(ExprIR::FuncInvocation(func), arg));
@@ -1093,7 +1096,9 @@ impl<'a> Parser<'a> {
                             ExpressionListType::ZeroOrMoreClosedBy(RParen),
                         )?;
                         if distinct {
-                            args = vec![tree!(ExprIR::Distinct; args)];
+                            args = vec![
+                                tree!(ExprIR::Distinct(self.create_var(None, Type::String)?); args),
+                            ];
                         }
                         args.push(tree!(ExprIR::Var(self.create_var(None, Type::Any)?)));
                         return Ok(tree!(ExprIR::FuncInvocation(func); args));
