@@ -498,7 +498,7 @@ impl<'a> Runtime<'a> {
                     .collect::<Result<Vec<_>, _>>()?;
                 let mut value_dedupers = self.value_dedupers.borrow_mut();
                 let value_deduper = value_dedupers
-                    .entry(format!("{:?}{}", ir.idx(), group_id))
+                    .entry(format!("{:?}_{}", ir.idx(), group_id))
                     .or_default();
                 if value_deduper.is_seen(&values) {
                     return Ok(RcValue::list(vec![RcValue::null()]));
