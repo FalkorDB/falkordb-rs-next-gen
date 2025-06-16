@@ -32,9 +32,11 @@ where
         if !self.finished {
             for item in self.iter.by_ref() {
                 let key = (self.key_fn)(&item);
-                let mut hasher = DefaultHasher::new();
-                key.hash(&mut hasher);
-                let group_key = hasher.finish();
+                let group_key = {
+                    let mut h = DefaultHasher::new();
+                    key.hash(&mut h);
+                    h.finish()
+                };
 
                 self.cache
                     .entry(group_key)
