@@ -1008,7 +1008,7 @@ impl<'a> Parser<'a> {
         }
         match_token!(self.lexer => End);
         Ok(tree!(
-            ExprIR::FuncInvocation(get_functions().get("case", &FnType::Internal).unwrap()); children
+            ExprIR::FuncInvocation(get_functions().get("case", &FnType::Internal)?); children
         ))
     }
 
@@ -1070,13 +1070,12 @@ impl<'a> Parser<'a> {
 
                     let func = get_functions()
                         .get(&namespace_and_function, &FnType::Function)
-                        .or_else(|| {
+                        .or_else(|_| {
                             get_functions().get(
                                 &namespace_and_function,
                                 &FnType::Aggregation(RcValue::null()),
                             )
-                        })
-                        .ok_or_else(|| format!("Unknown function '{namespace_and_function}'"))?;
+                        })?;
 
                     let distinct = optional_match_token!(self.lexer => Distinct);
 
@@ -1217,11 +1216,7 @@ impl<'a> Parser<'a> {
                 .into_iter()
                 .map(|l| tree!(ExprIR::String(l))));
             return Ok(tree!(
-                ExprIR::FuncInvocation(
-                    get_functions()
-                        .get("node_has_labels", &FnType::Internal)
-                        .unwrap(),
-                ),
+                ExprIR::FuncInvocation(get_functions().get("node_has_labels", &FnType::Internal)?),
                 lhs,
                 labels
             ));
@@ -1235,7 +1230,7 @@ impl<'a> Parser<'a> {
     ) -> Result<DynTree<ExprIR>, String> {
         let ident = self.parse_ident()?;
         Ok(tree!(
-            ExprIR::FuncInvocation(get_functions().get("property", &FnType::Internal).unwrap()),
+            ExprIR::FuncInvocation(get_functions().get("property", &FnType::Internal)?),
             expr,
             tree!(ExprIR::String(ident))
         ))
@@ -1254,84 +1249,70 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_string_list_null_predicate_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
-        let mut vec = vec![self.parse_add_sub_expr()?];
+        let mut lhs = self.parse_add_sub_expr()?;
         loop {
             match self.lexer.current() {
                 Token::Keyword(Keyword::In, _) => {
                     self.lexer.next();
                     let rhs = self.parse_add_sub_expr()?;
-                    let lhs = vec.pop().unwrap();
-                    vec.push(tree!(ExprIR::In, lhs, rhs));
+                    lhs = tree!(ExprIR::In, lhs, rhs);
                 }
                 Token::Keyword(Keyword::Starts, _) => {
                     self.lexer.next();
                     match_token!(self.lexer => With);
                     let rhs = self.parse_add_sub_expr()?;
-                    let lhs = vec.pop().unwrap();
-                    vec.push(tree!(
+                    lhs = tree!(
                         ExprIR::FuncInvocation(
-                            get_functions()
-                                .get("starts_with", &FnType::Internal)
-                                .unwrap(),
+                            get_functions().get("starts_with", &FnType::Internal)?
                         ),
                         lhs,
                         rhs
-                    ));
+                    );
                 }
                 Token::Keyword(Keyword::Ends, _) => {
                     self.lexer.next();
                     match_token!(self.lexer => With);
                     let rhs = self.parse_add_sub_expr()?;
-                    let lhs = vec.pop().unwrap();
-                    vec.push(tree!(
+                    lhs = tree!(
                         ExprIR::FuncInvocation(
-                            get_functions().get("ends_with", &FnType::Internal).unwrap(),
+                            get_functions().get("ends_with", &FnType::Internal)?,
                         ),
                         lhs,
                         rhs
-                    ));
+                    );
                 }
                 Token::Keyword(Keyword::Contains, _) => {
                     self.lexer.next();
                     let rhs = self.parse_add_sub_expr()?;
-                    let lhs = vec.pop().unwrap();
-                    vec.push(tree!(
-                        ExprIR::FuncInvocation(
-                            get_functions().get("contains", &FnType::Internal).unwrap(),
-                        ),
+                    lhs = tree!(
+                        ExprIR::FuncInvocation(get_functions().get("contains", &FnType::Internal)?,),
                         lhs,
                         rhs
-                    ));
+                    );
                 }
                 Token::RegexMatches => {
                     self.lexer.next();
                     let rhs = self.parse_add_sub_expr()?;
-                    let lhs = vec.pop().unwrap();
-                    vec.push(tree!(
+                    lhs = tree!(
                         ExprIR::FuncInvocation(
-                            get_functions()
-                                .get("regex_matches", &FnType::Internal)
-                                .unwrap(),
+                            get_functions().get("regex_matches", &FnType::Internal)?,
                         ),
                         lhs,
                         rhs
-                    ));
+                    );
                 }
                 Token::Keyword(Keyword::Is, _) => {
                     self.lexer.next();
                     let is_not = tree!(ExprIR::Bool(optional_match_token!(self.lexer => Not)));
                     match_token!(self.lexer => Null);
-                    let lhs = vec.pop().unwrap();
-                    vec.push(tree!(
-                        ExprIR::FuncInvocation(
-                            get_functions().get("is_null", &FnType::Internal).unwrap(),
-                        ),
+                    lhs = tree!(
+                        ExprIR::FuncInvocation(get_functions().get("is_null", &FnType::Internal)?),
                         is_not,
                         lhs
-                    ));
+                    );
                 }
 
-                _ => return Ok(vec.pop().unwrap()),
+                _ => return Ok(lhs),
             }
         }
     }
@@ -1693,9 +1674,7 @@ impl<'a> Parser<'a> {
             } else if self.lexer.current() == Token::Colon {
                 expr = tree!(
                     ExprIR::FuncInvocation(
-                        get_functions()
-                            .get("node_set_labels", &FnType::Internal)
-                            .unwrap()
+                        get_functions().get("node_set_labels", &FnType::Internal)?
                     ),
                     expr,
                     tree!(ExprIR::List; self.parse_labels()?.into_iter().map(|l| tree!(ExprIR::String(l))))
@@ -1733,9 +1712,7 @@ impl<'a> Parser<'a> {
             } else if self.lexer.current() == Token::Colon {
                 expr = tree!(
                     ExprIR::FuncInvocation(
-                        get_functions()
-                            .get("node_set_labels", &FnType::Internal)
-                            .unwrap()
+                        get_functions().get("node_set_labels", &FnType::Internal)?
                     ),
                     expr,
                     tree!(ExprIR::List; self.parse_labels()?.into_iter().map(|l| tree!(ExprIR::String(l))))

@@ -265,7 +265,7 @@ impl Functions {
         &self,
         name: &str,
         fn_type: &FnType,
-    ) -> Option<Rc<GraphFn>> {
+    ) -> Result<Rc<GraphFn>, String> {
         self.functions
             .get(name.to_lowercase().as_str())
             .and_then(|graph_fn| {
@@ -275,6 +275,7 @@ impl Functions {
                     None
                 }
             })
+            .ok_or_else(|| format!("Unknown function '{name}'"))
     }
 
     #[must_use]

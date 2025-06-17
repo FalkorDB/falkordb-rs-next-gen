@@ -725,36 +725,34 @@ impl<'a> Runtime<'a> {
                 }
                 Ok(Box::new(empty()))
             }
-            IR::Call(name, trees) => match self.functions.get(name, &FnType::Procedure) {
-                Some(func) => {
-                    let args = trees
-                        .iter()
-                        .map(|ir| self.run_expr(ir.root(), &Env::default(), false))
-                        .collect::<Result<Vec<_>, _>>()?;
-                    if !self.write && func.write {
-                        return Err(String::from(
-                            "graph.RO_QUERY is to be executed only on read-only queries",
-                        ));
-                    }
-                    let res = (func.func)(self, args)?;
-                    match &*res {
-                        Value::List(arr) => Ok(Box::new(arr.clone().into_iter().map(|v| {
-                            let mut env = Env::default();
-                            env.insert(
-                                &VarId {
-                                    name: Some(name.clone()),
-                                    id: 0,
-                                    ty: Type::Any,
-                                },
-                                v,
-                            );
-                            Ok(env)
-                        }))),
-                        _ => Err(format!("Function '{name}' must return a list")),
-                    }
+            IR::Call(name, trees) => {
+                let func = self.functions.get(name, &FnType::Procedure)?;
+                let args = trees
+                    .iter()
+                    .map(|ir| self.run_expr(ir.root(), &Env::default(), false))
+                    .collect::<Result<Vec<_>, _>>()?;
+                if !self.write && func.write {
+                    return Err(String::from(
+                        "graph.RO_QUERY is to be executed only on read-only queries",
+                    ));
                 }
-                None => Err(format!("Function '{name}' not found")),
-            },
+                let res = (func.func)(self, args)?;
+                match &*res {
+                    Value::List(arr) => Ok(Box::new(arr.clone().into_iter().map(|v| {
+                        let mut env = Env::default();
+                        env.insert(
+                            &VarId {
+                                name: Some(name.clone()),
+                                id: 0,
+                                ty: Type::Any,
+                            },
+                            v,
+                        );
+                        Ok(env)
+                    }))),
+                    _ => Err(format!("Function '{name}' must return a list")),
+                }
+            }
             IR::Unwind(tree, name) => {
                 if let Some(child_idx) = child0_idx {
                     return Ok(Box::new(self.run(&child_idx)?.try_flat_map(move |vars| {
