@@ -1,5 +1,7 @@
-use std::{collections::HashSet, fmt::Display, hash::Hash, rc::Rc};
+use std::{fmt::Display, hash::Hash, rc::Rc};
 
+use hashbrown::HashSet;
+use ordermap::OrderSet;
 use orx_tree::{Dfs, DynNode, DynTree, NodeRef};
 
 use crate::functions::{GraphFn, Type};
@@ -301,7 +303,7 @@ impl SupportAggregation for DynTree<ExprIR> {
 #[derive(Debug)]
 pub struct NodePattern {
     pub alias: VarId,
-    pub labels: Vec<Rc<String>>,
+    pub labels: OrderSet<Rc<String>>,
     pub attrs: Rc<DynTree<ExprIR>>,
 }
 
@@ -330,7 +332,7 @@ impl NodePattern {
     #[must_use]
     pub const fn new(
         alias: VarId,
-        labels: Vec<Rc<String>>,
+        labels: OrderSet<Rc<String>>,
         attrs: Rc<DynTree<ExprIR>>,
     ) -> Self {
         Self {
@@ -469,6 +471,8 @@ pub enum QueryIR {
     Where(DynTree<ExprIR>),
     Create(Pattern),
     Delete(Vec<DynTree<ExprIR>>, bool),
+    Set(Vec<(DynTree<ExprIR>, DynTree<ExprIR>, bool)>),
+    Remove(Vec<DynTree<ExprIR>>),
     With {
         exprs: Vec<(VarId, DynTree<ExprIR>)>,
         orderby: Vec<(DynTree<ExprIR>, bool)>,
@@ -514,6 +518,20 @@ impl Display for QueryIR {
                 writeln!(f, "DELETE:")?;
                 for expr in exprs {
                     write!(f, "{expr}")?;
+                }
+                Ok(())
+            }
+            Self::Set(items) => {
+                writeln!(f, "SET:")?;
+                for (target, value, _) in items {
+                    write!(f, "{target} = {value}")?;
+                }
+                Ok(())
+            }
+            Self::Remove(items) => {
+                writeln!(f, "REMOVE:")?;
+                for item in items {
+                    write!(f, "{item}")?;
                 }
                 Ok(())
             }
@@ -622,13 +640,22 @@ impl QueryIR {
                     env.insert(node.alias.id);
                 }
                 for relationship in &p.relationships {
+                    if relationship.types.len() != 1 {
+                        return Err(String::from(
+                            "Exactly one relationship type must be specified for each relation in a MERGE pattern.",
+                        ));
+                    }
                     relationship.attrs.root().validate(env)?;
                     env.insert(relationship.alias.id);
                 }
                 iter.next()
                     .map_or(Ok(()), |first| first.inner_validate(iter, env))
             }
-            Self::Where(expr) => expr.root().validate(env),
+            Self::Where(expr) => {
+                expr.root().validate(env)?;
+                iter.next()
+                    .map_or(Ok(()), |first| first.inner_validate(iter, env))
+            }
             Self::Create(p) => {
                 for path in &p.paths {
                     if env.contains(&path.var.id) {
@@ -680,6 +707,21 @@ impl QueryIR {
             Self::Delete(exprs, _) => {
                 for expr in exprs {
                     expr.root().validate(env)?;
+                }
+                iter.next()
+                    .map_or(Ok(()), |first| first.inner_validate(iter, env))
+            }
+            Self::Set(items) => {
+                for (target, value, _) in items {
+                    target.root().validate(env)?;
+                    value.root().validate(env)?;
+                }
+                iter.next()
+                    .map_or(Ok(()), |first| first.inner_validate(iter, env))
+            }
+            Self::Remove(items) => {
+                for item in items {
+                    item.root().validate(env)?;
                 }
                 iter.next()
                     .map_or(Ok(()), |first| first.inner_validate(iter, env))

@@ -149,7 +149,7 @@ def validate_function(func, expected_args_type):
     ("sign", [Type.INT | Type.FLOAT | Type.NULL]),
     ("sqrt", [Type.INT | Type.FLOAT | Type.NULL]),
     ("range", [Type.INT, Type.INT, Optional[Type.INT]]),
-    ("keys", [Type.MAP | Type.NULL]),
+    ("keys", [Type.MAP | Type.NODE | Type.RELATIONSHIP | Type.NULL]),
     ("toBoolean", [Type.BOOL | Type.STRING | Type.INT | Type.NULL])
 ])
 def test_functions(name, types):

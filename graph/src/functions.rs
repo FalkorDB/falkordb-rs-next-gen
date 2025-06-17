@@ -4,9 +4,10 @@
 #![allow(clippy::cast_precision_loss)]
 #![allow(clippy::cast_possible_truncation)]
 
-use crate::runtime::{PendingNode, PendingRelationship, Runtime};
+use crate::runtime::{PendingRelationship, Runtime};
 use crate::value::{RcValue, Value};
-use hashbrown::{HashMap, HashSet};
+use hashbrown::HashMap;
+use ordermap::OrderSet;
 use rand::Rng;
 use std::fmt::Display;
 use std::iter::repeat_with;
@@ -264,7 +265,7 @@ impl Functions {
         &self,
         name: &str,
         fn_type: &FnType,
-    ) -> Option<Rc<GraphFn>> {
+    ) -> Result<Rc<GraphFn>, String> {
         self.functions
             .get(name.to_lowercase().as_str())
             .and_then(|graph_fn| {
@@ -274,6 +275,7 @@ impl Functions {
                     None
                 }
             })
+            .ok_or_else(|| format!("Unknown function '{name}'"))
     }
 
     #[must_use]
@@ -605,7 +607,12 @@ pub fn init_functions() -> Result<(), Functions> {
         "keys",
         keys,
         false,
-        vec![Type::Union(vec![Type::Map, Type::Null])],
+        vec![Type::Union(vec![
+            Type::Map,
+            Type::Node,
+            Type::Relationship,
+            Type::Null,
+        ])],
         FnType::Function,
     );
     funcs.add(
@@ -711,6 +718,13 @@ pub fn init_functions() -> Result<(), Functions> {
         FnType::Internal,
     );
     funcs.add(
+        "node_set_labels",
+        internal_node_has_labels,
+        false,
+        vec![Type::Node, Type::List(Box::new(Type::Any))],
+        FnType::Internal,
+    );
+    funcs.add(
         "regex_matches",
         internal_regex_matches,
         false,
@@ -767,37 +781,37 @@ fn property(
     let mut iter = args.into_iter();
     match (iter.next().as_deref(), iter.next().as_deref()) {
         (Some(Value::Node(node_id)), Some(Value::String(property))) => {
-            if let Some(node) = runtime.pending.borrow().created_nodes.get(node_id) {
-                if let Some(value) = node.properties.get(property) {
+            if let Some(attrs) = runtime.pending.borrow().set_nodes_attrs.get(node_id) {
+                if let Some(value) = attrs.get(property) {
                     return Ok(value.clone());
                 }
             }
-            runtime.g.borrow().get_node_property_id(property).map_or(
+            runtime.g.borrow().get_node_attribute_id(property).map_or(
                 Ok(RcValue::null()),
                 |property_id| {
                     runtime
                         .g
                         .borrow()
-                        .get_node_property(*node_id, property_id)
+                        .get_node_attribute(*node_id, property_id)
                         .map_or(Ok(RcValue::null()), Ok)
                 },
             )
         }
         (Some(Value::Relationship(id, _, _)), Some(Value::String(property))) => {
-            if let Some(rel) = runtime.pending.borrow().created_relationships.get(id) {
-                if let Some(value) = rel.attrs.get(property) {
+            if let Some(attrs) = runtime.pending.borrow().set_relationships_attrs.get(id) {
+                if let Some(value) = attrs.get(property) {
                     return Ok(value.clone());
                 }
             }
             runtime
                 .g
                 .borrow()
-                .get_relationship_property_id(property)
+                .get_relationship_attribute_id(property)
                 .map_or(Ok(RcValue::null()), |property_id| {
                     runtime
                         .g
                         .borrow()
-                        .get_relationship_property(*id, property_id)
+                        .get_relationship_attribute(*id, property_id)
                         .map_or(Ok(RcValue::null()), Ok)
                 })
         }
@@ -815,27 +829,27 @@ fn labels(
 ) -> Result<RcValue, String> {
     match args.into_iter().next().as_deref() {
         Some(Value::Node(node_id)) => {
-            if runtime.pending.borrow().created_nodes.contains_key(node_id) {
-                return Ok(RcValue::list(
-                    runtime
-                        .pending
-                        .borrow()
-                        .created_nodes
-                        .get(node_id)
-                        .unwrap()
-                        .labels
-                        .iter()
-                        .map(|label| RcValue::string(label.clone()))
-                        .collect(),
-                ));
+            let mut labels = runtime
+                .g
+                .borrow()
+                .get_node_labels(*node_id)
+                .collect::<OrderSet<_>>();
+            labels.extend(
+                runtime
+                    .pending
+                    .borrow()
+                    .set_node_labels
+                    .get(node_id)
+                    .cloned()
+                    .unwrap_or_else(OrderSet::new),
+            );
+            if let Some(remove_labels) = runtime.pending.borrow().remove_node_labels.get(node_id) {
+                for label in remove_labels {
+                    labels.remove(label);
+                }
             }
             Ok(RcValue::list(
-                runtime
-                    .g
-                    .borrow()
-                    .get_node_label_ids(*node_id)
-                    .map(|label_id| RcValue::string(runtime.g.borrow().get_label_by_id(label_id)))
-                    .collect(),
+                labels.into_iter().map(RcValue::string).collect(),
             ))
         }
         Some(Value::Null) => Ok(RcValue::null()),
@@ -1545,13 +1559,17 @@ fn range(
             }
             let mut curr = *start;
             let step = *step;
+            let length = (end - start) / step + 1;
+            if length > u32::MAX as i64 {
+                return Err(String::from("Range too large"));
+            }
             Ok(RcValue::list(
                 repeat_with(move || {
                     let tmp = curr;
                     curr += step;
                     RcValue::int(tmp)
                 })
-                .take(((end - start) / step + 1) as usize)
+                .take(length as usize)
                 .collect(),
             ))
         }
@@ -1574,13 +1592,54 @@ fn coalesce(
 }
 
 fn keys(
-    _: &Runtime,
+    runtime: &Runtime,
     args: Vec<RcValue>,
 ) -> Result<RcValue, String> {
     match args.into_iter().next().as_deref() {
         Some(Value::Map(map)) => Ok(RcValue::list(
             map.keys().map(|k| RcValue::string(k.clone())).collect(),
         )),
+        Some(Value::Node(id)) => {
+            let g = runtime.g.borrow();
+            let mut actual: OrderSet<Rc<String>> = g
+                .get_node_attrs(*id)
+                .keys()
+                .map(|k| g.get_node_attribute_string(*k).unwrap())
+                .collect();
+            if let Some(attrs) = runtime.pending.borrow().set_nodes_attrs.get(id) {
+                for (k, v) in attrs {
+                    if matches!(&**v, Value::Null) {
+                        actual.remove(k);
+                    } else {
+                        actual.insert(k.clone());
+                    }
+                }
+            }
+            Ok(RcValue::list(
+                actual.into_iter().map(|s| RcValue::string(s)).collect(),
+            ))
+        }
+        Some(Value::Relationship(id, _, _)) => {
+            let g = runtime.g.borrow();
+            let mut actual: OrderSet<Rc<String>> = g
+                .get_relationship_attrs(*id)
+                .keys()
+                .map(|k| g.get_relationship_attribute_string(*k).unwrap())
+                .collect();
+            if let Some(attrs) = runtime.pending.borrow().set_relationships_attrs.get(id) {
+                for (k, v) in attrs {
+                    if matches!(&**v, Value::Null) {
+                        actual.remove(k);
+                    } else {
+                        actual.insert(k.clone());
+                    }
+                }
+            }
+            Ok(RcValue::list(
+                actual.into_iter().map(|s| RcValue::string(s)).collect(),
+            ))
+        }
+
         Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
@@ -1709,23 +1768,28 @@ fn internal_node_has_labels(
     let mut iter = args.into_iter();
     match (iter.next().as_deref(), iter.next().as_deref()) {
         (Some(Value::Node(node_id)), Some(Value::List(required_labels))) => {
-            let actual_labels = if let Some(PendingNode { labels, .. }) =
-                runtime.pending.borrow().created_nodes.get(node_id)
-            {
-                labels
-                    .iter()
-                    .map(std::clone::Clone::clone)
-                    .collect::<HashSet<_>>()
-            } else {
+            let mut labels = runtime
+                .g
+                .borrow()
+                .get_node_labels(*node_id)
+                .collect::<OrderSet<_>>();
+            labels.extend(
                 runtime
-                    .g
+                    .pending
                     .borrow()
-                    .get_node_labels(*node_id)
-                    .collect::<HashSet<_>>()
-            };
+                    .set_node_labels
+                    .get(node_id)
+                    .cloned()
+                    .unwrap_or_else(OrderSet::new),
+            );
+            if let Some(remove_labels) = runtime.pending.borrow().remove_node_labels.get(node_id) {
+                for label in remove_labels {
+                    labels.remove(label);
+                }
+            }
             let all_labels_present = required_labels.iter().all(|label| {
                 if let Value::String(label_str) = &**label {
-                    actual_labels.contains(label_str)
+                    labels.contains(label_str)
                 } else {
                     false
                 }
@@ -1823,7 +1887,7 @@ fn db_properties(
         runtime
             .g
             .borrow()
-            .get_properties()
+            .get_attrs()
             .map(|n| RcValue::string(n.clone()))
             .collect(),
     ))

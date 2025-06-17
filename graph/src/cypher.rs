@@ -6,9 +6,9 @@ use crate::functions::{FnType, Type, get_functions};
 use crate::tree;
 use crate::value::RcValue;
 use falkordb_macro::parse_binary_expr;
-use hashbrown::HashMap;
+use hashbrown::{HashMap, HashSet};
+use ordermap::OrderSet;
 use orx_tree::{DynTree, NodeRef};
-use std::collections::HashSet;
 use std::num::IntErrorKind;
 use std::rc::Rc;
 use std::str::Chars;
@@ -24,6 +24,8 @@ enum Keyword {
     Create,
     Detach,
     Delete,
+    Set,
+    Remove,
     Where,
     With,
     Return,
@@ -81,6 +83,7 @@ enum Token {
     Plus,
     Dash,
     Equal,
+    PlusEqual,
     NotEqual,
     LessThan,
     LessThanOrEqual,
@@ -105,6 +108,8 @@ const KEYWORDS: &[(&str, Keyword)] = &[
     ("CREATE", Keyword::Create),
     ("DETACH", Keyword::Detach),
     ("DELETE", Keyword::Delete),
+    ("SET", Keyword::Set),
+    ("REMOVE", Keyword::Remove),
     ("WHERE", Keyword::Where),
     ("WITH", Keyword::With),
     ("RETURN", Keyword::Return),
@@ -223,7 +228,10 @@ impl<'a> Lexer<'a> {
                 '^' => (Token::Power, 1),
                 '*' => (Token::Star, 1),
                 '/' => (Token::Slash, 1),
-                '+' => (Token::Plus, 1),
+                '+' => match chars.next() {
+                    Some('=') => (Token::PlusEqual, 2),
+                    _ => (Token::Plus, 1),
+                },
                 '-' => (Token::Dash, 1),
                 '=' => match chars.next() {
                     Some('~') => (Token::RegexMatches, 2),
@@ -620,7 +628,12 @@ impl<'a> Parser<'a> {
                 clauses.push(self.parse_reading_clasue()?);
             }
             while let Token::Keyword(
-                Keyword::Create | Keyword::Merge | Keyword::Delete | Keyword::Detach,
+                Keyword::Create
+                | Keyword::Merge
+                | Keyword::Delete
+                | Keyword::Detach
+                | Keyword::Set
+                | Keyword::Remove,
                 _,
             ) = self.lexer.current()
             {
@@ -687,6 +700,14 @@ impl<'a> Parser<'a> {
                 let is_detach = optional_match_token!(self.lexer => Detach);
                 match_token!(self.lexer => Delete);
                 self.parse_delete_clause(is_detach)
+            }
+            Token::Keyword(Keyword::Set, _) => {
+                self.lexer.next();
+                self.parse_set_clause()
+            }
+            Token::Keyword(Keyword::Remove, _) => {
+                self.lexer.next();
+                self.parse_remove_clause()
             }
             token => Err(self.lexer.format_error(&format!("Invalid input {token:?}"))),
         }
@@ -987,7 +1008,7 @@ impl<'a> Parser<'a> {
         }
         match_token!(self.lexer => End);
         Ok(tree!(
-            ExprIR::FuncInvocation(get_functions().get("case", &FnType::Internal).unwrap()); children
+            ExprIR::FuncInvocation(get_functions().get("case", &FnType::Internal)?); children
         ))
     }
 
@@ -1049,13 +1070,12 @@ impl<'a> Parser<'a> {
 
                     let func = get_functions()
                         .get(&namespace_and_function, &FnType::Function)
-                        .or_else(|| {
+                        .or_else(|_| {
                             get_functions().get(
                                 &namespace_and_function,
                                 &FnType::Aggregation(RcValue::null()),
                             )
-                        })
-                        .ok_or_else(|| format!("Unknown function '{namespace_and_function}'"))?;
+                        })?;
 
                     let distinct = optional_match_token!(self.lexer => Distinct);
 
@@ -1176,38 +1196,32 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_non_arithmetic_operator_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
-        let mut res = vec![self.parse_primary_expr()?];
+        let mut lhs = self.parse_primary_expr()?;
         loop {
             match self.lexer.current() {
                 Token::LBrace => {
                     self.lexer.next();
-                    let lhs = res.pop().unwrap();
-                    res.push(self.parse_list_operator_expression(lhs)?);
+                    lhs = self.parse_list_operator_expression(lhs)?;
                 }
                 Token::Dot => {
                     self.lexer.next();
-                    let lhs = res.pop().unwrap();
-                    res.push(self.parse_property_lookup(lhs)?);
+                    lhs = self.parse_property_lookup(lhs)?;
                 }
                 _ => break,
             }
         }
         if self.lexer.current() == Token::Colon {
             let labels = tree!(ExprIR::List; self
-                .parse_node_labels()?
+                .parse_labels()?
                 .into_iter()
                 .map(|l| tree!(ExprIR::String(l))));
             return Ok(tree!(
-                ExprIR::FuncInvocation(
-                    get_functions()
-                        .get("node_has_labels", &FnType::Internal)
-                        .unwrap(),
-                ),
-                res.pop().unwrap(),
+                ExprIR::FuncInvocation(get_functions().get("node_has_labels", &FnType::Internal)?),
+                lhs,
                 labels
             ));
         }
-        Ok(res.pop().unwrap())
+        Ok(lhs)
     }
 
     fn parse_property_lookup(
@@ -1216,25 +1230,12 @@ impl<'a> Parser<'a> {
     ) -> Result<DynTree<ExprIR>, String> {
         let ident = self.parse_ident()?;
         Ok(tree!(
-            ExprIR::FuncInvocation(get_functions().get("property", &FnType::Internal).unwrap()),
+            ExprIR::FuncInvocation(get_functions().get("property", &FnType::Internal)?),
             expr,
             tree!(ExprIR::String(ident))
         ))
     }
 
-    fn parse_node_labels(&mut self) -> Result<Vec<Rc<String>>, String> {
-        let mut labels = Vec::new();
-
-        while optional_match_token!(self.lexer, Colon) {
-            labels.push(self.parse_ident()?);
-        }
-
-        if labels.is_empty() {
-            Err(self.lexer.format_error("Invalid input for node labels"))
-        } else {
-            Ok(labels)
-        }
-    }
     fn parse_power_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
         parse_binary_expr!(self.parse_unary_add_or_subtract_expr()?, Token::Power => Pow);
     }
@@ -1248,84 +1249,70 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_string_list_null_predicate_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
-        let mut vec = vec![self.parse_add_sub_expr()?];
+        let mut lhs = self.parse_add_sub_expr()?;
         loop {
             match self.lexer.current() {
                 Token::Keyword(Keyword::In, _) => {
                     self.lexer.next();
                     let rhs = self.parse_add_sub_expr()?;
-                    let lhs = vec.pop().unwrap();
-                    vec.push(tree!(ExprIR::In, lhs, rhs));
+                    lhs = tree!(ExprIR::In, lhs, rhs);
                 }
                 Token::Keyword(Keyword::Starts, _) => {
                     self.lexer.next();
                     match_token!(self.lexer => With);
                     let rhs = self.parse_add_sub_expr()?;
-                    let lhs = vec.pop().unwrap();
-                    vec.push(tree!(
+                    lhs = tree!(
                         ExprIR::FuncInvocation(
-                            get_functions()
-                                .get("starts_with", &FnType::Internal)
-                                .unwrap(),
+                            get_functions().get("starts_with", &FnType::Internal)?
                         ),
                         lhs,
                         rhs
-                    ));
+                    );
                 }
                 Token::Keyword(Keyword::Ends, _) => {
                     self.lexer.next();
                     match_token!(self.lexer => With);
                     let rhs = self.parse_add_sub_expr()?;
-                    let lhs = vec.pop().unwrap();
-                    vec.push(tree!(
+                    lhs = tree!(
                         ExprIR::FuncInvocation(
-                            get_functions().get("ends_with", &FnType::Internal).unwrap(),
+                            get_functions().get("ends_with", &FnType::Internal)?,
                         ),
                         lhs,
                         rhs
-                    ));
+                    );
                 }
                 Token::Keyword(Keyword::Contains, _) => {
                     self.lexer.next();
                     let rhs = self.parse_add_sub_expr()?;
-                    let lhs = vec.pop().unwrap();
-                    vec.push(tree!(
-                        ExprIR::FuncInvocation(
-                            get_functions().get("contains", &FnType::Internal).unwrap(),
-                        ),
+                    lhs = tree!(
+                        ExprIR::FuncInvocation(get_functions().get("contains", &FnType::Internal)?,),
                         lhs,
                         rhs
-                    ));
+                    );
                 }
                 Token::RegexMatches => {
                     self.lexer.next();
                     let rhs = self.parse_add_sub_expr()?;
-                    let lhs = vec.pop().unwrap();
-                    vec.push(tree!(
+                    lhs = tree!(
                         ExprIR::FuncInvocation(
-                            get_functions()
-                                .get("regex_matches", &FnType::Internal)
-                                .unwrap(),
+                            get_functions().get("regex_matches", &FnType::Internal)?,
                         ),
                         lhs,
                         rhs
-                    ));
+                    );
                 }
                 Token::Keyword(Keyword::Is, _) => {
                     self.lexer.next();
                     let is_not = tree!(ExprIR::Bool(optional_match_token!(self.lexer => Not)));
                     match_token!(self.lexer => Null);
-                    let lhs = vec.pop().unwrap();
-                    vec.push(tree!(
-                        ExprIR::FuncInvocation(
-                            get_functions().get("is_null", &FnType::Internal).unwrap(),
-                        ),
+                    lhs = tree!(
+                        ExprIR::FuncInvocation(get_functions().get("is_null", &FnType::Internal)?),
                         is_not,
                         lhs
-                    ));
+                    );
                 }
 
-                _ => return Ok(vec.pop().unwrap()),
+                _ => return Ok(lhs),
             }
         }
     }
@@ -1607,11 +1594,11 @@ impl<'a> Parser<'a> {
         Ok((Rc::new(relationship), dst))
     }
 
-    fn parse_labels(&mut self) -> Result<Vec<Rc<String>>, String> {
-        let mut labels = Vec::new();
+    fn parse_labels(&mut self) -> Result<OrderSet<Rc<String>>, String> {
+        let mut labels = OrderSet::new();
         while self.lexer.current() == Token::Colon {
             self.lexer.next();
-            labels.push(self.parse_ident()?);
+            labels.insert(self.parse_ident()?);
         }
         Ok(labels)
     }
@@ -1670,5 +1657,77 @@ impl<'a> Parser<'a> {
             }
         }
         Ok(orderby)
+    }
+
+    fn parse_set_clause(&mut self) -> Result<QueryIR, String> {
+        let mut set_items = vec![];
+        loop {
+            let mut expr = self.parse_primary_expr()?;
+            if self.lexer.current() == Token::Dot {
+                while self.lexer.current() == Token::Dot {
+                    self.lexer.next();
+                    expr = self.parse_property_lookup(expr)?;
+                }
+                match_token!(self.lexer, Equal);
+                let value = self.parse_expr()?;
+                set_items.push((expr, value, false));
+            } else if self.lexer.current() == Token::Colon {
+                expr = tree!(
+                    ExprIR::FuncInvocation(
+                        get_functions().get("node_set_labels", &FnType::Internal)?
+                    ),
+                    expr,
+                    tree!(ExprIR::List; self.parse_labels()?.into_iter().map(|l| tree!(ExprIR::String(l))))
+                );
+                set_items.push((expr, tree!(ExprIR::Null), false));
+            } else {
+                let equals = optional_match_token!(self.lexer, Equal);
+                let plus_equals = if equals {
+                    false
+                } else {
+                    match_token!(self.lexer, PlusEqual);
+                    true
+                };
+                let value = self.parse_expr()?;
+                set_items.push((expr, value, !plus_equals));
+            }
+
+            if !optional_match_token!(self.lexer, Comma) {
+                break;
+            }
+        }
+        Ok(QueryIR::Set(set_items))
+    }
+
+    fn parse_remove_clause(&mut self) -> Result<QueryIR, String> {
+        let mut remove_items = vec![];
+        loop {
+            let mut expr = self.parse_primary_expr()?;
+            if self.lexer.current() == Token::Dot {
+                while self.lexer.current() == Token::Dot {
+                    self.lexer.next();
+                    expr = self.parse_property_lookup(expr)?;
+                }
+                remove_items.push(expr);
+            } else if self.lexer.current() == Token::Colon {
+                expr = tree!(
+                    ExprIR::FuncInvocation(
+                        get_functions().get("node_set_labels", &FnType::Internal)?
+                    ),
+                    expr,
+                    tree!(ExprIR::List; self.parse_labels()?.into_iter().map(|l| tree!(ExprIR::String(l))))
+                );
+                remove_items.push(expr);
+            } else {
+                return Err(self
+                    .lexer
+                    .format_error(format!("Invalid input {:?}", self.lexer.current()).as_str()));
+            }
+
+            if !optional_match_token!(self.lexer, Comma) {
+                break;
+            }
+        }
+        Ok(QueryIR::Remove(remove_items))
     }
 }
