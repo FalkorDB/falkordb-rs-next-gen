@@ -365,7 +365,11 @@ impl Graph {
     ) -> bool {
         let attrs = self.node_attrs.entry(id).or_default();
         if *value == Value::Null {
-            attrs.remove(&attr_id).is_some()
+            let removed = attrs.remove(&attr_id).is_some();
+            if attrs.is_empty() {
+                self.node_attrs.remove(&id);
+            }
+            removed
         } else {
             attrs.insert(attr_id, value).is_some()
         }
