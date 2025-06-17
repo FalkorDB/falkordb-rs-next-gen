@@ -739,6 +739,11 @@ impl QueryIR {
                 if !exprs.is_empty() {
                     env.clear();
                     for (name, _) in exprs {
+                        if env.contains(&name.id) {
+                            return Err(String::from(
+                                "Error: Multiple result columns with the same name are not supported.",
+                            ));
+                        }
                         env.insert(name.id);
                     }
                 }
