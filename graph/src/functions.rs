@@ -6,7 +6,8 @@
 
 use crate::runtime::{PendingRelationship, Runtime};
 use crate::value::{RcValue, Value};
-use hashbrown::{HashMap, HashSet};
+use hashbrown::HashMap;
+use ordermap::OrderSet;
 use rand::Rng;
 use std::fmt::Display;
 use std::iter::repeat_with;
@@ -827,21 +828,27 @@ fn labels(
 ) -> Result<RcValue, String> {
     match args.into_iter().next().as_deref() {
         Some(Value::Node(node_id)) => {
-            if let Some(labels) = runtime.pending.borrow().set_node_labels.get(node_id) {
-                return Ok(RcValue::list(
-                    labels
-                        .iter()
-                        .map(|label| RcValue::string(label.clone()))
-                        .collect(),
-                ));
+            let mut labels = runtime
+                .g
+                .borrow()
+                .get_node_labels(*node_id)
+                .collect::<OrderSet<_>>();
+            labels.extend(
+                runtime
+                    .pending
+                    .borrow()
+                    .set_node_labels
+                    .get(node_id)
+                    .cloned()
+                    .unwrap_or_else(OrderSet::new),
+            );
+            if let Some(remove_labels) = runtime.pending.borrow().remove_node_labels.get(node_id) {
+                for label in remove_labels {
+                    labels.remove(label);
+                }
             }
             Ok(RcValue::list(
-                runtime
-                    .g
-                    .borrow()
-                    .get_node_label_ids(*node_id)
-                    .map(|label_id| RcValue::string(runtime.g.borrow().get_label_by_id(label_id)))
-                    .collect(),
+                labels.into_iter().map(RcValue::string).collect(),
             ))
         }
         Some(Value::Null) => Ok(RcValue::null()),
@@ -1760,30 +1767,28 @@ fn internal_node_has_labels(
     let mut iter = args.into_iter();
     match (iter.next().as_deref(), iter.next().as_deref()) {
         (Some(Value::Node(node_id)), Some(Value::List(required_labels))) => {
-            let actual_labels = runtime
-                .pending
+            let mut labels = runtime
+                .g
                 .borrow()
-                .set_node_labels
-                .get(node_id)
-                .map_or_else(
-                    || {
-                        runtime
-                            .g
-                            .borrow()
-                            .get_node_labels(*node_id)
-                            .collect::<HashSet<_>>()
-                    },
-                    |labels| {
-                        labels
-                            .iter()
-                            .map(std::clone::Clone::clone)
-                            .chain(runtime.g.borrow().get_node_labels(*node_id))
-                            .collect::<HashSet<_>>()
-                    },
-                );
+                .get_node_labels(*node_id)
+                .collect::<OrderSet<_>>();
+            labels.extend(
+                runtime
+                    .pending
+                    .borrow()
+                    .set_node_labels
+                    .get(node_id)
+                    .cloned()
+                    .unwrap_or_else(OrderSet::new),
+            );
+            if let Some(remove_labels) = runtime.pending.borrow().remove_node_labels.get(node_id) {
+                for label in remove_labels {
+                    labels.remove(label);
+                }
+            }
             let all_labels_present = required_labels.iter().all(|label| {
                 if let Value::String(label_str) = &**label {
-                    actual_labels.contains(label_str)
+                    labels.contains(label_str)
                 } else {
                     false
                 }

@@ -84,6 +84,7 @@ pub struct Pending {
     pub set_nodes_attrs: HashMap<u64, OrderMap<Rc<String>, RcValue>>,
     pub set_relationships_attrs: HashMap<u64, OrderMap<Rc<String>, RcValue>>,
     pub set_node_labels: HashMap<u64, OrderSet<Rc<String>>>,
+    pub remove_node_labels: HashMap<u64, OrderSet<Rc<String>>>,
 }
 
 impl Pending {
@@ -105,6 +106,14 @@ impl Pending {
         labels: OrderSet<Rc<String>>,
     ) {
         self.set_node_labels.insert(node_id, labels);
+    }
+
+    pub fn remove_node_labels(
+        &mut self,
+        node_id: u64,
+        labels: OrderSet<Rc<String>>,
+    ) {
+        self.remove_node_labels.insert(node_id, labels);
     }
 
     pub fn set_relationship_property(
@@ -988,6 +997,9 @@ impl<'a> Runtime<'a> {
                                             RcValue::null(),
                                         );
                                     }
+                                    if let Some(labels) = labels {
+                                        self.pending.borrow_mut().remove_node_labels(*node, labels);
+                                    }
                                 }
                                 Value::Relationship(relationship, _, _) => {
                                     if let Some(property) = property {
@@ -1515,6 +1527,12 @@ impl<'a> Runtime<'a> {
                 self.g.borrow_mut().set_node_labels(*id, labels);
             }
             self.pending.borrow_mut().set_node_labels.clear();
+        }
+        if !self.pending.borrow().remove_node_labels.is_empty() {
+            for (id, labels) in &self.pending.borrow().remove_node_labels {
+                self.g.borrow_mut().remove_node_labels(*id, labels);
+            }
+            self.pending.borrow_mut().remove_node_labels.clear();
         }
         if !self.pending.borrow().set_relationships_attrs.is_empty() {
             self.stats.borrow_mut().properties_set += self

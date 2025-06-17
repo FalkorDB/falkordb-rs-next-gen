@@ -386,6 +386,22 @@ impl Graph {
         }
     }
 
+    pub fn remove_node_labels(
+        &mut self,
+        id: u64,
+        labels: &OrderSet<Rc<String>>,
+    ) {
+        for label in labels {
+            if !self.node_labels.contains(label) {
+                continue;
+            }
+            let label_matrix = self.get_label_matrix_mut(label);
+            label_matrix.set(id, id, true);
+            let label_id = self.get_label_id(label).unwrap();
+            self.node_labels_matrix.remove(id, label_id);
+        }
+    }
+
     pub fn delete_node(
         &mut self,
         id: u64,
