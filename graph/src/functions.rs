@@ -671,6 +671,17 @@ pub fn init_functions() -> Result<(), Functions> {
         vec![Type::Any],
         FnType::Aggregation(RcValue::null()),
     );
+    funcs.add(
+        "avg",
+        avg,
+        false,
+        vec![Type::Any],
+        FnType::Aggregation(RcValue::list(vec![
+            RcValue::float(0.0),
+            RcValue::int(0),
+            RcValue::bool(false),
+        ])),
+    );
 
     // Internal functions
     funcs.add(
@@ -964,6 +975,67 @@ fn min(
         }
         _ => unreachable!(),
     }
+}
+
+fn avg(
+    _: &Runtime,
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
+    // Convert int or float to f64
+    let to_f64 = |v: &Value| match v {
+        Value::Int(i) => *i as f64,
+        Value::Float(f) => *f,
+        _ => unreachable!("avg expects numeric value"),
+    };
+
+    let mut iter = args.into_iter();
+    match (iter.next().as_deref(), iter.next().as_deref()) {
+        (Some(val @ (Value::Int(_) | Value::Float(_))), Some(Value::List(vec))) => {
+            // Extract existing sum and count
+            let (Value::Float(sum), Value::Int(count), Value::Bool(had_overflow)) =
+                (&*vec[0], &*vec[1], &*vec[2])
+            else {
+                unreachable!("avg accumulator should be [sum, count]")
+            };
+
+            let count = *count + 1;
+
+            let overflow = *had_overflow || about_to_overflow(*sum, to_f64(val));
+
+            let sum = {
+                if overflow {
+                    // switch to incremental averaging
+                    let mut total = sum / count as f64;
+                    if *had_overflow {
+                        total *= (count - 1) as f64;
+                    }
+                    total += to_f64(val) / count as f64;
+                    total
+                } else {
+                    sum + to_f64(val)
+                }
+            };
+
+            Ok(RcValue::list(vec![
+                RcValue::float(sum),
+                RcValue::int(count),
+                RcValue::bool(overflow),
+            ]))
+        }
+        // distinct may pass null as a way to skip the value
+        (Some(Value::Null), Some(Value::List(vec))) => {
+            // If the first value is null, return the accumulator unchanged
+            Ok(RcValue::list(vec.clone()))
+        }
+        _ => unreachable!("avg expects numeric input"),
+    }
+}
+
+fn about_to_overflow(
+    a: f64,
+    b: f64,
+) -> bool {
+    a.signum() == b.signum() && a.abs() > (f64::MAX - b.abs())
 }
 
 fn value_to_integer(

@@ -508,17 +508,41 @@ impl<'a> Runtime<'a> {
             ExprIR::FuncInvocation(func) => {
                 if finalize_agg {
                     if let FnType::Aggregation(aggregation_return_type) = &func.fn_type {
-                        match ir.child(ir.num_children() - 1).data() {
-                            ExprIR::Var(key) => {
-                                return Ok(env
-                                    .get(key)
-                                    .unwrap_or_else(|| aggregation_return_type.clone()));
+                        let ExprIR::Var(key) = ir.child(ir.num_children() - 1).data() else {
+                            unreachable!(
+                                "Aggregation function invocation must end with an accumulator variable"
+                            );
+                        };
+                        let acc = env
+                            .get(key)
+                            .unwrap_or_else(|| aggregation_return_type.clone());
+
+                        return match (func.name.as_str(), &*acc) {
+                            ("avg", Value::List(vec)) if vec.len() == 3 => {
+                                let (Value::Float(sum), Value::Int(count), Value::Bool(overflow)) =
+                                    (&*vec[0], &*vec[1], &*vec[2])
+                                else {
+                                    unreachable!(
+                                        "avg function should have [sum, coun, overflow] format"
+                                    );
+                                };
+                                if *count == 0 {
+                                    Ok(RcValue::null())
+                                } else if *overflow {
+                                    Ok(RcValue::float(*sum))
+                                } else {
+                                    Ok(RcValue::float(sum / *count as f64))
+                                }
                             }
-                            _ => unreachable!(),
-                        }
+                            ("avg", _) => {
+                                unreachable!(
+                                    "avg function should have [sum, count, overflow] format"
+                                )
+                            }
+                            _ => Ok(acc),
+                        };
                     }
                 }
-
                 let mut args = ir
                     .children()
                     .map(|ir| self.run_expr(ir, env, finalize_agg))
