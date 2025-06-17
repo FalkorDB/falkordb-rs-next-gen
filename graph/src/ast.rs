@@ -640,6 +640,11 @@ impl QueryIR {
                     env.insert(node.alias.id);
                 }
                 for relationship in &p.relationships {
+                    if relationship.types.len() != 1 {
+                        return Err(String::from(
+                            "Exactly one relationship type must be specified for each relation in a MERGE pattern.",
+                        ));
+                    }
                     relationship.attrs.root().validate(env)?;
                     env.insert(relationship.alias.id);
                 }
