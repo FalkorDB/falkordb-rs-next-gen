@@ -395,7 +395,7 @@ impl Graph {
                 continue;
             }
             let label_matrix = self.get_label_matrix_mut(label);
-            label_matrix.set(id, id, true);
+            label_matrix.remove(id, id);
             let label_id = self.get_label_id(label).unwrap();
             self.node_labels_matrix.remove(id, label_id);
         }
@@ -665,9 +665,7 @@ impl Graph {
     ) -> Option<RcValue> {
         self.relationship_attrs
             .get(&relationship_id)
-            .unwrap()
-            .get(&attr_id)
-            .cloned()
+            .map_or_else(|| None, |attrs| attrs.get(&attr_id).cloned())
     }
 
     fn resize(&mut self) {
