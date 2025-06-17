@@ -365,8 +365,7 @@ impl Graph {
     ) -> bool {
         let attrs = self.node_attrs.entry(id).or_default();
         if *value == Value::Null {
-            attrs.remove(&attr_id);
-            true
+            attrs.remove(&attr_id).is_some()
         } else {
             attrs.insert(attr_id, value).is_some()
         }
@@ -548,8 +547,7 @@ impl Graph {
     ) -> bool {
         let attrs = self.relationship_attrs.entry(id).or_default();
         if *value == Value::Null {
-            attrs.remove(&attr_id);
-            true
+            attrs.remove(&attr_id).is_some()
         } else {
             attrs.insert(attr_id, value).is_some()
         }

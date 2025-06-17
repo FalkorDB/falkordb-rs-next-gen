@@ -1741,6 +1741,10 @@ impl<'a> Parser<'a> {
                     tree!(ExprIR::List; self.parse_labels()?.into_iter().map(|l| tree!(ExprIR::String(l))))
                 );
                 remove_items.push(expr);
+            } else {
+                return Err(self
+                    .lexer
+                    .format_error(format!("Invalid input {:?}", self.lexer.current()).as_str()));
             }
 
             if !optional_match_token!(self.lexer, Comma) {
