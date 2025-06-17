@@ -601,39 +601,32 @@ impl<'a> Runtime<'a> {
     ) -> Result<Box<dyn Iterator<Item = RcValue>>, String> {
         match ir.data() {
             ExprIR::FuncInvocation(func) if func.name == "range" => {
-                let start = self.run_expr(ir.child(0), env, false);
-                let end = self.run_expr(ir.child(1), env, false);
+                let start = self.run_expr(ir.child(0), env, false)?;
+                let end = self.run_expr(ir.child(1), env, false)?;
                 let step = ir
                     .get_child(2)
-                    .map_or_else(|| Ok(RcValue::int(1)), |c| self.run_expr(c, env, false));
-                match (start, end, step) {
-                    (Ok(start), Ok(end), Ok(step)) => {
-                        func.validate_args_type(&[start.clone(), end.clone(), step.clone()])?;
-                        match (&*start, &*end, &*step) {
-                            (Value::Int(start), Value::Int(end), Value::Int(step)) => {
-                                if step == &0 {
-                                    return Err(String::from(
-                                        "ArgumentError: step argument to range() can't be 0",
-                                    ));
-                                }
-                                if (start > end && step > &0) || (start < end && step < &0) {
-                                    return Ok(Box::new(empty()));
-                                }
-                                let mut curr = *start;
-                                let step = *step;
-                                return Ok(Box::new(
-                                    repeat_with(move || {
-                                        let tmp = curr;
-                                        curr += step;
-                                        RcValue::int(tmp)
-                                    })
-                                    .take(((end - start) / step + 1) as usize),
-                                ));
-                            }
-                            _ => {
-                                unreachable!();
-                            }
+                    .map_or_else(|| Ok(RcValue::int(1)), |c| self.run_expr(c, env, false))?;
+                func.validate_args_type(&[start.clone(), end.clone(), step.clone()])?;
+                match (&*start, &*end, &*step) {
+                    (Value::Int(start), Value::Int(end), Value::Int(step)) => {
+                        if step == &0 {
+                            return Err(String::from(
+                                "ArgumentError: step argument to range() can't be 0",
+                            ));
                         }
+                        if (start > end && step > &0) || (start < end && step < &0) {
+                            return Ok(Box::new(empty()));
+                        }
+                        let mut curr = *start;
+                        let step = *step;
+                        return Ok(Box::new(
+                            repeat_with(move || {
+                                let tmp = curr;
+                                curr += step;
+                                RcValue::int(tmp)
+                            })
+                            .take(((end - start) / step + 1) as usize),
+                        ));
                     }
                     _ => {
                         unreachable!();
