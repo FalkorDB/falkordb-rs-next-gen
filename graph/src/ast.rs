@@ -651,7 +651,11 @@ impl QueryIR {
                 iter.next()
                     .map_or(Ok(()), |first| first.inner_validate(iter, env))
             }
-            Self::Where(expr) => expr.root().validate(env),
+            Self::Where(expr) => {
+                expr.root().validate(env)?;
+                iter.next()
+                    .map_or(Ok(()), |first| first.inner_validate(iter, env))
+            }
             Self::Create(p) => {
                 for path in &p.paths {
                     if env.contains(&path.var.id) {
