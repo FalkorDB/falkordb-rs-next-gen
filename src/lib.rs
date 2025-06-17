@@ -135,7 +135,7 @@ fn compact_value_to_redis_value(
         }
         Value::Node(id) => {
             let mut props = Vec::new();
-            for (key, value) in g.borrow().get_node_properties(*id) {
+            for (key, value) in g.borrow().get_node_attrs(*id) {
                 let mut prop = Vec::new();
                 prop.push(RedisValue::Integer(*key as _));
                 if let RedisValue::Array(mut v) = compact_value_to_redis_value(g, value) {
@@ -159,7 +159,7 @@ fn compact_value_to_redis_value(
         }
         Value::Relationship(id, from, to) => {
             let mut props = Vec::new();
-            for (key, value) in g.borrow().get_relationship_properties(*id) {
+            for (key, value) in g.borrow().get_relationship_attrs(*id) {
                 let mut prop = Vec::new();
                 prop.push(RedisValue::Integer(*key as _));
                 if let RedisValue::Array(mut v) = compact_value_to_redis_value(g, value) {
@@ -228,7 +228,7 @@ fn verbose_value_to_redis_value(
         }
         Value::Node(id) => {
             let mut props = Vec::new();
-            for (key, value) in g.borrow().get_node_properties(*id) {
+            for (key, value) in g.borrow().get_node_attrs(*id) {
                 let mut prop = Vec::new();
                 prop.push(RedisValue::Integer(*key as _));
                 if let RedisValue::Array(mut v) = verbose_value_to_redis_value(g, value) {
@@ -249,7 +249,7 @@ fn verbose_value_to_redis_value(
         }
         Value::Relationship(id, from, to) => {
             let mut props = Vec::new();
-            for (key, value) in g.borrow().get_relationship_properties(*id) {
+            for (key, value) in g.borrow().get_relationship_attrs(*id) {
                 let mut prop = Vec::new();
                 prop.push(RedisValue::Integer(*key as _));
                 if let RedisValue::Array(mut v) = verbose_value_to_redis_value(g, value) {

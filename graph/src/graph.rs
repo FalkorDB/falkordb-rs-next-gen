@@ -60,12 +60,12 @@ pub struct Graph {
     labels_matices: HashMap<usize, Matrix<bool>>,
     relationship_matrices: HashMap<usize, Tensor>,
     empty_map: OrderMap<u64, RcValue>,
-    node_properties_map: HashMap<u64, OrderMap<u64, RcValue>>,
-    relationship_properties_map: HashMap<u64, OrderMap<u64, RcValue>>,
+    node_attrs: HashMap<u64, OrderMap<u64, RcValue>>,
+    relationship_attrs: HashMap<u64, OrderMap<u64, RcValue>>,
     node_labels: Vec<Rc<String>>,
     relationship_types: Vec<Rc<String>>,
-    node_properties: Vec<Rc<String>>,
-    relationship_properties: Vec<Rc<String>>,
+    node_attrs_name: Vec<Rc<String>>,
+    relationship_attrs_name: Vec<Rc<String>>,
     cache: Mutex<HashMap<String, Rc<DynTree<IR>>>>,
 }
 
@@ -92,12 +92,12 @@ impl Graph {
             labels_matices: HashMap::new(),
             relationship_matrices: HashMap::new(),
             empty_map: OrderMap::new(),
-            node_properties_map: HashMap::new(),
-            relationship_properties_map: HashMap::new(),
+            node_attrs: HashMap::new(),
+            relationship_attrs: HashMap::new(),
             node_labels: Vec::new(),
             relationship_types: Vec::new(),
-            node_properties: Vec::new(),
-            relationship_properties: Vec::new(),
+            node_attrs_name: Vec::new(),
+            relationship_attrs_name: Vec::new(),
             cache: Mutex::new(HashMap::new()),
         }
     }
@@ -121,10 +121,10 @@ impl Graph {
         self.relationship_types.iter()
     }
 
-    pub fn get_properties(&self) -> impl Iterator<Item = &Rc<String>> {
-        self.node_properties
+    pub fn get_attrs(&self) -> impl Iterator<Item = &Rc<String>> {
+        self.node_attrs_name
             .iter()
-            .chain(self.relationship_properties.iter())
+            .chain(self.relationship_attrs_name.iter())
     }
 
     pub fn get_label_id(
@@ -259,63 +259,70 @@ impl Graph {
         )
     }
 
-    pub fn get_node_property_id(
+    pub fn get_node_attribute_id(
         &self,
         key: &str,
     ) -> Option<u64> {
-        self.node_properties
+        self.node_attrs_name
             .iter()
             .position(|p| p.as_str() == key)
-            .map(|property_id| property_id as u64)
+            .map(|attr_id| attr_id as u64)
     }
 
-    pub fn get_node_property_string(
+    pub fn get_node_attribute_string(
         &self,
-        property_id: u64,
+        id: u64,
     ) -> Option<Rc<String>> {
-        self.node_properties.get(property_id as usize).cloned()
+        self.node_attrs_name.get(id as usize).cloned()
     }
 
-    pub fn get_or_add_node_property_id(
+    pub fn get_or_add_node_attribute_id(
         &mut self,
         key: &Rc<String>,
     ) -> u64 {
-        let property_id = self
-            .node_properties
+        let attr_id = self
+            .node_attrs_name
             .iter()
             .position(|p| p.as_str() == key.as_str())
             .unwrap_or_else(|| {
-                let len = self.node_properties.len();
-                self.node_properties.push(key.clone());
+                let len = self.node_attrs_name.len();
+                self.node_attrs_name.push(key.clone());
                 len
             });
-        property_id as u64
+        attr_id as u64
     }
 
-    pub fn get_or_add_relationship_property_id(
+    pub fn get_or_add_relationship_attribute_id(
         &mut self,
         key: &String,
     ) -> u64 {
-        let property_id = self
-            .relationship_properties
+        let attr_id = self
+            .relationship_attrs_name
             .iter()
             .position(|p| p.as_str() == key)
             .unwrap_or_else(|| {
-                let len = self.relationship_properties.len();
-                self.relationship_properties.push(Rc::new(key.clone()));
+                let len = self.relationship_attrs_name.len();
+                self.relationship_attrs_name.push(Rc::new(key.clone()));
                 len
             });
-        property_id as u64
+        attr_id as u64
     }
 
-    pub fn get_relationship_property_id(
+    pub fn get_relationship_attribute_id(
         &self,
         key: &String,
     ) -> Option<u64> {
-        self.relationship_properties
+        self.relationship_attrs_name
             .iter()
             .position(|p| p.as_str() == key)
-            .map(|property_id| property_id as u64)
+            .map(|attr_id| attr_id as u64)
+    }
+
+    pub fn get_relationship_attribute_string(
+        &self,
+        id: u64,
+    ) -> Option<Rc<String>> {
+        self.relationship_attrs_name.get(id as usize).cloned()
     }
 
     pub fn reserve_node(&mut self) -> u64 {
@@ -350,18 +357,18 @@ impl Graph {
         }
     }
 
-    pub fn set_node_property(
+    pub fn set_node_attribute(
         &mut self,
         id: u64,
-        property_id: u64,
+        attr_id: u64,
         value: RcValue,
     ) -> bool {
-        let properties = self.node_properties_map.entry(id).or_default();
+        let attrs = self.node_attrs.entry(id).or_default();
         if *value == Value::Null {
-            properties.remove(&property_id);
+            attrs.remove(&attr_id);
             true
         } else {
-            properties.insert(property_id, value).is_some()
+            attrs.insert(attr_id, value).is_some()
         }
     }
 
@@ -392,7 +399,7 @@ impl Graph {
             self.node_labels_matrix.remove(id, *label_id as _);
         }
 
-        self.node_properties_map.remove(&id);
+        self.node_attrs.remove(&id);
     }
 
     pub fn get_node_relationships(
@@ -445,14 +452,14 @@ impl Graph {
             .map(move |label_id| self.node_labels[label_id].clone())
     }
 
-    pub fn get_node_property(
+    pub fn get_node_attribute(
         &self,
         node_id: u64,
-        property_id: u64,
+        attr_id: u64,
     ) -> Option<RcValue> {
-        self.node_properties_map
+        self.node_attrs
             .get(&node_id)
-            .map_or_else(|| None, |properties| properties.get(&property_id).cloned())
+            .map_or_else(|| None, |attrs| attrs.get(&attr_id).cloned())
     }
 
     pub fn reserve_relationship(&mut self) -> u64 {
@@ -502,7 +509,6 @@ impl Graph {
                 type_name,
                 from: start,
                 to: end,
-                attrs: properties,
             },
         ) in relationships
         {
@@ -515,34 +521,21 @@ impl Graph {
                     .unwrap() as u64,
                 true,
             );
-
-            let mut map = OrderMap::new();
-            for (key, value) in properties {
-                if **value == Value::Null {
-                    continue;
-                }
-                let property_id = self.get_or_add_relationship_property_id(key);
-                map.insert(property_id, value.clone());
-            }
-            self.relationship_properties_map.insert(*id, map);
         }
     }
 
-    pub fn set_relationship_property(
+    pub fn set_relationship_attribute(
         &mut self,
         id: u64,
-        property_id: u64,
+        attr_id: u64,
         value: RcValue,
     ) -> bool {
-        if !self.relationship_properties_map.contains_key(&id) {
-            self.relationship_properties_map.insert(id, OrderMap::new());
-        }
-        let properties = self.relationship_properties_map.get_mut(&id).unwrap();
+        let attrs = self.relationship_attrs.entry(id).or_default();
         if *value == Value::Null {
-            properties.remove(&property_id);
+            attrs.remove(&attr_id);
             true
         } else {
-            properties.insert(property_id, value).is_some()
+            attrs.insert(attr_id, value).is_some()
         }
     }
 
@@ -651,15 +644,15 @@ impl Graph {
             .unwrap()
     }
 
-    pub fn get_relationship_property(
+    pub fn get_relationship_attribute(
         &self,
         relationship_id: u64,
-        property_id: u64,
+        attr_id: u64,
     ) -> Option<RcValue> {
-        self.relationship_properties_map
+        self.relationship_attrs
             .get(&relationship_id)
             .unwrap()
-            .get(&property_id)
+            .get(&attr_id)
             .cloned()
     }
 
@@ -699,19 +692,17 @@ impl Graph {
         }
     }
 
-    pub fn get_node_properties(
+    pub fn get_node_attrs(
         &self,
         id: u64,
     ) -> &OrderMap<u64, RcValue> {
-        self.node_properties_map.get(&id).unwrap_or(&self.empty_map)
+        self.node_attrs.get(&id).unwrap_or(&self.empty_map)
     }
 
-    pub fn get_relationship_properties(
+    pub fn get_relationship_attrs(
         &self,
         id: u64,
     ) -> &OrderMap<u64, RcValue> {
-        self.relationship_properties_map
-            .get(&id)
-            .unwrap_or_else(|| panic!("Relationship with id {id} not found"))
+        self.relationship_attrs.get(&id).unwrap_or(&self.empty_map)
     }
 }

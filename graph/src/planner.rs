@@ -211,7 +211,7 @@ impl Planner {
             QueryIR::Create(pattern) => tree!(IR::Create(pattern)),
             QueryIR::Delete(exprs, is_detach) => tree!(IR::Delete(exprs, is_detach)),
             QueryIR::Set(items) => tree!(IR::Set(items)),
-            QueryIR::Remove(expr) => tree!(IR::Remove(vec![expr])),
+            QueryIR::Remove(items) => tree!(IR::Remove(items)),
             QueryIR::Where(expr) => tree!(IR::Filter(expr)),
             QueryIR::With {
                 exprs,

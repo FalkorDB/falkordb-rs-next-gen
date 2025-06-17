@@ -605,7 +605,12 @@ pub fn init_functions() -> Result<(), Functions> {
         "keys",
         keys,
         false,
-        vec![Type::Union(vec![Type::Map, Type::Null])],
+        vec![Type::Union(vec![
+            Type::Map,
+            Type::Node,
+            Type::Relationship,
+            Type::Null,
+        ])],
         FnType::Function,
     );
     funcs.add(
@@ -774,37 +779,37 @@ fn property(
     let mut iter = args.into_iter();
     match (iter.next().as_deref(), iter.next().as_deref()) {
         (Some(Value::Node(node_id)), Some(Value::String(property))) => {
-            if let Some(properties) = runtime.pending.borrow().set_nodes_properties.get(node_id) {
-                if let Some(value) = properties.get(property) {
+            if let Some(attrs) = runtime.pending.borrow().set_nodes_attrs.get(node_id) {
+                if let Some(value) = attrs.get(property) {
                     return Ok(value.clone());
                 }
             }
-            runtime.g.borrow().get_node_property_id(property).map_or(
+            runtime.g.borrow().get_node_attribute_id(property).map_or(
                 Ok(RcValue::null()),
                 |property_id| {
                     runtime
                         .g
                         .borrow()
-                        .get_node_property(*node_id, property_id)
+                        .get_node_attribute(*node_id, property_id)
                         .map_or(Ok(RcValue::null()), Ok)
                 },
             )
         }
         (Some(Value::Relationship(id, _, _)), Some(Value::String(property))) => {
-            if let Some(rel) = runtime.pending.borrow().created_relationships.get(id) {
-                if let Some(value) = rel.attrs.get(property) {
+            if let Some(attrs) = runtime.pending.borrow().set_relationships_attrs.get(id) {
+                if let Some(value) = attrs.get(property) {
                     return Ok(value.clone());
                 }
             }
             runtime
                 .g
                 .borrow()
-                .get_relationship_property_id(property)
+                .get_relationship_attribute_id(property)
                 .map_or(Ok(RcValue::null()), |property_id| {
                     runtime
                         .g
                         .borrow()
-                        .get_relationship_property(*id, property_id)
+                        .get_relationship_attribute(*id, property_id)
                         .map_or(Ok(RcValue::null()), Ok)
                 })
         }
@@ -1575,13 +1580,58 @@ fn coalesce(
 }
 
 fn keys(
-    _: &Runtime,
+    runtime: &Runtime,
     args: Vec<RcValue>,
 ) -> Result<RcValue, String> {
     match args.into_iter().next().as_deref() {
         Some(Value::Map(map)) => Ok(RcValue::list(
             map.keys().map(|k| RcValue::string(k.clone())).collect(),
         )),
+        Some(Value::Node(id)) => {
+            let g = runtime.g.borrow();
+            let mut actual: Vec<RcValue> = g
+                .get_node_attrs(*id)
+                .keys()
+                .map(|k| RcValue::string(g.get_node_attribute_string(*k).unwrap()))
+                .collect();
+            if let Some(attrs) = runtime.pending.borrow().set_nodes_attrs.get(id) {
+                for (k, v) in attrs {
+                    if matches!(&**v, Value::Null) {
+                        if let Some(pos) =
+                            actual.iter().position(|x| *x == RcValue::string(k.clone()))
+                        {
+                            actual.remove(pos);
+                        }
+                    } else {
+                        actual.push(RcValue::string(k.clone()));
+                    }
+                }
+            }
+            Ok(RcValue::list(actual))
+        }
+        Some(Value::Relationship(id, _, _)) => {
+            let g = runtime.g.borrow();
+            let mut actual: Vec<RcValue> = g
+                .get_relationship_attrs(*id)
+                .keys()
+                .map(|k| RcValue::string(g.get_relationship_attribute_string(*k).unwrap()))
+                .collect();
+            if let Some(attrs) = runtime.pending.borrow().set_relationships_attrs.get(id) {
+                for (k, v) in attrs {
+                    if matches!(&**v, Value::Null) {
+                        if let Some(pos) =
+                            actual.iter().position(|x| *x == RcValue::string(k.clone()))
+                        {
+                            actual.remove(pos);
+                        }
+                    } else {
+                        actual.push(RcValue::string(k.clone()));
+                    }
+                }
+            }
+            Ok(RcValue::list(actual))
+        }
+
         Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
@@ -1831,7 +1881,7 @@ fn db_properties(
         runtime
             .g
             .borrow()
-            .get_properties()
+            .get_attrs()
             .map(|n| RcValue::string(n.clone()))
             .collect(),
     ))

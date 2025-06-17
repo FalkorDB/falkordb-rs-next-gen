@@ -1720,7 +1720,33 @@ impl<'a> Parser<'a> {
         Ok(QueryIR::Set(set_items))
     }
 
-    fn parse_remove_clause(&self) -> Result<QueryIR, String> {
-        todo!()
+    fn parse_remove_clause(&mut self) -> Result<QueryIR, String> {
+        let mut remove_items = vec![];
+        loop {
+            let mut expr = self.parse_primary_expr()?;
+            if self.lexer.current() == Token::Dot {
+                while self.lexer.current() == Token::Dot {
+                    self.lexer.next();
+                    expr = self.parse_property_lookup(expr)?;
+                }
+                remove_items.push(expr);
+            } else if self.lexer.current() == Token::Colon {
+                expr = tree!(
+                    ExprIR::FuncInvocation(
+                        get_functions()
+                            .get("node_set_labels", &FnType::Internal)
+                            .unwrap()
+                    ),
+                    expr,
+                    tree!(ExprIR::List; self.parse_labels()?.into_iter().map(|l| tree!(ExprIR::String(l))))
+                );
+                remove_items.push(expr);
+            }
+
+            if !optional_match_token!(self.lexer, Comma) {
+                break;
+            }
+        }
+        Ok(QueryIR::Remove(remove_items))
     }
 }
