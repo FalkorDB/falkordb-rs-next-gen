@@ -854,7 +854,7 @@ impl<'a> Runtime<'a> {
             IR::Set(trees) => {
                 if let Some(child_idx) = child0_idx {
                     return Ok(Box::new(self.run(&child_idx)?.try_map(move |vars| {
-                        for (entity, value, _) in trees {
+                        for (entity, value, replace) in trees {
                             let value = self.run_expr(value.root(), &vars, false)?;
                             let (entity, property, labels) = match entity.root().data() {
                                 ExprIR::Var(name) => (vars.get(name).unwrap(), None, None),
@@ -898,6 +898,28 @@ impl<'a> Runtime<'a> {
                                             property.clone(),
                                             value,
                                         );
+                                    } else if let Value::Map(map) = &*value {
+                                        if *replace {
+                                            for key in
+                                                self.g.borrow().get_node_properties(*node).keys()
+                                            {
+                                                self.pending.borrow_mut().set_node_property(
+                                                    *node,
+                                                    self.g
+                                                        .borrow()
+                                                        .get_node_property_string(*key)
+                                                        .unwrap(),
+                                                    RcValue::null(),
+                                                );
+                                            }
+                                        }
+                                        for (key, value) in map {
+                                            self.pending.borrow_mut().set_node_property(
+                                                *node,
+                                                key.clone(),
+                                                value.clone(),
+                                            );
+                                        }
                                     }
                                     if let Some(labels) = labels {
                                         self.pending.borrow_mut().set_node_labels(*node, labels);

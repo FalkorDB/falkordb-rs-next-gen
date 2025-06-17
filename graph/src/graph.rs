@@ -269,6 +269,13 @@ impl Graph {
             .map(|property_id| property_id as u64)
     }
 
+    pub fn get_node_property_string(
+        &self,
+        property_id: u64,
+    ) -> Option<Rc<String>> {
+        self.node_properties.get(property_id as usize).cloned()
+    }
+
     pub fn get_or_add_node_property_id(
         &mut self,
         key: &Rc<String>,

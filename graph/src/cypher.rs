@@ -1687,16 +1687,9 @@ impl<'a> Parser<'a> {
                     self.lexer.next();
                     expr = self.parse_property_lookup(expr)?;
                 }
-
-                let equals = optional_match_token!(self.lexer, Equal);
-                let plus_equals = if equals {
-                    false
-                } else {
-                    match_token!(self.lexer, PlusEqual);
-                    true
-                };
+                match_token!(self.lexer, Equal);
                 let value = self.parse_expr()?;
-                set_items.push((expr, value, plus_equals));
+                set_items.push((expr, value, false));
             } else if self.lexer.current() == Token::Colon {
                 expr = tree!(
                     ExprIR::FuncInvocation(
@@ -1708,6 +1701,16 @@ impl<'a> Parser<'a> {
                     tree!(ExprIR::List; self.parse_labels()?.into_iter().map(|l| tree!(ExprIR::String(l))))
                 );
                 set_items.push((expr, tree!(ExprIR::Null), false));
+            } else {
+                let equals = optional_match_token!(self.lexer, Equal);
+                let plus_equals = if equals {
+                    false
+                } else {
+                    match_token!(self.lexer, PlusEqual);
+                    true
+                };
+                let value = self.parse_expr()?;
+                set_items.push((expr, value, !plus_equals));
             }
 
             if !optional_match_token!(self.lexer, Comma) {
