@@ -1597,47 +1597,43 @@ fn keys(
         )),
         Some(Value::Node(id)) => {
             let g = runtime.g.borrow();
-            let mut actual: Vec<RcValue> = g
+            let mut actual: OrderSet<Rc<String>> = g
                 .get_node_attrs(*id)
                 .keys()
-                .map(|k| RcValue::string(g.get_node_attribute_string(*k).unwrap()))
+                .map(|k| g.get_node_attribute_string(*k).unwrap())
                 .collect();
             if let Some(attrs) = runtime.pending.borrow().set_nodes_attrs.get(id) {
                 for (k, v) in attrs {
                     if matches!(&**v, Value::Null) {
-                        if let Some(pos) =
-                            actual.iter().position(|x| *x == RcValue::string(k.clone()))
-                        {
-                            actual.remove(pos);
-                        }
+                        actual.remove(k);
                     } else {
-                        actual.push(RcValue::string(k.clone()));
+                        actual.insert(k.clone());
                     }
                 }
             }
-            Ok(RcValue::list(actual))
+            Ok(RcValue::list(
+                actual.into_iter().map(|s| RcValue::string(s)).collect(),
+            ))
         }
         Some(Value::Relationship(id, _, _)) => {
             let g = runtime.g.borrow();
-            let mut actual: Vec<RcValue> = g
+            let mut actual: OrderSet<Rc<String>> = g
                 .get_relationship_attrs(*id)
                 .keys()
-                .map(|k| RcValue::string(g.get_relationship_attribute_string(*k).unwrap()))
+                .map(|k| g.get_relationship_attribute_string(*k).unwrap())
                 .collect();
             if let Some(attrs) = runtime.pending.borrow().set_relationships_attrs.get(id) {
                 for (k, v) in attrs {
                     if matches!(&**v, Value::Null) {
-                        if let Some(pos) =
-                            actual.iter().position(|x| *x == RcValue::string(k.clone()))
-                        {
-                            actual.remove(pos);
-                        }
+                        actual.remove(k);
                     } else {
-                        actual.push(RcValue::string(k.clone()));
+                        actual.insert(k.clone());
                     }
                 }
             }
-            Ok(RcValue::list(actual))
+            Ok(RcValue::list(
+                actual.into_iter().map(|s| RcValue::string(s)).collect(),
+            ))
         }
 
         Some(Value::Null) => Ok(RcValue::null()),
