@@ -1559,13 +1559,17 @@ fn range(
             }
             let mut curr = *start;
             let step = *step;
+            let length = (end - start) / step + 1;
+            if length > u32::MAX as i64 {
+                return Err(String::from("Range too large"));
+            }
             Ok(RcValue::list(
                 repeat_with(move || {
                     let tmp = curr;
                     curr += step;
                     RcValue::int(tmp)
                 })
-                .take(((end - start) / step + 1) as usize)
+                .take(length as usize)
                 .collect(),
             ))
         }
