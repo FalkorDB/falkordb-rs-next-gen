@@ -151,7 +151,7 @@ jobs:
           CXX=clang++-20 CARGO_PROFILE_RELEASE_LTO=false cargo fuzz run fuzz_target_runtime -- -max_total_time=300
           CXX=clang++-20 CARGO_PROFILE_RELEASE_LTO=false cargo fuzz cmin fuzz_target_runtime
           CXX=clang++-20 CARGO_PROFILE_RELEASE_LTO=false cargo fuzz coverage fuzz_target_runtime
-          llvm-cov-20 export --format=lcov --instr-profile fuzz/coverage/fuzz_target_runtime/coverage.profdata target/aarch64-apple-darwin/coverage/aarch64-apple-darwin/release/fuzz_target_runtime > codecov.txt.all
+          llvm-cov-20 export --format=lcov --instr-profile fuzz/coverage/fuzz_target_runtime/coverage.profdata target/x86_64-unknown-linux-gnu/coverage/x86_64-unknown-linux-gnu/release/fuzz_target_runtime > codecov.txt.all
           lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@18283e04ce6e62d37312384ff67231eb8fd56d24
