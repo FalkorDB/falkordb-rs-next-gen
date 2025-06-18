@@ -266,7 +266,7 @@ impl<'a> Runtime<'a> {
                 };
 
                 if let ExprIR::Distinct(var) = ir.child(0).data() {
-                    curr.insert(var, RcValue::string(Rc::new(group_key.to_string())));
+                    curr.insert(var, RcValue::int(group_key as _));
                 }
 
                 curr.insert(&key, acc.get(&key).unwrap_or_else(RcValue::null));
@@ -488,7 +488,7 @@ impl<'a> Runtime<'a> {
                 let group_id = env
                     .get(v)
                     .and_then(|rc| match &*rc {
-                        Value::String(s) => Some(s.clone()),
+                        Value::Int(s) => Some(*s),
                         _ => unreachable!(),
                     })
                     .unwrap();
