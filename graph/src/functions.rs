@@ -9,19 +9,32 @@ use crate::value::{RcValue, Value};
 use hashbrown::HashMap;
 use ordermap::OrderSet;
 use rand::Rng;
-use std::fmt::Display;
+use std::fmt::{Debug, Display};
 use std::iter::repeat_with;
 use std::rc::Rc;
 use std::sync::OnceLock;
 
 type RuntimeFn = fn(&Runtime, Vec<RcValue>) -> Result<RcValue, String>;
 
-#[derive(Debug)]
 pub enum FnType {
     Function,
     Internal,
     Procedure,
-    Aggregation(RcValue),
+    Aggregation(RcValue, Option<Box<dyn Fn(RcValue) -> RcValue>>),
+}
+
+impl Debug for FnType {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        match self {
+            Self::Function => write!(f, "Function"),
+            Self::Internal => write!(f, "Internal"),
+            Self::Procedure => write!(f, "Procedure"),
+            Self::Aggregation(_, _) => write!(f, "Aggregation"),
+        }
+    }
 }
 
 impl PartialEq for FnType {
@@ -34,7 +47,7 @@ impl PartialEq for FnType {
             (Self::Function, Self::Function)
                 | (Self::Internal, Self::Internal)
                 | (Self::Procedure, Self::Procedure)
-                | (Self::Aggregation(_), Self::Aggregation(_))
+                | (Self::Aggregation(_, _), Self::Aggregation(_, _))
         )
     }
 }
@@ -131,7 +144,7 @@ impl GraphFn {
 
     #[must_use]
     pub const fn is_aggregate(&self) -> bool {
-        matches!(self.fn_type, FnType::Aggregation(_))
+        matches!(self.fn_type, FnType::Aggregation(_, _))
     }
 
     pub fn validate(
@@ -151,7 +164,7 @@ impl GraphFn {
                     ));
                 }
                 let most = match self.fn_type {
-                    FnType::Aggregation(_) => args_type.len() + 1,
+                    FnType::Aggregation(_, _) => args_type.len() + 1,
                     _ => args_type.len(),
                 };
                 if args > most {
@@ -285,7 +298,7 @@ impl Functions {
     ) -> bool {
         self.functions
             .get(name)
-            .is_some_and(|graph_fn| matches!(graph_fn.fn_type, FnType::Aggregation(_)))
+            .is_some_and(|graph_fn| matches!(graph_fn.fn_type, FnType::Aggregation(_, _)))
     }
 }
 
@@ -641,46 +654,49 @@ pub fn init_functions() -> Result<(), Functions> {
         collect,
         false,
         vec![Type::Any],
-        FnType::Aggregation(RcValue::list(vec![])),
+        FnType::Aggregation(RcValue::list(vec![]), None),
     );
     funcs.add(
         "count",
         count,
         false,
         vec![Type::Optional(Box::new(Type::Any))],
-        FnType::Aggregation(RcValue::int(0)),
+        FnType::Aggregation(RcValue::int(0), None),
     );
     funcs.add(
         "sum",
         sum,
         false,
         vec![Type::Any],
-        FnType::Aggregation(RcValue::float(0.0)),
+        FnType::Aggregation(RcValue::float(0.0), None),
     );
     funcs.add(
         "max",
         max,
         false,
         vec![Type::Any],
-        FnType::Aggregation(RcValue::null()),
+        FnType::Aggregation(RcValue::null(), None),
     );
     funcs.add(
         "min",
         min,
         false,
         vec![Type::Any],
-        FnType::Aggregation(RcValue::null()),
+        FnType::Aggregation(RcValue::null(), None),
     );
     funcs.add(
         "avg",
         avg,
         false,
         vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
-        FnType::Aggregation(RcValue::list(vec![
-            RcValue::float(0.0),
-            RcValue::int(0),
-            RcValue::bool(false),
-        ])),
+        FnType::Aggregation(
+            RcValue::list(vec![
+                RcValue::float(0.0),
+                RcValue::int(0),
+                RcValue::bool(false),
+            ]),
+            Some(Box::new(finalize_avg)),
+        ),
     );
 
     // Internal functions
@@ -1035,6 +1051,24 @@ fn about_to_overflow(
     b: f64,
 ) -> bool {
     a.signum() == b.signum() && a.abs() >= (f64::MAX - b.abs())
+}
+
+fn finalize_avg(value: RcValue) -> RcValue {
+    let Value::List(vec) = &*value else {
+        unreachable!("finalize_avg expects a list");
+    };
+    let (Value::Float(sum), Value::Int(count), Value::Bool(overflow)) =
+        (&*vec[0], &*vec[1], &*vec[2])
+    else {
+        unreachable!("avg function should have [sum, count, overflow] format");
+    };
+    if *count == 0 {
+        RcValue::null()
+    } else if *overflow {
+        RcValue::float(*sum)
+    } else {
+        RcValue::float(sum / *count as f64)
+    }
 }
 
 fn value_to_integer(

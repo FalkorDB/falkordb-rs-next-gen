@@ -1073,7 +1073,7 @@ impl<'a> Parser<'a> {
                         .or_else(|_| {
                             get_functions().get(
                                 &namespace_and_function,
-                                &FnType::Aggregation(RcValue::null()),
+                                &FnType::Aggregation(RcValue::null(), None),
                             )
                         })?;
 

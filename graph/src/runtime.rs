@@ -231,11 +231,11 @@ impl<'a> Runtime<'a> {
     ) {
         match ir.data() {
             ExprIR::FuncInvocation(func) if func.is_aggregate() => {
-                if let FnType::Aggregation(aggregation_return_type) = &func.fn_type {
+                if let FnType::Aggregation(zero, _) = &func.fn_type {
                     let ExprIR::Var(key) = ir.child(ir.num_children() - 1).data() else {
                         unreachable!();
                     };
-                    env.insert(key, aggregation_return_type.clone());
+                    env.insert(key, zero.clone());
                 }
             }
             _ => {
@@ -246,13 +246,13 @@ impl<'a> Runtime<'a> {
         }
     }
 
-    #[instrument(name = "run_agg_expr", level = "debug", skip(self, ir, group_key), fields(expr_type = ?ir.data()))]
+    #[instrument(name = "run_agg_expr", level = "debug", skip(self, ir), fields(expr_type = ?ir.data()))]
     fn run_agg_expr(
         &self,
         ir: DynNode<ExprIR>,
         curr: &mut Env,
         acc: &mut Env,
-        group_key: u64,
+        agg_group_key: u64,
     ) -> Result<(), String> {
         match ir.data() {
             ExprIR::FuncInvocation(func) if func.is_aggregate() => {
@@ -266,11 +266,11 @@ impl<'a> Runtime<'a> {
                 };
 
                 curr.insert(&key, acc.get(&key).unwrap_or_else(RcValue::null));
-                acc.insert(&key, self.run_expr(ir, curr, Some(group_key))?);
+                acc.insert(&key, self.run_expr(ir, curr, Some(agg_group_key))?);
             }
             _ => {
                 for child in ir.children() {
-                    self.run_agg_expr(child, curr, acc, group_key)?;
+                    self.run_agg_expr(child, curr, acc, agg_group_key)?;
                 }
             }
         }
@@ -501,39 +501,17 @@ impl<'a> Runtime<'a> {
             }
             ExprIR::FuncInvocation(func) => {
                 if agg_group_key.is_none() {
-                    if let FnType::Aggregation(aggregation_return_type) = &func.fn_type {
+                    if let FnType::Aggregation(_, finalize) = &func.fn_type {
                         let ExprIR::Var(key) = ir.child(ir.num_children() - 1).data() else {
                             unreachable!(
                                 "Aggregation function invocation must end with an accumulator variable"
                             );
                         };
-                        let acc = env
-                            .get(key)
-                            .unwrap_or_else(|| aggregation_return_type.clone());
+                        let acc = env.get(key).unwrap();
 
-                        return match (func.name.as_str(), &*acc) {
-                            ("avg", Value::List(vec)) if vec.len() == 3 => {
-                                let (Value::Float(sum), Value::Int(count), Value::Bool(overflow)) =
-                                    (&*vec[0], &*vec[1], &*vec[2])
-                                else {
-                                    unreachable!(
-                                        "avg function should have [sum, count, overflow] format"
-                                    );
-                                };
-                                if *count == 0 {
-                                    Ok(RcValue::null())
-                                } else if *overflow {
-                                    Ok(RcValue::float(*sum))
-                                } else {
-                                    Ok(RcValue::float(sum / *count as f64))
-                                }
-                            }
-                            ("avg", _) => {
-                                unreachable!(
-                                    "avg function should have [sum, count, overflow] format"
-                                )
-                            }
-                            _ => Ok(acc),
+                        return match finalize {
+                            Some(func) => Ok((func)(acc)),
+                            None => Ok(acc),
                         };
                     }
                 }
