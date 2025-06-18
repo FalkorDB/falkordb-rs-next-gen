@@ -995,7 +995,7 @@ fn avg(
             let (Value::Float(sum), Value::Int(count), Value::Bool(had_overflow)) =
                 (&*vec[0], &*vec[1], &*vec[2])
             else {
-                unreachable!("avg accumulator should be [sum, count]")
+                unreachable!("avg accumulator should be [sum, count, overflow]");
             };
 
             let count = *count + 1;
@@ -1035,7 +1035,7 @@ fn about_to_overflow(
     a: f64,
     b: f64,
 ) -> bool {
-    a.signum() == b.signum() && a.abs() > (f64::MAX - b.abs())
+    a.signum() == b.signum() && a.abs() >= (f64::MAX - b.abs())
 }
 
 fn value_to_integer(

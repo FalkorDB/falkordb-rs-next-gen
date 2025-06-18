@@ -523,7 +523,7 @@ impl<'a> Runtime<'a> {
                                     (&*vec[0], &*vec[1], &*vec[2])
                                 else {
                                     unreachable!(
-                                        "avg function should have [sum, coun, overflow] format"
+                                        "avg function should have [sum, count, overflow] format"
                                     );
                                 };
                                 if *count == 0 {
