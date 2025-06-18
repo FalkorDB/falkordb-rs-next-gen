@@ -251,16 +251,10 @@ impl Validate for DynNode<'_, ExprIR> {
             | ExprIR::Negate
             | ExprIR::Length
             | ExprIR::IsNode
-            | ExprIR::IsRelationship => {
+            | ExprIR::IsRelationship
+            | ExprIR::Distinct(_) => {
                 debug_assert_eq!(self.num_children(), 1);
                 self.child(0).validate(env)
-            }
-            ExprIR::Distinct(var) => {
-                debug_assert_eq!(self.num_children(), 1);
-                env.insert(var.id);
-                let res = self.child(0).validate(env);
-                env.remove(&var.id);
-                res
             }
             ExprIR::GetElements => {
                 debug_assert_eq!(self.num_children(), 3);
@@ -738,7 +732,7 @@ impl QueryIR {
                 }
                 if !exprs.is_empty() {
                     env.clear();
-                    let mut seen_aliases = std::collections::HashSet::new();
+                    let mut seen_aliases = HashSet::new();
                     for (name, _) in exprs {
                         let alias = name.as_str();
                         if !seen_aliases.insert(alias) {
