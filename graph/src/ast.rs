@@ -738,8 +738,10 @@ impl QueryIR {
                 }
                 if !exprs.is_empty() {
                     env.clear();
+                    let mut seen_aliases = std::collections::HashSet::new();
                     for (name, _) in exprs {
-                        if env.contains(&name.id) {
+                        let alias = name.as_str();
+                        if !seen_aliases.insert(alias) {
                             return Err(String::from(
                                 "Error: Multiple result columns with the same name are not supported.",
                             ));
