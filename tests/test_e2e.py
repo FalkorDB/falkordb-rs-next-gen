@@ -3,7 +3,7 @@ import sys
 from typing import Counter
 import common
 from falkordb import Node, Edge, Path
-from hypothesis import given, strategies as st, settings
+from hypothesis import given, strategies as st
 import itertools
 import math
 import pytest
@@ -60,6 +60,9 @@ def assert_result_set_equal_no_order(res, expected):
     assert len(res.result_set) == len(expected)
     for record in expected:
         assert record in res.result_set
+
+def assert_float_equal(f1, f2):
+    assert abs(f1 - f2) < 1e-10, f"Expected {f1} to be close to {f2}"
 
 
 def test_return_values():
@@ -1037,12 +1040,6 @@ def test_aggregation():
     
     res = query("UNWIND [[1, 1], [1, 2], [1, 3], [1, 1], [2, 1], [2, 2], [2, 3], [2, 1]] AS x RETURN x[0], sum(x[1]), sum(distinct x[1])", compare_results=False)
     assert_result_set_equal_no_order(res, [[1, 7.0, 6.0], [2, 7.0, 6.0]])
-    
-    res = query("UNWIND [] AS x RETURN avg(x)")
-    assert res.result_set == [[None]]
-    
-    res = query("UNWIND [1, 2, 2, 3, 3] AS x RETURN avg(distinct x)")
-    assert res.result_set == [[2.0]]
 
 
 @given(st.lists(st.integers(-10, 10)))
@@ -1052,45 +1049,69 @@ def test_avg_integers(a):
         assert res.result_set == [[None]]
     else:
         expected_avg = sum(a) / len(a)
-        assert abs(res.result_set[0][0] - expected_avg) < 1e-10
+        assert_float_equal(res.result_set[0][0], expected_avg)
+    
+    res = query("UNWIND $a AS x RETURN avg(distinct x)", params={"a": a})
+    if not a:
+        assert res.result_set == [[None]]
+    else:
+        a = list(set(a))
+        expected_avg = sum(a) / len(a)
+        assert_float_equal(res.result_set[0][0], expected_avg)
 
 @given(st.lists(st.floats(min_value=-10.0, max_value=10.0, allow_nan=False, allow_infinity=False, allow_subnormal=False)))
 def test_avg_floats(a):
-	res = query("UNWIND $a AS x RETURN avg(x)", params={"a": a})
-	if not a:
-		assert res.result_set == [[None]]
-	else:
-		expected_avg = sum(a) / len(a)
-		assert abs(res.result_set[0][0] - expected_avg) < 1e-10		
+    res = query("UNWIND $a AS x RETURN avg(x)", params={"a": a})
+    if not a:
+        assert res.result_set == [[None]]
+    else:
+        expected_avg = sum(a) / len(a)
+        assert_float_equal(res.result_set[0][0], expected_avg)
+    
+    res = query("UNWIND $a AS x RETURN avg(distinct x)", params={"a": a})
+    if not a:
+        assert res.result_set == [[None]]
+    else:
+        a = list(set(a))
+        expected_avg = sum(a) / len(a)
+        assert_float_equal(res.result_set[0][0], expected_avg)
         
 @given(st.lists(st.none() | st.integers(-10, 10) | st.floats(min_value=-10.0, max_value=10.0, allow_nan=False, allow_infinity=False, allow_subnormal=False)))
 def test_avg_mixed(a):
     res = query("UNWIND $a AS x RETURN avg(x)", params={"a": a})
-    valid_values = [x for x in a if x is not None]
-    expected = sum(valid_values) / len(valid_values) if valid_values else None
-    if expected is None:
+    if not any(True for x in a if x is not None):
         assert res.result_set == [[None]]
     else:
-        assert abs(res.result_set[0][0] - expected) < 1e-10
+        valid_values = [x for x in a if x is not None]
+        expected_avg = sum(valid_values) / len(valid_values)
+        assert_float_equal(res.result_set[0][0], expected_avg)
+
+    res = query("UNWIND $a AS x RETURN avg(distinct x)", params={"a": a})
+    if not any(True for x in a if x is not None):
+        assert res.result_set == [[None]]
+    else:
+        valid_values = list(set(x for x in a if x is not None))
+        expected_avg = sum(valid_values) / len(valid_values)
+        assert_float_equal(res.result_set[0][0], expected_avg)
 
 def test_avg_overflow():
-	# Test with very large values that might cause overflow
-	large_values = [1e30, 1e30, 1e30]
-	res = query("UNWIND $a AS x RETURN avg(x)", params={"a": large_values})
-	assert res.result_set[0][0] == 1e30
+    # Test with very large values that might cause overflow
+    large_values = [1e30, 1e30, 1e30]
+    res = query("UNWIND $a AS x RETURN avg(x)", params={"a": large_values})
+    assert res.result_set[0][0] == 1e30
 
-	# Test with very large values with different signs
-	mixed_large_values = [1e30, -1e30, 1e30]
-	res = query("UNWIND $a AS x RETURN avg(x)", params={"a": mixed_large_values})
-	expected = 1e30/3
-	assert abs(res.result_set[0][0] - expected) < 1e-10 * expected
+    # Test with very large values with different signs
+    mixed_large_values = [1e30, -1e30, 1e30]
+    res = query("UNWIND $a AS x RETURN avg(x)", params={"a": mixed_large_values})
+    expected = 1e30/3
+    assert abs(res.result_set[0][0] - expected) < 1e-10 * expected
 
-	# Test with values close to max float
-	max_float = sys.float_info.max / 10  # Using a smaller value to avoid overflow
-	near_max_values = [max_float, max_float/2, max_float/4]
-	res = query("UNWIND $a AS x RETURN avg(x)", params={"a": near_max_values})
-	expected = sum(near_max_values) / len(near_max_values)
-	assert abs(res.result_set[0][0] - expected) < expected * 1e-10
+    # Test with values close to max float
+    max_float = sys.float_info.max / 10  # Using a smaller value to avoid overflow
+    near_max_values = [max_float, max_float/2, max_float/4]
+    res = query("UNWIND $a AS x RETURN avg(x)", params={"a": near_max_values})
+    expected = sum(near_max_values) / len(near_max_values)
+    assert abs(res.result_set[0][0] - expected) < expected * 1e-10
 
 
 def test_case():
