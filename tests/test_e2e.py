@@ -1043,9 +1043,8 @@ def test_aggregation():
     
     res = query("UNWIND [1, 2, 2, 3, 3] AS x RETURN avg(distinct x)")
     assert res.result_set == [[2.0]]
-    
-    
-@settings(max_examples=10)
+
+
 @given(st.lists(st.integers(-10, 10)))
 def test_avg_integers(a):
     res = query("UNWIND $a AS x RETURN avg(x)", params={"a": a})
@@ -1064,12 +1063,7 @@ def test_avg_floats(a):
 		expected_avg = sum(a) / len(a)
 		assert abs(res.result_set[0][0] - expected_avg) < 1e-10		
         
-@given(st.lists(st.one_of(
-    st.integers(-10, 10),
-    st.floats(min_value=-10.0, max_value=10.0, allow_nan=False, allow_infinity=False, allow_subnormal=False),
-    st.none()
-)))
-
+@given(st.lists(st.none() | st.integers(-10, 10) | st.floats(min_value=-10.0, max_value=10.0, allow_nan=False, allow_infinity=False, allow_subnormal=False)))
 def test_avg_mixed(a):
     res = query("UNWIND $a AS x RETURN avg(x)", params={"a": a})
     valid_values = [x for x in a if x is not None]
@@ -1078,7 +1072,7 @@ def test_avg_mixed(a):
         assert res.result_set == [[None]]
     else:
         assert abs(res.result_set[0][0] - expected) < 1e-10
-	
+
 def test_avg_overflow():
 	# Test with very large values that might cause overflow
 	large_values = [1e30, 1e30, 1e30]
