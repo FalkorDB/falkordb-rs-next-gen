@@ -675,7 +675,7 @@ pub fn init_functions() -> Result<(), Functions> {
         "avg",
         avg,
         false,
-        vec![Type::Any],
+        vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
         FnType::Aggregation(RcValue::list(vec![
             RcValue::float(0.0),
             RcValue::int(0),
