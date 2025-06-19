@@ -23,7 +23,7 @@ pub enum FnType {
     Aggregation(RcValue, Option<Box<dyn Fn(RcValue) -> RcValue>>),
 }
 
-#[cfg_attr(tarpaulin, skip)]
+// LCOV_EXCL_START
 impl Debug for FnType {
     fn fmt(
         &self,
@@ -37,6 +37,7 @@ impl Debug for FnType {
         }
     }
 }
+// LCOV_EXCL_END
 
 impl PartialEq for FnType {
     fn eq(
