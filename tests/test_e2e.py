@@ -1096,14 +1096,14 @@ def test_avg_mixed(a):
 
 def test_avg_overflow():
     # Test with very large values that might cause overflow
-    large_values = [1e30, 1e30, 1e30]
+    large_values = [1e308, 1e308, 1e308]
     res = query("UNWIND $a AS x RETURN avg(x)", params={"a": large_values})
-    assert res.result_set[0][0] == 1e30
+    assert res.result_set[0][0] == 1e308
 
     # Test with very large values with different signs
-    mixed_large_values = [1e30, -1e30, 1e30]
+    mixed_large_values = [1e308, -1e308, 1e308]
     res = query("UNWIND $a AS x RETURN avg(x)", params={"a": mixed_large_values})
-    expected = 1e30/3
+    expected = 1e308/3
     assert abs(res.result_set[0][0] - expected) < 1e-10 * expected
 
     # Test with values close to max float
