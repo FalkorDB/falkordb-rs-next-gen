@@ -3,7 +3,7 @@
 #![allow(clippy::cast_possible_truncation)]
 #![allow(clippy::cast_precision_loss)]
 
-use crate::ast::{NodePattern, Pattern, QuantifierType, RelationshipPattern, VarId};
+use crate::ast::{NodePattern, QuantifierType, QueryGraph, RelationshipPattern, VarId};
 use crate::functions::{FnType, Functions, Type, get_functions};
 use crate::iter::{Aggregate, LazyReplace, TryFlatMap, TryMap};
 use crate::value::{DisjointOrNull, Env, RcValue, ValuesDeduper};
@@ -1182,7 +1182,38 @@ impl<'a> Runtime<'a> {
                         });
                     return Ok(Box::new(aggregator));
                 }
-                Ok(Box::new(empty()))
+                Ok(Box::new(
+                    once(Ok(Env::default()))
+                        .aggregate(
+                            move |vars| {
+                                let vars = vars.clone()?;
+                                let mut return_vars = Env::default();
+                                for (name, tree) in keys {
+                                    let value = self.run_expr(tree.root(), &vars, None)?;
+                                    return_vars.insert(name, value);
+                                }
+                                Ok::<Env, String>(return_vars)
+                            },
+                            Ok(env),
+                            move |group_key, x, acc| {
+                                let mut x = x?;
+                                let mut acc: Env = acc?;
+                                for (_, tree) in agg {
+                                    self.run_agg_expr(tree.root(), &mut x, &mut acc, group_key)?;
+                                }
+                                Ok(acc)
+                            },
+                            cache,
+                        )
+                        .map(move |(key, v)| {
+                            let mut vars = v?;
+                            vars.merge(key?);
+                            for (name, tree) in agg {
+                                vars.insert(name, self.run_expr(tree.root(), &vars, None)?);
+                            }
+                            Ok(vars)
+                        }),
+                ))
             }
             IR::Project(trees) => {
                 if let Some(child_idx) = child0_idx {
@@ -1237,6 +1268,18 @@ impl<'a> Runtime<'a> {
                 return Box::new(once(Err(e)));
             }
         };
+        let from_id = vars
+            .get(&relationship_pattern.from.alias)
+            .and_then(|v| match *v {
+                Value::Node(id) => Some(id),
+                _ => None,
+            });
+        let to_id = vars
+            .get(&relationship_pattern.to.alias)
+            .and_then(|v| match *v {
+                Value::Node(id) => Some(id),
+                _ => None,
+            });
         let iter = self.g.borrow().get_relationships(
             &relationship_pattern.types,
             &relationship_pattern.from.labels,
@@ -1245,6 +1288,12 @@ impl<'a> Runtime<'a> {
         Box::new(iter.flat_map(move |(src, dst)| {
             let vars = vars.clone();
             let attrs = attrs.clone();
+            if from_id.is_some() && from_id.unwrap() != src {
+                return vec![];
+            }
+            if to_id.is_some() && to_id.unwrap() != dst {
+                return vec![];
+            }
             self.g
                 .borrow()
                 .get_src_dest_relationships(src, dst, &relationship_pattern.types)
@@ -1364,9 +1413,7 @@ impl<'a> Runtime<'a> {
     ) -> Result<(), String> {
         for tree in trees {
             let value = self.run_expr(tree.root(), vars, None)?;
-            if let Some(value) = self.delete_entity(&value) {
-                return value;
-            }
+            self.delete_entity(&value)?;
         }
         Ok(())
     }
@@ -1374,7 +1421,7 @@ impl<'a> Runtime<'a> {
     fn delete_entity(
         &self,
         value: &RcValue,
-    ) -> Option<Result<(), String>> {
+    ) -> Result<(), String> {
         match &**value {
             Value::Node(id) => {
                 for (src, dest, id) in self.g.borrow().get_node_relationships(*id) {
@@ -1393,20 +1440,20 @@ impl<'a> Runtime<'a> {
             }
             Value::Path(values) => {
                 for value in values {
-                    let _ = self.delete_entity(value)?;
+                    self.delete_entity(value)?;
                 }
             }
             Value::Null => {}
             _ => {
-                return Some(Err(String::from("Delete operator requires a node")));
+                return Err(String::from("Delete operator requires a node"));
             }
         }
-        None
+        Ok(())
     }
 
     fn create(
         &self,
-        pattern: &Pattern,
+        pattern: &QueryGraph,
         vars: &mut Env,
     ) -> Result<(), String> {
         for node in &pattern.nodes {

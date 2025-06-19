@@ -1,5 +1,6 @@
 use crate::ast::{
-    ExprIR, NodePattern, PathPattern, Pattern, QuantifierType, QueryIR, RelationshipPattern, VarId,
+    ExprIR, NodePattern, PathPattern, QuantifierType, QueryGraph, QueryIR, RelationshipPattern,
+    VarId,
 };
 use crate::cypher::Token::RParen;
 use crate::functions::{FnType, Type, get_functions};
@@ -849,7 +850,13 @@ impl<'a> Parser<'a> {
         write: bool,
     ) -> Result<QueryIR, String> {
         let exprs = if optional_match_token!(self.lexer, Star) {
-            vec![]
+            let mut res: Vec<(VarId, DynTree<ExprIR>)> = self
+                .vars
+                .values()
+                .map(|v| (v.clone(), tree!(ExprIR::Var(v.clone()))))
+                .collect();
+            res.sort_by(|a, b| a.0.name.cmp(&b.0.name));
+            res
         } else {
             self.parse_named_exprs()?
         };
@@ -912,7 +919,7 @@ impl<'a> Parser<'a> {
     fn parse_pattern(
         &mut self,
         clause: &Keyword,
-    ) -> Result<Pattern, String> {
+    ) -> Result<QueryGraph, String> {
         let mut nodes = Vec::new();
         let mut nodes_alias = HashSet::new();
         let mut relationships = Vec::new();
@@ -981,7 +988,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        Ok(Pattern::new(nodes, relationships, paths))
+        Ok(QueryGraph::new(nodes, relationships, paths))
     }
 
     fn parse_case_expression(&mut self) -> Result<DynTree<ExprIR>, String> {

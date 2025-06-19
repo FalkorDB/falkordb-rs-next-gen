@@ -4,7 +4,7 @@ use orx_tree::{DynTree, NodeRef};
 
 use crate::{
     ast::{
-        ExprIR, NodePattern, PathPattern, Pattern, QueryIR, RelationshipPattern,
+        ExprIR, NodePattern, PathPattern, QueryGraph, QueryIR, RelationshipPattern,
         SupportAggregation, VarId,
     },
     tree,
@@ -16,8 +16,8 @@ pub enum IR {
     Optional(Vec<VarId>),
     Call(Rc<String>, Vec<DynTree<ExprIR>>),
     Unwind(DynTree<ExprIR>, VarId),
-    Create(Pattern),
-    Merge(Pattern),
+    Create(QueryGraph),
+    Merge(QueryGraph),
     Delete(Vec<DynTree<ExprIR>>, bool),
     Set(Vec<(DynTree<ExprIR>, DynTree<ExprIR>, bool)>),
     Remove(Vec<DynTree<ExprIR>>),
@@ -79,7 +79,7 @@ impl Planner {
         Self {}
     }
 
-    fn plan_match(pattern: Pattern) -> DynTree<IR> {
+    fn plan_match(pattern: QueryGraph) -> DynTree<IR> {
         if pattern.relationships.is_empty() && !pattern.nodes.is_empty() {
             let mut iter = pattern.nodes.into_iter().rev();
             let mut res = tree!(IR::NodeScan(iter.next().unwrap()));
@@ -91,19 +91,27 @@ impl Planner {
             }
             return res;
         }
-        if pattern.relationships.len() == 1 {
-            let relationship = pattern.relationships[0].clone();
-            if relationship.from.alias.id == relationship.to.alias.id {
-                let mut res = tree!(
+        if !pattern.relationships.is_empty() {
+            let mut iter = pattern.relationships.into_iter();
+            let relationship = iter.next().unwrap();
+            let mut res = if relationship.from.alias.id == relationship.to.alias.id {
+                tree!(
                     IR::ExpandInto(relationship.clone()),
                     tree!(IR::NodeScan(relationship.from.clone()))
-                );
-                if !pattern.paths.is_empty() {
-                    res = tree!(IR::PathBuilder(pattern.paths), res);
-                }
-                return res;
+                )
+            } else {
+                tree!(IR::RelationshipScan(relationship))
+            };
+            for relationship in iter {
+                res = if relationship.from.alias.id == relationship.to.alias.id {
+                    tree!(
+                        IR::ExpandInto(relationship.clone()),
+                        tree!(IR::NodeScan(relationship.from.clone()), res)
+                    )
+                } else {
+                    tree!(IR::RelationshipScan(relationship), res)
+                };
             }
-            let mut res = tree!(IR::RelationshipScan(relationship));
             if !pattern.paths.is_empty() {
                 res = tree!(IR::PathBuilder(pattern.paths), res);
             }
@@ -138,14 +146,14 @@ impl Planner {
         if !orderby.is_empty() {
             res = tree!(IR::Sort(orderby), res);
         }
+        if write {
+            res = tree!(IR::Commit, res);
+        }
         if let Some(skip_expr) = skip {
             res = tree!(IR::Skip(skip_expr), res);
         }
         if let Some(limit_expr) = limit {
             res = tree!(IR::Limit(limit_expr), res);
-        }
-        if write {
-            res = tree!(IR::Commit, res);
         }
         res
     }
@@ -198,6 +206,7 @@ impl Planner {
                                 .iter()
                                 .map(|n| n.alias.clone())
                                 .chain(pattern.relationships.iter().map(|r| r.alias.clone()))
+                                .chain(pattern.paths.iter().map(|p| p.var.clone()))
                                 .collect()
                         ),
                         Self::plan_match(pattern)
