@@ -233,6 +233,7 @@ impl<'a> Runtime<'a> {
             ExprIR::FuncInvocation(func) if func.is_aggregate() => {
                 if let FnType::Aggregation(zero, _) = &func.fn_type {
                     let ExprIR::Var(key) = ir.child(ir.num_children() - 1).data() else {
+                        #[cfg_attr(tarpaulin, skip)]
                         unreachable!();
                     };
                     env.insert(key, zero.clone());
@@ -503,6 +504,7 @@ impl<'a> Runtime<'a> {
                 if agg_group_key.is_none() {
                     if let FnType::Aggregation(_, finalize) = &func.fn_type {
                         let ExprIR::Var(key) = ir.child(ir.num_children() - 1).data() else {
+                            #[cfg_attr(tarpaulin, skip)]
                             unreachable!(
                                 "Aggregation function invocation must end with an accumulator variable"
                             );
@@ -527,6 +529,7 @@ impl<'a> Runtime<'a> {
                         values.append(&mut args);
                         args = values;
                     } else {
+                        #[cfg_attr(tarpaulin, skip)]
                         unreachable!();
                     }
                 }
@@ -640,6 +643,7 @@ impl<'a> Runtime<'a> {
                         ));
                     }
                     _ => {
+                        #[cfg_attr(tarpaulin, skip)]
                         unreachable!();
                     }
                 }
@@ -869,6 +873,7 @@ impl<'a> Runtime<'a> {
                                 ExprIR::FuncInvocation(func) if func.name == "property" => {
                                     let ExprIR::String(property) = entity.root().child(1).data()
                                     else {
+                                        #[cfg_attr(tarpaulin, skip)]
                                         unreachable!();
                                     };
                                     (
@@ -895,6 +900,7 @@ impl<'a> Runtime<'a> {
                                     )
                                 }
                                 _ => {
+                                    #[cfg_attr(tarpaulin, skip)]
                                     unreachable!();
                                 }
                             };
@@ -951,6 +957,7 @@ impl<'a> Runtime<'a> {
                         Ok(vars)
                     })));
                 }
+                #[cfg_attr(tarpaulin, skip)]
                 unreachable!();
             }
             IR::Remove(items) => {
@@ -961,6 +968,7 @@ impl<'a> Runtime<'a> {
                                 ExprIR::FuncInvocation(func) if func.name == "property" => {
                                     let ExprIR::String(property) = item.root().child(1).data()
                                     else {
+                                        #[cfg_attr(tarpaulin, skip)]
                                         unreachable!();
                                     };
                                     (
@@ -987,6 +995,7 @@ impl<'a> Runtime<'a> {
                                     )
                                 }
                                 _ => {
+                                    #[cfg_attr(tarpaulin, skip)]
                                     unreachable!();
                                 }
                             };
@@ -1024,6 +1033,7 @@ impl<'a> Runtime<'a> {
                         Ok(vars)
                     })));
                 }
+                #[cfg_attr(tarpaulin, skip)]
                 unreachable!();
             }
             IR::NodeScan(node_pattern) => {
@@ -1071,6 +1081,7 @@ impl<'a> Runtime<'a> {
                         Ok(vars)
                     })));
                 }
+                #[cfg_attr(tarpaulin, skip)]
                 unreachable!();
             }
             IR::Filter(tree) => {
@@ -1090,6 +1101,7 @@ impl<'a> Runtime<'a> {
                         },
                     )));
                 }
+                #[cfg_attr(tarpaulin, skip)]
                 unreachable!();
             }
             IR::Sort(trees) => {
@@ -1113,6 +1125,7 @@ impl<'a> Runtime<'a> {
                     });
                     return Ok(Box::new(items.into_iter().map(Ok)));
                 }
+                #[cfg_attr(tarpaulin, skip)]
                 unreachable!();
             }
             IR::Skip(skip) => {
@@ -1122,6 +1135,7 @@ impl<'a> Runtime<'a> {
                 if let Some(child_idx) = child0_idx {
                     return Ok(Box::new(self.run(&child_idx)?.skip(skip as usize)));
                 }
+                #[cfg_attr(tarpaulin, skip)]
                 unreachable!();
             }
             IR::Limit(limit) => {
@@ -1131,6 +1145,7 @@ impl<'a> Runtime<'a> {
                 if let Some(child_idx) = child0_idx {
                     return Ok(Box::new(self.run(&child_idx)?.take(limit as usize)));
                 }
+                #[cfg_attr(tarpaulin, skip)]
                 unreachable!();
             }
             IR::Aggregate(_, keys, agg) => {
@@ -1423,6 +1438,7 @@ impl<'a> Runtime<'a> {
                         .set_nodes_attrs
                         .insert(id, properties.clone());
                 }
+                #[cfg_attr(tarpaulin, skip)]
                 _ => unreachable!(),
             }
             vars.insert(&node.alias, RcValue::node(id));

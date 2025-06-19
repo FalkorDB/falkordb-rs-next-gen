@@ -274,7 +274,6 @@ impl Functions {
         self.functions.insert(name, graph_fn);
     }
 
-    #[must_use]
     pub fn get(
         &self,
         name: &str,
@@ -847,6 +846,7 @@ fn property(
             Ok(map.get(property).cloned().unwrap_or_else(RcValue::null))
         }
         (Some(Value::Null), Some(Value::String(_))) => Ok(RcValue::null()),
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -881,6 +881,7 @@ fn labels(
             ))
         }
         Some(Value::Null) => Ok(RcValue::null()),
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -892,6 +893,7 @@ fn start_node(
     let mut iter = args.into_iter();
     match iter.next().as_deref() {
         Some(Value::Relationship(_, src, _)) => Ok(RcValue::node(*src)),
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -903,6 +905,7 @@ fn end_node(
     let mut iter = args.into_iter();
     match iter.next().as_deref() {
         Some(Value::Relationship(_, _, dest)) => Ok(RcValue::node(*dest)),
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -922,6 +925,7 @@ fn collect(
             l.push(a);
             Ok(RcValue::list(l))
         }
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -936,6 +940,7 @@ fn count(
     match (first.as_deref(), sec.as_deref()) {
         (Some(Value::Null), Some(_)) => Ok(sec.unwrap()),
         (Some(_), Some(Value::Int(a))) | (Some(Value::Int(a)), None) => Ok(RcValue::int(a + 1)),
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -952,6 +957,7 @@ fn sum(
         (Some(Value::Float(a)), Some(Value::Float(b))) => Ok(RcValue::float(a + b)),
         (Some(Value::Int(a)), Some(Value::Float(b))) => Ok(RcValue::float(*a as f64 + b)),
         (Some(Value::Float(a)), Some(Value::Int(b))) => Ok(RcValue::float(a + *b as f64)),
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -971,6 +977,7 @@ fn max(
             }
             Ok(b)
         }
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -990,6 +997,7 @@ fn min(
             }
             Ok(b)
         }
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -1013,6 +1021,7 @@ fn avg(
             let (Value::Float(sum), Value::Int(count), Value::Bool(had_overflow)) =
                 (&*vec[0], &*vec[1], &*vec[2])
             else {
+                #[cfg_attr(tarpaulin, skip)]
                 unreachable!("avg accumulator should be [sum, count, overflow]");
             };
 
@@ -1043,6 +1052,7 @@ fn avg(
                 RcValue::bool(overflow),
             ]))
         }
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!("avg expects numeric input"),
     }
 }
@@ -1056,11 +1066,13 @@ fn about_to_overflow(
 
 fn finalize_avg(value: RcValue) -> RcValue {
     let Value::List(vec) = &*value else {
+        #[cfg_attr(tarpaulin, skip)]
         unreachable!("finalize_avg expects a list");
     };
     let (Value::Float(sum), Value::Int(count), Value::Bool(overflow)) =
         (&*vec[0], &*vec[1], &*vec[2])
     else {
+        #[cfg_attr(tarpaulin, skip)]
         unreachable!("avg function should have [sum, count, overflow] format");
     };
     if *count == 0 {
@@ -1086,6 +1098,7 @@ fn value_to_integer(
         Some(Value::Float(f)) => Ok(RcValue::int(f.floor() as i64)),
         Some(Value::Bool(b)) => Ok(RcValue::int(i64::from(*b))),
         Some(Value::Null) => Ok(RcValue::null()),
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -1099,6 +1112,7 @@ fn value_to_float(
         Some(Value::Float(f)) => Ok(RcValue::float(*f)),
         Some(Value::Int(i)) => Ok(RcValue::float(*i as f64)),
         Some(Value::Null) => Ok(RcValue::null()),
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -1108,6 +1122,7 @@ fn value_string(value: &Value) -> Result<Rc<String>, String> {
         Value::String(s) => Ok(s.clone()),
         Value::Int(i) => Ok(Rc::new(i.to_string())),
         Value::Bool(b) => Ok(Rc::new(String::from(if *b { "true" } else { "false" }))),
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -1119,6 +1134,7 @@ fn value_to_string(
     match args.into_iter().next().as_deref() {
         Some(Value::Null) => Ok(RcValue::null()),
         Some(v) => Ok(RcValue::string(value_string(v)?)),
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -1131,6 +1147,7 @@ fn size(
         Some(Value::String(s)) => Ok(RcValue::int(s.len() as i64)),
         Some(Value::List(v)) => Ok(RcValue::int(v.len() as i64)),
         Some(Value::Null) => Ok(RcValue::null()),
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -1148,6 +1165,7 @@ fn head(
             }
         }
         Some(Value::Null) => Ok(RcValue::null()),
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -1159,6 +1177,7 @@ fn last(
     match args.into_iter().next().as_deref() {
         Some(Value::List(v)) => Ok(v.last().cloned().unwrap_or_else(RcValue::null)),
         Some(Value::Null) => Ok(RcValue::null()),
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -1176,6 +1195,7 @@ fn tail(
             }
         }
         Some(Value::Null) => Ok(RcValue::null()),
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -1192,6 +1212,7 @@ fn reverse(
         }
         Some(Value::String(s)) => Ok(RcValue::string(Rc::new(s.chars().rev().collect()))),
         Some(Value::Null) => Ok(RcValue::null()),
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -1241,6 +1262,7 @@ fn substring(
             let end = start.saturating_add(length).min(s.len());
             Ok(RcValue::string(Rc::new(String::from(&s[start..end]))))
         }
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -1270,6 +1292,7 @@ fn split(
             }
         }
         (Some(Value::Null), Some(_)) | (Some(_), Some(Value::Null)) => Ok(RcValue::null()),
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -1281,6 +1304,7 @@ fn string_to_lower(
     match args.into_iter().next().as_deref() {
         Some(Value::String(s)) => Ok(RcValue::string(Rc::new(s.to_lowercase()))),
         Some(Value::Null) => Ok(RcValue::null()),
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -1292,6 +1316,7 @@ fn string_to_upper(
     match args.into_iter().next().as_deref() {
         Some(Value::String(s)) => Ok(RcValue::string(Rc::new(s.to_uppercase()))),
         Some(Value::Null) => Ok(RcValue::null()),
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -1314,6 +1339,7 @@ fn string_replace(
         (Some(Value::Null), _, _) | (_, Some(Value::Null), _) | (_, _, Some(Value::Null)) => {
             Ok(RcValue::null())
         }
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -1335,6 +1361,7 @@ fn string_left(
         }
         (Some(Value::Null), _) => Ok(RcValue::null()),
         (_, Some(Value::Null)) => Err(String::from("length must be a non-negative integer")),
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -1348,6 +1375,7 @@ fn string_ltrim(
             s.trim_start_matches(' '),
         )))),
         Some(Value::Null) => Ok(RcValue::null()),
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -1368,6 +1396,7 @@ fn string_right(
         }
         (Some(Value::Null), _) => Ok(RcValue::null()),
         (_, Some(Value::Null)) => Err(String::from("length must be a non-negative integer")),
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -1406,6 +1435,7 @@ fn string_join(
                     ))
                 })
             }
+            #[cfg_attr(tarpaulin, skip)]
             _ => unreachable!(),
         },
         (Value::List(vec), None) => {
@@ -1421,6 +1451,7 @@ fn string_join(
             })
         }
         (Value::Null, _) => Ok(RcValue::null()),
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -1449,6 +1480,7 @@ fn string_match_reg_ex(
             }
         }
         (Some(Value::Null), Some(_)) | (Some(_), Some(Value::Null)) => Ok(RcValue::list(vec![])),
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -1479,6 +1511,7 @@ fn string_replace_reg_ex(
         (Some(Value::Null), Some(_), Some(_))
         | (Some(_), Some(Value::Null), Some(_))
         | (Some(_), Some(_), Some(Value::Null)) => Ok(RcValue::null()),
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -1491,6 +1524,7 @@ fn abs(
         Some(Value::Int(n)) => Ok(RcValue::int(n.abs())),
         Some(Value::Float(f)) => Ok(RcValue::float(f.abs())),
         Some(Value::Null) => Ok(RcValue::null()),
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -1503,6 +1537,7 @@ fn ceil(
         Some(Value::Int(n)) => Ok(RcValue::int(*n)),
         Some(Value::Float(f)) => Ok(RcValue::float(f.ceil())),
         Some(Value::Null) => Ok(RcValue::null()),
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -1513,6 +1548,7 @@ fn e(
 ) -> Result<RcValue, String> {
     match args.into_iter().next().as_deref() {
         None => Ok(RcValue::float(std::f64::consts::E)),
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -1525,6 +1561,7 @@ fn exp(
         Some(Value::Int(n)) => Ok(RcValue::float((*n as f64).exp())),
         Some(Value::Float(f)) => Ok(RcValue::float(f.exp())),
         Some(Value::Null) => Ok(RcValue::null()),
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -1537,6 +1574,7 @@ fn floor(
         Some(Value::Int(n)) => Ok(RcValue::int(*n)),
         Some(Value::Float(f)) => Ok(RcValue::float(f.floor())),
         Some(Value::Null) => Ok(RcValue::null()),
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -1549,6 +1587,7 @@ fn log(
         Some(Value::Int(n)) => Ok(RcValue::float((*n as f64).ln())),
         Some(Value::Float(f)) => Ok(RcValue::float(f.ln())),
         Some(Value::Null) => Ok(RcValue::null()),
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -1561,6 +1600,7 @@ fn log10(
         Some(Value::Int(n)) => Ok(RcValue::float((*n as f64).log10())),
         Some(Value::Float(f)) => Ok(RcValue::float(f.log10())),
         Some(Value::Null) => Ok(RcValue::null()),
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -1580,6 +1620,7 @@ fn pow(
         }
         (Some(Value::Float(f1)), Some(Value::Int(i1))) => Ok(RcValue::float(f1.powi(*i1 as i32))),
         (Some(Value::Null), Some(_)) | (Some(_), Some(Value::Null)) => Ok(RcValue::null()),
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -1601,6 +1642,7 @@ fn round(
         Some(Value::Int(n)) => Ok(RcValue::int(*n)),
         Some(Value::Float(f)) => Ok(RcValue::float(f.round())),
         Some(Value::Null) => Ok(RcValue::null()),
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -1617,6 +1659,7 @@ fn sign(
             RcValue::float(f.signum().round())
         }),
         Some(Value::Null) => Ok(RcValue::null()),
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -1641,6 +1684,7 @@ fn sqrt(
             }
         }
         Some(Value::Null) => Ok(RcValue::null()),
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -1679,6 +1723,7 @@ fn range(
                 .collect(),
             ))
         }
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -1722,7 +1767,7 @@ fn keys(
                 }
             }
             Ok(RcValue::list(
-                actual.into_iter().map(|s| RcValue::string(s)).collect(),
+                actual.into_iter().map(RcValue::string).collect(),
             ))
         }
         Some(Value::Relationship(id, _, _)) => {
@@ -1742,11 +1787,12 @@ fn keys(
                 }
             }
             Ok(RcValue::list(
-                actual.into_iter().map(|s| RcValue::string(s)).collect(),
+                actual.into_iter().map(RcValue::string).collect(),
             ))
         }
 
         Some(Value::Null) => Ok(RcValue::null()),
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -1768,6 +1814,7 @@ fn to_boolean(
         }
         Some(Value::Int(n)) => Ok(RcValue::bool(*n != 0)),
         Some(Value::Null) => Ok(RcValue::null()),
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -1793,6 +1840,7 @@ fn relationship_type(
                 .map(|type_name| RcValue::string(type_name.clone()))
                 .ok_or_else(|| String::from("Relationship type not found"))
         }
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -1804,6 +1852,7 @@ fn nodes(
     let mut iter = args.into_iter();
     match iter.next().as_deref() {
         Some(Value::Path(_values)) => Ok(RcValue::null()),
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -1823,6 +1872,7 @@ fn internal_starts_with(
         }
 
         (_, Some(Value::Null)) | (Some(Value::Null), _) => Ok(RcValue::null()),
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -1837,6 +1887,7 @@ fn internal_ends_with(
             Ok(RcValue::bool(s.ends_with(suffix.as_str())))
         }
         (_, Some(Value::Null)) | (Some(Value::Null), _) => Ok(RcValue::null()),
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -1851,6 +1902,7 @@ fn internal_contains(
             Ok(RcValue::bool(s.contains(substring.as_str())))
         }
         (_, Some(Value::Null)) | (Some(Value::Null), _) => Ok(RcValue::null()),
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -1863,6 +1915,7 @@ fn internal_is_null(
     match (iter.next().as_deref(), iter.next().as_deref()) {
         (Some(Value::Bool(is_not)), Some(Value::Null)) => Ok(RcValue::bool(!is_not)),
         (Some(Value::Bool(is_not)), Some(_)) => Ok(RcValue::bool(*is_not)),
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -1903,6 +1956,7 @@ fn internal_node_has_labels(
 
             Ok(RcValue::bool(all_labels_present))
         }
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -1921,6 +1975,7 @@ fn internal_regex_matches(
             }
         }
         (Some(Value::Null), _) | (_, Some(Value::Null)) => Ok(RcValue::null()),
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
@@ -1942,6 +1997,7 @@ fn internal_case(
         }
         (Some(value), Some(alt), Some(else_)) => {
             let Value::List(alts) = &*alt else {
+                #[cfg_attr(tarpaulin, skip)]
                 unreachable!()
             };
             for pair in alts.chunks(2) {
@@ -1953,6 +2009,7 @@ fn internal_case(
             }
             Ok(else_)
         }
+        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }
