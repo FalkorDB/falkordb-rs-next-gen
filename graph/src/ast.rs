@@ -423,13 +423,13 @@ impl PathPattern {
 }
 
 #[derive(Clone, Debug)]
-pub struct Pattern {
+pub struct QueryGraph {
     pub nodes: Vec<Rc<NodePattern>>,
     pub relationships: Vec<Rc<RelationshipPattern>>,
     pub paths: Vec<Rc<PathPattern>>,
 }
 
-impl Display for Pattern {
+impl Display for QueryGraph {
     fn fmt(
         &self,
         f: &mut std::fmt::Formatter<'_>,
@@ -447,7 +447,7 @@ impl Display for Pattern {
     }
 }
 
-impl Pattern {
+impl QueryGraph {
     #[must_use]
     pub const fn new(
         nodes: Vec<Rc<NodePattern>>,
@@ -460,16 +460,91 @@ impl Pattern {
             paths,
         }
     }
+
+    #[must_use]
+    pub fn connected_components(&self) -> Vec<Self> {
+        let mut visited = HashSet::new();
+        let mut components = Vec::new();
+
+        for node in &self.nodes {
+            if !visited.contains(&node.alias.id) {
+                let mut component_nodes = Vec::new();
+                let mut component_relationships = Vec::new();
+                let mut component_paths = Vec::new();
+
+                self.dfs(
+                    node,
+                    &mut visited,
+                    &mut component_nodes,
+                    &mut component_relationships,
+                    &mut component_paths,
+                );
+
+                components.push(Self::new(
+                    component_nodes,
+                    component_relationships,
+                    component_paths,
+                ));
+            }
+        }
+
+        components
+    }
+
+    fn dfs(
+        &self,
+        node: &Rc<NodePattern>,
+        visited: &mut HashSet<u32>,
+        component_nodes: &mut Vec<Rc<NodePattern>>,
+        component_relationships: &mut Vec<Rc<RelationshipPattern>>,
+        component_paths: &mut Vec<Rc<PathPattern>>,
+    ) {
+        visited.insert(node.alias.id);
+        component_nodes.push(node.clone());
+
+        for relationship in &self.relationships {
+            if relationship.from.alias.id == node.alias.id
+                && !visited.contains(&relationship.to.alias.id)
+            {
+                component_relationships.push(relationship.clone());
+                self.dfs(
+                    &relationship.to,
+                    visited,
+                    component_nodes,
+                    component_relationships,
+                    component_paths,
+                );
+            } else if relationship.to.alias.id == node.alias.id
+                && !visited.contains(&relationship.from.alias.id)
+            {
+                component_relationships.push(relationship.clone());
+                self.dfs(
+                    &relationship.from,
+                    visited,
+                    component_nodes,
+                    component_relationships,
+                    component_paths,
+                );
+            }
+        }
+
+        for path in &self.paths {
+            if path.vars.iter().any(|id| visited.contains(&id.id)) {
+                debug_assert!(path.vars.iter().all(|id| id.id != node.alias.id));
+                component_paths.push(path.clone());
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
 pub enum QueryIR {
     Call(Rc<String>, Vec<DynTree<ExprIR>>),
-    Match(Pattern, bool),
+    Match(QueryGraph, bool),
     Unwind(DynTree<ExprIR>, VarId),
-    Merge(Pattern),
+    Merge(QueryGraph),
     Where(DynTree<ExprIR>),
-    Create(Pattern),
+    Create(QueryGraph),
     Delete(Vec<DynTree<ExprIR>>, bool),
     Set(Vec<(DynTree<ExprIR>, DynTree<ExprIR>, bool)>),
     Remove(Vec<DynTree<ExprIR>>),

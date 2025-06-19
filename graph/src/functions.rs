@@ -274,7 +274,6 @@ impl Functions {
         self.functions.insert(name, graph_fn);
     }
 
-    #[must_use]
     pub fn get(
         &self,
         name: &str,
@@ -648,7 +647,20 @@ pub fn init_functions() -> Result<(), Functions> {
         vec![Type::Relationship],
         FnType::Function,
     );
-    funcs.add("nodes", nodes, false, vec![Type::Path], FnType::Function);
+    funcs.add(
+        "nodes",
+        nodes,
+        false,
+        vec![Type::Union(vec![Type::Path, Type::Null])],
+        FnType::Function,
+    );
+    funcs.add(
+        "relationships",
+        relationships,
+        false,
+        vec![Type::Union(vec![Type::Path, Type::Null])],
+        FnType::Function,
+    );
     // aggregation functions
     funcs.add(
         "collect",
@@ -1803,7 +1815,42 @@ fn nodes(
 ) -> Result<RcValue, String> {
     let mut iter = args.into_iter();
     match iter.next().as_deref() {
-        Some(Value::Path(_values)) => Ok(RcValue::null()),
+        Some(Value::Path(values)) => Ok(RcValue::list(
+            values
+                .iter()
+                .filter_map(|v| {
+                    if let Value::Node(id) = &**v {
+                        Some(RcValue::node(*id))
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
+        )),
+        Some(Value::Null) => Ok(RcValue::null()),
+        _ => unreachable!(),
+    }
+}
+
+fn relationships(
+    _: &Runtime,
+    args: Vec<RcValue>,
+) -> Result<RcValue, String> {
+    let mut iter = args.into_iter();
+    match iter.next().as_deref() {
+        Some(Value::Path(values)) => Ok(RcValue::list(
+            values
+                .iter()
+                .filter_map(|v| {
+                    if let Value::Relationship(id, src, dest) = &**v {
+                        Some(RcValue::relationship(*id, *src, *dest))
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
+        )),
+        Some(Value::Null) => Ok(RcValue::null()),
         _ => unreachable!(),
     }
 }

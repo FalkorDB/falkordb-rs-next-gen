@@ -438,11 +438,13 @@ impl Value {
             (Self::Bool(a), Self::Bool(b)) => (a.cmp(b), DisjointOrNull::None),
             (Self::Float(a), Self::Float(b)) => compare_floats(*a, *b),
             (Self::String(a), Self::String(b)) => (a.cmp(b), DisjointOrNull::None),
-            (Self::List(a), Self::List(b)) => Self::compare_list(a, b),
+            (Self::List(a), Self::List(b)) | (Self::Path(a), Self::Path(b)) => {
+                Self::compare_list(a, b)
+            }
             (Self::Map(a), Self::Map(b)) => Self::compare_map(a, b),
             (Self::Node(a), Self::Node(b)) => (a.cmp(b), DisjointOrNull::None),
-            (Self::Relationship(a, b, c), Self::Relationship(a1, b1, c1)) => {
-                ((a, b, c).cmp(&(a1, b1, c1)), DisjointOrNull::None)
+            (Self::Relationship(a, _, _), Self::Relationship(b, _, _)) => {
+                (a.cmp(b), DisjointOrNull::None)
             }
             // the inputs have different type - compare them if they
             // are both numerics of differing types
