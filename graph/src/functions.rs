@@ -23,6 +23,7 @@ pub enum FnType {
     Aggregation(RcValue, Option<Box<dyn Fn(RcValue) -> RcValue>>),
 }
 
+#[cfg_attr(tarpaulin, skip)]
 impl Debug for FnType {
     fn fmt(
         &self,
