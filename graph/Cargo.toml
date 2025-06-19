@@ -9,6 +9,10 @@ readme = "../README.md"
 keywords = ["graph", "database"]
 categories = ["data-structures", "database"]
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin)'] }
+
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
