@@ -108,6 +108,18 @@ pub enum Value {
     Path(Vec<RcValue>),
 }
 
+impl Value {
+    #[must_use]
+    #[inline]
+    pub fn get_numeric(&self) -> f64 {
+        match &self {
+            Self::Int(i) => *i as f64,
+            Self::Float(f) => *f,
+            _ => unreachable!("avg expects numeric value"),
+        }
+    }
+}
+
 impl Hash for Value {
     fn hash<H: std::hash::Hasher>(
         &self,

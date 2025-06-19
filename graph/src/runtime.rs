@@ -231,11 +231,11 @@ impl<'a> Runtime<'a> {
     ) {
         match ir.data() {
             ExprIR::FuncInvocation(func) if func.is_aggregate() => {
-                if let FnType::Aggregation(aggregation_return_type) = &func.fn_type {
+                if let FnType::Aggregation(zero, _) = &func.fn_type {
                     let ExprIR::Var(key) = ir.child(ir.num_children() - 1).data() else {
                         unreachable!();
                     };
-                    env.insert(key, aggregation_return_type.clone());
+                    env.insert(key, zero.clone());
                 }
             }
             _ => {
@@ -252,6 +252,7 @@ impl<'a> Runtime<'a> {
         ir: DynNode<ExprIR>,
         curr: &mut Env,
         acc: &mut Env,
+        agg_group_key: u64,
     ) -> Result<(), String> {
         match ir.data() {
             ExprIR::FuncInvocation(func) if func.is_aggregate() => {
@@ -263,12 +264,13 @@ impl<'a> Runtime<'a> {
                         ));
                     }
                 };
+
                 curr.insert(&key, acc.get(&key).unwrap_or_else(RcValue::null));
-                acc.insert(&key, self.run_expr(ir, curr, false)?);
+                acc.insert(&key, self.run_expr(ir, curr, Some(agg_group_key))?);
             }
             _ => {
                 for child in ir.children() {
-                    self.run_agg_expr(child, curr, acc)?;
+                    self.run_agg_expr(child, curr, acc, agg_group_key)?;
                 }
             }
         }
@@ -281,7 +283,7 @@ impl<'a> Runtime<'a> {
         &self,
         ir: DynNode<ExprIR>,
         env: &Env,
-        finalize_agg: bool,
+        agg_group_key: Option<u64>,
     ) -> Result<RcValue, String> {
         match ir.data() {
             ExprIR::Null => Ok(RcValue::null()),
@@ -298,16 +300,16 @@ impl<'a> Runtime<'a> {
             ),
             ExprIR::List => Ok(RcValue::new(Value::List(
                 ir.children()
-                    .map(|ir| self.run_expr(ir, env, finalize_agg))
+                    .map(|ir| self.run_expr(ir, env, agg_group_key))
                     .collect::<Result<Vec<_>, _>>()?,
             ))),
-            ExprIR::Length => match &*(self.run_expr(ir.child(0), env, finalize_agg)?) {
+            ExprIR::Length => match &*(self.run_expr(ir.child(0), env, agg_group_key)?) {
                 Value::List(arr) => Ok(RcValue::new(Value::Int(arr.len() as _))),
                 _ => Err(String::from("Length operator requires a list")),
             },
             ExprIR::GetElement => {
-                let arr = self.run_expr(ir.child(0), env, finalize_agg)?;
-                let i = self.run_expr(ir.child(1), env, finalize_agg)?;
+                let arr = self.run_expr(ir.child(0), env, agg_group_key)?;
+                let i = self.run_expr(ir.child(1), env, agg_group_key)?;
                 match (&*arr, &*i) {
                     (Value::List(values), Value::Int(i)) => {
                         if *i >= 0 && *i < values.len() as _ {
@@ -327,23 +329,23 @@ impl<'a> Runtime<'a> {
                 }
             }
             ExprIR::GetElements => {
-                let arr = self.run_expr(ir.child(0), env, finalize_agg)?;
-                let a = self.run_expr(ir.child(1), env, finalize_agg)?;
-                let b = self.run_expr(ir.child(2), env, finalize_agg)?;
+                let arr = self.run_expr(ir.child(0), env, agg_group_key)?;
+                let a = self.run_expr(ir.child(1), env, agg_group_key)?;
+                let b = self.run_expr(ir.child(2), env, agg_group_key)?;
                 get_elements(&arr, &a, &b)
             }
-            ExprIR::IsNode => match *self.run_expr(ir.child(0), env, finalize_agg)? {
+            ExprIR::IsNode => match *self.run_expr(ir.child(0), env, agg_group_key)? {
                 Value::Node(_) => Ok(RcValue::bool(true)),
                 _ => Ok(RcValue::bool(false)),
             },
-            ExprIR::IsRelationship => match *self.run_expr(ir.child(0), env, finalize_agg)? {
+            ExprIR::IsRelationship => match *self.run_expr(ir.child(0), env, agg_group_key)? {
                 Value::Relationship(_, _, _) => Ok(RcValue::bool(true)),
                 _ => Ok(RcValue::bool(false)),
             },
             ExprIR::Or => {
                 let mut is_null = false;
                 for ir in ir.children() {
-                    match &*self.run_expr(ir, env, finalize_agg)? {
+                    match &*self.run_expr(ir, env, agg_group_key)? {
                         Value::Bool(true) => return Ok(RcValue::bool(true)),
                         Value::Bool(false) => {}
                         Value::Null => is_null = true,
@@ -359,7 +361,7 @@ impl<'a> Runtime<'a> {
             ExprIR::Xor => {
                 let mut last = None;
                 for ir in ir.children() {
-                    match &*self.run_expr(ir, env, finalize_agg)? {
+                    match &*self.run_expr(ir, env, agg_group_key)? {
                         Value::Bool(b) => last = Some(last.map_or(*b, |l| logical_xor(l, *b))),
                         Value::Null => return Ok(RcValue::null()),
                         ir => return Err(format!("Type mismatch: expected Bool but was {ir:?}")),
@@ -370,7 +372,7 @@ impl<'a> Runtime<'a> {
             ExprIR::And => {
                 let mut is_null = false;
                 for ir in ir.children() {
-                    match &*self.run_expr(ir, env, finalize_agg)? {
+                    match &*self.run_expr(ir, env, agg_group_key)? {
                         Value::Bool(false) => return Ok(RcValue::bool(false)),
                         Value::Bool(true) => {}
                         Value::Null => is_null = true,
@@ -383,7 +385,7 @@ impl<'a> Runtime<'a> {
 
                 Ok(RcValue::bool(true))
             }
-            ExprIR::Not => match &*self.run_expr(ir.child(0), env, finalize_agg)? {
+            ExprIR::Not => match &*self.run_expr(ir.child(0), env, agg_group_key)? {
                 Value::Bool(b) => Ok(RcValue::bool(!b)),
                 Value::Null => Ok(RcValue::null()),
                 v => Err(format!(
@@ -391,7 +393,7 @@ impl<'a> Runtime<'a> {
                     v.name()
                 )),
             },
-            ExprIR::Negate => match &*self.run_expr(ir.child(0), env, finalize_agg)? {
+            ExprIR::Negate => match &*self.run_expr(ir.child(0), env, agg_group_key)? {
                 Value::Int(i) => Ok(RcValue::int(-i)),
                 Value::Float(f) => Ok(RcValue::float(-f)),
                 Value::Null => Ok(RcValue::null()),
@@ -400,13 +402,17 @@ impl<'a> Runtime<'a> {
                     v.name()
                 )),
             },
-            ExprIR::Eq => all_equals(ir.children().map(|ir| self.run_expr(ir, env, finalize_agg))),
-            ExprIR::Neq => {
-                all_not_equals(ir.children().map(|ir| self.run_expr(ir, env, finalize_agg)))
-            }
+            ExprIR::Eq => all_equals(
+                ir.children()
+                    .map(|ir| self.run_expr(ir, env, agg_group_key)),
+            ),
+            ExprIR::Neq => all_not_equals(
+                ir.children()
+                    .map(|ir| self.run_expr(ir, env, agg_group_key)),
+            ),
             ExprIR::Lt => match self
-                .run_expr(ir.child(0), env, finalize_agg)?
-                .compare_value(&*(self.run_expr(ir.child(1), env, finalize_agg)?))
+                .run_expr(ir.child(0), env, agg_group_key)?
+                .compare_value(&*(self.run_expr(ir.child(1), env, agg_group_key)?))
             {
                 (_, DisjointOrNull::ComparedNull | DisjointOrNull::Disjoint) => Ok(RcValue::null()),
                 (_, DisjointOrNull::NaN) => Ok(RcValue::bool(false)),
@@ -414,8 +420,8 @@ impl<'a> Runtime<'a> {
                 _ => Ok(RcValue::bool(false)),
             },
             ExprIR::Gt => match self
-                .run_expr(ir.child(0), env, finalize_agg)?
-                .compare_value(&*(self.run_expr(ir.child(1), env, finalize_agg)?))
+                .run_expr(ir.child(0), env, agg_group_key)?
+                .compare_value(&*(self.run_expr(ir.child(1), env, agg_group_key)?))
             {
                 (_, DisjointOrNull::ComparedNull | DisjointOrNull::Disjoint) => Ok(RcValue::null()),
                 (_, DisjointOrNull::NaN) => Ok(RcValue::bool(false)),
@@ -423,8 +429,8 @@ impl<'a> Runtime<'a> {
                 _ => Ok(RcValue::bool(false)),
             },
             ExprIR::Le => match self
-                .run_expr(ir.child(0), env, finalize_agg)?
-                .compare_value(&*(self.run_expr(ir.child(1), env, finalize_agg)?))
+                .run_expr(ir.child(0), env, agg_group_key)?
+                .compare_value(&*(self.run_expr(ir.child(1), env, agg_group_key)?))
             {
                 (_, DisjointOrNull::ComparedNull | DisjointOrNull::Disjoint) => Ok(RcValue::null()),
                 (_, DisjointOrNull::NaN) => Ok(RcValue::bool(false)),
@@ -432,8 +438,8 @@ impl<'a> Runtime<'a> {
                 _ => Ok(RcValue::bool(false)),
             },
             ExprIR::Ge => match self
-                .run_expr(ir.child(0), env, finalize_agg)?
-                .compare_value(&*(self.run_expr(ir.child(1), env, finalize_agg)?))
+                .run_expr(ir.child(0), env, agg_group_key)?
+                .compare_value(&*(self.run_expr(ir.child(1), env, agg_group_key)?))
             {
                 (_, DisjointOrNull::ComparedNull | DisjointOrNull::Disjoint) => Ok(RcValue::null()),
                 (_, DisjointOrNull::NaN) => Ok(RcValue::bool(false)),
@@ -441,72 +447,77 @@ impl<'a> Runtime<'a> {
                 _ => Ok(RcValue::bool(false)),
             },
             ExprIR::In => {
-                let value = self.run_expr(ir.child(0), env, finalize_agg)?;
-                let list = self.run_expr(ir.child(1), env, finalize_agg)?;
+                let value = self.run_expr(ir.child(0), env, agg_group_key)?;
+                let list = self.run_expr(ir.child(1), env, agg_group_key)?;
                 list_contains(&list, value)
             }
             ExprIR::Add => ir
                 .children()
-                .map(|ir| self.run_expr(ir, env, finalize_agg))
+                .map(|ir| self.run_expr(ir, env, agg_group_key))
                 .reduce(|acc, value| acc? + value?)
                 .ok_or_else(|| String::from("Add operator requires at least one operand"))?,
             ExprIR::Sub => ir
                 .children()
-                .map(|ir| self.run_expr(ir, env, finalize_agg))
+                .map(|ir| self.run_expr(ir, env, agg_group_key))
                 .reduce(|acc, value| acc? - value?)
                 .ok_or_else(|| String::from("Sub operator requires at least one argument"))?,
             ExprIR::Mul => ir
                 .children()
-                .map(|ir| self.run_expr(ir, env, finalize_agg))
+                .map(|ir| self.run_expr(ir, env, agg_group_key))
                 .reduce(|acc, value| acc? * value?)
                 .ok_or_else(|| String::from("Mul operator requires at least one argument"))?,
             ExprIR::Div => ir
                 .children()
-                .map(|ir| self.run_expr(ir, env, finalize_agg))
+                .map(|ir| self.run_expr(ir, env, agg_group_key))
                 .reduce(|acc, value| acc? / value?)
                 .ok_or_else(|| String::from("Div operator requires at least one argument"))?,
             ExprIR::Modulo => ir
                 .children()
-                .map(|ir| self.run_expr(ir, env, finalize_agg))
+                .map(|ir| self.run_expr(ir, env, agg_group_key))
                 .reduce(|acc, value| acc? % value?)
                 .ok_or_else(|| String::from("Modulo operator requires at least one argument"))?,
             ExprIR::Pow => ir
                 .children()
-                .flat_map(|ir| self.run_expr(ir, env, finalize_agg))
+                .flat_map(|ir| self.run_expr(ir, env, agg_group_key))
                 .reduce(|a, b| match (&*a, &*b) {
                     (Value::Int(a), Value::Int(b)) => RcValue::float((*a as f64).powf(*b as _)),
                     _ => RcValue::null(),
                 })
                 .ok_or_else(|| String::from("Pow operator requires at least one argument")),
             ExprIR::Distinct => {
+                let group_id = agg_group_key.unwrap();
                 let values = ir
                     .children()
-                    .map(|ir| self.run_expr(ir, env, finalize_agg))
+                    .map(|ir| self.run_expr(ir, env, agg_group_key))
                     .collect::<Result<Vec<_>, _>>()?;
                 let mut value_dedupers = self.value_dedupers.borrow_mut();
-                let value_deduper = value_dedupers.entry(format!("{:?}", ir.idx())).or_default();
+                let value_deduper = value_dedupers
+                    .entry(format!("{:?}_{}", ir.idx(), group_id))
+                    .or_default();
                 if value_deduper.is_seen(&values) {
                     return Ok(RcValue::list(vec![RcValue::null()]));
                 }
                 Ok(RcValue::list(values))
             }
             ExprIR::FuncInvocation(func) => {
-                if finalize_agg {
-                    if let FnType::Aggregation(aggregation_return_type) = &func.fn_type {
-                        match ir.child(ir.num_children() - 1).data() {
-                            ExprIR::Var(key) => {
-                                return Ok(env
-                                    .get(key)
-                                    .unwrap_or_else(|| aggregation_return_type.clone()));
-                            }
-                            _ => unreachable!(),
-                        }
+                if agg_group_key.is_none() {
+                    if let FnType::Aggregation(_, finalize) = &func.fn_type {
+                        let ExprIR::Var(key) = ir.child(ir.num_children() - 1).data() else {
+                            unreachable!(
+                                "Aggregation function invocation must end with an accumulator variable"
+                            );
+                        };
+                        let acc = env.get(key).unwrap();
+
+                        return match finalize {
+                            Some(func) => Ok((func)(acc)),
+                            None => Ok(acc),
+                        };
                     }
                 }
-
                 let mut args = ir
                     .children()
-                    .map(|ir| self.run_expr(ir, env, finalize_agg))
+                    .map(|ir| self.run_expr(ir, env, agg_group_key))
                     .collect::<Result<Vec<_>, _>>()?;
                 if ir.num_children() == 2 && matches!(ir.child(0).data(), ExprIR::Distinct) {
                     let arg = &args[0];
@@ -538,13 +549,13 @@ impl<'a> Runtime<'a> {
                             } else {
                                 todo!();
                             },
-                            self.run_expr(child.child(0), env, finalize_agg)?,
+                            self.run_expr(child.child(0), env, agg_group_key)?,
                         ))
                     })
                     .collect::<Result<_, String>>()?,
             )),
             ExprIR::Quantifier(quantifier, var) => {
-                let list = self.run_expr(ir.child(0), env, finalize_agg)?;
+                let list = self.run_expr(ir.child(0), env, agg_group_key)?;
                 match &*list {
                     Value::List(values) => {
                         let mut env = env.clone();
@@ -554,7 +565,7 @@ impl<'a> Runtime<'a> {
                         for value in values {
                             env.insert(var, value.clone());
 
-                            match &*self.run_expr(ir.child(1), &env, finalize_agg)? {
+                            match &*self.run_expr(ir.child(1), &env, agg_group_key)? {
                                 Value::Bool(true) => t += 1,
                                 Value::Bool(false) => f += 1,
                                 Value::Null => n += 1,
@@ -581,11 +592,11 @@ impl<'a> Runtime<'a> {
                 let mut acc = vec![];
                 for value in iter {
                     env.insert(var, value.clone());
-                    match *self.run_expr(ir.child(1), &env, finalize_agg)? {
+                    match *self.run_expr(ir.child(1), &env, agg_group_key)? {
                         Value::Bool(true) => {}
                         _ => continue,
                     }
-                    acc.push(self.run_expr(ir.child(2), &env, finalize_agg)?);
+                    acc.push(self.run_expr(ir.child(2), &env, agg_group_key)?);
                 }
 
                 Ok(RcValue::list(acc))
@@ -601,11 +612,11 @@ impl<'a> Runtime<'a> {
     ) -> Result<Box<dyn Iterator<Item = RcValue>>, String> {
         match ir.data() {
             ExprIR::FuncInvocation(func) if func.name == "range" => {
-                let start = self.run_expr(ir.child(0), env, false)?;
-                let end = self.run_expr(ir.child(1), env, false)?;
+                let start = self.run_expr(ir.child(0), env, None)?;
+                let end = self.run_expr(ir.child(1), env, None)?;
                 let step = ir
                     .get_child(2)
-                    .map_or_else(|| Ok(RcValue::int(1)), |c| self.run_expr(c, env, false))?;
+                    .map_or_else(|| Ok(RcValue::int(1)), |c| self.run_expr(c, env, None))?;
                 func.validate_args_type(&[start.clone(), end.clone(), step.clone()])?;
                 match (&*start, &*end, &*step) {
                     (Value::Int(start), Value::Int(end), Value::Int(step)) => {
@@ -634,7 +645,7 @@ impl<'a> Runtime<'a> {
                 }
             }
             _ => {
-                let res = self.run_expr(ir, env, false)?;
+                let res = self.run_expr(ir, env, None)?;
                 match &*res {
                     Value::List(arr) => Ok(Box::new(arr.clone().into_iter())),
                     _ => Ok(Box::new(once(res))),
@@ -729,7 +740,7 @@ impl<'a> Runtime<'a> {
                 let func = self.functions.get(name, &FnType::Procedure)?;
                 let args = trees
                     .iter()
-                    .map(|ir| self.run_expr(ir.root(), &Env::default(), false))
+                    .map(|ir| self.run_expr(ir.root(), &Env::default(), None))
                     .collect::<Result<Vec<_>, _>>()?;
                 if !self.write && func.write {
                     return Err(String::from(
@@ -852,7 +863,7 @@ impl<'a> Runtime<'a> {
                 if let Some(child_idx) = child0_idx {
                     return Ok(Box::new(self.run(&child_idx)?.try_map(move |vars| {
                         for (entity, value, replace) in trees {
-                            let value = self.run_expr(value.root(), &vars, false)?;
+                            let value = self.run_expr(value.root(), &vars, None)?;
                             let (entity, property, labels) = match entity.root().data() {
                                 ExprIR::Var(name) => (vars.get(name).unwrap(), None, None),
                                 ExprIR::FuncInvocation(func) if func.name == "property" => {
@@ -861,7 +872,7 @@ impl<'a> Runtime<'a> {
                                         unreachable!();
                                     };
                                     (
-                                        self.run_expr(entity.root().child(0), &vars, false)?,
+                                        self.run_expr(entity.root().child(0), &vars, None)?,
                                         Some(property),
                                         None,
                                     )
@@ -878,7 +889,7 @@ impl<'a> Runtime<'a> {
                                         .collect::<OrderSet<_>>();
 
                                     (
-                                        self.run_expr(entity.root().child(0), &vars, false)?,
+                                        self.run_expr(entity.root().child(0), &vars, None)?,
                                         None,
                                         Some(labels),
                                     )
@@ -953,7 +964,7 @@ impl<'a> Runtime<'a> {
                                         unreachable!();
                                     };
                                     (
-                                        self.run_expr(item.root().child(0), &vars, false)?,
+                                        self.run_expr(item.root().child(0), &vars, None)?,
                                         Some(property),
                                         None,
                                     )
@@ -970,7 +981,7 @@ impl<'a> Runtime<'a> {
                                         .collect::<OrderSet<_>>();
 
                                     (
-                                        self.run_expr(item.root().child(0), &vars, false)?,
+                                        self.run_expr(item.root().child(0), &vars, None)?,
                                         None,
                                         Some(labels),
                                     )
@@ -1067,7 +1078,7 @@ impl<'a> Runtime<'a> {
                     return Ok(Box::new(self.run(&child_idx)?.filter_map(
                         move |vars| match vars {
                             Ok(vars) => {
-                                if self.run_expr(tree.root(), &vars, false)
+                                if self.run_expr(tree.root(), &vars, None)
                                     == Ok(RcValue::bool(true))
                                 {
                                     Some(Ok(vars))
@@ -1089,8 +1100,8 @@ impl<'a> Runtime<'a> {
                             if acc != Ordering::Equal {
                                 return acc;
                             }
-                            let a_value = self.run_expr(tree.root(), a, false);
-                            let b_value = self.run_expr(tree.root(), b, false);
+                            let a_value = self.run_expr(tree.root(), a, None);
+                            let b_value = self.run_expr(tree.root(), b, None);
                             match (a_value, b_value) {
                                 (Ok(a_value), Ok(b_value)) => {
                                     let ordering = a_value.compare_value(&b_value).0;
@@ -1105,7 +1116,7 @@ impl<'a> Runtime<'a> {
                 unreachable!();
             }
             IR::Skip(skip) => {
-                let Value::Int(skip) = *self.run_expr(skip.root(), &Env::default(), false)? else {
+                let Value::Int(skip) = *self.run_expr(skip.root(), &Env::default(), None)? else {
                     return Err(String::from("Skip operator requires an integer argument"));
                 };
                 if let Some(child_idx) = child0_idx {
@@ -1114,8 +1125,7 @@ impl<'a> Runtime<'a> {
                 unreachable!();
             }
             IR::Limit(limit) => {
-                let Value::Int(limit) = *self.run_expr(limit.root(), &Env::default(), false)?
-                else {
+                let Value::Int(limit) = *self.run_expr(limit.root(), &Env::default(), None)? else {
                     return Err(String::from("Limit operator requires an integer argument"));
                 };
                 if let Some(child_idx) = child0_idx {
@@ -1146,17 +1156,17 @@ impl<'a> Runtime<'a> {
                                 let vars = vars.clone()?;
                                 let mut return_vars = Env::default();
                                 for (name, tree) in keys {
-                                    let value = self.run_expr(tree.root(), &vars, false)?;
+                                    let value = self.run_expr(tree.root(), &vars, None)?;
                                     return_vars.insert(name, value);
                                 }
                                 Ok::<Env, String>(return_vars)
                             },
                             Ok(env),
-                            move |x, acc| {
+                            move |group_key, x, acc| {
                                 let mut x = x?;
                                 let mut acc: Env = acc?;
                                 for (_, tree) in agg {
-                                    self.run_agg_expr(tree.root(), &mut x, &mut acc)?;
+                                    self.run_agg_expr(tree.root(), &mut x, &mut acc, group_key)?;
                                 }
                                 Ok(acc)
                             },
@@ -1166,7 +1176,7 @@ impl<'a> Runtime<'a> {
                             let mut vars = v?;
                             vars.merge(key?);
                             for (name, tree) in agg {
-                                vars.insert(name, self.run_expr(tree.root(), &vars, true)?);
+                                vars.insert(name, self.run_expr(tree.root(), &vars, None)?);
                             }
                             Ok(vars)
                         });
@@ -1182,7 +1192,7 @@ impl<'a> Runtime<'a> {
                         }
                         let mut return_vars = Env::default();
                         for (name, tree) in trees {
-                            let value = self.run_expr(tree.root(), &vars, false)?;
+                            let value = self.run_expr(tree.root(), &vars, None)?;
                             return_vars.insert(name, value);
                         }
                         Ok(return_vars)
@@ -1192,7 +1202,7 @@ impl<'a> Runtime<'a> {
                         let vars = Env::default();
                         let mut return_vars = Env::default();
                         for (name, tree) in trees {
-                            let value = self.run_expr(tree.root(), &vars, false)?;
+                            let value = self.run_expr(tree.root(), &vars, None)?;
                             return_vars.insert(name, value);
                         }
                         Ok(return_vars)
@@ -1221,7 +1231,7 @@ impl<'a> Runtime<'a> {
         relationship_pattern: &'a RelationshipPattern,
         vars: Env,
     ) -> Box<dyn Iterator<Item = Result<Env, String>> + '_> {
-        let attrs = match self.run_expr(relationship_pattern.attrs.root(), &vars, false) {
+        let attrs = match self.run_expr(relationship_pattern.attrs.root(), &vars, None) {
             Ok(attrs) => attrs,
             Err(e) => {
                 return Box::new(once(Err(e)));
@@ -1317,7 +1327,7 @@ impl<'a> Runtime<'a> {
         node_pattern: &'a NodePattern,
         vars: Env,
     ) -> Box<dyn Iterator<Item = Result<Env, String>> + '_> {
-        let attrs = match self.run_expr(node_pattern.attrs.root(), &vars, false) {
+        let attrs = match self.run_expr(node_pattern.attrs.root(), &vars, None) {
             Ok(attrs) => attrs,
             Err(e) => {
                 return Box::new(once(Err(e)));
@@ -1353,7 +1363,7 @@ impl<'a> Runtime<'a> {
         vars: &Env,
     ) -> Result<(), String> {
         for tree in trees {
-            let value = self.run_expr(tree.root(), vars, false)?;
+            let value = self.run_expr(tree.root(), vars, None)?;
             if let Some(value) = self.delete_entity(&value) {
                 return value;
             }
@@ -1405,7 +1415,7 @@ impl<'a> Runtime<'a> {
             self.pending
                 .borrow_mut()
                 .set_node_labels(id, node.labels.clone());
-            let properties = self.run_expr(node.attrs.root(), vars, false)?;
+            let properties = self.run_expr(node.attrs.root(), vars, None)?;
             match &*properties {
                 Value::Map(properties) => {
                     self.pending
@@ -1438,7 +1448,7 @@ impl<'a> Runtime<'a> {
                 id,
                 PendingRelationship::new(from_id, to_id, rel.types.first().unwrap().clone()),
             );
-            let attrs = self.run_expr(rel.attrs.root(), vars, false)?;
+            let attrs = self.run_expr(rel.attrs.root(), vars, None)?;
             match &*attrs {
                 Value::Map(attrs) => {
                     self.pending

@@ -8,7 +8,7 @@ where
     I: Iterator<Item = V>,
     K: std::hash::Hash,
     F: Fn(&V) -> K,
-    G: Fn(V, V) -> V,
+    G: Fn(u64, V, V) -> V,
 {
     pub iter: I,
     pub key_fn: F,
@@ -23,7 +23,7 @@ where
     I: Iterator<Item = V>,
     K: std::hash::Hash + Clone,
     F: Fn(&V) -> K,
-    G: Fn(V, V) -> V,
+    G: Fn(u64, V, V) -> V,
     V: Clone,
 {
     type Item = (K, V);
@@ -32,14 +32,20 @@ where
         if !self.finished {
             for item in self.iter.by_ref() {
                 let key = (self.key_fn)(&item);
-                let mut hasher = DefaultHasher::new();
-                key.hash(&mut hasher);
+                let group_key = {
+                    let mut h = DefaultHasher::new();
+                    key.hash(&mut h);
+                    h.finish()
+                };
 
                 self.cache
-                    .entry(hasher.finish())
-                    .and_modify(|v| v.1 = (self.agg_fn)(item.clone(), v.1.clone()))
+                    .entry(group_key)
+                    .and_modify(|v| v.1 = (self.agg_fn)(group_key, item.clone(), v.1.clone()))
                     .or_insert_with(|| {
-                        (key, (self.agg_fn)(item.clone(), self.default_value.clone()))
+                        (
+                            key,
+                            (self.agg_fn)(group_key, item.clone(), self.default_value.clone()),
+                        )
                     });
             }
 
@@ -67,7 +73,7 @@ pub trait Aggregate {
         Self: Iterator<Item = V>,
         K: std::hash::Hash + Clone,
         F: Fn(&V) -> K,
-        G: Fn(V, V) -> V,
+        G: Fn(u64, V, V) -> V,
         V: Clone;
 }
 
@@ -86,7 +92,7 @@ where
         Self: Iterator<Item = V>,
         K: std::hash::Hash + Clone,
         F: Fn(&V) -> K,
-        G: Fn(V, V) -> V,
+        G: Fn(u64, V, V) -> V,
         V: Clone,
     {
         AggregateIter {
