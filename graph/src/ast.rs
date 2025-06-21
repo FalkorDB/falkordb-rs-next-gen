@@ -462,6 +462,33 @@ impl QueryGraph {
     }
 
     #[must_use]
+    pub fn filter_visited(
+        &self,
+        visited: &HashSet<u32>,
+    ) -> Self {
+        let nodes = self
+            .nodes
+            .iter()
+            .filter(|node| !visited.contains(&node.alias.id))
+            .cloned()
+            .collect();
+        let relationships = self
+            .relationships
+            .iter()
+            .filter(|rel| !visited.contains(&rel.alias.id))
+            .cloned()
+            .collect();
+        let paths = self
+            .paths
+            .iter()
+            .filter(|path| !visited.contains(&path.var.id))
+            .cloned()
+            .collect();
+
+        Self::new(nodes, relationships, paths)
+    }
+
+    #[must_use]
     pub fn connected_components(&self) -> Vec<Self> {
         let mut visited = HashSet::new();
         let mut components = Vec::new();
@@ -503,34 +530,38 @@ impl QueryGraph {
         component_nodes.push(node.clone());
 
         for relationship in &self.relationships {
-            if relationship.from.alias.id == node.alias.id
-                && !visited.contains(&relationship.to.alias.id)
-            {
-                component_relationships.push(relationship.clone());
-                self.dfs(
-                    &relationship.to,
-                    visited,
-                    component_nodes,
-                    component_relationships,
-                    component_paths,
-                );
-            } else if relationship.to.alias.id == node.alias.id
-                && !visited.contains(&relationship.from.alias.id)
-            {
-                component_relationships.push(relationship.clone());
-                self.dfs(
-                    &relationship.from,
-                    visited,
-                    component_nodes,
-                    component_relationships,
-                    component_paths,
-                );
+            if relationship.from.alias.id == node.alias.id {
+                if visited.insert(relationship.alias.id) {
+                    component_relationships.push(relationship.clone());
+                }
+                if !visited.contains(&relationship.to.alias.id) {
+                    self.dfs(
+                        &relationship.to,
+                        visited,
+                        component_nodes,
+                        component_relationships,
+                        component_paths,
+                    );
+                }
+            } else if relationship.to.alias.id == node.alias.id {
+                if visited.insert(relationship.alias.id) {
+                    component_relationships.push(relationship.clone());
+                }
+                if !visited.contains(&relationship.from.alias.id) {
+                    self.dfs(
+                        &relationship.from,
+                        visited,
+                        component_nodes,
+                        component_relationships,
+                        component_paths,
+                    );
+                }
             }
         }
 
         for path in &self.paths {
-            if path.vars.iter().any(|id| visited.contains(&id.id)) {
-                debug_assert!(path.vars.iter().all(|id| id.id != node.alias.id));
+            if path.vars.iter().any(|id| visited.contains(&id.id)) && visited.insert(path.var.id) {
+                debug_assert!(path.vars.iter().all(|id| visited.contains(&id.id)));
                 component_paths.push(path.clone());
             }
         }
@@ -642,12 +673,12 @@ impl QueryIR {
 
     #[allow(clippy::too_many_lines)]
     fn inner_validate<'a, T>(
-        &mut self,
+        &self,
         mut iter: T,
         env: &mut HashSet<u32>,
     ) -> Result<(), String>
     where
-        T: Iterator<Item = &'a mut Self>,
+        T: Iterator<Item = &'a Self>,
     {
         match self {
             Self::Call(_, args) => {
@@ -657,17 +688,9 @@ impl QueryIR {
                 Ok(())
             }
             Self::Match(p, _) => {
-                let mut remove = Vec::new();
-                for (i, node) in p.nodes.iter().enumerate() {
-                    if env.contains(&node.alias.id) {
-                        remove.push(i);
-                    }
+                for node in &p.nodes {
                     node.attrs.root().validate(env)?;
                     env.insert(node.alias.id);
-                }
-                remove.reverse();
-                for i in remove {
-                    p.nodes.remove(i);
                 }
                 for relationship in &p.relationships {
                     relationship.attrs.root().validate(env)?;
@@ -694,22 +717,14 @@ impl QueryIR {
                     )), |first| first.inner_validate(iter, env))
             }
             Self::Merge(p) => {
-                let mut remove = Vec::new();
-                for (i, node) in p.nodes.iter().enumerate() {
-                    if env.contains(&node.alias.id) {
-                        if p.relationships.is_empty() {
-                            return Err(format!(
-                                "The bound variable {} can't be redeclared in a create clause",
-                                node.alias.as_str()
-                            ));
-                        }
-                        remove.push(i);
+                for node in &p.nodes {
+                    if env.contains(&node.alias.id) && p.relationships.is_empty() {
+                        return Err(format!(
+                            "The bound variable {} can't be redeclared in a create clause",
+                            node.alias.as_str()
+                        ));
                     }
                     node.attrs.root().validate(env)?;
-                }
-                remove.reverse();
-                for i in remove {
-                    p.nodes.remove(i);
                 }
                 for node in &p.nodes {
                     env.insert(node.alias.id);
@@ -741,22 +756,14 @@ impl QueryIR {
                     }
                     env.insert(path.var.id);
                 }
-                let mut remove = Vec::new();
-                for (i, node) in p.nodes.iter().enumerate() {
-                    if env.contains(&node.alias.id) {
-                        if p.relationships.is_empty() {
-                            return Err(format!(
-                                "The bound variable {} can't be redeclared in a create clause",
-                                node.alias.as_str()
-                            ));
-                        }
-                        remove.push(i);
+                for node in &p.nodes {
+                    if env.contains(&node.alias.id) && p.relationships.is_empty() {
+                        return Err(format!(
+                            "The bound variable {} can't be redeclared in a create clause",
+                            node.alias.as_str()
+                        ));
                     }
                     node.attrs.root().validate(env)?;
-                }
-                remove.reverse();
-                for i in remove {
-                    p.nodes.remove(i);
                 }
                 for node in &p.nodes {
                     env.insert(node.alias.id);
@@ -802,7 +809,7 @@ impl QueryIR {
                     .map_or(Ok(()), |first| first.inner_validate(iter, env))
             }
             Self::With { exprs, .. } | Self::Return { exprs, .. } => {
-                for (_, expr) in exprs.iter() {
+                for (_, expr) in exprs {
                     expr.root().validate(env)?;
                 }
                 if !exprs.is_empty() {
@@ -822,7 +829,7 @@ impl QueryIR {
                     .map_or(Ok(()), |first| first.inner_validate(iter, env))
             }
             Self::Query(q, _) => {
-                let mut iter = q.iter_mut();
+                let mut iter = q.iter();
                 let first = iter.next().ok_or("Empty query")?;
                 first.inner_validate(iter, env)
             }

@@ -1,5 +1,6 @@
 use std::{fmt::Display, rc::Rc};
 
+use hashbrown::HashSet;
 use orx_tree::{DynTree, NodeRef};
 
 use crate::{
@@ -26,6 +27,7 @@ pub enum IR {
     ExpandInto(Rc<RelationshipPattern>),
     PathBuilder(Vec<Rc<PathPattern>>),
     Filter(DynTree<ExprIR>),
+    CartesianProduct,
     Sort(Vec<(DynTree<ExprIR>, bool)>),
     Skip(DynTree<ExprIR>),
     Limit(DynTree<ExprIR>),
@@ -60,6 +62,7 @@ impl Display for IR {
             Self::ExpandInto(rel) => write!(f, "ExpandInto {rel}"),
             Self::PathBuilder(_) => write!(f, "PathBuilder"),
             Self::Filter(_) => write!(f, "Filter"),
+            Self::CartesianProduct => write!(f, "CartesianProduct"),
             Self::Sort(_) => write!(f, "Sort"),
             Self::Skip(_) => write!(f, "Skip"),
             Self::Limit(_) => write!(f, "Limit"),
@@ -71,28 +74,24 @@ impl Display for IR {
 }
 
 #[derive(Default)]
-pub struct Planner {}
+pub struct Planner {
+    visited: HashSet<u32>,
+}
 
 impl Planner {
-    #[must_use]
-    pub const fn new() -> Self {
-        Self {}
-    }
-
-    fn plan_match(pattern: QueryGraph) -> DynTree<IR> {
-        if pattern.relationships.is_empty() && !pattern.nodes.is_empty() {
-            let mut iter = pattern.nodes.into_iter().rev();
-            let mut res = tree!(IR::NodeScan(iter.next().unwrap()));
-            for node in iter {
-                res = tree!(IR::NodeScan(node), res);
+    fn plan_match(
+        &mut self,
+        pattern: QueryGraph,
+    ) -> DynTree<IR> {
+        let mut vec = vec![];
+        for component in pattern.connected_components() {
+            if component.relationships.is_empty() {
+                debug_assert_eq!(component.nodes.len(), 1);
+                vec.push(tree!(IR::NodeScan(component.nodes[0].clone())));
+                self.visited.insert(component.nodes[0].alias.id);
+                continue;
             }
-            if !pattern.paths.is_empty() {
-                res = tree!(IR::PathBuilder(pattern.paths), res);
-            }
-            return res;
-        }
-        if !pattern.relationships.is_empty() {
-            let mut iter = pattern.relationships.into_iter();
+            let mut iter = component.relationships.into_iter();
             let relationship = iter.next().unwrap();
             let mut res = if relationship.from.alias.id == relationship.to.alias.id {
                 tree!(
@@ -100,8 +99,11 @@ impl Planner {
                     tree!(IR::NodeScan(relationship.from.clone()))
                 )
             } else {
-                tree!(IR::RelationshipScan(relationship))
+                tree!(IR::RelationshipScan(relationship.clone()))
             };
+            self.visited.insert(relationship.from.alias.id);
+            self.visited.insert(relationship.to.alias.id);
+            self.visited.insert(relationship.alias.id);
             for relationship in iter {
                 res = if relationship.from.alias.id == relationship.to.alias.id {
                     tree!(
@@ -109,24 +111,34 @@ impl Planner {
                         tree!(IR::NodeScan(relationship.from.clone()), res)
                     )
                 } else {
-                    tree!(IR::RelationshipScan(relationship), res)
+                    tree!(IR::RelationshipScan(relationship.clone()), res)
                 };
+                self.visited.insert(relationship.from.alias.id);
+                self.visited.insert(relationship.to.alias.id);
+                self.visited.insert(relationship.alias.id);
             }
-            if !pattern.paths.is_empty() {
-                res = tree!(IR::PathBuilder(pattern.paths), res);
+            if !component.paths.is_empty() {
+                res = tree!(IR::PathBuilder(component.paths), res);
             }
-            return res;
+            vec.push(res);
         }
-        tree!(IR::Empty)
+        if vec.len() == 1 {
+            return vec.pop().unwrap();
+        }
+        tree!(IR::CartesianProduct; vec)
     }
 
     fn plan_project(
+        &mut self,
         exprs: Vec<(VarId, DynTree<ExprIR>)>,
         orderby: Vec<(DynTree<ExprIR>, bool)>,
         skip: Option<DynTree<ExprIR>>,
         limit: Option<DynTree<ExprIR>>,
         write: bool,
     ) -> DynTree<IR> {
+        for expr in &exprs {
+            self.visited.insert(expr.0.id);
+        }
         let mut res = if exprs.iter().any(|e| e.1.is_aggregation()) {
             let mut group_by_keys = Vec::new();
             let mut aggregations = Vec::new();
@@ -159,12 +171,13 @@ impl Planner {
     }
 
     fn plan_query(
-        &self,
+        &mut self,
         q: Vec<QueryIR>,
         write: bool,
     ) -> DynTree<IR> {
-        let iter = &mut q.into_iter().rev();
-        let mut res = self.plan(iter.next().unwrap());
+        let plans: Vec<DynTree<IR>> = q.into_iter().map(|ir| self.plan(ir)).collect();
+        let mut iter = plans.into_iter().rev();
+        let mut res = iter.next().unwrap();
         let mut idx = res.root().idx();
         while matches!(res.node(&idx).data(), IR::Commit)
             || matches!(res.node(&idx).data(), IR::Sort(_))
@@ -173,8 +186,7 @@ impl Planner {
         {
             idx = res.node(&idx).child(0).idx();
         }
-        for e in iter {
-            let n = self.plan(e);
+        for n in iter {
             idx = res.node_mut(&idx).push_child_tree(n);
             while matches!(res.node(&idx).data(), IR::Commit)
                 || matches!(res.node(&idx).data(), IR::Sort(_))
@@ -192,7 +204,7 @@ impl Planner {
 
     #[must_use]
     pub fn plan(
-        &self,
+        &mut self,
         ir: QueryIR,
     ) -> DynTree<IR> {
         match ir {
@@ -207,17 +219,23 @@ impl Planner {
                                 .map(|n| n.alias.clone())
                                 .chain(pattern.relationships.iter().map(|r| r.alias.clone()))
                                 .chain(pattern.paths.iter().map(|p| p.var.clone()))
+                                .filter(|v| !self.visited.contains(&v.id))
                                 .collect()
                         ),
-                        Self::plan_match(pattern)
+                        self.plan_match(pattern)
                     )
                 } else {
-                    Self::plan_match(pattern)
+                    self.plan_match(pattern)
                 }
             }
             QueryIR::Unwind(expr, alias) => tree!(IR::Unwind(expr, alias)),
-            QueryIR::Merge(pattern) => tree!(IR::Merge(pattern.clone()), Self::plan_match(pattern)),
-            QueryIR::Create(pattern) => tree!(IR::Create(pattern)),
+            QueryIR::Merge(pattern) => tree!(
+                IR::Merge(pattern.filter_visited(&self.visited)),
+                self.plan_match(pattern)
+            ),
+            QueryIR::Create(pattern) => {
+                tree!(IR::Create(pattern.filter_visited(&self.visited)))
+            }
             QueryIR::Delete(exprs, is_detach) => tree!(IR::Delete(exprs, is_detach)),
             QueryIR::Set(items) => tree!(IR::Set(items)),
             QueryIR::Remove(items) => tree!(IR::Remove(items)),
@@ -237,7 +255,7 @@ impl Planner {
                 limit,
                 write,
                 ..
-            } => Self::plan_project(exprs, orderby, skip, limit, write),
+            } => self.plan_project(exprs, orderby, skip, limit, write),
             QueryIR::Query(q, write) => self.plan_query(q, write),
         }
     }

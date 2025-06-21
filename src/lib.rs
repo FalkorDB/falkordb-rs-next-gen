@@ -630,7 +630,7 @@ fn graph_plan(
     let mut parser = Parser::new(query);
     match parser.parse() {
         Ok(ir) => {
-            let planner = Planner::new();
+            let mut planner = Planner::default();
             let ir = planner.plan(ir);
             Ok(RedisValue::BulkString(format!("{ir}")))
         }

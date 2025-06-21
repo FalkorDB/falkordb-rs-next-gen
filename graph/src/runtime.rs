@@ -1092,6 +1092,24 @@ impl<'a> Runtime<'a> {
                 }
                 unreachable!();
             }
+            IR::CartesianProduct => {
+                if let Some(child_idx) = child0_idx {
+                    let mut iter = self.run(&child_idx)?;
+                    let node = self.plan.node(idx);
+                    for child in node.children().skip(1) {
+                        let idx = child.idx();
+                        iter = Box::new(iter.try_flat_map(move |vars1| {
+                            self.run(&idx).unwrap().try_map(move |vars2| {
+                                let mut vars = vars1.clone();
+                                vars.merge(vars2);
+                                Ok(vars)
+                            })
+                        }));
+                    }
+                    return Ok(iter);
+                }
+                unreachable!();
+            }
             IR::Sort(trees) => {
                 if let Some(child_idx) = child0_idx {
                     let mut items = self.run(&child_idx)?.collect::<Result<Vec<_>, String>>()?;
