@@ -5,8 +5,8 @@ use orx_tree::{DynTree, NodeRef};
 
 use crate::{
     ast::{
-        ExprIR, NodePattern, PathPattern, QueryGraph, QueryIR, RelationshipPattern,
-        SupportAggregation, VarId,
+        ExprIR, QueryGraph, QueryIR, QueryNode, QueryPath, QueryRelationship, SupportAggregation,
+        Variable,
     },
     tree,
 };
@@ -14,29 +14,29 @@ use crate::{
 #[derive(Debug)]
 pub enum IR {
     Empty,
-    Optional(Vec<VarId>),
+    Optional(Vec<Variable>),
     Call(Rc<String>, Vec<DynTree<ExprIR>>),
-    Unwind(DynTree<ExprIR>, VarId),
+    Unwind(DynTree<ExprIR>, Variable),
     Create(QueryGraph),
     Merge(QueryGraph),
     Delete(Vec<DynTree<ExprIR>>, bool),
     Set(Vec<(DynTree<ExprIR>, DynTree<ExprIR>, bool)>),
     Remove(Vec<DynTree<ExprIR>>),
-    NodeScan(Rc<NodePattern>),
-    RelationshipScan(Rc<RelationshipPattern>),
-    ExpandInto(Rc<RelationshipPattern>),
-    PathBuilder(Vec<Rc<PathPattern>>),
+    NodeScan(Rc<QueryNode>),
+    RelationshipScan(Rc<QueryRelationship>),
+    ExpandInto(Rc<QueryRelationship>),
+    PathBuilder(Vec<Rc<QueryPath>>),
     Filter(DynTree<ExprIR>),
     CartesianProduct,
     Sort(Vec<(DynTree<ExprIR>, bool)>),
     Skip(DynTree<ExprIR>),
     Limit(DynTree<ExprIR>),
     Aggregate(
-        Vec<VarId>,
-        Vec<(VarId, DynTree<ExprIR>)>,
-        Vec<(VarId, DynTree<ExprIR>)>,
+        Vec<Variable>,
+        Vec<(Variable, DynTree<ExprIR>)>,
+        Vec<(Variable, DynTree<ExprIR>)>,
     ),
-    Project(Vec<(VarId, DynTree<ExprIR>)>),
+    Project(Vec<(Variable, DynTree<ExprIR>)>),
     Commit,
 }
 
@@ -134,7 +134,7 @@ impl Planner {
 
     fn plan_project(
         &mut self,
-        exprs: Vec<(VarId, DynTree<ExprIR>)>,
+        exprs: Vec<(Variable, DynTree<ExprIR>)>,
         orderby: Vec<(DynTree<ExprIR>, bool)>,
         skip: Option<DynTree<ExprIR>>,
         limit: Option<DynTree<ExprIR>>,

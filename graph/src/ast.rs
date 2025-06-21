@@ -7,13 +7,13 @@ use orx_tree::{Dfs, DynNode, DynTree, NodeRef};
 use crate::functions::{GraphFn, Type};
 
 #[derive(Clone, Debug)]
-pub struct VarId {
+pub struct Variable {
     pub name: Option<Rc<String>>,
     pub id: u32,
     pub ty: Type,
 }
 
-impl PartialEq for VarId {
+impl PartialEq for Variable {
     fn eq(
         &self,
         other: &Self,
@@ -22,9 +22,9 @@ impl PartialEq for VarId {
     }
 }
 
-impl Eq for VarId {}
+impl Eq for Variable {}
 
-impl Hash for VarId {
+impl Hash for Variable {
     fn hash<H: std::hash::Hasher>(
         &self,
         state: &mut H,
@@ -33,7 +33,7 @@ impl Hash for VarId {
     }
 }
 
-impl VarId {
+impl Variable {
     #[must_use]
     pub fn as_str(&self) -> &str {
         self.name.as_ref().map_or("?", |n| n.as_str())
@@ -49,7 +49,7 @@ pub enum ExprIR {
     String(Rc<String>),
     List,
     Map,
-    Var(VarId),
+    Variable(Variable),
     Parameter(String),
     Length,
     GetElement,
@@ -76,8 +76,8 @@ pub enum ExprIR {
     Modulo,
     Distinct,
     FuncInvocation(Rc<GraphFn>),
-    Quantifier(QuantifierType, VarId),
-    ListComprehension(VarId),
+    Quantifier(QuantifierType, Variable),
+    ListComprehension(Variable),
 }
 
 impl Display for ExprIR {
@@ -93,7 +93,7 @@ impl Display for ExprIR {
             Self::String(s) => write!(f, "{s}"),
             Self::List => write!(f, "[]"),
             Self::Map => write!(f, "{{}}"),
-            Self::Var(id) => write!(f, "{}", id.as_str()),
+            Self::Variable(id) => write!(f, "{}", id.as_str()),
             Self::Parameter(p) => write!(f, "@{p}"),
             Self::Length => write!(f, "length()"),
             Self::GetElement => write!(f, "get_element()"),
@@ -176,7 +176,7 @@ impl Validate for DynNode<'_, ExprIR> {
                 debug_assert_eq!(self.num_children(), 0);
                 Ok(())
             }
-            ExprIR::Var(var) => {
+            ExprIR::Variable(var) => {
                 debug_assert_eq!(self.num_children(), 0);
                 if env.contains(&var.id) {
                     Ok(())
@@ -301,13 +301,13 @@ impl SupportAggregation for DynTree<ExprIR> {
 }
 
 #[derive(Debug)]
-pub struct NodePattern {
-    pub alias: VarId,
+pub struct QueryNode {
+    pub alias: Variable,
     pub labels: OrderSet<Rc<String>>,
     pub attrs: Rc<DynTree<ExprIR>>,
 }
 
-impl Display for NodePattern {
+impl Display for QueryNode {
     fn fmt(
         &self,
         f: &mut std::fmt::Formatter<'_>,
@@ -328,10 +328,10 @@ impl Display for NodePattern {
     }
 }
 
-impl NodePattern {
+impl QueryNode {
     #[must_use]
     pub const fn new(
-        alias: VarId,
+        alias: Variable,
         labels: OrderSet<Rc<String>>,
         attrs: Rc<DynTree<ExprIR>>,
     ) -> Self {
@@ -344,16 +344,16 @@ impl NodePattern {
 }
 
 #[derive(Debug)]
-pub struct RelationshipPattern {
-    pub alias: VarId,
+pub struct QueryRelationship {
+    pub alias: Variable,
     pub types: Vec<Rc<String>>,
     pub attrs: Rc<DynTree<ExprIR>>,
-    pub from: Rc<NodePattern>,
-    pub to: Rc<NodePattern>,
+    pub from: Rc<QueryNode>,
+    pub to: Rc<QueryNode>,
     pub bidirectional: bool,
 }
 
-impl Display for RelationshipPattern {
+impl Display for QueryRelationship {
     fn fmt(
         &self,
         f: &mut std::fmt::Formatter<'_>,
@@ -385,14 +385,14 @@ impl Display for RelationshipPattern {
     }
 }
 
-impl RelationshipPattern {
+impl QueryRelationship {
     #[must_use]
     pub const fn new(
-        alias: VarId,
+        alias: Variable,
         types: Vec<Rc<String>>,
         attrs: Rc<DynTree<ExprIR>>,
-        from: Rc<NodePattern>,
-        to: Rc<NodePattern>,
+        from: Rc<QueryNode>,
+        to: Rc<QueryNode>,
         bidirectional: bool,
     ) -> Self {
         Self {
@@ -407,16 +407,16 @@ impl RelationshipPattern {
 }
 
 #[derive(Debug)]
-pub struct PathPattern {
-    pub var: VarId,
-    pub vars: Vec<VarId>,
+pub struct QueryPath {
+    pub var: Variable,
+    pub vars: Vec<Variable>,
 }
 
-impl PathPattern {
+impl QueryPath {
     #[must_use]
     pub const fn new(
-        var: VarId,
-        vars: Vec<VarId>,
+        var: Variable,
+        vars: Vec<Variable>,
     ) -> Self {
         Self { var, vars }
     }
@@ -424,9 +424,9 @@ impl PathPattern {
 
 #[derive(Clone, Debug)]
 pub struct QueryGraph {
-    pub nodes: Vec<Rc<NodePattern>>,
-    pub relationships: Vec<Rc<RelationshipPattern>>,
-    pub paths: Vec<Rc<PathPattern>>,
+    pub nodes: Vec<Rc<QueryNode>>,
+    pub relationships: Vec<Rc<QueryRelationship>>,
+    pub paths: Vec<Rc<QueryPath>>,
 }
 
 impl Display for QueryGraph {
@@ -450,9 +450,9 @@ impl Display for QueryGraph {
 impl QueryGraph {
     #[must_use]
     pub const fn new(
-        nodes: Vec<Rc<NodePattern>>,
-        relationships: Vec<Rc<RelationshipPattern>>,
-        paths: Vec<Rc<PathPattern>>,
+        nodes: Vec<Rc<QueryNode>>,
+        relationships: Vec<Rc<QueryRelationship>>,
+        paths: Vec<Rc<QueryPath>>,
     ) -> Self {
         Self {
             nodes,
@@ -520,11 +520,11 @@ impl QueryGraph {
 
     fn dfs(
         &self,
-        node: &Rc<NodePattern>,
+        node: &Rc<QueryNode>,
         visited: &mut HashSet<u32>,
-        component_nodes: &mut Vec<Rc<NodePattern>>,
-        component_relationships: &mut Vec<Rc<RelationshipPattern>>,
-        component_paths: &mut Vec<Rc<PathPattern>>,
+        component_nodes: &mut Vec<Rc<QueryNode>>,
+        component_relationships: &mut Vec<Rc<QueryRelationship>>,
+        component_paths: &mut Vec<Rc<QueryPath>>,
     ) {
         visited.insert(node.alias.id);
         component_nodes.push(node.clone());
@@ -572,7 +572,7 @@ impl QueryGraph {
 pub enum QueryIR {
     Call(Rc<String>, Vec<DynTree<ExprIR>>),
     Match(QueryGraph, bool),
-    Unwind(DynTree<ExprIR>, VarId),
+    Unwind(DynTree<ExprIR>, Variable),
     Merge(QueryGraph),
     Where(DynTree<ExprIR>),
     Create(QueryGraph),
@@ -580,14 +580,14 @@ pub enum QueryIR {
     Set(Vec<(DynTree<ExprIR>, DynTree<ExprIR>, bool)>),
     Remove(Vec<DynTree<ExprIR>>),
     With {
-        exprs: Vec<(VarId, DynTree<ExprIR>)>,
+        exprs: Vec<(Variable, DynTree<ExprIR>)>,
         orderby: Vec<(DynTree<ExprIR>, bool)>,
         skip: Option<DynTree<ExprIR>>,
         limit: Option<DynTree<ExprIR>>,
         write: bool,
     },
     Return {
-        exprs: Vec<(VarId, DynTree<ExprIR>)>,
+        exprs: Vec<(Variable, DynTree<ExprIR>)>,
         orderby: Vec<(DynTree<ExprIR>, bool)>,
         skip: Option<DynTree<ExprIR>>,
         limit: Option<DynTree<ExprIR>>,

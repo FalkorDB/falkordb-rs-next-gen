@@ -10,7 +10,7 @@ use std::rc::Rc;
 
 use ordermap::OrderMap;
 
-use crate::ast::VarId;
+use crate::ast::Variable;
 use crate::functions::Type;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -181,7 +181,7 @@ pub struct Env(Vec<RcValue>);
 impl Env {
     pub fn insert(
         &mut self,
-        key: &VarId,
+        key: &Variable,
         value: RcValue,
     ) {
         while self.0.len() <= key.id as _ {
@@ -193,7 +193,7 @@ impl Env {
     #[must_use]
     pub fn get(
         &self,
-        key: &VarId,
+        key: &Variable,
     ) -> Option<RcValue> {
         self.0.get(key.id as usize).cloned()
     }

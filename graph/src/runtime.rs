@@ -3,7 +3,7 @@
 #![allow(clippy::cast_possible_truncation)]
 #![allow(clippy::cast_precision_loss)]
 
-use crate::ast::{NodePattern, QuantifierType, QueryGraph, RelationshipPattern, VarId};
+use crate::ast::{QuantifierType, QueryGraph, QueryNode, QueryRelationship, Variable};
 use crate::functions::{FnType, Functions, Type, get_functions};
 use crate::iter::{Aggregate, LazyReplace, TryFlatMap, TryMap};
 use crate::value::{DisjointOrNull, Env, RcValue, ValuesDeduper};
@@ -26,7 +26,7 @@ pub trait ReturnCallback {
         &self,
         graph: &RefCell<Graph>,
         env: Env,
-        return_names: &[VarId],
+        return_names: &[Variable],
     );
 }
 
@@ -141,17 +141,17 @@ pub struct Runtime<'a> {
 }
 
 trait ReturnNames {
-    fn get_return_names(&self) -> Vec<VarId>;
+    fn get_return_names(&self) -> Vec<Variable>;
 }
 
 impl ReturnNames for DynNode<'_, IR> {
-    fn get_return_names(&self) -> Vec<VarId> {
+    fn get_return_names(&self) -> Vec<Variable> {
         match self.data() {
             IR::Project(trees) => trees.iter().map(|v| v.0.clone()).collect(),
             IR::Commit => self
                 .get_child(0)
                 .map_or(vec![], |child| child.get_return_names()),
-            IR::Call(name, _) => vec![VarId {
+            IR::Call(name, _) => vec![Variable {
                 name: Some(name.clone()),
                 id: 0,
                 ty: Type::Any,
@@ -232,7 +232,7 @@ impl<'a> Runtime<'a> {
         match ir.data() {
             ExprIR::FuncInvocation(func) if func.is_aggregate() => {
                 if let FnType::Aggregation(zero, _) = &func.fn_type {
-                    let ExprIR::Var(key) = ir.child(ir.num_children() - 1).data() else {
+                    let ExprIR::Variable(key) = ir.child(ir.num_children() - 1).data() else {
                         unreachable!();
                     };
                     env.insert(key, zero.clone());
@@ -257,7 +257,7 @@ impl<'a> Runtime<'a> {
         match ir.data() {
             ExprIR::FuncInvocation(func) if func.is_aggregate() => {
                 let key = match ir.child(ir.num_children() - 1).data() {
-                    ExprIR::Var(key) => key.clone(),
+                    ExprIR::Variable(key) => key.clone(),
                     _ => {
                         return Err(String::from(
                             "Aggregation function must end with a variable",
@@ -291,7 +291,7 @@ impl<'a> Runtime<'a> {
             ExprIR::Integer(x) => Ok(RcValue::new(Value::Int(*x))),
             ExprIR::Float(x) => Ok(RcValue::new(Value::Float(*x))),
             ExprIR::String(x) => Ok(RcValue::new(Value::String(x.clone()))),
-            ExprIR::Var(x) => env
+            ExprIR::Variable(x) => env
                 .get(x)
                 .map_or_else(|| Err(format!("Variable {} not found", x.as_str())), Ok),
             ExprIR::Parameter(x) => self.parameters.get(x).map_or_else(
@@ -502,7 +502,7 @@ impl<'a> Runtime<'a> {
             ExprIR::FuncInvocation(func) => {
                 if agg_group_key.is_none() {
                     if let FnType::Aggregation(_, finalize) = &func.fn_type {
-                        let ExprIR::Var(key) = ir.child(ir.num_children() - 1).data() else {
+                        let ExprIR::Variable(key) = ir.child(ir.num_children() - 1).data() else {
                             unreachable!(
                                 "Aggregation function invocation must end with an accumulator variable"
                             );
@@ -752,7 +752,7 @@ impl<'a> Runtime<'a> {
                     Value::List(arr) => Ok(Box::new(arr.clone().into_iter().map(|v| {
                         let mut env = Env::default();
                         env.insert(
-                            &VarId {
+                            &Variable {
                                 name: Some(name.clone()),
                                 id: 0,
                                 ty: Type::Any,
@@ -865,7 +865,7 @@ impl<'a> Runtime<'a> {
                         for (entity, value, replace) in trees {
                             let value = self.run_expr(value.root(), &vars, None)?;
                             let (entity, property, labels) = match entity.root().data() {
-                                ExprIR::Var(name) => (vars.get(name).unwrap(), None, None),
+                                ExprIR::Variable(name) => (vars.get(name).unwrap(), None, None),
                                 ExprIR::FuncInvocation(func) if func.name == "property" => {
                                     let ExprIR::String(property) = entity.root().child(1).data()
                                     else {
@@ -1277,7 +1277,7 @@ impl<'a> Runtime<'a> {
 
     fn relationship_scan(
         &self,
-        relationship_pattern: &'a RelationshipPattern,
+        relationship_pattern: &'a QueryRelationship,
         vars: Env,
     ) -> Box<dyn Iterator<Item = Result<Env, String>> + '_> {
         let attrs = match self.run_expr(relationship_pattern.attrs.root(), &vars, None) {
@@ -1352,7 +1352,7 @@ impl<'a> Runtime<'a> {
 
     fn expand_into(
         &self,
-        relationship_pattern: &'a RelationshipPattern,
+        relationship_pattern: &'a QueryRelationship,
         vars: Env,
     ) -> Box<dyn Iterator<Item = Result<Env, String>> + '_> {
         let src = vars
@@ -1391,7 +1391,7 @@ impl<'a> Runtime<'a> {
 
     fn node_scan(
         &self,
-        node_pattern: &'a NodePattern,
+        node_pattern: &'a QueryNode,
         vars: Env,
     ) -> Box<dyn Iterator<Item = Result<Env, String>> + '_> {
         let attrs = match self.run_expr(node_pattern.attrs.root(), &vars, None) {
