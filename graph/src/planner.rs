@@ -87,8 +87,12 @@ impl Planner {
         for component in pattern.connected_components() {
             if component.relationships.is_empty() {
                 debug_assert_eq!(component.nodes.len(), 1);
-                vec.push(tree!(IR::NodeScan(component.nodes[0].clone())));
+                let mut res = tree!(IR::NodeScan(component.nodes[0].clone()));
                 self.visited.insert(component.nodes[0].alias.id);
+                if !component.paths.is_empty() {
+                    res = tree!(IR::PathBuilder(component.paths), res);
+                }
+                vec.push(res);
                 continue;
             }
             let mut iter = component.relationships.into_iter();
