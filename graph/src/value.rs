@@ -125,16 +125,52 @@ impl Hash for Value {
         &self,
         state: &mut H,
     ) {
-        discriminant(self).hash(state);
         match self {
-            Self::Null => {}
-            Self::Bool(x) => x.hash(state),
-            Self::Int(x) => x.hash(state),
-            Self::Float(x) => x.to_string().hash(state),
-            Self::String(x) => x.hash(state),
-            Self::List(x) | Self::Path(x) => x.hash(state),
-            Self::Map(x) => x.hash(state),
-            Self::Node(x) | Self::Relationship(x, _, _) => x.hash(state),
+            Self::Null => {
+                0.hash(state);
+            }
+            Self::Bool(x) => {
+                1.hash(state);
+                x.hash(state);
+            }
+            Self::Int(x) => {
+                2.hash(state);
+                x.hash(state);
+            }
+            Self::Float(x) => {
+                2.hash(state);
+                let casted = *x as i64;
+                let diff = *x - casted as f64;
+                if diff == 0.0 {
+                    casted.hash(state);
+                } else {
+                    x.to_bits().hash(state);
+                }
+            }
+            Self::String(x) => {
+                3.hash(state);
+                x.hash(state);
+            }
+            Self::List(x) => {
+                4.hash(state);
+                x.hash(state);
+            }
+            Self::Map(x) => {
+                5.hash(state);
+                x.hash(state);
+            }
+            Self::Node(x) => {
+                6.hash(state);
+                x.hash(state);
+            }
+            Self::Relationship(x, _, _) => {
+                7.hash(state);
+                x.hash(state);
+            }
+            Self::Path(x) => {
+                8.hash(state);
+                x.hash(state);
+            }
         }
     }
 }
