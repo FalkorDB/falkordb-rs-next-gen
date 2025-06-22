@@ -10,7 +10,7 @@ use std::rc::Rc;
 
 use ordermap::OrderMap;
 
-use crate::ast::VarId;
+use crate::ast::Variable;
 use crate::functions::Type;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -125,16 +125,52 @@ impl Hash for Value {
         &self,
         state: &mut H,
     ) {
-        discriminant(self).hash(state);
         match self {
-            Self::Null => {}
-            Self::Bool(x) => x.hash(state),
-            Self::Int(x) => x.hash(state),
-            Self::Float(x) => x.to_string().hash(state),
-            Self::String(x) => x.hash(state),
-            Self::List(x) | Self::Path(x) => x.hash(state),
-            Self::Map(x) => x.hash(state),
-            Self::Node(x) | Self::Relationship(x, _, _) => x.hash(state),
+            Self::Null => {
+                0.hash(state);
+            }
+            Self::Bool(x) => {
+                1.hash(state);
+                x.hash(state);
+            }
+            Self::Int(x) => {
+                2.hash(state);
+                x.hash(state);
+            }
+            Self::Float(x) => {
+                2.hash(state);
+                let casted = *x as i64;
+                let diff = *x - casted as f64;
+                if diff == 0.0 {
+                    casted.hash(state);
+                } else {
+                    x.to_bits().hash(state);
+                }
+            }
+            Self::String(x) => {
+                3.hash(state);
+                x.hash(state);
+            }
+            Self::List(x) => {
+                4.hash(state);
+                x.hash(state);
+            }
+            Self::Map(x) => {
+                5.hash(state);
+                x.hash(state);
+            }
+            Self::Node(x) => {
+                6.hash(state);
+                x.hash(state);
+            }
+            Self::Relationship(x, _, _) => {
+                7.hash(state);
+                x.hash(state);
+            }
+            Self::Path(x) => {
+                8.hash(state);
+                x.hash(state);
+            }
         }
     }
 }
@@ -145,7 +181,7 @@ pub struct Env(Vec<RcValue>);
 impl Env {
     pub fn insert(
         &mut self,
-        key: &VarId,
+        key: &Variable,
         value: RcValue,
     ) {
         while self.0.len() <= key.id as _ {
@@ -157,7 +193,7 @@ impl Env {
     #[must_use]
     pub fn get(
         &self,
-        key: &VarId,
+        key: &Variable,
     ) -> Option<RcValue> {
         self.0.get(key.id as usize).cloned()
     }
@@ -458,11 +494,13 @@ impl Value {
             (Self::Bool(a), Self::Bool(b)) => (a.cmp(b), DisjointOrNull::None),
             (Self::Float(a), Self::Float(b)) => compare_floats(*a, *b),
             (Self::String(a), Self::String(b)) => (a.cmp(b), DisjointOrNull::None),
-            (Self::List(a), Self::List(b)) => Self::compare_list(a, b),
+            (Self::List(a), Self::List(b)) | (Self::Path(a), Self::Path(b)) => {
+                Self::compare_list(a, b)
+            }
             (Self::Map(a), Self::Map(b)) => Self::compare_map(a, b),
             (Self::Node(a), Self::Node(b)) => (a.cmp(b), DisjointOrNull::None),
-            (Self::Relationship(a, b, c), Self::Relationship(a1, b1, c1)) => {
-                ((a, b, c).cmp(&(a1, b1, c1)), DisjointOrNull::None)
+            (Self::Relationship(a, _, _), Self::Relationship(b, _, _)) => {
+                (a.cmp(b), DisjointOrNull::None)
             }
             // the inputs have different type - compare them if they
             // are both numerics of differing types

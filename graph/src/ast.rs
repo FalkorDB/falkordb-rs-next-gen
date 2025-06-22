@@ -7,13 +7,13 @@ use orx_tree::{Dfs, DynNode, DynTree, NodeRef};
 use crate::functions::{GraphFn, Type};
 
 #[derive(Clone, Debug)]
-pub struct VarId {
+pub struct Variable {
     pub name: Option<Rc<String>>,
     pub id: u32,
     pub ty: Type,
 }
 
-impl PartialEq for VarId {
+impl PartialEq for Variable {
     fn eq(
         &self,
         other: &Self,
@@ -22,9 +22,9 @@ impl PartialEq for VarId {
     }
 }
 
-impl Eq for VarId {}
+impl Eq for Variable {}
 
-impl Hash for VarId {
+impl Hash for Variable {
     fn hash<H: std::hash::Hasher>(
         &self,
         state: &mut H,
@@ -33,7 +33,7 @@ impl Hash for VarId {
     }
 }
 
-impl VarId {
+impl Variable {
     #[must_use]
     pub fn as_str(&self) -> &str {
         self.name.as_ref().map_or("?", |n| n.as_str())
@@ -49,7 +49,7 @@ pub enum ExprIR {
     String(Rc<String>),
     List,
     Map,
-    Var(VarId),
+    Variable(Variable),
     Parameter(String),
     Length,
     GetElement,
@@ -76,8 +76,8 @@ pub enum ExprIR {
     Modulo,
     Distinct,
     FuncInvocation(Rc<GraphFn>),
-    Quantifier(QuantifierType, VarId),
-    ListComprehension(VarId),
+    Quantifier(QuantifierType, Variable),
+    ListComprehension(Variable),
 }
 
 impl Display for ExprIR {
@@ -93,7 +93,7 @@ impl Display for ExprIR {
             Self::String(s) => write!(f, "{s}"),
             Self::List => write!(f, "[]"),
             Self::Map => write!(f, "{{}}"),
-            Self::Var(id) => write!(f, "{}", id.as_str()),
+            Self::Variable(id) => write!(f, "{}", id.as_str()),
             Self::Parameter(p) => write!(f, "@{p}"),
             Self::Length => write!(f, "length()"),
             Self::GetElement => write!(f, "get_element()"),
@@ -176,7 +176,7 @@ impl Validate for DynNode<'_, ExprIR> {
                 debug_assert_eq!(self.num_children(), 0);
                 Ok(())
             }
-            ExprIR::Var(var) => {
+            ExprIR::Variable(var) => {
                 debug_assert_eq!(self.num_children(), 0);
                 if env.contains(&var.id) {
                     Ok(())
@@ -301,13 +301,13 @@ impl SupportAggregation for DynTree<ExprIR> {
 }
 
 #[derive(Debug)]
-pub struct NodePattern {
-    pub alias: VarId,
+pub struct QueryNode {
+    pub alias: Variable,
     pub labels: OrderSet<Rc<String>>,
     pub attrs: Rc<DynTree<ExprIR>>,
 }
 
-impl Display for NodePattern {
+impl Display for QueryNode {
     fn fmt(
         &self,
         f: &mut std::fmt::Formatter<'_>,
@@ -328,10 +328,10 @@ impl Display for NodePattern {
     }
 }
 
-impl NodePattern {
+impl QueryNode {
     #[must_use]
     pub const fn new(
-        alias: VarId,
+        alias: Variable,
         labels: OrderSet<Rc<String>>,
         attrs: Rc<DynTree<ExprIR>>,
     ) -> Self {
@@ -344,16 +344,16 @@ impl NodePattern {
 }
 
 #[derive(Debug)]
-pub struct RelationshipPattern {
-    pub alias: VarId,
+pub struct QueryRelationship {
+    pub alias: Variable,
     pub types: Vec<Rc<String>>,
     pub attrs: Rc<DynTree<ExprIR>>,
-    pub from: Rc<NodePattern>,
-    pub to: Rc<NodePattern>,
+    pub from: Rc<QueryNode>,
+    pub to: Rc<QueryNode>,
     pub bidirectional: bool,
 }
 
-impl Display for RelationshipPattern {
+impl Display for QueryRelationship {
     fn fmt(
         &self,
         f: &mut std::fmt::Formatter<'_>,
@@ -385,14 +385,14 @@ impl Display for RelationshipPattern {
     }
 }
 
-impl RelationshipPattern {
+impl QueryRelationship {
     #[must_use]
     pub const fn new(
-        alias: VarId,
+        alias: Variable,
         types: Vec<Rc<String>>,
         attrs: Rc<DynTree<ExprIR>>,
-        from: Rc<NodePattern>,
-        to: Rc<NodePattern>,
+        from: Rc<QueryNode>,
+        to: Rc<QueryNode>,
         bidirectional: bool,
     ) -> Self {
         Self {
@@ -407,29 +407,29 @@ impl RelationshipPattern {
 }
 
 #[derive(Debug)]
-pub struct PathPattern {
-    pub var: VarId,
-    pub vars: Vec<VarId>,
+pub struct QueryPath {
+    pub var: Variable,
+    pub vars: Vec<Variable>,
 }
 
-impl PathPattern {
+impl QueryPath {
     #[must_use]
     pub const fn new(
-        var: VarId,
-        vars: Vec<VarId>,
+        var: Variable,
+        vars: Vec<Variable>,
     ) -> Self {
         Self { var, vars }
     }
 }
 
 #[derive(Clone, Debug)]
-pub struct Pattern {
-    pub nodes: Vec<Rc<NodePattern>>,
-    pub relationships: Vec<Rc<RelationshipPattern>>,
-    pub paths: Vec<Rc<PathPattern>>,
+pub struct QueryGraph {
+    pub nodes: Vec<Rc<QueryNode>>,
+    pub relationships: Vec<Rc<QueryRelationship>>,
+    pub paths: Vec<Rc<QueryPath>>,
 }
 
-impl Display for Pattern {
+impl Display for QueryGraph {
     fn fmt(
         &self,
         f: &mut std::fmt::Formatter<'_>,
@@ -447,12 +447,12 @@ impl Display for Pattern {
     }
 }
 
-impl Pattern {
+impl QueryGraph {
     #[must_use]
     pub const fn new(
-        nodes: Vec<Rc<NodePattern>>,
-        relationships: Vec<Rc<RelationshipPattern>>,
-        paths: Vec<Rc<PathPattern>>,
+        nodes: Vec<Rc<QueryNode>>,
+        relationships: Vec<Rc<QueryRelationship>>,
+        paths: Vec<Rc<QueryPath>>,
     ) -> Self {
         Self {
             nodes,
@@ -460,28 +460,134 @@ impl Pattern {
             paths,
         }
     }
+
+    #[must_use]
+    pub fn filter_visited(
+        &self,
+        visited: &HashSet<u32>,
+    ) -> Self {
+        let nodes = self
+            .nodes
+            .iter()
+            .filter(|node| !visited.contains(&node.alias.id))
+            .cloned()
+            .collect();
+        let relationships = self
+            .relationships
+            .iter()
+            .filter(|rel| !visited.contains(&rel.alias.id))
+            .cloned()
+            .collect();
+        let paths = self
+            .paths
+            .iter()
+            .filter(|path| !visited.contains(&path.var.id))
+            .cloned()
+            .collect();
+
+        Self::new(nodes, relationships, paths)
+    }
+
+    #[must_use]
+    pub fn connected_components(&self) -> Vec<Self> {
+        let mut visited = HashSet::new();
+        let mut components = Vec::new();
+
+        for node in &self.nodes {
+            if !visited.contains(&node.alias.id) {
+                let mut component_nodes = Vec::new();
+                let mut component_relationships = Vec::new();
+                let mut component_paths = Vec::new();
+
+                self.dfs(
+                    node,
+                    &mut visited,
+                    &mut component_nodes,
+                    &mut component_relationships,
+                    &mut component_paths,
+                );
+
+                components.push(Self::new(
+                    component_nodes,
+                    component_relationships,
+                    component_paths,
+                ));
+            }
+        }
+
+        components
+    }
+
+    fn dfs(
+        &self,
+        node: &Rc<QueryNode>,
+        visited: &mut HashSet<u32>,
+        component_nodes: &mut Vec<Rc<QueryNode>>,
+        component_relationships: &mut Vec<Rc<QueryRelationship>>,
+        component_paths: &mut Vec<Rc<QueryPath>>,
+    ) {
+        visited.insert(node.alias.id);
+        component_nodes.push(node.clone());
+
+        for relationship in &self.relationships {
+            if relationship.from.alias.id == node.alias.id {
+                if visited.insert(relationship.alias.id) {
+                    component_relationships.push(relationship.clone());
+                }
+                if !visited.contains(&relationship.to.alias.id) {
+                    self.dfs(
+                        &relationship.to,
+                        visited,
+                        component_nodes,
+                        component_relationships,
+                        component_paths,
+                    );
+                }
+            } else if relationship.to.alias.id == node.alias.id {
+                if visited.insert(relationship.alias.id) {
+                    component_relationships.push(relationship.clone());
+                }
+                if !visited.contains(&relationship.from.alias.id) {
+                    self.dfs(
+                        &relationship.from,
+                        visited,
+                        component_nodes,
+                        component_relationships,
+                        component_paths,
+                    );
+                }
+            }
+        }
+
+        for path in &self.paths {
+            if path.vars.iter().any(|id| visited.contains(&id.id)) && visited.insert(path.var.id) {
+                debug_assert!(path.vars.iter().all(|id| visited.contains(&id.id)));
+                component_paths.push(path.clone());
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
 pub enum QueryIR {
     Call(Rc<String>, Vec<DynTree<ExprIR>>),
-    Match(Pattern, bool),
-    Unwind(DynTree<ExprIR>, VarId),
-    Merge(Pattern),
+    Match(QueryGraph, bool),
+    Unwind(DynTree<ExprIR>, Variable),
+    Merge(QueryGraph),
     Where(DynTree<ExprIR>),
-    Create(Pattern),
+    Create(QueryGraph),
     Delete(Vec<DynTree<ExprIR>>, bool),
     Set(Vec<(DynTree<ExprIR>, DynTree<ExprIR>, bool)>),
     Remove(Vec<DynTree<ExprIR>>),
     With {
-        exprs: Vec<(VarId, DynTree<ExprIR>)>,
+        exprs: Vec<(Variable, DynTree<ExprIR>)>,
         orderby: Vec<(DynTree<ExprIR>, bool)>,
         skip: Option<DynTree<ExprIR>>,
         limit: Option<DynTree<ExprIR>>,
         write: bool,
     },
     Return {
-        exprs: Vec<(VarId, DynTree<ExprIR>)>,
+        exprs: Vec<(Variable, DynTree<ExprIR>)>,
         orderby: Vec<(DynTree<ExprIR>, bool)>,
         skip: Option<DynTree<ExprIR>>,
         limit: Option<DynTree<ExprIR>>,
@@ -567,12 +673,12 @@ impl QueryIR {
 
     #[allow(clippy::too_many_lines)]
     fn inner_validate<'a, T>(
-        &mut self,
+        &self,
         mut iter: T,
         env: &mut HashSet<u32>,
     ) -> Result<(), String>
     where
-        T: Iterator<Item = &'a mut Self>,
+        T: Iterator<Item = &'a Self>,
     {
         match self {
             Self::Call(_, args) => {
@@ -582,17 +688,9 @@ impl QueryIR {
                 Ok(())
             }
             Self::Match(p, _) => {
-                let mut remove = Vec::new();
-                for (i, node) in p.nodes.iter().enumerate() {
-                    if env.contains(&node.alias.id) {
-                        remove.push(i);
-                    }
+                for node in &p.nodes {
                     node.attrs.root().validate(env)?;
                     env.insert(node.alias.id);
-                }
-                remove.reverse();
-                for i in remove {
-                    p.nodes.remove(i);
                 }
                 for relationship in &p.relationships {
                     relationship.attrs.root().validate(env)?;
@@ -619,22 +717,14 @@ impl QueryIR {
                     )), |first| first.inner_validate(iter, env))
             }
             Self::Merge(p) => {
-                let mut remove = Vec::new();
-                for (i, node) in p.nodes.iter().enumerate() {
-                    if env.contains(&node.alias.id) {
-                        if p.relationships.is_empty() {
-                            return Err(format!(
-                                "The bound variable {} can't be redeclared in a create clause",
-                                node.alias.as_str()
-                            ));
-                        }
-                        remove.push(i);
+                for node in &p.nodes {
+                    if env.contains(&node.alias.id) && p.relationships.is_empty() {
+                        return Err(format!(
+                            "The bound variable {} can't be redeclared in a create clause",
+                            node.alias.as_str()
+                        ));
                     }
                     node.attrs.root().validate(env)?;
-                }
-                remove.reverse();
-                for i in remove {
-                    p.nodes.remove(i);
                 }
                 for node in &p.nodes {
                     env.insert(node.alias.id);
@@ -666,22 +756,14 @@ impl QueryIR {
                     }
                     env.insert(path.var.id);
                 }
-                let mut remove = Vec::new();
-                for (i, node) in p.nodes.iter().enumerate() {
-                    if env.contains(&node.alias.id) {
-                        if p.relationships.is_empty() {
-                            return Err(format!(
-                                "The bound variable {} can't be redeclared in a create clause",
-                                node.alias.as_str()
-                            ));
-                        }
-                        remove.push(i);
+                for node in &p.nodes {
+                    if env.contains(&node.alias.id) && p.relationships.is_empty() {
+                        return Err(format!(
+                            "The bound variable {} can't be redeclared in a create clause",
+                            node.alias.as_str()
+                        ));
                     }
                     node.attrs.root().validate(env)?;
-                }
-                remove.reverse();
-                for i in remove {
-                    p.nodes.remove(i);
                 }
                 for node in &p.nodes {
                     env.insert(node.alias.id);
@@ -727,7 +809,7 @@ impl QueryIR {
                     .map_or(Ok(()), |first| first.inner_validate(iter, env))
             }
             Self::With { exprs, .. } | Self::Return { exprs, .. } => {
-                for (_, expr) in exprs.iter() {
+                for (_, expr) in exprs {
                     expr.root().validate(env)?;
                 }
                 if !exprs.is_empty() {
@@ -747,7 +829,7 @@ impl QueryIR {
                     .map_or(Ok(()), |first| first.inner_validate(iter, env))
             }
             Self::Query(q, _) => {
-                let mut iter = q.iter_mut();
+                let mut iter = q.iter();
                 let first = iter.next().ok_or("Empty query")?;
                 first.inner_validate(iter, env)
             }
