@@ -1,6 +1,6 @@
 #![allow(clippy::cast_possible_wrap)]
 
-use graph::ast::VarId;
+use graph::ast::Variable;
 use graph::functions::init_functions;
 use graph::graph::Plan;
 use graph::runtime::{ResultSummary, ReturnCallback, Runtime, evaluate_param};
@@ -308,7 +308,7 @@ impl ReturnCallback for RedisValuesCollector<Compact> {
         &self,
         graph: &RefCell<Graph>,
         env: Env,
-        return_names: &[VarId],
+        return_names: &[Variable],
     ) {
         self.res.borrow_mut().push(
             return_names
@@ -325,7 +325,7 @@ impl ReturnCallback for RedisValuesCollector<Verbose> {
         &self,
         graph: &RefCell<Graph>,
         env: Env,
-        return_names: &[VarId],
+        return_names: &[Variable],
     ) {
         self.res.borrow_mut().push(
             return_names
@@ -630,7 +630,7 @@ fn graph_plan(
     let mut parser = Parser::new(query);
     match parser.parse() {
         Ok(ir) => {
-            let planner = Planner::new();
+            let mut planner = Planner::default();
             let ir = planner.plan(ir);
             Ok(RedisValue::BulkString(format!("{ir}")))
         }

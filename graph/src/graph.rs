@@ -171,7 +171,7 @@ impl Graph {
                     let ir = parser.parse()?;
                     parse_duration = start.elapsed();
 
-                    let planner = Planner::new();
+                    let mut planner = Planner::default();
                     let start = Instant::now();
                     let value = Rc::new(planner.plan(ir));
                     plan_duration = start.elapsed();

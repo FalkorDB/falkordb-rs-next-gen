@@ -4,7 +4,7 @@ use std::cell::RefCell;
 
 use graph::{
     GraphBLAS::{GrB_Mode, GrB_init},
-    ast::VarId,
+    ast::Variable,
     functions::init_functions,
     graph::{Graph, Plan},
     runtime::{ReturnCallback, Runtime, evaluate_param},
@@ -21,7 +21,7 @@ impl ReturnCallback for FuzzValuesCollector {
         &self,
         _: &RefCell<Graph>,
         _: Env,
-        _: &[VarId],
+        _: &[Variable],
     ) {
     }
 }
