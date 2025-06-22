@@ -680,7 +680,7 @@ pub fn init_functions() -> Result<(), Functions> {
         "sum",
         sum,
         false,
-        vec![Type::Any],
+        vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
         FnType::Aggregation(RcValue::float(0.0), None),
     );
     funcs.add(
