@@ -859,7 +859,6 @@ fn property(
             Ok(map.get(property).cloned().unwrap_or_else(RcValue::null))
         }
         (Some(Value::Null), Some(Value::String(_))) => Ok(RcValue::null()),
-        #[cfg_attr(tarpaulin, skip)]
         _ => unreachable!(),
     }
 }

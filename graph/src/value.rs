@@ -712,21 +712,26 @@ impl ValuesDeduper {
     ) -> bool {
         let mut hasher = DefaultHasher::new();
 
-        // Hash values, replace int with float because 0 and 0.0 should dedup
-        // we have to normalize -0.0 to 0.0 and -0 to 0 as well
-        // so that we can dedup them
-        // for now we do not normalize recursive values
+        // Hash values with special handling for zero normalization
         for v in values {
             match &**v {
                 Value::Int(i) => {
-                    // Normalize -0 to 0 for integer values
-                    let normalized_i = if *i == 0 { 0 } else { *i };
-                    RcValue::float(normalized_i as _).hash(&mut hasher);
+                    if *i == 0 {
+                        // Normalize zero integer to float zero for consistent deduplication with 0.0
+                        RcValue::float(0.0).hash(&mut hasher);
+                    } else {
+                        // Hash non-zero integers as integers to preserve precision
+                        v.hash(&mut hasher);
+                    }
                 }
                 Value::Float(f) => {
-                    // Normalize -0.0 to 0.0 for float values
-                    let normalized_f = if *f == 0.0 { 0.0 } else { *f };
-                    RcValue::float(normalized_f).hash(&mut hasher);
+                    if *f == 0.0 || *f == -0.0 {
+                        // Normalize both 0.0 and -0.0 to positive 0.0
+                        RcValue::float(0.0).hash(&mut hasher);
+                    } else {
+                        // Hash non-zero floats normally
+                        v.hash(&mut hasher);
+                    }
                 }
                 _ => v.hash(&mut hasher),
             }
