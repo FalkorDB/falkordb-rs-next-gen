@@ -337,9 +337,7 @@ impl Div for RcValue {
         match (&*self, &*rhs) {
             (Value::Null, _) | (_, Value::Null) => Ok(Self::null()),
             (Value::Int(a), Value::Int(b)) => {
-                if *b == 0 && *a == 0 {
-                    Ok(Self::float(f64::NAN))
-                } else if *b == 0 {
+                if *b == 0 {
                     Err(String::from("Division by zero"))
                 } else {
                     Ok(Self::int(a.wrapping_div(*b)))

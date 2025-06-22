@@ -122,8 +122,7 @@ def test_return_values():
     res = query("WITH 1 AS a, 'Avi' AS b RETURN b, a")
     assert res.result_set == [['Avi', 1]]
     
-    res = query("RETURN 0/0 AS a")
-    assert math.isnan(res.result_set[0][0])
+    query_exception("RETURN 0/0 AS a", "Division by zero")
     
     query_exception("RETURN 1/0 AS a", "Division by zero")
     
