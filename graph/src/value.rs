@@ -301,29 +301,49 @@ impl Div for RcValue {
         match (&*self, &*rhs) {
             (Value::Null, _) | (_, Value::Null) => Ok(Self::null()),
             (Value::Int(a), Value::Int(b)) => {
-                if *b == 0 {
+                if *b == 0 && *a == 0 {
+                    Ok(Self::float(f64::NAN))
+                } else if *b == 0 {
                     Err(String::from("Division by zero"))
                 } else {
                     Ok(Self::int(a.wrapping_div(*b)))
                 }
             }
             (Value::Float(a), Value::Float(b)) => {
-                if *b == 0.0 {
+                if *b == 0.0 && *a == 0.0 {
                     Ok(Self::float(f64::NAN))
+                } else if *b == 0.0 {
+                    Ok(Self::float(if *a == 0.0 {
+                        f64::NAN
+                    } else {
+                        f64::INFINITY.copysign(*a)
+                    }))
                 } else {
                     Ok(Self::float(a / b))
                 }
             }
             (Value::Float(a), Value::Int(b)) => {
-                if *b == 0 {
-                    Err(String::from("Division by zero"))
+                if *b == 0 && *a == 0.0 {
+                    Ok(Self::float(f64::NAN))
+                } else if *b == 0 {
+                    Ok(Self::float(if *a == 0.0 {
+                        f64::NAN
+                    } else {
+                        f64::INFINITY.copysign(*a)
+                    }))
                 } else {
                     Ok(Self::float(a / *b as f64))
                 }
             }
             (Value::Int(a), Value::Float(b)) => {
-                if *b == 0.0 {
-                    Err(String::from("Division by zero"))
+                if *b == 0.0 && *a == 0 {
+                    Ok(Self::float(f64::NAN))
+                } else if *b == 0.0 {
+                    Ok(Self::float(if *a == 0 {
+                        f64::NAN
+                    } else {
+                        f64::INFINITY.copysign(*a as _)
+                    }))
                 } else {
                     Ok(Self::float(*a as f64 / b))
                 }
@@ -667,10 +687,29 @@ impl ValuesDeduper {
         values: &[RcValue],
     ) -> bool {
         let mut hasher = DefaultHasher::new();
-        values.hash(&mut hasher);
+
+        // Hash values, replace int with float because 0 and 0.0 should dedup
+        // we have to normalize -0.0 to 0.0 and -0 to 0 as well
+        // so that we can dedup them
+        // for now we do not normalize recursive values
+        for v in values {
+            match &**v {
+                Value::Int(i) => {
+                    // Normalize -0 to 0 for integer values
+                    let normalized_i = if *i == 0 { 0 } else { *i };
+                    RcValue::float(normalized_i as _).hash(&mut hasher);
+                }
+                Value::Float(f) => {
+                    // Normalize -0.0 to 0.0 for float values
+                    let normalized_f = if *f == 0.0 { 0.0 } else { *f };
+                    RcValue::float(normalized_f).hash(&mut hasher);
+                }
+                _ => v.hash(&mut hasher),
+            }
+        }
+
         let hash = hasher.finish();
 
-        // Check if already seen
         let mut seen = self.seen.borrow_mut();
         if seen.contains(&hash) {
             true
