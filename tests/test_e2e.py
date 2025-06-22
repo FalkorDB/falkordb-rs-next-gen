@@ -1143,16 +1143,16 @@ def test_avg_nan():
 
 def test_avg_inf():
     # Test with positive infinity
-	res = query("UNWIND [1, 2, 1.0/0] AS x RETURN avg(x)")
-	assert res.result_set[0][0] == float('inf')
+    res = query("UNWIND [1, 2, 1.0/0] AS x RETURN avg(x)")
+    assert res.result_set[0][0] == float('inf')
 
-	# Test with negative infinity
-	res = query("UNWIND [-1, -2, -1/0.0] AS x RETURN avg(x)")
-	assert res.result_set[0][0] == float('-inf')
+    # Test with negative infinity
+    res = query("UNWIND [-1, -2, -1/0.0] AS x RETURN avg(x)")
+    assert res.result_set[0][0] == float('-inf')
 
-	# Test with mixed infinities
-	res = query("UNWIND [1, 2, -1/0.0, 1/0.0] AS x RETURN avg(x)")
-	assert math.isnan(res.result_set[0][0])
+    # Test with mixed infinities
+    res = query("UNWIND [1, 2, -1/0.0, 1/0.0] AS x RETURN avg(x)")
+    assert math.isnan(res.result_set[0][0])
 
 def test_case():
     res = query("RETURN CASE 1 + 2 WHEN 'a' THEN 1 END")

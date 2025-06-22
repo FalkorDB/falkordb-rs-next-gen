@@ -349,11 +349,7 @@ impl Div for RcValue {
                 if *b == 0.0 && *a == 0.0 {
                     Ok(Self::float(f64::NAN))
                 } else if *b == 0.0 {
-                    Ok(Self::float(if *a == 0.0 {
-                        f64::NAN
-                    } else {
-                        f64::INFINITY.copysign(*a)
-                    }))
+                    Ok(Self::float(f64::INFINITY.copysign(*a)))
                 } else {
                     Ok(Self::float(a / b))
                 }
