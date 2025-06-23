@@ -193,7 +193,7 @@ impl Planner {
             || matches!(res.node(&idx).data(), IR::Sort(_))
             || matches!(res.node(&idx).data(), IR::Skip(_))
             || matches!(res.node(&idx).data(), IR::Limit(_))
-			|| matches!(res.node(&idx).data(), IR::Distinct)
+            || matches!(res.node(&idx).data(), IR::Distinct)
         {
             idx = res.node(&idx).child(0).idx();
         }
@@ -203,7 +203,7 @@ impl Planner {
                 || matches!(res.node(&idx).data(), IR::Sort(_))
                 || matches!(res.node(&idx).data(), IR::Skip(_))
                 || matches!(res.node(&idx).data(), IR::Limit(_))
-				|| matches!(res.node(&idx).data(), IR::Distinct)
+                || matches!(res.node(&idx).data(), IR::Distinct)
             {
                 idx = res.node(&idx).child(0).idx();
             }

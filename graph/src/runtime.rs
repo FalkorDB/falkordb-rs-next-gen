@@ -156,7 +156,9 @@ impl ReturnNames for DynNode<'_, IR> {
                 id: 0,
                 ty: Type::Any,
             }],
-            IR::Sort(_) | IR::Skip(_) | IR::Limit(_) | IR::Distinct => self.child(0).get_return_names(),
+            IR::Sort(_) | IR::Skip(_) | IR::Limit(_) | IR::Distinct => {
+                self.child(0).get_return_names()
+            }
             IR::Aggregate(names, _, _) => names.clone(),
             _ => vec![],
         }
@@ -1280,20 +1282,22 @@ impl<'a> Runtime<'a> {
                 if let Some(child_idx) = child0_idx {
                     let deduper = ValuesDeduper::default();
                     let return_names = self.plan.node(&child_idx).get_return_names();
-                    let items = self.run(&child_idx)?.collect::<Result<Vec<_>, String>>()?
-                    .into_iter()
-                    .filter(move |vars| {
-                        let mut values = Vec::with_capacity(return_names.len());
-                        for name in &return_names {
-                            if let Some(value) = vars.get(name) {
-                                values.push(value);
-                            } else {
-                                unreachable!("Variable {} not found", name.as_str());
+                    let items = self
+                        .run(&child_idx)?
+                        .collect::<Result<Vec<_>, String>>()?
+                        .into_iter()
+                        .filter(move |vars| {
+                            let mut values = Vec::with_capacity(return_names.len());
+                            for name in &return_names {
+                                if let Some(value) = vars.get(name) {
+                                    values.push(value);
+                                } else {
+                                    unreachable!("Variable {} not found", name.as_str());
+                                }
                             }
-                        }
-                        !deduper.is_seen(&values)
-                    });
-                
+                            !deduper.is_seen(&values)
+                        });
+
                     return Ok(Box::new(items.map(Ok)));
                 }
                 unreachable!();
