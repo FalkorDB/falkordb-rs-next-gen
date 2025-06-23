@@ -1,6 +1,6 @@
 #![no_main]
 
-use std::cell::RefCell;
+use std::{cell::RefCell, collections::HashMap};
 
 use graph::{
     GraphBLAS::{GrB_Mode, GrB_init},
@@ -10,7 +10,6 @@ use graph::{
     runtime::{ReturnCallback, Runtime, evaluate_param},
     value::Env,
 };
-use hashbrown::HashMap;
 use libfuzzer_sys::{Corpus, fuzz_target};
 
 #[derive(Default)]

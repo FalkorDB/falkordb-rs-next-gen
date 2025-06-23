@@ -6,9 +6,9 @@ use crate::functions::{FnType, Type, get_functions};
 use crate::tree;
 use crate::value::RcValue;
 use falkordb_macro::parse_binary_expr;
-use hashbrown::{HashMap, HashSet};
 use ordermap::OrderSet;
 use orx_tree::{DynTree, NodeRef};
+use std::collections::{HashMap, HashSet};
 use std::num::IntErrorKind;
 use std::rc::Rc;
 use std::str::Chars;
@@ -1099,6 +1099,7 @@ impl<'a> Parser<'a> {
                         let mut args = self.parse_expression_list(
                             ExpressionListType::ZeroOrMoreClosedBy(RParen),
                         )?;
+                        func.validate(args.len())?;
                         if distinct {
                             args = vec![tree!(ExprIR::Distinct; args)];
                         }
@@ -1108,6 +1109,12 @@ impl<'a> Parser<'a> {
 
                     let args =
                         self.parse_expression_list(ExpressionListType::ZeroOrMoreClosedBy(RParen))?;
+                    func.validate(args.len())?;
+                    if distinct && args.is_empty() {
+                        return Err(self.lexer.format_error(
+                            "DISTINCT can only be used with function calls that have arguments",
+                        ));
+                    }
                     return Ok(tree!(ExprIR::FuncInvocation(func); args));
                 }
                 self.lexer.set_pos(pos);
