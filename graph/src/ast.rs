@@ -80,6 +80,7 @@ pub enum ExprIR {
     ListComprehension(Variable),
 }
 
+#[cfg_attr(tarpaulin, skip)]
 impl Display for ExprIR {
     fn fmt(
         &self,
@@ -307,6 +308,7 @@ pub struct QueryNode {
     pub attrs: Rc<DynTree<ExprIR>>,
 }
 
+#[cfg_attr(tarpaulin, skip)]
 impl Display for QueryNode {
     fn fmt(
         &self,
@@ -353,6 +355,7 @@ pub struct QueryRelationship {
     pub bidirectional: bool,
 }
 
+#[cfg_attr(tarpaulin, skip)]
 impl Display for QueryRelationship {
     fn fmt(
         &self,
@@ -429,6 +432,7 @@ pub struct QueryGraph {
     pub paths: Vec<Rc<QueryPath>>,
 }
 
+#[cfg_attr(tarpaulin, skip)]
 impl Display for QueryGraph {
     fn fmt(
         &self,
@@ -596,6 +600,7 @@ pub enum QueryIR {
     Query(Vec<QueryIR>, bool),
 }
 
+#[cfg_attr(tarpaulin, skip)]
 impl Display for QueryIR {
     fn fmt(
         &self,
