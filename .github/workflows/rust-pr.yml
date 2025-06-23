@@ -156,6 +156,7 @@ jobs:
           CXX=clang++-20 CARGO_PROFILE_RELEASE_LTO=false cargo fuzz coverage fuzz_target_runtime
           llvm-cov-20 export --format=lcov --instr-profile fuzz/coverage/fuzz_target_runtime/coverage.profdata target/x86_64-unknown-linux-gnu/coverage/x86_64-unknown-linux-gnu/release/fuzz_target_runtime > codecov.txt.all
           lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
+
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@18283e04ce6e62d37312384ff67231eb8fd56d24
         with:
@@ -171,6 +172,19 @@ jobs:
         with:
           name: fuzzing-artifacts-fuzz_target_runtime-${{ github.sha }}
           path: fuzz/artifacts
+      - name: Display fuzz artifacts if they exist
+        if: failure()  
+        run: |        
+          if [ -d "fuzz/artifacts" ] && [ "$(ls -A fuzz/artifacts)" ]; then
+            echo "Found fuzz artifacts, displaying content:"
+            find fuzz/artifacts -type f -not -path "*/\.*" | while read file; do
+              echo "=== Content of $file ==="
+              cat "$file" || echo "Failed to cat file (might be binary content)"
+              echo "========================="
+            done
+          else                                                              
+            echo "No fuzz artifacts found or directory is empty"           
+          fi                                                                
   benchmark:
     runs-on: ubuntu-latest
     container: aviavni/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && github.event.pull_request.number || 'latest' }}

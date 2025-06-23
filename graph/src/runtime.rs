@@ -951,6 +951,7 @@ impl<'a> Runtime<'a> {
                         Ok(vars)
                     })));
                 }
+
                 unreachable!();
             }
             IR::Remove(items) => {
@@ -1024,6 +1025,7 @@ impl<'a> Runtime<'a> {
                         Ok(vars)
                     })));
                 }
+
                 unreachable!();
             }
             IR::NodeScan(node_pattern) => {
@@ -1071,6 +1073,7 @@ impl<'a> Runtime<'a> {
                         Ok(vars)
                     })));
                 }
+
                 unreachable!();
             }
             IR::Filter(tree) => {
@@ -1090,6 +1093,7 @@ impl<'a> Runtime<'a> {
                         },
                     )));
                 }
+
                 unreachable!();
             }
             IR::CartesianProduct => {

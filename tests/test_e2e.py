@@ -121,6 +121,28 @@ def test_return_values():
 
     res = query("WITH 1 AS a, 'Avi' AS b RETURN b, a")
     assert res.result_set == [['Avi', 1]]
+    
+    query_exception("RETURN 0/0 AS a", "Division by zero")
+    
+    query_exception("RETURN 1/0 AS a", "Division by zero")
+    
+    res = query("RETURN 0.0/0.0 AS a")
+    assert math.isnan(res.result_set[0][0])
+
+    res = query("RETURN 0.1/0.0 AS a")
+    assert res.result_set == [[float('inf')]]
+    
+    res = query("RETURN 0.0/0 AS a")
+    assert math.isnan(res.result_set[0][0])
+
+    res = query("RETURN 0.1/0 AS a")
+    assert res.result_set == [[float('inf')]]
+
+    res = query("RETURN 0/0.0 AS a")
+    assert math.isnan(res.result_set[0][0])
+
+    res = query("RETURN 1/0.0 AS a")
+    assert res.result_set == [[float('inf')]]
 
 
 @pytest.mark.extra
@@ -1113,6 +1135,23 @@ def test_avg_overflow():
     expected = sum(near_max_values) / len(near_max_values)
     assert abs(res.result_set[0][0] - expected) < expected * 1e-10
 
+def test_avg_nan():
+    # Test with NaN values
+    res = query("UNWIND [0.0/0.0, 1, 2] AS x RETURN avg(x)")
+    assert math.isnan(res.result_set[0][0])
+
+def test_avg_inf():
+    # Test with positive infinity
+    res = query("UNWIND [1, 2, 1.0/0] AS x RETURN avg(x)")
+    assert res.result_set[0][0] == float('inf')
+
+    # Test with negative infinity
+    res = query("UNWIND [-1, -2, -1/0.0] AS x RETURN avg(x)")
+    assert res.result_set[0][0] == float('-inf')
+
+    # Test with mixed infinities
+    res = query("UNWIND [1, 2, -1/0.0, 1/0.0] AS x RETURN avg(x)")
+    assert math.isnan(res.result_set[0][0])
 
 def test_case():
     res = query("RETURN CASE 1 + 2 WHEN 'a' THEN 1 END")

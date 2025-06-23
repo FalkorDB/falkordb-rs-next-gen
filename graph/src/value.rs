@@ -343,27 +343,12 @@ impl Div for RcValue {
                     Ok(Self::int(a.wrapping_div(*b)))
                 }
             }
-            (Value::Float(a), Value::Float(b)) => {
-                if *b == 0.0 {
-                    Ok(Self::float(f64::NAN))
-                } else {
-                    Ok(Self::float(a / b))
-                }
-            }
-            (Value::Float(a), Value::Int(b)) => {
-                if *b == 0 {
-                    Err(String::from("Division by zero"))
-                } else {
-                    Ok(Self::float(a / *b as f64))
-                }
-            }
-            (Value::Int(a), Value::Float(b)) => {
-                if *b == 0.0 {
-                    Err(String::from("Division by zero"))
-                } else {
-                    Ok(Self::float(*a as f64 / b))
-                }
-            }
+            (Value::Float(a), Value::Float(b)) => Ok(Self::float(a / b)),
+
+            (Value::Float(a), Value::Int(b)) => Ok(Self::float(a / *b as f64)),
+
+            (Value::Int(a), Value::Float(b)) => Ok(Self::float(*a as f64 / b)),
+
             (a, b) => Err(format!(
                 "Type mismatch: expected Integer, Float, or Null but was ({}, {})",
                 a.name(),
@@ -692,7 +677,6 @@ fn compare_floats(
         None => (Ordering::Less, DisjointOrNull::NaN),
     }
 }
-
 #[derive(Default, Debug)]
 pub struct ValuesDeduper {
     seen: RefCell<HashSet<u64>>,
