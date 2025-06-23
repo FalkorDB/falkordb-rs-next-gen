@@ -1211,18 +1211,25 @@ impl<'a> Runtime<'a> {
                     let return_names = self.plan.node(&child_idx).get_return_names();
                     let items = self
                         .run(&child_idx)?
-                        .collect::<Result<Vec<_>, String>>()?
-                        .into_iter()
-                        .filter(move |vars| {
-                            let mut values = Vec::with_capacity(return_names.len());
-                            for name in &return_names {
-                                if let Some(value) = vars.get(name) {
-                                    values.push(value);
-                                } else {
-                                    unreachable!("Variable {} not found", name.as_str());
+                        .filter_map(move |result| {
+                            match result {
+                                Ok(vars) => {
+                                    let mut values = Vec::with_capacity(return_names.len());
+                                    for name in &return_names {
+                                        if let Some(value) = vars.get(name) {
+                                            values.push(value);
+                                        } else {
+                                            unreachable!("Variable {} not found", name.as_str());
+                                        }
+                                    }
+                                    if deduper.is_seen(&values) {
+                                        None
+                                    } else {
+                                        Some(Ok(vars))
+                                    }
                                 }
+                                Err(e) => Some(Err(e)),
                             }
-                            !deduper.is_seen(&values)
                         });
 
                     return Ok(Box::new(items.map(Ok)));
