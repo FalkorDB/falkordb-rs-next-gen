@@ -37,6 +37,7 @@ pub enum IR {
         Vec<(Variable, DynTree<ExprIR>)>,
     ),
     Project(Vec<(Variable, DynTree<ExprIR>)>),
+    Distinct,
     Commit,
 }
 
@@ -69,6 +70,7 @@ impl Display for IR {
             Self::Aggregate(_, _, _) => write!(f, "Aggregate"),
             Self::Project(_) => write!(f, "Project"),
             Self::Commit => write!(f, "Commit"),
+            Self::Distinct => write!(f, "Distinct"),
         }
     }
 }
@@ -139,6 +141,7 @@ impl Planner {
         skip: Option<DynTree<ExprIR>>,
         limit: Option<DynTree<ExprIR>>,
         write: bool,
+        distinct: bool,
     ) -> DynTree<IR> {
         for expr in &exprs {
             self.visited.insert(expr.0.id);
@@ -159,6 +162,9 @@ impl Planner {
         } else {
             tree!(IR::Project(exprs))
         };
+        if distinct {
+            res = tree!(IR::Distinct, res);
+        }
         if !orderby.is_empty() {
             res = tree!(IR::Sort(orderby), res);
         }
@@ -187,6 +193,7 @@ impl Planner {
             || matches!(res.node(&idx).data(), IR::Sort(_))
             || matches!(res.node(&idx).data(), IR::Skip(_))
             || matches!(res.node(&idx).data(), IR::Limit(_))
+			|| matches!(res.node(&idx).data(), IR::Distinct)
         {
             idx = res.node(&idx).child(0).idx();
         }
@@ -196,6 +203,7 @@ impl Planner {
                 || matches!(res.node(&idx).data(), IR::Sort(_))
                 || matches!(res.node(&idx).data(), IR::Skip(_))
                 || matches!(res.node(&idx).data(), IR::Limit(_))
+				|| matches!(res.node(&idx).data(), IR::Distinct)
             {
                 idx = res.node(&idx).child(0).idx();
             }
@@ -245,6 +253,7 @@ impl Planner {
             QueryIR::Remove(items) => tree!(IR::Remove(items)),
             QueryIR::Where(expr) => tree!(IR::Filter(expr)),
             QueryIR::With {
+                distinct,
                 exprs,
                 orderby,
                 skip,
@@ -253,13 +262,14 @@ impl Planner {
                 ..
             }
             | QueryIR::Return {
+                distinct,
                 exprs,
                 orderby,
                 skip,
                 limit,
                 write,
                 ..
-            } => self.plan_project(exprs, orderby, skip, limit, write),
+            } => self.plan_project(exprs, orderby, skip, limit, write, distinct),
             QueryIR::Query(q, write) => self.plan_query(q, write),
         }
     }
