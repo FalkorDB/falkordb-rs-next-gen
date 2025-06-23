@@ -343,15 +343,8 @@ impl Div for RcValue {
                     Ok(Self::int(a.wrapping_div(*b)))
                 }
             }
-            (Value::Float(a), Value::Float(b)) => {
-                if *b == 0.0 && *a == 0.0 {
-                    Ok(Self::float(f64::NAN))
-                } else if *b == 0.0 {
-                    Ok(Self::float(f64::INFINITY.copysign(*a)))
-                } else {
-                    Ok(Self::float(a / b))
-                }
-            }
+            (Value::Float(a), Value::Float(b)) => Ok(Self::float(a / b)),
+
             (Value::Float(a), Value::Int(b)) => {
                 if *b == 0 && *a == 0.0 {
                     Ok(Self::float(f64::NAN))
@@ -698,7 +691,6 @@ fn compare_floats(
         None => (Ordering::Less, DisjointOrNull::NaN),
     }
 }
-
 #[derive(Default, Debug)]
 pub struct ValuesDeduper {
     seen: RefCell<HashSet<u64>>,
@@ -711,34 +703,10 @@ impl ValuesDeduper {
         values: &[RcValue],
     ) -> bool {
         let mut hasher = DefaultHasher::new();
-
-        // Hash values with special handling for zero normalization
-        for v in values {
-            match &**v {
-                Value::Int(i) => {
-                    if *i == 0 {
-                        // Normalize zero integer to float zero for consistent deduplication with 0.0
-                        RcValue::float(0.0).hash(&mut hasher);
-                    } else {
-                        // Hash non-zero integers as integers to preserve precision
-                        v.hash(&mut hasher);
-                    }
-                }
-                Value::Float(f) => {
-                    if *f == 0.0 || *f == -0.0 {
-                        // Normalize both 0.0 and -0.0 to positive 0.0
-                        RcValue::float(0.0).hash(&mut hasher);
-                    } else {
-                        // Hash non-zero floats normally
-                        v.hash(&mut hasher);
-                    }
-                }
-                _ => v.hash(&mut hasher),
-            }
-        }
-
+        values.hash(&mut hasher);
         let hash = hasher.finish();
 
+        // Check if already seen
         let mut seen = self.seen.borrow_mut();
         if seen.contains(&hash) {
             true
