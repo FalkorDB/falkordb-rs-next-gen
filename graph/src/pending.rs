@@ -48,17 +48,17 @@ pub struct Pending {
 impl Pending {
     pub fn created_node(
         &mut self,
-        node_id: NodeId,
+        id: NodeId,
     ) {
-        self.created_nodes.push(node_id);
+        self.created_nodes.push(id);
     }
 
     pub fn set_node_attributes(
         &mut self,
-        node_id: NodeId,
+        id: NodeId,
         attrs: OrderMap<Rc<String>, RcValue>,
     ) {
-        self.set_nodes_attrs.insert(node_id, attrs);
+        self.set_nodes_attrs.insert(id, attrs);
     }
 
     pub fn set_node_attribute(
@@ -76,20 +76,20 @@ impl Pending {
     #[must_use]
     pub fn get_node_attribute(
         &self,
-        node_id: NodeId,
+        id: NodeId,
         key: &Rc<String>,
     ) -> Option<&RcValue> {
         self.set_nodes_attrs
-            .get(&node_id)
+            .get(&id)
             .and_then(|attrs| attrs.get(key))
     }
 
     pub fn update_node_attrs(
         &self,
-        node_id: NodeId,
+        id: NodeId,
         attrs: &mut OrderMap<Rc<String>, RcValue>,
     ) {
-        if let Some(added) = self.set_nodes_attrs.get(&node_id) {
+        if let Some(added) = self.set_nodes_attrs.get(&id) {
             for (key, value) in added {
                 if **value == Value::Null {
                     attrs.remove(key);
@@ -118,13 +118,13 @@ impl Pending {
 
     pub fn update_node_labels(
         &self,
-        node_id: NodeId,
+        id: NodeId,
         labels: &mut OrderSet<Rc<String>>,
     ) {
-        if let Some(added) = self.set_node_labels.get(&node_id) {
+        if let Some(added) = self.set_node_labels.get(&id) {
             labels.extend(added.iter().cloned());
         }
-        if let Some(removed) = self.remove_node_labels.get(&node_id) {
+        if let Some(removed) = self.remove_node_labels.get(&id) {
             for label in removed {
                 labels.remove(label);
             }
@@ -133,28 +133,28 @@ impl Pending {
 
     pub fn deleted_node(
         &mut self,
-        node_id: NodeId,
+        id: NodeId,
     ) {
-        self.deleted_nodes.insert(node_id);
+        self.deleted_nodes.insert(id);
     }
 
     pub fn created_relationship(
         &mut self,
-        rel_id: RelationshipId,
+        id: RelationshipId,
         from: NodeId,
         to: NodeId,
         type_name: Rc<String>,
     ) {
         self.created_relationships
-            .insert(rel_id, PendingRelationship::new(from, to, type_name));
+            .insert(id, PendingRelationship::new(from, to, type_name));
     }
 
     pub fn set_relationship_attributes(
         &mut self,
-        rel_id: RelationshipId,
+        id: RelationshipId,
         attrs: OrderMap<Rc<String>, RcValue>,
     ) {
-        self.set_relationships_attrs.insert(rel_id, attrs);
+        self.set_relationships_attrs.insert(id, attrs);
     }
 
     pub fn set_relationship_attribute(
@@ -172,11 +172,11 @@ impl Pending {
     #[must_use]
     pub fn get_relationship_attribute(
         &self,
-        node_id: RelationshipId,
+        id: RelationshipId,
         key: &Rc<String>,
     ) -> Option<&RcValue> {
         self.set_relationships_attrs
-            .get(&node_id)
+            .get(&id)
             .and_then(|attrs| attrs.get(key))
     }
 
@@ -198,20 +198,20 @@ impl Pending {
 
     pub fn deleted_relationship(
         &mut self,
-        rel_id: RelationshipId,
+        id: RelationshipId,
         from: NodeId,
         to: NodeId,
     ) {
-        self.deleted_relationships.insert((rel_id, from, to));
+        self.deleted_relationships.insert((id, from, to));
     }
 
     #[must_use]
     pub fn get_relationship_type(
         &self,
-        rel_id: RelationshipId,
+        id: RelationshipId,
     ) -> Option<Rc<String>> {
         self.created_relationships
-            .get(&rel_id)
+            .get(&id)
             .map(|r| r.type_name.clone())
     }
 
@@ -257,9 +257,9 @@ impl Pending {
                 .sum::<usize>();
             for (id, attrs) in &self.set_nodes_attrs {
                 for (key, value) in attrs {
-                    let property_id = g.borrow_mut().get_or_add_node_attribute_id(key);
+                    let attr_id = g.borrow_mut().get_or_add_node_attribute_id(key);
                     if g.borrow_mut()
-                        .set_node_attribute(*id, property_id, value.clone())
+                        .set_node_attribute(*id, attr_id, value.clone())
                     {
                         stats.borrow_mut().properties_removed += 1;
                     }
@@ -291,9 +291,9 @@ impl Pending {
                 .sum::<usize>();
             for (id, attrs) in &self.set_relationships_attrs {
                 for (key, value) in attrs {
-                    let property_id = g.borrow_mut().get_or_add_relationship_attribute_id(key);
+                    let attr_id = g.borrow_mut().get_or_add_relationship_attribute_id(key);
                     if g.borrow_mut()
-                        .set_relationship_attribute(*id, property_id, value.clone())
+                        .set_relationship_attribute(*id, attr_id, value.clone())
                     {
                         stats.borrow_mut().properties_removed += 1;
                     }

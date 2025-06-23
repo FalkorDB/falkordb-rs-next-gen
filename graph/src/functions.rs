@@ -1885,8 +1885,8 @@ fn internal_node_has_labels(
 ) -> Result<RcValue, String> {
     let mut iter = args.into_iter();
     match (iter.next().as_deref(), iter.next().as_deref()) {
-        (Some(Value::Node(node_id)), Some(Value::List(required_labels))) => {
-            let labels = runtime.get_node_labels(*node_id);
+        (Some(Value::Node(id)), Some(Value::List(required_labels))) => {
+            let labels = runtime.get_node_labels(*id);
             let all_labels_present = required_labels.iter().all(|label| {
                 if let Value::String(label_str) = &**label {
                     labels.contains(label_str)

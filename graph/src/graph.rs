@@ -164,9 +164,9 @@ impl Graph {
 
     pub fn get_type(
         &self,
-        type_id: TypeId,
+        id: TypeId,
     ) -> Option<Rc<String>> {
-        self.relationship_types.get(type_id.0).cloned()
+        self.relationship_types.get(id.0).cloned()
     }
 
     pub fn get_attrs(&self) -> Vec<Rc<String>> {
@@ -330,32 +330,32 @@ impl Graph {
         &mut self,
         key: &Rc<String>,
     ) -> AttrId {
-        let attr_id = self
-            .node_attrs_name
-            .iter()
-            .position(|p| p.as_str() == key.as_str())
-            .unwrap_or_else(|| {
-                let len = self.node_attrs_name.len();
-                self.node_attrs_name.push(key.clone());
-                len
-            });
-        AttrId(attr_id)
+        AttrId(
+            self.node_attrs_name
+                .iter()
+                .position(|p| p.as_str() == key.as_str())
+                .unwrap_or_else(|| {
+                    let len = self.node_attrs_name.len();
+                    self.node_attrs_name.push(key.clone());
+                    len
+                }),
+        )
     }
 
     pub fn get_or_add_relationship_attribute_id(
         &mut self,
         key: &String,
     ) -> AttrId {
-        let attr_id = self
-            .relationship_attrs_name
-            .iter()
-            .position(|p| p.as_str() == key)
-            .unwrap_or_else(|| {
-                let len = self.relationship_attrs_name.len();
-                self.relationship_attrs_name.push(Rc::new(key.clone()));
-                len
-            });
-        AttrId(attr_id)
+        AttrId(
+            self.relationship_attrs_name
+                .iter()
+                .position(|p| p.as_str() == key)
+                .unwrap_or_else(|| {
+                    let len = self.relationship_attrs_name.len();
+                    self.relationship_attrs_name.push(Rc::new(key.clone()));
+                    len
+                }),
+        )
     }
 
     pub fn get_relationship_attribute_id(
@@ -478,10 +478,10 @@ impl Graph {
         self.relationship_matrices
             .values()
             .flat_map(move |m| m.iter(id.0, id.0).chain(m.transpose().iter(id.0, id.0)))
-            .map(|(src, dest, relationship_id)| {
+            .map(|(src, dest, id)| {
                 let src_node = NodeId(src);
                 let dest_node = NodeId(dest);
-                (src_node, dest_node, RelationshipId(relationship_id))
+                (src_node, dest_node, RelationshipId(id))
             })
     }
 
@@ -531,11 +531,11 @@ impl Graph {
 
     pub fn get_node_attribute(
         &self,
-        node_id: NodeId,
+        id: NodeId,
         attr_id: AttrId,
     ) -> Option<RcValue> {
         self.node_attrs
-            .get(&node_id)
+            .get(&id)
             .map_or_else(|| None, |attrs| attrs.get(&attr_id).cloned())
     }
 
@@ -716,11 +716,11 @@ impl Graph {
 
     pub fn get_relationship_attribute(
         &self,
-        relationship_id: RelationshipId,
+        id: RelationshipId,
         attr_id: AttrId,
     ) -> Option<RcValue> {
         self.relationship_attrs
-            .get(&relationship_id)
+            .get(&id)
             .map_or_else(|| None, |attrs| attrs.get(&attr_id).cloned())
     }
 

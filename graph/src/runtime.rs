@@ -1466,38 +1466,34 @@ impl<'a> Runtime<'a> {
 
     pub fn get_node_attribute(
         &self,
-        node_id: NodeId,
+        id: NodeId,
         attribute: &Rc<String>,
     ) -> Option<RcValue> {
-        if let Some(value) = self.pending.borrow().get_node_attribute(node_id, attribute) {
+        if let Some(value) = self.pending.borrow().get_node_attribute(id, attribute) {
             return Some(value.clone());
         }
         self.g
             .borrow()
             .get_node_attribute_id(attribute.as_str())
-            .and_then(|attr_id| self.g.borrow().get_node_attribute(node_id, attr_id))
+            .and_then(|attr_id| self.g.borrow().get_node_attribute(id, attr_id))
     }
 
     pub fn get_relationship_attribute(
         &self,
-        relationship_id: RelationshipId,
+        id: RelationshipId,
         attribute: &Rc<String>,
     ) -> Option<RcValue> {
         if let Some(value) = self
             .pending
             .borrow()
-            .get_relationship_attribute(relationship_id, attribute)
+            .get_relationship_attribute(id, attribute)
         {
             return Some(value.clone());
         }
         self.g
             .borrow()
             .get_relationship_attribute_id(attribute.as_str())
-            .and_then(|attr_id| {
-                self.g
-                    .borrow()
-                    .get_relationship_attribute(relationship_id, attr_id)
-            })
+            .and_then(|attr_id| self.g.borrow().get_relationship_attribute(id, attr_id))
     }
 
     pub fn get_node_labels(
@@ -1546,8 +1542,9 @@ impl<'a> Runtime<'a> {
         if let Some(type_name) = self.pending.borrow().get_relationship_type(id) {
             return Some(type_name);
         }
-        let relation_type_id = self.g.borrow().get_relationship_type_id(id);
-        self.g.borrow().get_type(relation_type_id)
+        self.g
+            .borrow()
+            .get_type(self.g.borrow().get_relationship_type_id(id))
     }
 
     pub fn get_labels(&self) -> Vec<Rc<String>> {
