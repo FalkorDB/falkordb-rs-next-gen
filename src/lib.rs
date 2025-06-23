@@ -6,7 +6,6 @@ use graph::graph::Plan;
 use graph::runtime::{ResultSummary, ReturnCallback, Runtime, evaluate_param};
 use graph::value::{Env, RcValue};
 use graph::{cypher::Parser, graph::Graph, matrix::init, planner::Planner, value::Value};
-use hashbrown::HashMap;
 #[cfg(feature = "zipkin")]
 use opentelemetry::global;
 #[cfg(feature = "zipkin")]
@@ -24,6 +23,7 @@ use redis_module::{
     RedisString, RedisValue, Status, native_types::RedisType, redis_module,
 };
 use std::cell::RefCell;
+use std::collections::HashMap;
 #[cfg(feature = "fuzz")]
 use std::fs::File;
 #[cfg(feature = "fuzz")]
@@ -137,7 +137,7 @@ fn compact_value_to_redis_value(
             let mut props = Vec::new();
             for (key, value) in g.borrow().get_node_attrs(*id) {
                 let mut prop = Vec::new();
-                prop.push(RedisValue::Integer(*key as _));
+                prop.push(RedisValue::Integer(usize::from(*key) as _));
                 if let RedisValue::Array(mut v) = compact_value_to_redis_value(g, value) {
                     prop.append(&mut v);
                 }
@@ -146,11 +146,11 @@ fn compact_value_to_redis_value(
             RedisValue::Array(vec![
                 RedisValue::Integer(8),
                 RedisValue::Array(vec![
-                    RedisValue::Integer(*id as _),
+                    RedisValue::Integer(u64::from(*id) as _),
                     RedisValue::Array(
                         g.borrow()
                             .get_node_label_ids(*id)
-                            .map(|l| RedisValue::Integer(l as _))
+                            .map(|l| RedisValue::Integer(usize::from(l) as _))
                             .collect(),
                     ),
                     RedisValue::Array(props),
@@ -161,7 +161,7 @@ fn compact_value_to_redis_value(
             let mut props = Vec::new();
             for (key, value) in g.borrow().get_relationship_attrs(*id) {
                 let mut prop = Vec::new();
-                prop.push(RedisValue::Integer(*key as _));
+                prop.push(RedisValue::Integer(usize::from(*key) as _));
                 if let RedisValue::Array(mut v) = compact_value_to_redis_value(g, value) {
                     prop.append(&mut v);
                 }
@@ -170,10 +170,10 @@ fn compact_value_to_redis_value(
             RedisValue::Array(vec![
                 RedisValue::Integer(7),
                 RedisValue::Array(vec![
-                    RedisValue::Integer(*id as _),
-                    RedisValue::Integer(g.borrow().get_relationship_type_id(*id) as _),
-                    RedisValue::Integer(*from as _),
-                    RedisValue::Integer(*to as _),
+                    RedisValue::Integer(u64::from(*id) as _),
+                    RedisValue::Integer(usize::from(g.borrow().get_relationship_type_id(*id)) as _),
+                    RedisValue::Integer(u64::from(*from) as _),
+                    RedisValue::Integer(u64::from(*to) as _),
                     RedisValue::Array(props),
                 ]),
             ])
@@ -230,14 +230,14 @@ fn verbose_value_to_redis_value(
             let mut props = Vec::new();
             for (key, value) in g.borrow().get_node_attrs(*id) {
                 let mut prop = Vec::new();
-                prop.push(RedisValue::Integer(*key as _));
+                prop.push(RedisValue::Integer(usize::from(*key) as _));
                 if let RedisValue::Array(mut v) = verbose_value_to_redis_value(g, value) {
                     prop.append(&mut v);
                 }
                 props.push(RedisValue::Array(prop));
             }
             RedisValue::Array(vec![
-                RedisValue::Integer(*id as _),
+                RedisValue::Integer(u64::from(*id) as _),
                 RedisValue::Array(
                     g.borrow()
                         .get_node_label_ids(*id)
@@ -251,17 +251,17 @@ fn verbose_value_to_redis_value(
             let mut props = Vec::new();
             for (key, value) in g.borrow().get_relationship_attrs(*id) {
                 let mut prop = Vec::new();
-                prop.push(RedisValue::Integer(*key as _));
+                prop.push(RedisValue::Integer(usize::from(*key) as _));
                 if let RedisValue::Array(mut v) = verbose_value_to_redis_value(g, value) {
                     prop.append(&mut v);
                 }
                 props.push(RedisValue::Array(prop));
             }
             RedisValue::Array(vec![
-                RedisValue::Integer(*id as _),
-                RedisValue::Integer(g.borrow().get_relationship_type_id(*id) as _),
-                RedisValue::Integer(*from as _),
-                RedisValue::Integer(*to as _),
+                RedisValue::Integer(u64::from(*id) as _),
+                RedisValue::Integer(usize::from(g.borrow().get_relationship_type_id(*id)) as _),
+                RedisValue::Integer(u64::from(*from) as _),
+                RedisValue::Integer(u64::from(*to) as _),
                 RedisValue::Array(props),
             ])
         }

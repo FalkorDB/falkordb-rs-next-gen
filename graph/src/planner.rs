@@ -1,6 +1,5 @@
-use std::{fmt::Display, rc::Rc};
+use std::{collections::HashSet, fmt::Display, rc::Rc};
 
-use hashbrown::HashSet;
 use orx_tree::{DynTree, NodeRef};
 
 use crate::{
@@ -83,7 +82,7 @@ pub struct Planner {
 impl Planner {
     fn plan_match(
         &mut self,
-        pattern: QueryGraph,
+        pattern: &QueryGraph,
     ) -> DynTree<IR> {
         let mut vec = vec![];
         for component in pattern.connected_components() {
@@ -185,7 +184,10 @@ impl Planner {
         q: Vec<QueryIR>,
         write: bool,
     ) -> DynTree<IR> {
-        let plans: Vec<DynTree<IR>> = q.into_iter().map(|ir| self.plan(ir)).collect();
+        let mut plans = Vec::with_capacity(q.len());
+        for ir in q {
+            plans.push(self.plan(ir));
+        }
         let mut iter = plans.into_iter().rev();
         let mut res = iter.next().unwrap();
         let mut idx = res.root().idx();
@@ -234,16 +236,16 @@ impl Planner {
                                 .filter(|v| !self.visited.contains(&v.id))
                                 .collect()
                         ),
-                        self.plan_match(pattern)
+                        self.plan_match(&pattern)
                     )
                 } else {
-                    self.plan_match(pattern)
+                    self.plan_match(&pattern)
                 }
             }
             QueryIR::Unwind(expr, alias) => tree!(IR::Unwind(expr, alias)),
             QueryIR::Merge(pattern) => tree!(
                 IR::Merge(pattern.filter_visited(&self.visited)),
-                self.plan_match(pattern)
+                self.plan_match(&pattern)
             ),
             QueryIR::Create(pattern) => {
                 tree!(IR::Create(pattern.filter_visited(&self.visited)))

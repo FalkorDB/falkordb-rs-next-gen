@@ -23,7 +23,6 @@ name = "falkordb"
 
 [dependencies]
 graph = { path = "graph", version = "0.1.0" }
-hashbrown = "0.15.4"
 redis-module = { git = "https://github.com/RedisLabsModules/redismodule-rs", tag = "v2.1.2" }
 redis-module-macros = { git = "https://github.com/RedisLabsModules/redismodule-rs", tag = "v2.1.2" }
 tracing = "0.1"
