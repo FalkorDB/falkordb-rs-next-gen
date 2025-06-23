@@ -4,7 +4,6 @@ use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::mem::discriminant;
 use std::ops::{Add, Deref, Div, Mul, Rem, Sub};
 use std::rc::Rc;
 
@@ -12,6 +11,7 @@ use ordermap::OrderMap;
 
 use crate::ast::Variable;
 use crate::functions::Type;
+use crate::graph::{NodeId, RelationshipId};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct RcValue(Rc<Value>);
@@ -33,7 +33,7 @@ impl RcValue {
     }
 
     #[must_use]
-    pub fn node(id: u64) -> Self {
+    pub fn node(id: NodeId) -> Self {
         Self::new(Value::Node(id))
     }
 
@@ -64,9 +64,9 @@ impl RcValue {
 
     #[must_use]
     pub fn relationship(
-        id: u64,
-        from_id: u64,
-        to_id: u64,
+        id: RelationshipId,
+        from_id: NodeId,
+        to_id: NodeId,
     ) -> Self {
         Self::new(Value::Relationship(id, from_id, to_id))
     }
@@ -103,8 +103,8 @@ pub enum Value {
     String(Rc<String>),
     List(Vec<RcValue>),
     Map(OrderMap<Rc<String>, RcValue>),
-    Node(u64),
-    Relationship(u64, u64, u64),
+    Node(NodeId),
+    Relationship(RelationshipId, NodeId, NodeId),
     Path(Vec<RcValue>),
 }
 

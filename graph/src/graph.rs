@@ -1,10 +1,10 @@
 use std::{
+    collections::HashMap,
     rc::Rc,
     sync::Mutex,
     time::{Duration, Instant},
 };
 
-use hashbrown::HashMap;
 use ordermap::{OrderMap, OrderSet};
 use orx_tree::DynTree;
 use roaring::RoaringTreemap;
@@ -12,9 +12,9 @@ use roaring::RoaringTreemap;
 use crate::{
     ast::ExprIR,
     cypher::Parser,
-    matrix::{self, Dup, ElementWiseAdd, ElementWiseMultiply, Matrix, MxM, New, Remove, Set, Size},
+    matrix::{Dup, ElementWiseAdd, ElementWiseMultiply, Matrix, MxM, New, Remove, Set, Size},
+    pending::PendingRelationship,
     planner::{IR, Planner},
-    runtime::PendingRelationship,
     tensor::Tensor,
     value::{RcValue, Value},
 };
@@ -24,6 +24,47 @@ pub struct Plan {
     pub parameters: HashMap<String, DynTree<ExprIR>>,
     pub parse_duration: Duration,
     pub plan_duration: Duration,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct LabelId(usize);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct TypeId(usize);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct AttrId(usize);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct NodeId(u64);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct RelationshipId(u64);
+
+impl From<LabelId> for usize {
+    fn from(val: LabelId) -> Self {
+        val.0
+    }
+}
+
+impl From<TypeId> for usize {
+    fn from(val: TypeId) -> Self {
+        val.0
+    }
+}
+
+impl From<AttrId> for usize {
+    fn from(val: AttrId) -> Self {
+        val.0
+    }
+}
+
+impl From<NodeId> for u64 {
+    fn from(value: NodeId) -> Self {
+        value.0
+    }
+}
+
+impl From<RelationshipId> for u64 {
+    fn from(value: RelationshipId) -> Self {
+        value.0
+    }
 }
 
 impl Plan {
@@ -59,9 +100,9 @@ pub struct Graph {
     all_nodes_matrix: Matrix<bool>,
     labels_matices: HashMap<usize, Matrix<bool>>,
     relationship_matrices: HashMap<usize, Tensor>,
-    empty_map: OrderMap<u64, RcValue>,
-    node_attrs: HashMap<u64, OrderMap<u64, RcValue>>,
-    relationship_attrs: HashMap<u64, OrderMap<u64, RcValue>>,
+    empty_map: OrderMap<AttrId, RcValue>,
+    node_attrs: HashMap<NodeId, OrderMap<AttrId, RcValue>>,
+    relationship_attrs: HashMap<RelationshipId, OrderMap<AttrId, RcValue>>,
     node_labels: Vec<Rc<String>>,
     relationship_types: Vec<Rc<String>>,
     node_attrs_name: Vec<Rc<String>>,
@@ -106,45 +147,54 @@ impl Graph {
         self.node_labels.len()
     }
 
-    pub fn get_labels(&self) -> impl Iterator<Item = &Rc<String>> {
-        self.node_labels.iter()
+    pub fn get_labels(&self) -> Vec<Rc<String>> {
+        self.node_labels.clone()
     }
 
     pub fn get_label_by_id(
         &self,
-        id: usize,
+        id: LabelId,
     ) -> Rc<String> {
-        self.node_labels[id].clone()
+        self.node_labels[id.0].clone()
     }
 
-    pub fn get_types(&self) -> impl Iterator<Item = &Rc<String>> {
-        self.relationship_types.iter()
+    pub fn get_types(&self) -> Vec<Rc<String>> {
+        self.relationship_types.clone()
     }
 
-    pub fn get_attrs(&self) -> impl Iterator<Item = &Rc<String>> {
+    pub fn get_type(
+        &self,
+        type_id: TypeId,
+    ) -> Option<Rc<String>> {
+        self.relationship_types.get(type_id.0).cloned()
+    }
+
+    pub fn get_attrs(&self) -> Vec<Rc<String>> {
         self.node_attrs_name
             .iter()
             .chain(self.relationship_attrs_name.iter())
+            .cloned()
+            .collect()
     }
 
     pub fn get_label_id(
         &self,
         label: &str,
-    ) -> Option<u64> {
+    ) -> Option<LabelId> {
         self.node_labels
             .iter()
             .position(|l| l.as_str() == label)
-            .map(|p| p as u64)
+            .map(LabelId)
     }
 
     pub fn get_type_id(
         &self,
         relationship_type: &str,
-    ) -> Option<u64> {
+    ) -> Option<TypeId> {
         self.relationship_types
             .iter()
             .position(|t| t.as_str() == relationship_type)
-            .map(|p| p as u64)
+            .map(TypeId)
     }
 
     pub fn get_plan(
@@ -262,24 +312,24 @@ impl Graph {
     pub fn get_node_attribute_id(
         &self,
         key: &str,
-    ) -> Option<u64> {
+    ) -> Option<AttrId> {
         self.node_attrs_name
             .iter()
             .position(|p| p.as_str() == key)
-            .map(|attr_id| attr_id as u64)
+            .map(AttrId)
     }
 
     pub fn get_node_attribute_string(
         &self,
-        id: u64,
+        id: AttrId,
     ) -> Option<Rc<String>> {
-        self.node_attrs_name.get(id as usize).cloned()
+        self.node_attrs_name.get(id.0).cloned()
     }
 
     pub fn get_or_add_node_attribute_id(
         &mut self,
         key: &Rc<String>,
-    ) -> u64 {
+    ) -> AttrId {
         let attr_id = self
             .node_attrs_name
             .iter()
@@ -289,13 +339,13 @@ impl Graph {
                 self.node_attrs_name.push(key.clone());
                 len
             });
-        attr_id as u64
+        AttrId(attr_id)
     }
 
     pub fn get_or_add_relationship_attribute_id(
         &mut self,
         key: &String,
-    ) -> u64 {
+    ) -> AttrId {
         let attr_id = self
             .relationship_attrs_name
             .iter()
@@ -305,40 +355,40 @@ impl Graph {
                 self.relationship_attrs_name.push(Rc::new(key.clone()));
                 len
             });
-        attr_id as u64
+        AttrId(attr_id)
     }
 
     pub fn get_relationship_attribute_id(
         &self,
-        key: &String,
-    ) -> Option<u64> {
+        key: &str,
+    ) -> Option<AttrId> {
         self.relationship_attrs_name
             .iter()
             .position(|p| p.as_str() == key)
-            .map(|attr_id| attr_id as u64)
+            .map(AttrId)
     }
 
     pub fn get_relationship_attribute_string(
         &self,
-        id: u64,
+        id: AttrId,
     ) -> Option<Rc<String>> {
-        self.relationship_attrs_name.get(id as usize).cloned()
+        self.relationship_attrs_name.get(id.0).cloned()
     }
 
-    pub fn reserve_node(&mut self) -> u64 {
+    pub fn reserve_node(&mut self) -> NodeId {
         let mut iter = self.deleted_nodes.iter();
         iter.advance_to(self.reserved_node_count);
         if let Some(id) = iter.next() {
             self.reserved_node_count += 1;
-            return id;
+            return NodeId(id);
         }
         self.reserved_node_count += 1;
-        self.node_count + self.reserved_node_count - 1
+        NodeId(self.node_count + self.reserved_node_count - 1)
     }
 
     pub fn create_nodes(
         &mut self,
-        nodes: &Vec<u64>,
+        nodes: &Vec<NodeId>,
     ) {
         self.node_count += nodes.len() as u64;
         self.reserved_node_count -= nodes.len() as u64;
@@ -347,20 +397,20 @@ impl Graph {
             if self.deleted_nodes.is_empty() {
                 break;
             }
-            self.deleted_nodes.remove(*id);
+            self.deleted_nodes.remove(id.0);
         }
 
         self.resize();
 
         for id in nodes {
-            self.all_nodes_matrix.set(*id, *id, true);
+            self.all_nodes_matrix.set(id.0, id.0, true);
         }
     }
 
     pub fn set_node_attribute(
         &mut self,
-        id: u64,
-        attr_id: u64,
+        id: NodeId,
+        attr_id: AttrId,
         value: RcValue,
     ) -> bool {
         let attrs = self.node_attrs.entry(id).or_default();
@@ -377,21 +427,21 @@ impl Graph {
 
     pub fn set_node_labels(
         &mut self,
-        id: u64,
+        id: NodeId,
         labels: &OrderSet<Rc<String>>,
     ) {
         for label in labels {
             let label_matrix = self.get_label_matrix_mut(label);
-            label_matrix.set(id, id, true);
+            label_matrix.set(id.0, id.0, true);
             let label_id = self.get_label_id(label).unwrap();
             self.resize();
-            self.node_labels_matrix.set(id, label_id, true);
+            self.node_labels_matrix.set(id.0, label_id.0 as u64, true);
         }
     }
 
     pub fn remove_node_labels(
         &mut self,
-        id: u64,
+        id: NodeId,
         labels: &OrderSet<Rc<String>>,
     ) {
         for label in labels {
@@ -399,23 +449,23 @@ impl Graph {
                 continue;
             }
             let label_matrix = self.get_label_matrix_mut(label);
-            label_matrix.remove(id, id);
+            label_matrix.remove(id.0, id.0);
             let label_id = self.get_label_id(label).unwrap();
-            self.node_labels_matrix.remove(id, label_id);
+            self.node_labels_matrix.remove(id.0, label_id.0 as u64);
         }
     }
 
     pub fn delete_node(
         &mut self,
-        id: u64,
+        id: NodeId,
     ) {
-        self.deleted_nodes.insert(id);
+        self.deleted_nodes.insert(id.0);
         self.node_count -= 1;
-        self.all_nodes_matrix.remove(id, id);
+        self.all_nodes_matrix.remove(id.0, id.0);
 
         for (label_id, label_matrix) in &mut self.labels_matices {
-            label_matrix.remove(id, id);
-            self.node_labels_matrix.remove(id, *label_id as _);
+            label_matrix.remove(id.0, id.0);
+            self.node_labels_matrix.remove(id.0, *label_id as _);
         }
 
         self.node_attrs.remove(&id);
@@ -423,87 +473,95 @@ impl Graph {
 
     pub fn get_node_relationships(
         &self,
-        id: u64,
-    ) -> impl Iterator<Item = (u64, u64, u64)> + '_ {
+        id: NodeId,
+    ) -> impl Iterator<Item = (NodeId, NodeId, RelationshipId)> + '_ {
         self.relationship_matrices
             .values()
-            .flat_map(move |m| m.iter(id, id).chain(m.transpose().iter(id, id)))
+            .flat_map(move |m| m.iter(id.0, id.0).chain(m.transpose().iter(id.0, id.0)))
+            .map(|(src, dest, relationship_id)| {
+                let src_node = NodeId(src);
+                let dest_node = NodeId(dest);
+                (src_node, dest_node, RelationshipId(relationship_id))
+            })
     }
 
     pub fn get_nodes(
         &self,
         labels: &OrderSet<Rc<String>>,
-    ) -> matrix::Iter<bool> {
-        if labels.is_empty() {
-            return self.all_nodes_matrix.iter(0, u64::MAX);
-        }
-        let mut iter = labels.iter();
-        let mut m = if let Some(label_matrix) = self.get_label_matrix(iter.next().unwrap()) {
-            label_matrix.dup()
+    ) -> impl Iterator<Item = NodeId> + use<> {
+        let iter = if labels.is_empty() {
+            self.all_nodes_matrix.iter(0, u64::MAX)
         } else {
-            return self.zero_matrix.iter(0, u64::MAX);
+            let matrices = labels
+                .iter()
+                .map(|label| self.get_label_matrix(label))
+                .collect::<Option<Vec<_>>>();
+            matrices.map_or_else(
+                || self.zero_matrix.iter(0, u64::MAX),
+                |matrices| {
+                    let mut iter = matrices.iter();
+                    let mut m = iter.next().unwrap().dup();
+                    for label_matrix in iter {
+                        m.element_wise_multiply(label_matrix);
+                    }
+                    m.iter(0, u64::MAX)
+                },
+            )
         };
-        for label in iter {
-            if let Some(label_matrix) = self.get_label_matrix(label) {
-                m.element_wise_multiply(label_matrix);
-            } else {
-                return self.zero_matrix.iter(0, u64::MAX);
-            }
-        }
-        m.iter(0, u64::MAX)
+        iter.map(|(id, _)| NodeId(id))
     }
 
     #[allow(clippy::cast_possible_truncation)]
     pub fn get_node_label_ids(
         &self,
-        id: u64,
-    ) -> impl Iterator<Item = usize> {
+        id: NodeId,
+    ) -> impl Iterator<Item = LabelId> {
         self.node_labels_matrix
-            .iter(id, id)
-            .map(|(_, l)| l as usize)
+            .iter(id.0, id.0)
+            .map(|(_, l)| LabelId(l as usize))
     }
 
     pub fn get_node_labels(
         &self,
-        id: u64,
+        id: NodeId,
     ) -> impl Iterator<Item = Rc<String>> {
         self.get_node_label_ids(id)
-            .map(move |label_id| self.node_labels[label_id].clone())
+            .map(move |label_id| self.node_labels[label_id.0].clone())
     }
 
     pub fn get_node_attribute(
         &self,
-        node_id: u64,
-        attr_id: u64,
+        node_id: NodeId,
+        attr_id: AttrId,
     ) -> Option<RcValue> {
         self.node_attrs
             .get(&node_id)
             .map_or_else(|| None, |attrs| attrs.get(&attr_id).cloned())
     }
 
-    pub fn reserve_relationship(&mut self) -> u64 {
+    pub fn reserve_relationship(&mut self) -> RelationshipId {
         let mut iter = self.deleted_relationships.iter();
         iter.advance_to(self.reserved_relationship_count);
         if let Some(id) = iter.next() {
             self.reserved_relationship_count += 1;
-            return id;
+            return RelationshipId(id);
         }
         self.reserved_relationship_count += 1;
-        self.relationship_count + self.reserved_relationship_count - 1
+        RelationshipId(self.relationship_count + self.reserved_relationship_count - 1)
     }
 
     pub fn create_relationships(
         &mut self,
-        relationships: &HashMap<u64, PendingRelationship>,
+        relationships: &HashMap<RelationshipId, PendingRelationship>,
     ) {
         self.relationship_count += relationships.len() as u64;
         self.reserved_relationship_count -= relationships.len() as u64;
 
-        for (id, _) in relationships {
+        for id in relationships.keys() {
             if self.deleted_relationships.is_empty() {
                 break;
             }
-            self.deleted_relationships.remove(*id);
+            self.deleted_relationships.remove(id.0);
         }
 
         for (
@@ -517,7 +575,7 @@ impl Graph {
         ) in relationships
         {
             let relationship_type_matrix = self.get_relationship_matrix_mut(type_name);
-            relationship_type_matrix.set(*start, *end, *id);
+            relationship_type_matrix.set(start.0, end.0, id.0);
         }
 
         self.resize();
@@ -531,9 +589,9 @@ impl Graph {
             },
         ) in relationships
         {
-            self.adjacancy_matrix.set(*start, *end, true);
+            self.adjacancy_matrix.set(start.0, end.0, true);
             self.relationship_type_matrix.set(
-                *id,
+                id.0,
                 self.relationship_types
                     .iter()
                     .position(|p| p.as_str() == type_name.as_str())
@@ -545,8 +603,8 @@ impl Graph {
 
     pub fn set_relationship_attribute(
         &mut self,
-        id: u64,
-        attr_id: u64,
+        id: RelationshipId,
+        attr_id: AttrId,
         value: RcValue,
     ) -> bool {
         let attrs = self.relationship_attrs.entry(id).or_default();
@@ -559,23 +617,23 @@ impl Graph {
 
     pub fn delete_relationship(
         &mut self,
-        id: u64,
-        src: u64,
-        dest: u64,
+        id: RelationshipId,
+        src: NodeId,
+        dest: NodeId,
     ) {
-        self.deleted_relationships.insert(id);
+        self.deleted_relationships.insert(id.0);
         self.relationship_count -= 1;
         self.relationship_matrices
             .values_mut()
-            .for_each(|m| m.remove(src, dest, id));
+            .for_each(|m| m.remove(src.0, dest.0, id.0));
     }
 
     pub fn get_src_dest_relationships(
         &self,
-        src: u64,
-        dest: u64,
+        src: NodeId,
+        dest: NodeId,
         types: &[Rc<String>],
-    ) -> Vec<u64> {
+    ) -> Vec<RelationshipId> {
         let mut vec = vec![];
         for relationship_type in if types.is_empty() {
             &self.relationship_types
@@ -583,8 +641,8 @@ impl Graph {
             types
         } {
             if let Some(relationship_matrix) = self.get_relationship_matrix(relationship_type) {
-                if let Some(id) = relationship_matrix.get(src, dest) {
-                    vec.push(id);
+                if let Some(id) = relationship_matrix.get(src.0, dest.0) {
+                    vec.push(RelationshipId(id));
                 }
             }
         }
@@ -596,76 +654,70 @@ impl Graph {
         types: &[Rc<String>],
         src_lables: &OrderSet<Rc<String>>,
         dest_labels: &OrderSet<Rc<String>>,
-    ) -> matrix::Iter<bool> {
-        let mut iter = types.iter();
-        let mut m = if let Some(relationship_type) = iter.next() {
-            if let Some(relationship_matrix) = self.get_relationship_matrix(relationship_type) {
-                relationship_matrix.dup_bool()
-            } else {
-                return self.zero_matrix.iter(0, u64::MAX);
-            }
-        } else {
-            self.adjacancy_matrix.dup()
-        };
-        for relationship_type in iter {
-            if let Some(relationship_matrix) = self.get_relationship_matrix(relationship_type) {
+    ) -> impl Iterator<Item = (NodeId, NodeId)> + use<> {
+        let matrices = types
+            .iter()
+            .map(|relationship_type| self.get_relationship_matrix(relationship_type))
+            .collect::<Option<Vec<_>>>();
+        let src_labels_matrices = src_lables
+            .iter()
+            .map(|label| self.get_label_matrix(label))
+            .collect::<Option<Vec<_>>>();
+        let dest_labels_matrices = dest_labels
+            .iter()
+            .map(|label| self.get_label_matrix(label))
+            .collect::<Option<Vec<_>>>();
+        let iter = if let (Some(matrices), Some(src_labels_matrices), Some(dest_labels_matrices)) =
+            (matrices, src_labels_matrices, dest_labels_matrices)
+        {
+            let mut iter = matrices.iter();
+            let mut m = iter.next().map_or_else(
+                || self.adjacancy_matrix.dup(),
+                |relationship_matrix| relationship_matrix.dup_bool(),
+            );
+            for relationship_matrix in iter {
                 m.element_wise_add(&relationship_matrix.dup_bool());
-            } else {
-                return self.zero_matrix.iter(0, u64::MAX);
             }
-        }
-        if !src_lables.is_empty() {
-            let mut iter = src_lables.iter();
-            let mut src_matrix =
-                if let Some(label_matrix) = self.get_label_matrix(iter.next().unwrap()) {
-                    label_matrix.dup()
-                } else {
-                    return self.zero_matrix.iter(0, u64::MAX);
-                };
-            for label in iter {
-                if let Some(label_matrix) = self.get_label_matrix(label) {
+
+            if !src_labels_matrices.is_empty() {
+                let mut iter = src_labels_matrices.iter();
+                let mut src_matrix = iter.next().unwrap().dup();
+                for label_matrix in iter {
                     src_matrix.element_wise_multiply(label_matrix);
-                } else {
-                    return self.zero_matrix.iter(0, u64::MAX);
                 }
+                m.rmxm(&src_matrix);
             }
-            m.rmxm(&src_matrix);
-        }
-        if !dest_labels.is_empty() {
-            let mut iter = dest_labels.iter();
-            let mut dest_matrix =
-                if let Some(label_matrix) = self.get_label_matrix(iter.next().unwrap()) {
-                    label_matrix.dup()
-                } else {
-                    return self.zero_matrix.iter(0, u64::MAX);
-                };
-            for label in iter {
-                if let Some(label_matrix) = self.get_label_matrix(label) {
+            if !dest_labels_matrices.is_empty() {
+                let mut iter = dest_labels_matrices.iter();
+                let mut dest_matrix = iter.next().unwrap().dup();
+                for label_matrix in iter {
                     dest_matrix.element_wise_multiply(label_matrix);
-                } else {
-                    return self.zero_matrix.iter(0, u64::MAX);
                 }
+                m.lmxm(&dest_matrix);
             }
-            m.lmxm(&dest_matrix);
-        }
-        m.iter(0, u64::MAX)
+            m.iter(0, u64::MAX)
+        } else {
+            self.zero_matrix.iter(0, u64::MAX)
+        };
+
+        iter.map(|(src, dest)| (NodeId(src), NodeId(dest)))
     }
 
     pub fn get_relationship_type_id(
         &self,
-        id: u64,
-    ) -> u64 {
+        id: RelationshipId,
+    ) -> TypeId {
         self.relationship_type_matrix
-            .iter(id, id)
-            .map(|(_, l)| l)
+            .iter(id.0, id.0)
+            .map(|(_, l)| TypeId(l as usize))
             .next()
             .unwrap()
     }
 
     pub fn get_relationship_attribute(
         &self,
-        relationship_id: u64,
-        attr_id: u64,
+        relationship_id: RelationshipId,
+        attr_id: AttrId,
     ) -> Option<RcValue> {
         self.relationship_attrs
             .get(&relationship_id)
@@ -710,15 +762,15 @@ impl Graph {
 
     pub fn get_node_attrs(
         &self,
-        id: u64,
-    ) -> &OrderMap<u64, RcValue> {
+        id: NodeId,
+    ) -> &OrderMap<AttrId, RcValue> {
         self.node_attrs.get(&id).unwrap_or(&self.empty_map)
     }
 
     pub fn get_relationship_attrs(
         &self,
-        id: u64,
-    ) -> &OrderMap<u64, RcValue> {
+        id: RelationshipId,
+    ) -> &OrderMap<AttrId, RcValue> {
         self.relationship_attrs.get(&id).unwrap_or(&self.empty_map)
     }
 }

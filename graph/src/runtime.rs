@@ -5,15 +5,17 @@
 
 use crate::ast::{QuantifierType, QueryGraph, QueryNode, QueryRelationship, Variable};
 use crate::functions::{FnType, Functions, Type, get_functions};
+use crate::graph::{NodeId, RelationshipId};
 use crate::iter::{Aggregate, LazyReplace, TryFlatMap, TryMap};
+use crate::pending::Pending;
 use crate::value::{DisjointOrNull, Env, RcValue, ValuesDeduper};
 use crate::{ast::ExprIR, graph::Graph, planner::IR, value::Contains, value::Value};
-use hashbrown::{HashMap, HashSet};
 use once_cell::unsync::Lazy;
 use ordermap::{OrderMap, OrderSet};
 use orx_tree::{Dyn, DynNode, DynTree, NodeIdx, NodeRef};
 use std::cell::RefCell;
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::iter::{empty, once, repeat_with};
@@ -54,90 +56,15 @@ pub struct Stats {
     pub properties_removed: usize,
 }
 
-pub struct PendingRelationship {
-    pub from: u64,
-    pub to: u64,
-    pub type_name: Rc<String>,
-}
-
-impl PendingRelationship {
-    #[must_use]
-    pub const fn new(
-        from: u64,
-        to: u64,
-        type_name: Rc<String>,
-    ) -> Self {
-        Self {
-            from,
-            to,
-            type_name,
-        }
-    }
-}
-
-#[derive(Default)]
-pub struct Pending {
-    pub created_nodes: Vec<u64>,
-    pub created_relationships: HashMap<u64, PendingRelationship>,
-    pub deleted_nodes: HashSet<u64>,
-    pub deleted_relationships: HashSet<(u64, u64, u64)>,
-    pub set_nodes_attrs: HashMap<u64, OrderMap<Rc<String>, RcValue>>,
-    pub set_relationships_attrs: HashMap<u64, OrderMap<Rc<String>, RcValue>>,
-    pub set_node_labels: HashMap<u64, OrderSet<Rc<String>>>,
-    pub remove_node_labels: HashMap<u64, OrderSet<Rc<String>>>,
-}
-
-impl Pending {
-    pub fn set_node_property(
-        &mut self,
-        node_id: u64,
-        key: Rc<String>,
-        value: RcValue,
-    ) {
-        self.set_nodes_attrs
-            .entry(node_id)
-            .or_default()
-            .insert(key, value);
-    }
-
-    pub fn set_node_labels(
-        &mut self,
-        node_id: u64,
-        labels: OrderSet<Rc<String>>,
-    ) {
-        self.set_node_labels.insert(node_id, labels);
-    }
-
-    pub fn remove_node_labels(
-        &mut self,
-        node_id: u64,
-        labels: OrderSet<Rc<String>>,
-    ) {
-        self.remove_node_labels.insert(node_id, labels);
-    }
-
-    pub fn set_relationship_property(
-        &mut self,
-        rel_id: u64,
-        key: Rc<String>,
-        value: RcValue,
-    ) {
-        self.set_relationships_attrs
-            .entry(rel_id)
-            .or_default()
-            .insert(key, value);
-    }
-}
-
 pub struct Runtime<'a> {
     functions: &'static Functions,
     parameters: HashMap<String, RcValue>,
-    pub g: &'a RefCell<Graph>,
+    g: &'a RefCell<Graph>,
     write: bool,
-    pub pending: Lazy<RefCell<Pending>>,
-    pub stats: RefCell<Stats>,
-    pub plan: Rc<DynTree<IR>>,
-    pub value_dedupers: RefCell<HashMap<String, ValuesDeduper>>,
+    pending: Lazy<RefCell<Pending>>,
+    stats: RefCell<Stats>,
+    plan: Rc<DynTree<IR>>,
+    value_dedupers: RefCell<HashMap<String, ValuesDeduper>>,
 }
 
 trait ReturnNames {
@@ -630,14 +557,14 @@ impl<'a> Runtime<'a> {
                         }
                         let mut curr = *start;
                         let step = *step;
-                        return Ok(Box::new(
+                        Ok(Box::new(
                             repeat_with(move || {
                                 let tmp = curr;
                                 curr += step;
                                 RcValue::int(tmp)
                             })
                             .take(((end - start) / step + 1) as usize),
-                        ));
+                        ))
                     }
                     _ => {
                         unreachable!();
@@ -783,11 +710,11 @@ impl<'a> Runtime<'a> {
                 }
                 let vars = Env::default();
                 let value = self.run_iter_expr(tree.root(), &vars)?;
-                return Ok(Box::new(value.map(move |v| {
+                Ok(Box::new(value.map(move |v| {
                     let mut vars = Env::default();
                     vars.insert(name, v);
                     Ok(vars)
-                })));
+                })))
             }
             IR::Create(pattern) => {
                 let mut parent_commit = false;
@@ -901,7 +828,7 @@ impl<'a> Runtime<'a> {
                             match &*entity {
                                 Value::Node(node) => {
                                     if let Some(property) = property {
-                                        self.pending.borrow_mut().set_node_property(
+                                        self.pending.borrow_mut().set_node_attribute(
                                             *node,
                                             property.clone(),
                                             value,
@@ -910,7 +837,7 @@ impl<'a> Runtime<'a> {
                                         if *replace {
                                             for key in self.g.borrow().get_node_attrs(*node).keys()
                                             {
-                                                self.pending.borrow_mut().set_node_property(
+                                                self.pending.borrow_mut().set_node_attribute(
                                                     *node,
                                                     self.g
                                                         .borrow()
@@ -921,7 +848,7 @@ impl<'a> Runtime<'a> {
                                             }
                                         }
                                         for (key, value) in map {
-                                            self.pending.borrow_mut().set_node_property(
+                                            self.pending.borrow_mut().set_node_attribute(
                                                 *node,
                                                 key.clone(),
                                                 value.clone(),
@@ -933,7 +860,7 @@ impl<'a> Runtime<'a> {
                                     }
                                 }
                                 Value::Relationship(relationship, _, _) => {
-                                    self.pending.borrow_mut().set_relationship_property(
+                                    self.pending.borrow_mut().set_relationship_attribute(
                                         *relationship,
                                         property.unwrap().clone(),
                                         value,
@@ -994,7 +921,7 @@ impl<'a> Runtime<'a> {
                             match &*entity {
                                 Value::Node(node) => {
                                     if let Some(property) = property {
-                                        self.pending.borrow_mut().set_node_property(
+                                        self.pending.borrow_mut().set_node_attribute(
                                             *node,
                                             property.clone(),
                                             RcValue::null(),
@@ -1006,7 +933,7 @@ impl<'a> Runtime<'a> {
                                 }
                                 Value::Relationship(relationship, _, _) => {
                                     if let Some(property) = property {
-                                        self.pending.borrow_mut().set_relationship_property(
+                                        self.pending.borrow_mut().set_relationship_attribute(
                                             *relationship,
                                             property.clone(),
                                             RcValue::null(),
@@ -1405,7 +1332,7 @@ impl<'a> Runtime<'a> {
             }
         };
         let iter = self.g.borrow().get_nodes(&node_pattern.labels);
-        Box::new(iter.filter_map(move |(v, _)| {
+        Box::new(iter.filter_map(move |v| {
             let mut vars = vars.clone();
             if let Value::Map(attrs) = &*attrs {
                 if !attrs.is_empty() {
@@ -1449,16 +1376,14 @@ impl<'a> Runtime<'a> {
                 for (src, dest, id) in self.g.borrow().get_node_relationships(*id) {
                     self.pending
                         .borrow_mut()
-                        .deleted_relationships
-                        .insert((id, src, dest));
+                        .deleted_relationship(id, src, dest);
                 }
-                self.pending.borrow_mut().deleted_nodes.insert(*id);
+                self.pending.borrow_mut().deleted_node(*id);
             }
             Value::Relationship(id, src, dest) => {
                 self.pending
                     .borrow_mut()
-                    .deleted_relationships
-                    .insert((*id, *src, *dest));
+                    .deleted_relationship(*id, *src, *dest);
             }
             Value::Path(values) => {
                 for value in values {
@@ -1480,7 +1405,7 @@ impl<'a> Runtime<'a> {
     ) -> Result<(), String> {
         for node in &pattern.nodes {
             let id = self.g.borrow_mut().reserve_node();
-            self.pending.borrow_mut().created_nodes.push(id);
+            self.pending.borrow_mut().created_node(id);
             self.pending
                 .borrow_mut()
                 .set_node_labels(id, node.labels.clone());
@@ -1489,8 +1414,7 @@ impl<'a> Runtime<'a> {
                 Value::Map(properties) => {
                     self.pending
                         .borrow_mut()
-                        .set_nodes_attrs
-                        .insert(id, properties.clone());
+                        .set_node_attributes(id, properties.clone());
                 }
                 _ => unreachable!(),
             }
@@ -1513,17 +1437,18 @@ impl<'a> Runtime<'a> {
                 (from_id, to_id)
             };
             let id = self.g.borrow_mut().reserve_relationship();
-            self.pending.borrow_mut().created_relationships.insert(
+            self.pending.borrow_mut().created_relationship(
                 id,
-                PendingRelationship::new(from_id, to_id, rel.types.first().unwrap().clone()),
+                from_id,
+                to_id,
+                rel.types.first().unwrap().clone(),
             );
             let attrs = self.run_expr(rel.attrs.root(), vars, None)?;
             match &*attrs {
                 Value::Map(attrs) => {
                     self.pending
                         .borrow_mut()
-                        .set_relationships_attrs
-                        .insert(id, attrs.clone());
+                        .set_relationship_attributes(id, attrs.clone());
                 }
                 _ => {
                     return Err(String::from("Invalid relationship properties"));
@@ -1536,103 +1461,105 @@ impl<'a> Runtime<'a> {
 
     #[allow(clippy::too_many_lines)]
     fn commit(&self) {
-        if !self.pending.borrow().created_nodes.is_empty() {
-            self.stats.borrow_mut().nodes_created += self.pending.borrow().created_nodes.len();
-            self.g
-                .borrow_mut()
-                .create_nodes(&self.pending.borrow().created_nodes);
-            self.pending.borrow_mut().created_nodes.clear();
+        self.pending.borrow_mut().commit(self.g, &self.stats);
+    }
+
+    pub fn get_node_attribute(
+        &self,
+        node_id: NodeId,
+        attribute: &Rc<String>,
+    ) -> Option<RcValue> {
+        if let Some(value) = self.pending.borrow().get_node_attribute(node_id, attribute) {
+            return Some(value.clone());
         }
-        if !self.pending.borrow().created_relationships.is_empty() {
-            self.stats.borrow_mut().relationships_created +=
-                self.pending.borrow().created_relationships.len();
-            self.g
-                .borrow_mut()
-                .create_relationships(&self.pending.borrow().created_relationships);
-            self.pending.borrow_mut().created_relationships.clear();
+        self.g
+            .borrow()
+            .get_node_attribute_id(attribute.as_str())
+            .and_then(|attr_id| self.g.borrow().get_node_attribute(node_id, attr_id))
+    }
+
+    pub fn get_relationship_attribute(
+        &self,
+        relationship_id: RelationshipId,
+        attribute: &Rc<String>,
+    ) -> Option<RcValue> {
+        if let Some(value) = self
+            .pending
+            .borrow()
+            .get_relationship_attribute(relationship_id, attribute)
+        {
+            return Some(value.clone());
         }
-        if !self.pending.borrow().deleted_relationships.is_empty() {
-            self.stats.borrow_mut().relationships_deleted +=
-                self.pending.borrow().deleted_relationships.len();
-            for (id, src, dest) in self.pending.borrow().deleted_relationships.clone() {
-                self.g.borrow_mut().delete_relationship(id, src, dest);
-            }
-            self.pending.borrow_mut().deleted_relationships.clear();
+        self.g
+            .borrow()
+            .get_relationship_attribute_id(attribute.as_str())
+            .and_then(|attr_id| {
+                self.g
+                    .borrow()
+                    .get_relationship_attribute(relationship_id, attr_id)
+            })
+    }
+
+    pub fn get_node_labels(
+        &self,
+        id: NodeId,
+    ) -> OrderSet<Rc<String>> {
+        let mut labels = self.g.borrow().get_node_labels(id).collect::<OrderSet<_>>();
+        self.pending.borrow().update_node_labels(id, &mut labels);
+        labels
+    }
+
+    pub fn get_node_attrs(
+        &self,
+        id: NodeId,
+    ) -> OrderMap<Rc<String>, RcValue> {
+        let g = self.g.borrow();
+        let mut actual: OrderMap<Rc<String>, RcValue> = g
+            .get_node_attrs(id)
+            .iter()
+            .map(|(k, v)| (g.get_node_attribute_string(*k).unwrap(), v.clone()))
+            .collect();
+        self.pending.borrow().update_node_attrs(id, &mut actual);
+        actual
+    }
+
+    pub fn get_relationship_attrs(
+        &self,
+        id: RelationshipId,
+    ) -> OrderMap<Rc<String>, RcValue> {
+        let g = self.g.borrow();
+        let mut actual: OrderMap<Rc<String>, RcValue> = g
+            .get_relationship_attrs(id)
+            .iter()
+            .map(|(k, v)| (g.get_relationship_attribute_string(*k).unwrap(), v.clone()))
+            .collect();
+        self.pending
+            .borrow()
+            .update_relationship_attrs(id, &mut actual);
+        actual
+    }
+
+    pub fn get_relationship_type(
+        &self,
+        id: RelationshipId,
+    ) -> Option<Rc<String>> {
+        if let Some(type_name) = self.pending.borrow().get_relationship_type(id) {
+            return Some(type_name);
         }
-        if !self.pending.borrow().deleted_nodes.is_empty() {
-            self.stats.borrow_mut().nodes_deleted += self.pending.borrow().deleted_nodes.len();
-            for id in self.pending.borrow().deleted_nodes.clone() {
-                self.g.borrow_mut().delete_node(id);
-            }
-            self.pending.borrow_mut().deleted_nodes.clear();
-        }
-        if !self.pending.borrow().set_nodes_attrs.is_empty() {
-            self.stats.borrow_mut().properties_set += self
-                .pending
-                .borrow()
-                .set_nodes_attrs
-                .values()
-                .flat_map(|v| v.values())
-                .map(|v| match **v {
-                    Value::Null => 0,
-                    _ => 1,
-                })
-                .sum::<usize>();
-            for (id, attrs) in &self.pending.borrow().set_nodes_attrs {
-                for (key, value) in attrs {
-                    let property_id = self.g.borrow_mut().get_or_add_node_attribute_id(key);
-                    if self
-                        .g
-                        .borrow_mut()
-                        .set_node_attribute(*id, property_id, value.clone())
-                    {
-                        self.stats.borrow_mut().properties_removed += 1;
-                    }
-                }
-            }
-            self.pending.borrow_mut().set_nodes_attrs.clear();
-        }
-        if !self.pending.borrow().set_node_labels.is_empty() {
-            for (id, labels) in &self.pending.borrow().set_node_labels {
-                self.g.borrow_mut().set_node_labels(*id, labels);
-            }
-            self.pending.borrow_mut().set_node_labels.clear();
-        }
-        if !self.pending.borrow().remove_node_labels.is_empty() {
-            for (id, labels) in &self.pending.borrow().remove_node_labels {
-                self.g.borrow_mut().remove_node_labels(*id, labels);
-            }
-            self.pending.borrow_mut().remove_node_labels.clear();
-        }
-        if !self.pending.borrow().set_relationships_attrs.is_empty() {
-            self.stats.borrow_mut().properties_set += self
-                .pending
-                .borrow()
-                .set_relationships_attrs
-                .values()
-                .flat_map(|v| v.values())
-                .map(|v| match **v {
-                    Value::Null => 0,
-                    _ => 1,
-                })
-                .sum::<usize>();
-            for (id, attrs) in &self.pending.borrow().set_relationships_attrs {
-                for (key, value) in attrs {
-                    let property_id = self
-                        .g
-                        .borrow_mut()
-                        .get_or_add_relationship_attribute_id(key);
-                    if self.g.borrow_mut().set_relationship_attribute(
-                        *id,
-                        property_id,
-                        value.clone(),
-                    ) {
-                        self.stats.borrow_mut().properties_removed += 1;
-                    }
-                }
-            }
-            self.pending.borrow_mut().set_relationships_attrs.clear();
-        }
+        let relation_type_id = self.g.borrow().get_relationship_type_id(id);
+        self.g.borrow().get_type(relation_type_id)
+    }
+
+    pub fn get_labels(&self) -> Vec<Rc<String>> {
+        self.g.borrow().get_labels()
+    }
+
+    pub fn get_types(&self) -> Vec<Rc<String>> {
+        self.g.borrow().get_types()
+    }
+
+    pub fn get_attrs(&self) -> Vec<Rc<String>> {
+        self.g.borrow().get_attrs()
     }
 }
 

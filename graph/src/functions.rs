@@ -4,11 +4,10 @@
 #![allow(clippy::cast_precision_loss)]
 #![allow(clippy::cast_possible_truncation)]
 
-use crate::runtime::{PendingRelationship, Runtime};
+use crate::runtime::Runtime;
 use crate::value::{RcValue, Value};
-use hashbrown::HashMap;
-use ordermap::OrderSet;
 use rand::Rng;
+use std::collections::HashMap;
 use std::fmt::{Debug, Display};
 use std::iter::repeat_with;
 use std::rc::Rc;
@@ -820,41 +819,12 @@ fn property(
 ) -> Result<RcValue, String> {
     let mut iter = args.into_iter();
     match (iter.next().as_deref(), iter.next().as_deref()) {
-        (Some(Value::Node(node_id)), Some(Value::String(property))) => {
-            if let Some(attrs) = runtime.pending.borrow().set_nodes_attrs.get(node_id) {
-                if let Some(value) = attrs.get(property) {
-                    return Ok(value.clone());
-                }
-            }
-            runtime.g.borrow().get_node_attribute_id(property).map_or(
-                Ok(RcValue::null()),
-                |property_id| {
-                    runtime
-                        .g
-                        .borrow()
-                        .get_node_attribute(*node_id, property_id)
-                        .map_or(Ok(RcValue::null()), Ok)
-                },
-            )
-        }
-        (Some(Value::Relationship(id, _, _)), Some(Value::String(property))) => {
-            if let Some(attrs) = runtime.pending.borrow().set_relationships_attrs.get(id) {
-                if let Some(value) = attrs.get(property) {
-                    return Ok(value.clone());
-                }
-            }
-            runtime
-                .g
-                .borrow()
-                .get_relationship_attribute_id(property)
-                .map_or(Ok(RcValue::null()), |property_id| {
-                    runtime
-                        .g
-                        .borrow()
-                        .get_relationship_attribute(*id, property_id)
-                        .map_or(Ok(RcValue::null()), Ok)
-                })
-        }
+        (Some(Value::Node(id)), Some(Value::String(attribute))) => runtime
+            .get_node_attribute(*id, attribute)
+            .map_or(Ok(RcValue::null()), Ok),
+        (Some(Value::Relationship(id, _, _)), Some(Value::String(attribute))) => runtime
+            .get_relationship_attribute(*id, attribute)
+            .map_or(Ok(RcValue::null()), Ok),
         (Some(Value::Map(map)), Some(Value::String(property))) => {
             Ok(map.get(property).cloned().unwrap_or_else(RcValue::null))
         }
@@ -868,26 +838,8 @@ fn labels(
     args: Vec<RcValue>,
 ) -> Result<RcValue, String> {
     match args.into_iter().next().as_deref() {
-        Some(Value::Node(node_id)) => {
-            let mut labels = runtime
-                .g
-                .borrow()
-                .get_node_labels(*node_id)
-                .collect::<OrderSet<_>>();
-            labels.extend(
-                runtime
-                    .pending
-                    .borrow()
-                    .set_node_labels
-                    .get(node_id)
-                    .cloned()
-                    .unwrap_or_else(OrderSet::new),
-            );
-            if let Some(remove_labels) = runtime.pending.borrow().remove_node_labels.get(node_id) {
-                for label in remove_labels {
-                    labels.remove(label);
-                }
-            }
+        Some(Value::Node(id)) => {
+            let labels = runtime.get_node_labels(*id);
             Ok(RcValue::list(
                 labels.into_iter().map(RcValue::string).collect(),
             ))
@@ -1759,47 +1711,20 @@ fn keys(
         Some(Value::Map(map)) => Ok(RcValue::list(
             map.keys().map(|k| RcValue::string(k.clone())).collect(),
         )),
-        Some(Value::Node(id)) => {
-            let g = runtime.g.borrow();
-            let mut actual: OrderSet<Rc<String>> = g
+        Some(Value::Node(id)) => Ok(RcValue::list(
+            runtime
                 .get_node_attrs(*id)
                 .keys()
-                .map(|k| g.get_node_attribute_string(*k).unwrap())
-                .collect();
-            if let Some(attrs) = runtime.pending.borrow().set_nodes_attrs.get(id) {
-                for (k, v) in attrs {
-                    if matches!(&**v, Value::Null) {
-                        actual.remove(k);
-                    } else {
-                        actual.insert(k.clone());
-                    }
-                }
-            }
-            Ok(RcValue::list(
-                actual.into_iter().map(RcValue::string).collect(),
-            ))
-        }
-        Some(Value::Relationship(id, _, _)) => {
-            let g = runtime.g.borrow();
-            let mut actual: OrderSet<Rc<String>> = g
+                .map(|k| RcValue::string(k.clone()))
+                .collect::<Vec<_>>(),
+        )),
+        Some(Value::Relationship(id, _, _)) => Ok(RcValue::list(
+            runtime
                 .get_relationship_attrs(*id)
                 .keys()
-                .map(|k| g.get_relationship_attribute_string(*k).unwrap())
-                .collect();
-            if let Some(attrs) = runtime.pending.borrow().set_relationships_attrs.get(id) {
-                for (k, v) in attrs {
-                    if matches!(&**v, Value::Null) {
-                        actual.remove(k);
-                    } else {
-                        actual.insert(k.clone());
-                    }
-                }
-            }
-            Ok(RcValue::list(
-                actual.into_iter().map(RcValue::string).collect(),
-            ))
-        }
-
+                .map(|k| RcValue::string(k.clone()))
+                .collect::<Vec<_>>(),
+        )),
         Some(Value::Null) => Ok(RcValue::null()),
 
         _ => unreachable!(),
@@ -1835,19 +1760,10 @@ fn relationship_type(
     let mut iter = args.into_iter();
     match iter.next().as_deref() {
         Some(Value::Relationship(id, _from, _to)) => {
-            if let Some(PendingRelationship { type_name, .. }) =
-                runtime.pending.borrow().created_relationships.get(id)
-            {
-                return Ok(RcValue::string(type_name.clone()));
-            }
-            let relation_type_id = runtime.g.borrow().get_relationship_type_id(*id);
-            runtime
-                .g
-                .borrow()
-                .get_types()
-                .nth(relation_type_id as usize)
-                .map(|type_name| RcValue::string(type_name.clone()))
-                .ok_or_else(|| String::from("Relationship type not found"))
+            runtime.get_relationship_type(*id).map_or_else(
+                || Ok(RcValue::null()),
+                |type_name| Ok(RcValue::string(type_name)),
+            )
         }
 
         _ => unreachable!(),
@@ -1970,25 +1886,7 @@ fn internal_node_has_labels(
     let mut iter = args.into_iter();
     match (iter.next().as_deref(), iter.next().as_deref()) {
         (Some(Value::Node(node_id)), Some(Value::List(required_labels))) => {
-            let mut labels = runtime
-                .g
-                .borrow()
-                .get_node_labels(*node_id)
-                .collect::<OrderSet<_>>();
-            labels.extend(
-                runtime
-                    .pending
-                    .borrow()
-                    .set_node_labels
-                    .get(node_id)
-                    .cloned()
-                    .unwrap_or_else(OrderSet::new),
-            );
-            if let Some(remove_labels) = runtime.pending.borrow().remove_node_labels.get(node_id) {
-                for label in remove_labels {
-                    labels.remove(label);
-                }
-            }
+            let labels = runtime.get_node_labels(*node_id);
             let all_labels_present = required_labels.iter().all(|label| {
                 if let Value::String(label_str) = &**label {
                     labels.contains(label_str)
@@ -2062,10 +1960,9 @@ fn db_labels(
 ) -> Result<RcValue, String> {
     Ok(RcValue::list(
         runtime
-            .g
-            .borrow()
             .get_labels()
-            .map(|n| RcValue::string(n.clone()))
+            .into_iter()
+            .map(RcValue::string)
             .collect(),
     ))
 }
@@ -2076,10 +1973,9 @@ fn db_types(
 ) -> Result<RcValue, String> {
     Ok(RcValue::list(
         runtime
-            .g
-            .borrow()
             .get_types()
-            .map(|n| RcValue::string(n.clone()))
+            .into_iter()
+            .map(RcValue::string)
             .collect(),
     ))
 }
@@ -2090,10 +1986,9 @@ fn db_properties(
 ) -> Result<RcValue, String> {
     Ok(RcValue::list(
         runtime
-            .g
-            .borrow()
             .get_attrs()
-            .map(|n| RcValue::string(n.clone()))
+            .into_iter()
+            .map(RcValue::string)
             .collect(),
     ))
 }

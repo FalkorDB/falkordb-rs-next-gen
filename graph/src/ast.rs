@@ -1,6 +1,5 @@
-use std::{fmt::Display, hash::Hash, rc::Rc};
+use std::{collections::HashSet, fmt::Display, hash::Hash, rc::Rc};
 
-use hashbrown::HashSet;
 use ordermap::OrderSet;
 use orx_tree::{Dfs, DynNode, DynTree, NodeRef};
 
