@@ -138,6 +138,7 @@ pub enum QuantifierType {
     Single,
 }
 
+#[cfg_attr(tarpaulin, skip)]
 impl Display for QuantifierType {
     fn fmt(
         &self,

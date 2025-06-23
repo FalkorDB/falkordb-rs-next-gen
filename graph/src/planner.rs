@@ -40,6 +40,7 @@ pub enum IR {
     Commit,
 }
 
+#[cfg_attr(tarpaulin, skip)]
 impl Display for IR {
     fn fmt(
         &self,
