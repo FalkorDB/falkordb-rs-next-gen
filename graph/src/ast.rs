@@ -220,12 +220,10 @@ impl Validate for DynNode<'_, ExprIR> {
             }
             ExprIR::FuncInvocation(func) => {
                 if func.is_aggregate() {
-                    func.validate(self.num_children() - 1)?;
                     for i in 0..self.num_children() - 1 {
                         self.child(i).validate(env)?;
                     }
                 } else {
-                    func.validate(self.num_children())?;
                     for expr in self.children() {
                         expr.validate(env)?;
                     }
