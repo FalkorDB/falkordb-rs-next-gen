@@ -176,12 +176,12 @@ jobs:
         if: failure()  
         run: |        
           if [ -d "fuzz/artifacts" ] && [ "$(ls -A fuzz/artifacts)" ]; then
-            echo "Found fuzz artifacts, displaying content:"                
-            for file in fuzz/artifacts/*; do                                
-              echo "=== Content of $file ==="                              
+            echo "Found fuzz artifacts, displaying content:"
+            find fuzz/artifacts -type f -not -path "*/\.*" | while read file; do
+              echo "=== Content of $file ==="
               cat "$file" || echo "Failed to cat file (might be binary content)"
-              echo "========================="                              
-            done                                                            
+              echo "========================="
+            done
           else                                                              
             echo "No fuzz artifacts found or directory is empty"           
           fi                                                                
