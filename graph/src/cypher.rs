@@ -780,6 +780,7 @@ impl<'a> Parser<'a> {
         &mut self,
         write: bool,
     ) -> Result<QueryIR, String> {
+        let distinct = optional_match_token!(self.lexer => Distinct);
         let exprs = if optional_match_token!(self.lexer, Star) {
             vec![]
         } else {
@@ -834,6 +835,7 @@ impl<'a> Parser<'a> {
         };
         let filter = self.parse_where()?;
         Ok(QueryIR::With {
+            distinct,
             exprs,
             orderby,
             skip,
@@ -847,6 +849,7 @@ impl<'a> Parser<'a> {
         &mut self,
         write: bool,
     ) -> Result<QueryIR, String> {
+        let distinct = optional_match_token!(self.lexer => Distinct);
         let exprs = if optional_match_token!(self.lexer, Star) {
             let mut res: Vec<(Variable, DynTree<ExprIR>)> = self
                 .vars
@@ -905,7 +908,9 @@ impl<'a> Parser<'a> {
         } else {
             None
         };
+
         Ok(QueryIR::Return {
+            distinct,
             exprs,
             orderby,
             skip,

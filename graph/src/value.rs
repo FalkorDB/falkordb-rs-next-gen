@@ -691,8 +691,21 @@ impl ValuesDeduper {
         let mut hasher = DefaultHasher::new();
         values.hash(&mut hasher);
         let hash = hasher.finish();
+        self.check_and_insert_hash(hash)
+    }
 
-        // Check if already seen
+    #[must_use]
+    pub fn has_hash(
+        &self,
+        hash: u64,
+    ) -> bool {
+        self.check_and_insert_hash(hash)
+    }
+
+    fn check_and_insert_hash(
+        &self,
+        hash: u64,
+    ) -> bool {
         let mut seen = self.seen.borrow_mut();
         if seen.contains(&hash) {
             true
