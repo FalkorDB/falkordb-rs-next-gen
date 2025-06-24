@@ -64,7 +64,7 @@ impl RcValue {
 
     #[must_use]
     pub fn map(map: OrderMap<Rc<String>, Self>) -> Self {
-        Self::new(Value::Map(map))
+        Self::new(Value::Map(Rc::new(map)))
     }
 
     #[must_use]
@@ -104,7 +104,7 @@ impl Deref for RcValue {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub enum ListValue {
     Values(Vec<RcValue>),
     Ints(Vec<i64>),
@@ -208,10 +208,11 @@ impl ListValue {
         }
     }
 
-    pub fn reverse(&mut self) {
+    #[must_use]
+    pub fn reverse(&self) -> Self {
         match self {
-            Self::Values(v) => v.reverse(),
-            Self::Ints(v) => v.reverse(),
+            Self::Values(v) => Self::Values(v.iter().rev().cloned().collect()),
+            Self::Ints(v) => Self::Ints(v.iter().rev().copied().collect()),
         }
     }
 
@@ -247,7 +248,7 @@ pub enum Value {
     Float(f64),
     String(Rc<String>),
     List(ListValue),
-    Map(OrderMap<Rc<String>, RcValue>),
+    Map(Rc<OrderMap<Rc<String>, RcValue>>),
     Node(NodeId),
     Relationship(RelationshipId, NodeId, NodeId),
     Path(Vec<RcValue>),
@@ -400,12 +401,10 @@ impl Add for RcValue {
 
             (Value::List(a), Value::List(b)) => Ok(Self::list(a.concat(b))),
             (Value::List(l), _) => {
-                let mut l = l.clone();
                 if l.is_empty() {
                     Ok(Self::list_values(vec![rhs]))
                 } else {
-                    l.push(rhs);
-                    Ok(Self::list(l))
+                    Ok(Self::list(l.concat(&ListValue::Values(vec![rhs]))))
                 }
             }
             (_, Value::List(l)) => Ok(Self::list(ListValue::Values(vec![self]).concat(l))),

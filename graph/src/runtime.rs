@@ -857,7 +857,7 @@ impl<'a> Runtime<'a> {
                                                 );
                                             }
                                         }
-                                        for (key, value) in map {
+                                        for (key, value) in &**map {
                                             self.pending.borrow_mut().set_node_attribute(
                                                 *node,
                                                 key.clone(),
@@ -1291,7 +1291,7 @@ impl<'a> Runtime<'a> {
                         if !filter_attrs.is_empty() {
                             let g = self.g.borrow();
                             let attrs = g.get_relationship_attrs(*v);
-                            for (key, avalue) in filter_attrs {
+                            for (key, avalue) in &**filter_attrs {
                                 if let Some(key) = g.get_relationship_attribute_id(key) {
                                     if let Some(pvalue) = attrs.get(&key) {
                                         if avalue == pvalue {
@@ -1377,7 +1377,7 @@ impl<'a> Runtime<'a> {
                 if !attrs.is_empty() {
                     let g = self.g.borrow();
                     let properties = g.get_node_attrs(v);
-                    for (key, avalue) in attrs {
+                    for (key, avalue) in &**attrs {
                         if let Some(key) = g.get_node_attribute_id(key) {
                             if let Some(pvalue) = properties.get(&key) {
                                 if avalue == pvalue {
@@ -1449,12 +1449,12 @@ impl<'a> Runtime<'a> {
             self.pending
                 .borrow_mut()
                 .set_node_labels(id, node.labels.clone());
-            let properties = self.run_expr(node.attrs.root(), vars, None)?;
-            match &*properties {
-                Value::Map(properties) => {
+            let attrs = self.run_expr(node.attrs.root(), vars, None)?;
+            match &*attrs {
+                Value::Map(attrs) => {
                     self.pending
                         .borrow_mut()
-                        .set_node_attributes(id, properties.clone());
+                        .set_node_attributes(id, Rc::unwrap_or_clone(attrs.clone()));
                 }
                 _ => unreachable!(),
             }
@@ -1488,7 +1488,7 @@ impl<'a> Runtime<'a> {
                 Value::Map(attrs) => {
                     self.pending
                         .borrow_mut()
-                        .set_relationship_attributes(id, attrs.clone());
+                        .set_relationship_attributes(id, Rc::unwrap_or_clone(attrs.clone()));
                 }
                 _ => {
                     return Err(String::from("Invalid relationship properties"));

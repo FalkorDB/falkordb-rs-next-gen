@@ -121,7 +121,7 @@ fn compact_value_to_redis_value(
             RedisValue::Array(match values {
                 ListValue::Values(values) => values
                     .iter()
-                    .map(|v| compact_value_to_redis_value(g, &v))
+                    .map(|v| compact_value_to_redis_value(g, v))
                     .collect(),
                 ListValue::Ints(values) => values
                     .iter()
@@ -136,7 +136,7 @@ fn compact_value_to_redis_value(
         ]),
         Value::Map(map) => {
             let mut vec = vec![];
-            for (key, value) in map {
+            for (key, value) in &**map {
                 vec.push(RedisValue::BulkString(key.to_string()));
                 vec.push(compact_value_to_redis_value(g, value));
             }
@@ -233,7 +233,7 @@ fn verbose_value_to_redis_value(
         }),
         Value::Map(map) => {
             let mut vec = vec![];
-            for (key, value) in map {
+            for (key, value) in &**map {
                 vec.push(RedisValue::BulkString(key.to_string()));
                 vec.push(verbose_value_to_redis_value(g, value));
             }

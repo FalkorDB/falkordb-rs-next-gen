@@ -879,12 +879,19 @@ fn collect(
     match (iter.next(), iter.next().as_deref()) {
         (Some(a), Some(Value::Null)) => Ok(RcValue::list_values(vec![a])),
         (Some(a), Some(Value::List(l))) => {
-            let mut l = l.clone();
             if *a == Value::Null {
-                return Ok(RcValue::list(l));
+                match l {
+                    ListValue::Values(l) => {
+                        return Ok(RcValue::list_values(l.clone()));
+                    }
+                    ListValue::Ints(l) => {
+                        return Ok(RcValue::list_ints(l.clone()));
+                    }
+                }
             }
+            let mut l = l.iter().collect::<Vec<_>>();
             l.push(a);
-            Ok(RcValue::list(l))
+            Ok(RcValue::list_values(l))
         }
 
         _ => unreachable!(),
@@ -1163,11 +1170,7 @@ fn reverse(
     args: Vec<RcValue>,
 ) -> Result<RcValue, String> {
     match args.into_iter().next().as_deref() {
-        Some(Value::List(v)) => {
-            let mut v = v.clone();
-            v.reverse();
-            Ok(RcValue::list(v))
-        }
+        Some(Value::List(v)) => Ok(RcValue::list(v.reverse())),
         Some(Value::String(s)) => Ok(RcValue::string(Rc::new(s.chars().rev().collect()))),
         Some(Value::Null) => Ok(RcValue::null()),
 
