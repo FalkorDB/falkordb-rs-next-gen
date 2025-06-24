@@ -1,6 +1,6 @@
 use std::{collections::HashSet, fmt::Display, hash::Hash, rc::Rc};
 
-use ordermap::OrderSet;
+use ordermap::{OrderMap, OrderSet};
 use orx_tree::{Dfs, DynNode, DynTree, NodeRef};
 
 use crate::functions::{GraphFn, Type};
@@ -422,11 +422,11 @@ impl QueryPath {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct QueryGraph {
-    pub nodes: Vec<Rc<QueryNode>>,
-    pub relationships: Vec<Rc<QueryRelationship>>,
-    pub paths: Vec<Rc<QueryPath>>,
+    nodes: OrderMap<Variable, Rc<QueryNode>>,
+    relationships: OrderMap<Variable, Rc<QueryRelationship>>,
+    paths: OrderMap<Variable, Rc<QueryPath>>,
 }
 
 #[cfg_attr(tarpaulin, skip)]
@@ -435,13 +435,13 @@ impl Display for QueryGraph {
         &self,
         f: &mut std::fmt::Formatter<'_>,
     ) -> std::fmt::Result {
-        for node in &self.nodes {
+        for node in self.nodes.values() {
             write!(f, "{node}, ")?;
         }
-        for relationship in &self.relationships {
+        for relationship in self.relationships.values() {
             write!(f, "{relationship}, ")?;
         }
-        for path in &self.paths {
+        for path in self.paths.values() {
             write!(f, "{path:?}, ")?;
         }
         Ok(())
@@ -449,17 +449,52 @@ impl Display for QueryGraph {
 }
 
 impl QueryGraph {
+    pub fn add_node(
+        &mut self,
+        node: Rc<QueryNode>,
+    ) -> bool {
+        self.nodes.insert(node.alias.clone(), node).is_none()
+    }
+
+    pub fn add_relationship(
+        &mut self,
+        relationship: Rc<QueryRelationship>,
+    ) -> bool {
+        self.relationships
+            .insert(relationship.alias.clone(), relationship)
+            .is_none()
+    }
+
+    pub fn add_path(
+        &mut self,
+        path: Rc<QueryPath>,
+    ) -> bool {
+        self.paths.insert(path.var.clone(), path).is_none()
+    }
+
     #[must_use]
-    pub const fn new(
-        nodes: Vec<Rc<QueryNode>>,
-        relationships: Vec<Rc<QueryRelationship>>,
-        paths: Vec<Rc<QueryPath>>,
-    ) -> Self {
-        Self {
-            nodes,
-            relationships,
-            paths,
-        }
+    pub fn variables(&self) -> Vec<Variable> {
+        self.nodes
+            .keys()
+            .chain(self.relationships.keys())
+            .chain(self.paths.keys())
+            .cloned()
+            .collect()
+    }
+
+    #[must_use]
+    pub fn nodes(&self) -> Vec<Rc<QueryNode>> {
+        self.nodes.values().cloned().collect()
+    }
+
+    #[must_use]
+    pub fn relationships(&self) -> Vec<Rc<QueryRelationship>> {
+        self.relationships.values().cloned().collect()
+    }
+
+    #[must_use]
+    pub fn paths(&self) -> Vec<Rc<QueryPath>> {
+        self.paths.values().cloned().collect()
     }
 
     #[must_use]
@@ -467,26 +502,23 @@ impl QueryGraph {
         &self,
         visited: &HashSet<u32>,
     ) -> Self {
-        let nodes = self
-            .nodes
-            .iter()
-            .filter(|node| !visited.contains(&node.alias.id))
-            .cloned()
-            .collect();
-        let relationships = self
-            .relationships
-            .iter()
-            .filter(|rel| !visited.contains(&rel.alias.id))
-            .cloned()
-            .collect();
-        let paths = self
-            .paths
-            .iter()
-            .filter(|path| !visited.contains(&path.var.id))
-            .cloned()
-            .collect();
-
-        Self::new(nodes, relationships, paths)
+        let mut res = Self::default();
+        for node in self.nodes.values() {
+            if !visited.contains(&node.alias.id) {
+                res.add_node(node.clone());
+            }
+        }
+        for relationship in self.relationships.values() {
+            if !visited.contains(&relationship.alias.id) {
+                res.add_relationship(relationship.clone());
+            }
+        }
+        for path in self.paths.values() {
+            if !visited.contains(&path.var.id) {
+                res.add_path(path.clone());
+            }
+        }
+        res
     }
 
     #[must_use]
@@ -494,25 +526,13 @@ impl QueryGraph {
         let mut visited = HashSet::new();
         let mut components = Vec::new();
 
-        for node in &self.nodes {
+        for node in self.nodes.values() {
             if !visited.contains(&node.alias.id) {
-                let mut component_nodes = Vec::new();
-                let mut component_relationships = Vec::new();
-                let mut component_paths = Vec::new();
+                let mut component = Self::default();
 
-                self.dfs(
-                    node,
-                    &mut visited,
-                    &mut component_nodes,
-                    &mut component_relationships,
-                    &mut component_paths,
-                );
+                self.dfs(node, &mut visited, &mut component);
 
-                components.push(Self::new(
-                    component_nodes,
-                    component_relationships,
-                    component_paths,
-                ));
+                components.push(component);
             }
         }
 
@@ -523,47 +543,33 @@ impl QueryGraph {
         &self,
         node: &Rc<QueryNode>,
         visited: &mut HashSet<u32>,
-        component_nodes: &mut Vec<Rc<QueryNode>>,
-        component_relationships: &mut Vec<Rc<QueryRelationship>>,
-        component_paths: &mut Vec<Rc<QueryPath>>,
+        component: &mut Self,
     ) {
         visited.insert(node.alias.id);
-        component_nodes.push(node.clone());
+        component.add_node(node.clone());
 
-        for relationship in &self.relationships {
+        for relationship in self.relationships.values() {
             if relationship.from.alias.id == node.alias.id {
                 if visited.insert(relationship.alias.id) {
-                    component_relationships.push(relationship.clone());
+                    component.add_relationship(relationship.clone());
                 }
                 if !visited.contains(&relationship.to.alias.id) {
-                    self.dfs(
-                        &relationship.to,
-                        visited,
-                        component_nodes,
-                        component_relationships,
-                        component_paths,
-                    );
+                    self.dfs(&relationship.to, visited, component);
                 }
             } else if relationship.to.alias.id == node.alias.id {
                 if visited.insert(relationship.alias.id) {
-                    component_relationships.push(relationship.clone());
+                    component.add_relationship(relationship.clone());
                 }
                 if !visited.contains(&relationship.from.alias.id) {
-                    self.dfs(
-                        &relationship.from,
-                        visited,
-                        component_nodes,
-                        component_relationships,
-                        component_paths,
-                    );
+                    self.dfs(&relationship.from, visited, component);
                 }
             }
         }
 
-        for path in &self.paths {
+        for path in self.paths.values() {
             if path.vars.iter().any(|id| visited.contains(&id.id)) && visited.insert(path.var.id) {
                 debug_assert!(path.vars.iter().all(|id| visited.contains(&id.id)));
-                component_paths.push(path.clone());
+                component.add_path(path.clone());
             }
         }
     }
@@ -690,15 +696,15 @@ impl QueryIR {
                 Ok(())
             }
             Self::Match(p, _) => {
-                for node in &p.nodes {
+                for node in p.nodes.values() {
                     node.attrs.root().validate(env)?;
                     env.insert(node.alias.id);
                 }
-                for relationship in &p.relationships {
+                for relationship in p.relationships.values() {
                     relationship.attrs.root().validate(env)?;
                     env.insert(relationship.alias.id);
                 }
-                for path in &p.paths {
+                for path in p.paths.values() {
                     if env.contains(&path.var.id) {
                         return Err(format!("Duplicate alias {}", path.var.as_str()));
                     }
@@ -719,7 +725,7 @@ impl QueryIR {
                     )), |first| first.inner_validate(iter, env))
             }
             Self::Merge(p) => {
-                for node in &p.nodes {
+                for node in p.nodes.values() {
                     if env.contains(&node.alias.id) && p.relationships.is_empty() {
                         return Err(format!(
                             "The bound variable {} can't be redeclared in a create clause",
@@ -728,10 +734,10 @@ impl QueryIR {
                     }
                     node.attrs.root().validate(env)?;
                 }
-                for node in &p.nodes {
+                for node in p.nodes.values() {
                     env.insert(node.alias.id);
                 }
-                for relationship in &p.relationships {
+                for relationship in p.relationships.values() {
                     if relationship.types.len() != 1 {
                         return Err(String::from(
                             "Exactly one relationship type must be specified for each relation in a MERGE pattern.",
@@ -749,7 +755,7 @@ impl QueryIR {
                     .map_or(Ok(()), |first| first.inner_validate(iter, env))
             }
             Self::Create(p) => {
-                for path in &p.paths {
+                for path in p.paths.values() {
                     if env.contains(&path.var.id) {
                         return Err(format!(
                             "The bound variable {} can't be redeclared in a create clause",
@@ -758,7 +764,7 @@ impl QueryIR {
                     }
                     env.insert(path.var.id);
                 }
-                for node in &p.nodes {
+                for node in p.nodes.values() {
                     if env.contains(&node.alias.id) && p.relationships.is_empty() {
                         return Err(format!(
                             "The bound variable {} can't be redeclared in a create clause",
@@ -767,10 +773,10 @@ impl QueryIR {
                     }
                     node.attrs.root().validate(env)?;
                 }
-                for node in &p.nodes {
+                for node in p.nodes.values() {
                     env.insert(node.alias.id);
                 }
-                for relationship in &p.relationships {
+                for relationship in p.relationships.values() {
                     if env.contains(&relationship.alias.id) {
                         return Err(format!(
                             "The bound variable '{}' can't be redeclared in a CREATE clause",
