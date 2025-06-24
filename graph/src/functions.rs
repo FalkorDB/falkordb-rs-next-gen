@@ -164,7 +164,7 @@ impl GraphFn {
                     ));
                 }
                 let most = match self.fn_type {
-                    FnType::Aggregation(_, _) => args_type.len() + 1,
+                    FnType::Aggregation(_, _) => args_type.len(),
                     _ => args_type.len(),
                 };
                 if args > most {
