@@ -64,6 +64,7 @@ pub struct Runtime<'a> {
     pending: Lazy<RefCell<Pending>>,
     stats: RefCell<Stats>,
     plan: Rc<DynTree<IR>>,
+    return_names: Vec<Variable>,
     value_dedupers: RefCell<HashMap<String, ValuesDeduper>>,
 }
 
@@ -116,7 +117,8 @@ impl<'a> Runtime<'a> {
             write,
             pending: Lazy::new(|| RefCell::new(Pending::default())),
             stats: RefCell::new(Stats::default()),
-            plan,
+            plan: plan.clone(),
+            return_names: plan.root().get_return_names(),
             value_dedupers: RefCell::new(HashMap::new()),
         }
     }
@@ -128,10 +130,9 @@ impl<'a> Runtime<'a> {
         let labels_count = self.g.borrow().get_labels_count();
         let start = Instant::now();
         let idx = self.plan.root().idx();
-        let return_names = self.plan.root().get_return_names();
         for v in self.run(&idx)? {
             let v = v?;
-            callback.return_value(self.g, v, &return_names);
+            callback.return_value(self.g, v, &self.return_names);
         }
         let run_duration = start.elapsed();
 
@@ -147,9 +148,10 @@ impl<'a> Runtime<'a> {
             relationships_deleted: stats.relationships_deleted,
             properties_set: stats.properties_set,
             properties_removed: stats.properties_removed,
-            return_names: return_names
-                .into_iter()
-                .map(|v| String::from(v.name.unwrap().as_str()))
+            return_names: self
+                .return_names
+                .iter()
+                .map(|v| String::from(v.name.as_ref().unwrap().as_str()))
                 .collect(),
         })
     }
@@ -1208,10 +1210,7 @@ impl<'a> Runtime<'a> {
             IR::Distinct => {
                 if let Some(child_idx) = child0_idx {
                     let deduper = ValuesDeduper::default();
-                    let return_names = self.plan.node(&child_idx).get_return_names();
-                    let child_iter = self.run(&child_idx)?; // Keep as iterator
-
-                    let filtered_iter = child_iter.filter_map(move |item| {
+                    return Ok(Box::new(self.run(&child_idx)?.filter_map(move |item| {
                         // Propagate errors immediately
                         let vars = match item {
                             Err(e) => return Some(Err(e)),
@@ -1221,22 +1220,19 @@ impl<'a> Runtime<'a> {
                         // compute the hash of all the values in return_names
                         // by order
                         let mut hasher = DefaultHasher::new();
-                        for name in &return_names {
+                        for name in &self.return_names {
                             vars.get(name)
                                 .unwrap_or_else(|| {
                                     unreachable!("Variable {} not found", name.as_str())
                                 })
                                 .hash(&mut hasher);
                         }
-                        // Check if the hash is already present in the deduper
                         if deduper.has_hash(hasher.finish()) {
                             None
                         } else {
                             Some(Ok(vars))
                         }
-                    });
-
-                    return Ok(Box::new(filtered_iter));
+                    })));
                 }
                 unreachable!();
             }
