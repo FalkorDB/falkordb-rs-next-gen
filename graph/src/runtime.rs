@@ -1218,16 +1218,18 @@ impl<'a> Runtime<'a> {
                             Ok(vars) => vars,
                         };
 
-                        // Build values incrementally
-                        let mut values = Vec::with_capacity(return_names.len());
+                        // compute the hash of all the values in return_names
+                        // by order
+                        let mut hasher = DefaultHasher::new();
                         for name in &return_names {
-                            values.push(vars.get(name).unwrap_or_else(|| {
-                                unreachable!("Variable {} not found", name.as_str())
-                            }));
+                            vars.get(name)
+                                .unwrap_or_else(|| {
+                                    unreachable!("Variable {} not found", name.as_str())
+                                })
+                                .hash(&mut hasher);
                         }
-
-                        // Filter duplicates using mutable deduper
-                        if deduper.is_seen(&values) {
+                        // Check if the hash is already present in the deduper
+                        if deduper.has_hash(hasher.finish()) {
                             None
                         } else {
                             Some(Ok(vars))

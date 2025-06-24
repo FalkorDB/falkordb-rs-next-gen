@@ -701,4 +701,18 @@ impl ValuesDeduper {
             false
         }
     }
+
+    #[must_use]
+    pub fn has_hash(
+        &self,
+        hash: u64,
+    ) -> bool {
+        let mut seen = self.seen.borrow_mut();
+        if seen.contains(&hash) {
+            true
+        } else {
+            seen.insert(hash);
+            false
+        }
+    }
 }
