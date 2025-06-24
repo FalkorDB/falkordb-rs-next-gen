@@ -152,8 +152,8 @@ impl Planner {
         skip: Option<DynTree<ExprIR>>,
         limit: Option<DynTree<ExprIR>>,
         filter: Option<DynTree<ExprIR>>,
-        write: bool,
         distinct: bool,
+        write: bool,
     ) -> DynTree<IR> {
         for expr in &exprs {
             self.visited.insert(expr.0.id);
@@ -284,6 +284,7 @@ impl Planner {
                 ..
             } => self.plan_project(exprs, orderby, skip, limit, filter, distinct, write),
             QueryIR::Return {
+                distinct,
                 exprs,
                 orderby,
                 skip,
