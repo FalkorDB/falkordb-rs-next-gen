@@ -564,7 +564,7 @@ impl<'a> Parser<'a> {
                 return Ok(Variable {
                     name: id.name.clone(),
                     id: id.id,
-                    ty,
+                    ty: id.ty.clone(),
                 });
             }
             self.vars.insert(
@@ -1701,6 +1701,17 @@ impl<'a> Parser<'a> {
                 let value = self.parse_expr()?;
                 set_items.push((expr, value, false));
             } else if self.lexer.current() == Token::Colon {
+                if let ExprIR::Variable(id) = expr.root().data() {
+                    if id.ty != Type::Node {
+                        return Err(self
+                            .lexer
+                            .format_error("Cannot set labels on non-node variables"));
+                    }
+                } else {
+                    return Err(self
+                        .lexer
+                        .format_error("Cannot set labels on non-node expressions"));
+                }
                 expr = tree!(
                     ExprIR::FuncInvocation(
                         get_functions().get("node_set_labels", &FnType::Internal)?
@@ -1710,6 +1721,17 @@ impl<'a> Parser<'a> {
                 );
                 set_items.push((expr, tree!(ExprIR::Null), false));
             } else {
+                if let ExprIR::Variable(id) = expr.root().data() {
+                    if id.ty != Type::Node {
+                        return Err(self
+                            .lexer
+                            .format_error("Cannot set labels on non-node variables"));
+                    }
+                } else {
+                    return Err(self
+                        .lexer
+                        .format_error("Cannot set labels on non-node expressions"));
+                }
                 let equals = optional_match_token!(self.lexer, Equal);
                 let plus_equals = if equals {
                     false
