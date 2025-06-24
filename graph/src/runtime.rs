@@ -1209,23 +1209,32 @@ impl<'a> Runtime<'a> {
                 if let Some(child_idx) = child0_idx {
                     let deduper = ValuesDeduper::default();
                     let return_names = self.plan.node(&child_idx).get_return_names();
-                    let items = self
-                        .run(&child_idx)?
-                        .collect::<Result<Vec<_>, String>>()?
-                        .into_iter()
-                        .filter(move |vars| {
-                            let mut values = Vec::with_capacity(return_names.len());
-                            for name in &return_names {
-                                if let Some(value) = vars.get(name) {
-                                    values.push(value);
-                                } else {
-                                    unreachable!("Variable {} not found", name.as_str());
-                                }
-                            }
-                            !deduper.is_seen(&values)
-                        });
+                    let child_iter = self.run(&child_idx)?; // Keep as iterator
 
-                    return Ok(Box::new(items.map(Ok)));
+                    let filtered_iter = child_iter.filter_map(move |item| {
+                        // Propagate errors immediately
+                        let vars = match item {
+                            Err(e) => return Some(Err(e)),
+                            Ok(vars) => vars,
+                        };
+
+                        // Build values incrementally
+                        let mut values = Vec::with_capacity(return_names.len());
+                        for name in &return_names {
+                            values.push(vars.get(name).unwrap_or_else(|| {
+                                unreachable!("Variable {} not found", name.as_str())
+                            }));
+                        }
+
+                        // Filter duplicates using mutable deduper
+                        if deduper.is_seen(&values) {
+                            None
+                        } else {
+                            Some(Ok(vars))
+                        }
+                    });
+
+                    return Ok(Box::new(filtered_iter));
                 }
                 unreachable!();
             }
