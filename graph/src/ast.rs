@@ -578,10 +578,13 @@ impl QueryGraph {
 #[derive(Debug)]
 pub enum QueryIR {
     Call(Rc<String>, Vec<DynTree<ExprIR>>),
-    Match(QueryGraph, bool),
+    Match {
+        pattern: QueryGraph,
+        filter: Option<DynTree<ExprIR>>,
+        optional: bool,
+    },
     Unwind(DynTree<ExprIR>, Variable),
     Merge(QueryGraph),
-    Where(DynTree<ExprIR>),
     Create(QueryGraph),
     Delete(Vec<DynTree<ExprIR>>, bool),
     Set(Vec<(DynTree<ExprIR>, DynTree<ExprIR>, bool)>),
@@ -591,6 +594,7 @@ pub enum QueryIR {
         orderby: Vec<(DynTree<ExprIR>, bool)>,
         skip: Option<DynTree<ExprIR>>,
         limit: Option<DynTree<ExprIR>>,
+        filter: Option<DynTree<ExprIR>>,
         write: bool,
     },
     Return {
@@ -617,16 +621,12 @@ impl Display for QueryIR {
                 }
                 Ok(())
             }
-            Self::Match(p, _) => writeln!(f, "MATCH {p}"),
+            Self::Match { pattern, .. } => writeln!(f, "MATCH {pattern}"),
             Self::Unwind(l, v) => {
                 writeln!(f, "UNWIND {}:", v.as_str())?;
                 write!(f, "{l}")
             }
             Self::Merge(p) => writeln!(f, "MERGE {p}"),
-            Self::Where(expr) => {
-                writeln!(f, "WHERE:")?;
-                write!(f, "{expr}")
-            }
             Self::Create(p) => write!(f, "CREATE {p}"),
             Self::Delete(exprs, _) => {
                 writeln!(f, "DELETE:")?;
@@ -695,20 +695,25 @@ impl QueryIR {
                 }
                 Ok(())
             }
-            Self::Match(p, _) => {
-                for node in p.nodes.values() {
+            Self::Match {
+                pattern, filter, ..
+            } => {
+                for node in pattern.nodes.values() {
                     node.attrs.root().validate(env)?;
                     env.insert(node.alias.id);
                 }
-                for relationship in p.relationships.values() {
+                for relationship in pattern.relationships.values() {
                     relationship.attrs.root().validate(env)?;
                     env.insert(relationship.alias.id);
                 }
-                for path in p.paths.values() {
+                for path in pattern.paths.values() {
                     if env.contains(&path.var.id) {
                         return Err(format!("Duplicate alias {}", path.var.as_str()));
                     }
                     env.insert(path.var.id);
+                }
+                if let Some(filter) = filter {
+                    filter.root().validate(env)?;
                 }
                 iter.next().map_or_else(|| Err(String::from(
                         "Query cannot conclude with MATCH (must be a RETURN clause, an update clause, a procedure call or a non-returning subquery)",
@@ -746,11 +751,6 @@ impl QueryIR {
                     relationship.attrs.root().validate(env)?;
                     env.insert(relationship.alias.id);
                 }
-                iter.next()
-                    .map_or(Ok(()), |first| first.inner_validate(iter, env))
-            }
-            Self::Where(expr) => {
-                expr.root().validate(env)?;
                 iter.next()
                     .map_or(Ok(()), |first| first.inner_validate(iter, env))
             }
