@@ -180,6 +180,7 @@ jobs:
             find fuzz/artifacts -type f -not -path "*/\.*" | while read file; do
               echo "=== Content of $file ==="
               cat "$file" || echo "Failed to cat file (might be binary content)"
+              echo ""
               echo "========================="
             done
           else                                                              

@@ -138,6 +138,7 @@ pub enum QuantifierType {
     Single,
 }
 
+#[cfg_attr(tarpaulin, skip)]
 impl Display for QuantifierType {
     fn fmt(
         &self,
@@ -590,6 +591,7 @@ pub enum QueryIR {
     Set(Vec<(DynTree<ExprIR>, DynTree<ExprIR>, bool)>),
     Remove(Vec<DynTree<ExprIR>>),
     With {
+        distinct: bool,
         exprs: Vec<(Variable, DynTree<ExprIR>)>,
         orderby: Vec<(DynTree<ExprIR>, bool)>,
         skip: Option<DynTree<ExprIR>>,
@@ -598,6 +600,7 @@ pub enum QueryIR {
         write: bool,
     },
     Return {
+        distinct: bool,
         exprs: Vec<(Variable, DynTree<ExprIR>)>,
         orderby: Vec<(DynTree<ExprIR>, bool)>,
         skip: Option<DynTree<ExprIR>>,

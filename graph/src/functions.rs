@@ -68,6 +68,7 @@ pub enum Type {
     Optional(Box<Type>),
 }
 
+#[cfg_attr(tarpaulin, skip)]
 impl Display for Type {
     fn fmt(
         &self,

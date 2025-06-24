@@ -36,9 +36,11 @@ pub enum IR {
         Vec<(Variable, DynTree<ExprIR>)>,
     ),
     Project(Vec<(Variable, DynTree<ExprIR>)>),
+    Distinct,
     Commit,
 }
 
+#[cfg_attr(tarpaulin, skip)]
 impl Display for IR {
     fn fmt(
         &self,
@@ -68,6 +70,7 @@ impl Display for IR {
             Self::Aggregate(_, _, _) => write!(f, "Aggregate"),
             Self::Project(_) => write!(f, "Project"),
             Self::Commit => write!(f, "Commit"),
+            Self::Distinct => write!(f, "Distinct"),
         }
     }
 }
@@ -149,6 +152,7 @@ impl Planner {
         skip: Option<DynTree<ExprIR>>,
         limit: Option<DynTree<ExprIR>>,
         filter: Option<DynTree<ExprIR>>,
+        distinct: bool,
         write: bool,
     ) -> DynTree<IR> {
         for expr in &exprs {
@@ -170,6 +174,9 @@ impl Planner {
         } else {
             tree!(IR::Project(exprs))
         };
+        if distinct {
+            res = tree!(IR::Distinct, res);
+        }
         if !orderby.is_empty() {
             res = tree!(IR::Sort(orderby), res);
         }
@@ -204,6 +211,7 @@ impl Planner {
             || matches!(res.node(&idx).data(), IR::Sort(_))
             || matches!(res.node(&idx).data(), IR::Skip(_))
             || matches!(res.node(&idx).data(), IR::Limit(_))
+            || matches!(res.node(&idx).data(), IR::Distinct)
             || matches!(res.node(&idx).data(), IR::Filter(_))
         {
             idx = res.node(&idx).child(0).idx();
@@ -214,6 +222,7 @@ impl Planner {
                 || matches!(res.node(&idx).data(), IR::Sort(_))
                 || matches!(res.node(&idx).data(), IR::Skip(_))
                 || matches!(res.node(&idx).data(), IR::Limit(_))
+                || matches!(res.node(&idx).data(), IR::Distinct)
                 || matches!(res.node(&idx).data(), IR::Filter(_))
             {
                 idx = res.node(&idx).child(0).idx();
@@ -265,6 +274,7 @@ impl Planner {
             QueryIR::Set(items) => tree!(IR::Set(items)),
             QueryIR::Remove(items) => tree!(IR::Remove(items)),
             QueryIR::With {
+                distinct,
                 exprs,
                 orderby,
                 skip,
@@ -272,15 +282,16 @@ impl Planner {
                 filter,
                 write,
                 ..
-            } => self.plan_project(exprs, orderby, skip, limit, filter, write),
+            } => self.plan_project(exprs, orderby, skip, limit, filter, distinct, write),
             QueryIR::Return {
+                distinct,
                 exprs,
                 orderby,
                 skip,
                 limit,
                 write,
                 ..
-            } => self.plan_project(exprs, orderby, skip, limit, None, write),
+            } => self.plan_project(exprs, orderby, skip, limit, None, distinct, write),
             QueryIR::Query(q, write) => self.plan_query(q, write),
         }
     }
