@@ -617,11 +617,7 @@ impl<'a> Parser<'a> {
         let mut write = false;
         loop {
             while let Token::Keyword(
-                Keyword::Optional
-                | Keyword::Match
-                | Keyword::Unwind
-                | Keyword::Call
-                | Keyword::Where,
+                Keyword::Optional | Keyword::Match | Keyword::Unwind | Keyword::Call,
                 _,
             ) = self.lexer.current()
             {
@@ -677,10 +673,6 @@ impl<'a> Parser<'a> {
             Token::Keyword(Keyword::Call, _) => {
                 self.lexer.next();
                 self.parse_call_clause()
-            }
-            Token::Keyword(Keyword::Where, _) => {
-                self.lexer.next();
-                self.parse_where_clause()
             }
             _ => unreachable!(),
         }
@@ -741,10 +733,11 @@ impl<'a> Parser<'a> {
         &mut self,
         optional: bool,
     ) -> Result<QueryIR, String> {
-        Ok(QueryIR::Match(
-            self.parse_pattern(&Keyword::Match)?,
+        Ok(QueryIR::Match {
+            pattern: self.parse_pattern(&Keyword::Match)?,
+            filter: self.parse_where()?,
             optional,
-        ))
+        })
     }
 
     fn parse_unwind_clause(&mut self) -> Result<QueryIR, String> {
@@ -775,8 +768,12 @@ impl<'a> Parser<'a> {
         ))
     }
 
-    fn parse_where_clause(&mut self) -> Result<QueryIR, String> {
-        Ok(QueryIR::Where(self.parse_expr()?))
+    fn parse_where(&mut self) -> Result<Option<DynTree<ExprIR>>, String> {
+        if let Token::Keyword(Keyword::Where, _) = self.lexer.current() {
+            self.lexer.next();
+            return Ok(Some(self.parse_expr()?));
+        }
+        Ok(None)
     }
 
     fn parse_with_clause(
@@ -835,11 +832,13 @@ impl<'a> Parser<'a> {
         } else {
             None
         };
+        let filter = self.parse_where()?;
         Ok(QueryIR::With {
             exprs,
             orderby,
             skip,
             limit,
+            filter,
             write,
         })
     }
