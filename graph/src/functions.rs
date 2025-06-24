@@ -164,10 +164,7 @@ impl GraphFn {
                         self.name
                     ));
                 }
-                let most = match self.fn_type {
-                    FnType::Aggregation(_, _) => args_type.len() + 1,
-                    _ => args_type.len(),
-                };
+                let most = args_type.len();
                 if args > most {
                     return Err(format!(
                         "Received {} arguments to function '{}', expected at most {}",

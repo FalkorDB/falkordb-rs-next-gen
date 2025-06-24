@@ -84,6 +84,7 @@ impl Planner {
     fn plan_match(
         &mut self,
         pattern: &QueryGraph,
+        filter: Option<DynTree<ExprIR>>,
     ) -> DynTree<IR> {
         let mut vec = vec![];
         for component in pattern.connected_components() {
@@ -133,10 +134,15 @@ impl Planner {
             }
             vec.push(res);
         }
-        if vec.len() == 1 {
-            return vec.pop().unwrap();
+        let mut res = if vec.len() == 1 {
+            vec.pop().unwrap()
+        } else {
+            tree!(IR::CartesianProduct; vec)
+        };
+        if let Some(filter) = filter {
+            res = tree!(IR::Filter(filter), res);
         }
-        tree!(IR::CartesianProduct; vec)
+        res
     }
 
     fn plan_project(
@@ -145,6 +151,7 @@ impl Planner {
         orderby: Vec<(DynTree<ExprIR>, bool)>,
         skip: Option<DynTree<ExprIR>>,
         limit: Option<DynTree<ExprIR>>,
+        filter: Option<DynTree<ExprIR>>,
         write: bool,
         distinct: bool,
     ) -> DynTree<IR> {
@@ -182,6 +189,9 @@ impl Planner {
         if let Some(limit_expr) = limit {
             res = tree!(IR::Limit(limit_expr), res);
         }
+        if let Some(filter) = filter {
+            res = tree!(IR::Filter(filter), res);
+        }
         res
     }
 
@@ -202,6 +212,7 @@ impl Planner {
             || matches!(res.node(&idx).data(), IR::Skip(_))
             || matches!(res.node(&idx).data(), IR::Limit(_))
             || matches!(res.node(&idx).data(), IR::Distinct)
+            || matches!(res.node(&idx).data(), IR::Filter(_))
         {
             idx = res.node(&idx).child(0).idx();
         }
@@ -212,6 +223,7 @@ impl Planner {
                 || matches!(res.node(&idx).data(), IR::Skip(_))
                 || matches!(res.node(&idx).data(), IR::Limit(_))
                 || matches!(res.node(&idx).data(), IR::Distinct)
+                || matches!(res.node(&idx).data(), IR::Filter(_))
             {
                 idx = res.node(&idx).child(0).idx();
             }
@@ -229,7 +241,11 @@ impl Planner {
     ) -> DynTree<IR> {
         match ir {
             QueryIR::Call(name, exprs) => tree!(IR::Call(name, exprs)),
-            QueryIR::Match(pattern, optional) => {
+            QueryIR::Match {
+                pattern,
+                filter,
+                optional,
+            } => {
                 if optional {
                     tree!(
                         IR::Optional(
@@ -240,16 +256,16 @@ impl Planner {
                                 .cloned()
                                 .collect()
                         ),
-                        self.plan_match(&pattern)
+                        self.plan_match(&pattern, filter)
                     )
                 } else {
-                    self.plan_match(&pattern)
+                    self.plan_match(&pattern, filter)
                 }
             }
             QueryIR::Unwind(expr, alias) => tree!(IR::Unwind(expr, alias)),
             QueryIR::Merge(pattern) => tree!(
                 IR::Merge(pattern.filter_visited(&self.visited)),
-                self.plan_match(&pattern)
+                self.plan_match(&pattern, None)
             ),
             QueryIR::Create(pattern) => {
                 tree!(IR::Create(pattern.filter_visited(&self.visited)))
@@ -257,25 +273,24 @@ impl Planner {
             QueryIR::Delete(exprs, is_detach) => tree!(IR::Delete(exprs, is_detach)),
             QueryIR::Set(items) => tree!(IR::Set(items)),
             QueryIR::Remove(items) => tree!(IR::Remove(items)),
-            QueryIR::Where(expr) => tree!(IR::Filter(expr)),
             QueryIR::With {
                 distinct,
                 exprs,
                 orderby,
                 skip,
                 limit,
+                filter,
                 write,
                 ..
-            }
-            | QueryIR::Return {
-                distinct,
+            } => self.plan_project(exprs, orderby, skip, limit, filter, distinct, write),
+            QueryIR::Return {
                 exprs,
                 orderby,
                 skip,
                 limit,
                 write,
                 ..
-            } => self.plan_project(exprs, orderby, skip, limit, write, distinct),
+            } => self.plan_project(exprs, orderby, skip, limit, None, distinct, write),
             QueryIR::Query(q, write) => self.plan_query(q, write),
         }
     }
