@@ -87,17 +87,21 @@ impl Planner {
     ) -> DynTree<IR> {
         let mut vec = vec![];
         for component in pattern.connected_components() {
-            if component.relationships.is_empty() {
-                debug_assert_eq!(component.nodes.len(), 1);
-                let mut res = tree!(IR::NodeScan(component.nodes[0].clone()));
-                self.visited.insert(component.nodes[0].alias.id);
-                if !component.paths.is_empty() {
-                    res = tree!(IR::PathBuilder(component.paths), res);
+            let relationships = component.relationships();
+            if relationships.is_empty() {
+                let nodes = component.nodes();
+                debug_assert_eq!(nodes.len(), 1);
+                let node = nodes[0].clone();
+                let mut res = tree!(IR::NodeScan(node.clone()));
+                self.visited.insert(node.alias.id);
+                let paths = component.paths();
+                if !paths.is_empty() {
+                    res = tree!(IR::PathBuilder(paths), res);
                 }
                 vec.push(res);
                 continue;
             }
-            let mut iter = component.relationships.into_iter();
+            let mut iter = relationships.into_iter();
             let relationship = iter.next().unwrap();
             let mut res = if relationship.from.alias.id == relationship.to.alias.id {
                 tree!(
@@ -123,8 +127,9 @@ impl Planner {
                 self.visited.insert(relationship.to.alias.id);
                 self.visited.insert(relationship.alias.id);
             }
-            if !component.paths.is_empty() {
-                res = tree!(IR::PathBuilder(component.paths), res);
+            let paths = component.paths();
+            if !paths.is_empty() {
+                res = tree!(IR::PathBuilder(paths), res);
             }
             vec.push(res);
         }
@@ -229,12 +234,10 @@ impl Planner {
                     tree!(
                         IR::Optional(
                             pattern
-                                .nodes
+                                .variables()
                                 .iter()
-                                .map(|n| n.alias.clone())
-                                .chain(pattern.relationships.iter().map(|r| r.alias.clone()))
-                                .chain(pattern.paths.iter().map(|p| p.var.clone()))
                                 .filter(|v| !self.visited.contains(&v.id))
+                                .cloned()
                                 .collect()
                         ),
                         self.plan_match(&pattern)

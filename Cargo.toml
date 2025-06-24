@@ -2,7 +2,8 @@
 members = [
     "graph",
     "falkordb-macro",
-    "fuzz", ]
+    "fuzz",
+    "runtime-fuzz-target", ]
 
 [package]
 name = "falkordb-rs"

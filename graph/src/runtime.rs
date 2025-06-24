@@ -1246,7 +1246,7 @@ impl<'a> Runtime<'a> {
         relationship_pattern: &'a QueryRelationship,
         vars: Env,
     ) -> Box<dyn Iterator<Item = Result<Env, String>> + '_> {
-        let attrs = match self.run_expr(relationship_pattern.attrs.root(), &vars, None) {
+        let filter_attrs = match self.run_expr(relationship_pattern.attrs.root(), &vars, None) {
             Ok(attrs) => attrs,
             Err(e) => {
                 return Box::new(once(Err(e)));
@@ -1271,7 +1271,7 @@ impl<'a> Runtime<'a> {
         );
         Box::new(iter.flat_map(move |(src, dst)| {
             let vars = vars.clone();
-            let attrs = attrs.clone();
+            let filter_attrs = filter_attrs.clone();
             if from_id.is_some() && from_id.unwrap() != src {
                 return vec![];
             }
@@ -1283,18 +1283,18 @@ impl<'a> Runtime<'a> {
                 .get_src_dest_relationships(src, dst, &relationship_pattern.types)
                 .into_iter()
                 .filter(move |v| {
-                    if let Value::Map(attrs) = &*attrs {
-                        if !attrs.is_empty() {
+                    if let Value::Map(filter_attrs) = &*filter_attrs {
+                        if !filter_attrs.is_empty() {
                             let g = self.g.borrow();
-                            let properties = g.get_relationship_attrs(*v);
-                            for (key, avalue) in attrs {
-                                if let Some(pvalue) =
-                                    properties.get(&g.get_relationship_attribute_id(key).unwrap())
-                                {
-                                    if avalue == pvalue {
-                                        continue;
+                            let attrs = g.get_relationship_attrs(*v);
+                            for (key, avalue) in filter_attrs {
+                                if let Some(key) = g.get_relationship_attribute_id(key) {
+                                    if let Some(pvalue) = attrs.get(&key) {
+                                        if avalue == pvalue {
+                                            continue;
+                                        }
+                                        return false;
                                     }
-                                    return false;
                                 }
                                 return false;
                             }
@@ -1374,12 +1374,13 @@ impl<'a> Runtime<'a> {
                     let g = self.g.borrow();
                     let properties = g.get_node_attrs(v);
                     for (key, avalue) in attrs {
-                        if let Some(pvalue) = properties.get(&g.get_node_attribute_id(key).unwrap())
-                        {
-                            if avalue == pvalue {
-                                continue;
+                        if let Some(key) = g.get_node_attribute_id(key) {
+                            if let Some(pvalue) = properties.get(&key) {
+                                if avalue == pvalue {
+                                    continue;
+                                }
+                                return None;
                             }
-                            return None;
                         }
                         return None;
                     }
@@ -1438,7 +1439,7 @@ impl<'a> Runtime<'a> {
         pattern: &QueryGraph,
         vars: &mut Env,
     ) -> Result<(), String> {
-        for node in &pattern.nodes {
+        for node in pattern.nodes() {
             let id = self.g.borrow_mut().reserve_node();
             self.pending.borrow_mut().created_node(id);
             self.pending
@@ -1455,7 +1456,7 @@ impl<'a> Runtime<'a> {
             }
             vars.insert(&node.alias, RcValue::node(id));
         }
-        for rel in &pattern.relationships {
+        for rel in pattern.relationships() {
             let (from_id, to_id) = {
                 let Value::Node(from_id) = *vars
                     .get(&rel.from.alias)

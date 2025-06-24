@@ -924,10 +924,8 @@ impl<'a> Parser<'a> {
         &mut self,
         clause: &Keyword,
     ) -> Result<QueryGraph, String> {
-        let mut nodes = Vec::new();
+        let mut query_graph = QueryGraph::default();
         let mut nodes_alias = HashSet::new();
-        let mut relationships = Vec::new();
-        let mut paths = Vec::new();
         loop {
             if let Token::Ident(ident) = self.lexer.current() {
                 self.lexer.next();
@@ -936,7 +934,7 @@ impl<'a> Parser<'a> {
                 let mut left = self.parse_node_pattern(clause)?;
                 vars.push(left.alias.clone());
                 if nodes_alias.insert(left.alias.clone()) {
-                    nodes.push(left.clone());
+                    query_graph.add_node(left.clone());
                 }
                 loop {
                     if let Token::Dash | Token::LessThan = self.lexer.current() {
@@ -945,12 +943,19 @@ impl<'a> Parser<'a> {
                         vars.push(relationship.alias.clone());
                         vars.push(right.alias.clone());
                         left = right.clone();
-                        relationships.push(relationship);
+                        if !query_graph.add_relationship(relationship.clone())
+                            && clause == &Keyword::Match
+                        {
+                            return Err(format!(
+                                "Cannot use the same relationship variable '{}' for multiple patterns.",
+                                relationship.alias.as_str()
+                            ));
+                        }
                         if nodes_alias.insert(right.alias.clone()) {
-                            nodes.push(right);
+                            query_graph.add_node(right);
                         }
                     } else {
-                        paths.push(Rc::new(QueryPath::new(
+                        query_graph.add_path(Rc::new(QueryPath::new(
                             self.create_var(Some(ident), Type::Path)?,
                             vars,
                         )));
@@ -961,14 +966,21 @@ impl<'a> Parser<'a> {
                 let mut left = self.parse_node_pattern(clause)?;
 
                 if nodes_alias.insert(left.alias.clone()) {
-                    nodes.push(left.clone());
+                    query_graph.add_node(left.clone());
                 }
                 while let Token::Dash | Token::LessThan = self.lexer.current() {
                     let (relationship, right) = self.parse_relationship_pattern(left, clause)?;
                     left = right.clone();
-                    relationships.push(relationship);
+                    if !query_graph.add_relationship(relationship.clone())
+                        && clause == &Keyword::Match
+                    {
+                        return Err(format!(
+                            "Cannot use the same relationship variable '{}' for multiple patterns.",
+                            relationship.alias.as_str()
+                        ));
+                    }
                     if nodes_alias.insert(right.alias.clone()) {
-                        nodes.push(right);
+                        query_graph.add_node(right);
                     }
                 }
             }
@@ -992,7 +1004,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        Ok(QueryGraph::new(nodes, relationships, paths))
+        Ok(query_graph)
     }
 
     fn parse_case_expression(&mut self) -> Result<DynTree<ExprIR>, String> {
