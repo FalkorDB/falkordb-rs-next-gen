@@ -18,13 +18,23 @@ pub struct RcValue(Rc<Value>);
 
 impl RcValue {
     #[must_use]
-    pub fn new(value: Value) -> Self {
+    fn new(value: Value) -> Self {
         Self(Rc::new(value))
     }
 
     #[must_use]
-    pub fn list(vec: Vec<Self>) -> Self {
+    pub fn list(vec: ListValue) -> Self {
         Self::new(Value::List(vec))
+    }
+
+    #[must_use]
+    pub fn list_values(vec: Vec<Self>) -> Self {
+        Self::new(Value::List(ListValue::Values(vec)))
+    }
+
+    #[must_use]
+    pub fn list_ints(vec: Vec<i64>) -> Self {
+        Self::new(Value::List(ListValue::Ints(vec)))
     }
 
     #[must_use]
@@ -94,6 +104,141 @@ impl Deref for RcValue {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum ListValue {
+    Values(Vec<RcValue>),
+    Ints(Vec<i64>),
+}
+
+impl Hash for ListValue {
+    fn hash<H: std::hash::Hasher>(
+        &self,
+        state: &mut H,
+    ) {
+        match self {
+            Self::Values(v) => {
+                v.hash(state);
+            }
+            Self::Ints(v) => {
+                v.hash(state);
+            }
+        }
+    }
+}
+
+impl ListValue {
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        match self {
+            Self::Values(v) => v.is_empty(),
+            Self::Ints(v) => v.is_empty(),
+        }
+    }
+
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        match self {
+            Self::Values(v) => v.len(),
+            Self::Ints(v) => v.len(),
+        }
+    }
+
+    #[must_use]
+    pub fn get(
+        &self,
+        index: usize,
+    ) -> RcValue {
+        match self {
+            Self::Values(v) => v.get(index).cloned().unwrap_or_else(RcValue::null),
+            Self::Ints(v) => v
+                .get(index)
+                .map_or_else(RcValue::null, |i| RcValue::int(*i)),
+        }
+    }
+
+    #[must_use]
+    pub fn get_slice(
+        &self,
+        start: usize,
+        end: usize,
+    ) -> Vec<RcValue> {
+        match self {
+            Self::Values(v) => v[start..end].to_vec(),
+            Self::Ints(v) => v[start..end].iter().map(|i| RcValue::int(*i)).collect(),
+        }
+    }
+
+    #[must_use]
+    #[allow(clippy::iter_without_into_iter)]
+    pub fn iter(&self) -> Box<dyn Iterator<Item = RcValue> + '_> {
+        match self {
+            Self::Values(v) => Box::new(v.iter().cloned()),
+            Self::Ints(v) => Box::new(v.iter().map(|i| RcValue::int(*i))),
+        }
+    }
+
+    pub fn last(&self) -> RcValue {
+        match self {
+            Self::Values(v) => v.last().cloned().unwrap_or_else(RcValue::null),
+            Self::Ints(v) => v.last().map_or_else(RcValue::null, |i| RcValue::int(*i)),
+        }
+    }
+
+    #[must_use]
+    pub fn chunks(
+        &self,
+        chunk_size: usize,
+    ) -> Box<dyn Iterator<Item = Vec<RcValue>> + '_> {
+        match self {
+            Self::Values(v) => Box::new(v.chunks(chunk_size).map(|chunk| chunk.to_vec())),
+            Self::Ints(v) => Box::new(
+                v.chunks(chunk_size)
+                    .map(|chunk| chunk.iter().map(|i| RcValue::int(*i)).collect()),
+            ),
+        }
+    }
+
+    pub fn push(
+        &mut self,
+        value: RcValue,
+    ) {
+        match self {
+            Self::Values(v) => v.push(value),
+            Self::Ints(v) => v.push(value.0.get_numeric() as i64),
+        }
+    }
+
+    pub fn reverse(&mut self) {
+        match self {
+            Self::Values(v) => v.reverse(),
+            Self::Ints(v) => v.reverse(),
+        }
+    }
+
+    #[must_use]
+    pub fn concat(
+        &self,
+        other: &Self,
+    ) -> Self {
+        match (self, other) {
+            (Self::Values(a), Self::Values(b)) => {
+                Self::Values(a.iter().chain(b).cloned().collect())
+            }
+            (Self::Ints(a), Self::Ints(b)) => Self::Ints(a.iter().chain(b).copied().collect()),
+            (Self::Values(a), Self::Ints(b)) => {
+                let mut new_list = a.clone();
+                new_list.extend(b.iter().map(|i| RcValue::int(*i)));
+                Self::Values(new_list)
+            }
+            (Self::Ints(a), Self::Values(b)) => {
+                let mut new_list = a.iter().map(|i| RcValue::int(*i)).collect::<Vec<_>>();
+                new_list.extend(b.iter().cloned());
+                Self::Values(new_list)
+            }
+        }
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub enum Value {
     Null,
@@ -101,7 +246,7 @@ pub enum Value {
     Int(i64),
     Float(f64),
     String(Rc<String>),
-    List(Vec<RcValue>),
+    List(ListValue),
     Map(OrderMap<Rc<String>, RcValue>),
     Node(NodeId),
     Relationship(RelationshipId, NodeId, NodeId),
@@ -253,23 +398,17 @@ impl Add for RcValue {
             (Value::Float(a), Value::Int(b)) => Ok(Self::float(a + *b as f64)),
             (Value::Int(a), Value::Float(b)) => Ok(Self::float(*a as f64 + b)),
 
-            (Value::List(a), Value::List(b)) => {
-                Ok(Self::list(a.iter().chain(b).cloned().collect()))
-            }
+            (Value::List(a), Value::List(b)) => Ok(Self::list(a.concat(b))),
             (Value::List(l), _) => {
                 let mut l = l.clone();
                 if l.is_empty() {
-                    Ok(Self::list(vec![rhs]))
+                    Ok(Self::list_values(vec![rhs]))
                 } else {
                     l.push(rhs);
                     Ok(Self::list(l))
                 }
             }
-            (_, Value::List(l)) => {
-                let mut new_list = vec![self];
-                new_list.extend(l.clone());
-                Ok(Self::list(new_list))
-            }
+            (_, Value::List(l)) => Ok(Self::list(ListValue::Values(vec![self]).concat(l))),
             (Value::String(a), Value::String(b)) => Ok(Self::string(Rc::new(format!("{a}{b}")))),
             (Value::String(s), Value::Int(i)) => Ok(Self::string(Rc::new(format!("{s}{i}")))),
             (Value::String(s), Value::Float(f)) => Ok(Self::string(Rc::new(format!("{s}{f}")))),
@@ -459,9 +598,10 @@ impl Value {
             (Self::Bool(a), Self::Bool(b)) => (a.cmp(b), DisjointOrNull::None),
             (Self::Float(a), Self::Float(b)) => compare_floats(*a, *b),
             (Self::String(a), Self::String(b)) => (a.cmp(b), DisjointOrNull::None),
-            (Self::List(a), Self::List(b)) | (Self::Path(a), Self::Path(b)) => {
-                Self::compare_list(a, b)
+            (Self::List(a), Self::List(b)) => {
+                Self::compare_list(&a.iter().collect::<Vec<_>>(), &b.iter().collect::<Vec<_>>())
             }
+            (Self::Path(a), Self::Path(b)) => Self::compare_list(a, b),
             (Self::Map(a), Self::Map(b)) => Self::compare_map(a, b),
             (Self::Node(a), Self::Node(b)) => (a.cmp(b), DisjointOrNull::None),
             (Self::Relationship(a, _, _), Self::Relationship(b, _, _)) => {
@@ -590,14 +730,22 @@ impl Value {
         arg_type: &Type,
     ) -> Option<(Type, Type)> {
         match (self, arg_type) {
-            (Self::List(vs), Type::List(ty)) => {
-                for v in vs {
-                    if let Some(res) = v.validate_of_type(ty) {
+            (Self::List(vs), Type::List(ty)) => match vs {
+                ListValue::Values(vs) => {
+                    for v in vs {
+                        if let Some(res) = v.validate_of_type(ty) {
+                            return Some(res);
+                        }
+                    }
+                    None
+                }
+                ListValue::Ints(_) => {
+                    if let Some(res) = RcValue::int(0).validate_of_type(ty) {
                         return Some(res);
                     }
+                    None
                 }
-                None
-            }
+            },
             (Self::Null, Type::Null)
             | (Self::Bool(_), Type::Bool)
             | (Self::Int(_), Type::Int)
@@ -625,6 +773,24 @@ pub trait Contains {
         &self,
         value: RcValue,
     ) -> RcValue;
+}
+
+impl Contains for ListValue {
+    fn contains(
+        &self,
+        value: RcValue,
+    ) -> RcValue {
+        match self {
+            Self::Values(vec) => vec.contains(value),
+            Self::Ints(vec) => {
+                if let Value::Int(i) = *value {
+                    RcValue::bool(vec.contains(&i))
+                } else {
+                    RcValue::null()
+                }
+            }
+        }
+    }
 }
 
 impl Contains for Vec<RcValue> {

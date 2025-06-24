@@ -4,7 +4,7 @@ use graph::ast::Variable;
 use graph::functions::init_functions;
 use graph::graph::Plan;
 use graph::runtime::{ResultSummary, ReturnCallback, Runtime, evaluate_param};
-use graph::value::{Env, RcValue};
+use graph::value::{Env, ListValue, RcValue};
 use graph::{cypher::Parser, graph::Graph, matrix::init, planner::Planner, value::Value};
 #[cfg(feature = "zipkin")]
 use opentelemetry::global;
@@ -118,12 +118,21 @@ fn compact_value_to_redis_value(
         ]),
         Value::List(values) => RedisValue::Array(vec![
             RedisValue::Integer(6),
-            RedisValue::Array(
-                values
+            RedisValue::Array(match values {
+                ListValue::Values(values) => values
                     .iter()
-                    .map(|v| compact_value_to_redis_value(g, v))
+                    .map(|v| compact_value_to_redis_value(g, &v))
                     .collect(),
-            ),
+                ListValue::Ints(values) => values
+                    .iter()
+                    .map(|v| {
+                        RedisValue::Array(vec![
+                            RedisValue::Integer(3),
+                            RedisValue::Integer(*v as _),
+                        ])
+                    })
+                    .collect(),
+            }),
         ]),
         Value::Map(map) => {
             let mut vec = vec![];
@@ -212,12 +221,16 @@ fn verbose_value_to_redis_value(
         Value::Int(x) => RedisValue::Integer(*x),
         Value::Float(x) => RedisValue::SimpleString(format!("{x:.14e}")),
         Value::String(x) => RedisValue::BulkString(x.to_string()),
-        Value::List(values) => RedisValue::Array(
-            values
+        Value::List(values) => RedisValue::Array(match values {
+            ListValue::Values(values) => values
                 .iter()
                 .map(|v| verbose_value_to_redis_value(g, v))
                 .collect(),
-        ),
+            ListValue::Ints(values) => values
+                .iter()
+                .map(|v| RedisValue::Integer(*v as _))
+                .collect(),
+        }),
         Value::Map(map) => {
             let mut vec = vec![];
             for (key, value) in map {

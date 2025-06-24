@@ -18,7 +18,7 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::iter::{empty, once, repeat_with};
+use std::iter::{empty, once};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 use tracing::instrument;
@@ -214,10 +214,10 @@ impl<'a> Runtime<'a> {
     ) -> Result<RcValue, String> {
         match ir.data() {
             ExprIR::Null => Ok(RcValue::null()),
-            ExprIR::Bool(x) => Ok(RcValue::new(Value::Bool(*x))),
-            ExprIR::Integer(x) => Ok(RcValue::new(Value::Int(*x))),
-            ExprIR::Float(x) => Ok(RcValue::new(Value::Float(*x))),
-            ExprIR::String(x) => Ok(RcValue::new(Value::String(x.clone()))),
+            ExprIR::Bool(x) => Ok(RcValue::bool(*x)),
+            ExprIR::Integer(x) => Ok(RcValue::int(*x)),
+            ExprIR::Float(x) => Ok(RcValue::float(*x)),
+            ExprIR::String(x) => Ok(RcValue::string(x.clone())),
             ExprIR::Variable(x) => env
                 .get(x)
                 .map_or_else(|| Err(format!("Variable {} not found", x.as_str())), Ok),
@@ -225,13 +225,13 @@ impl<'a> Runtime<'a> {
                 || Err(format!("Parameter {x} not found")),
                 |v| Ok(v.clone()),
             ),
-            ExprIR::List => Ok(RcValue::new(Value::List(
+            ExprIR::List => Ok(RcValue::list_values(
                 ir.children()
                     .map(|ir| self.run_expr(ir, env, agg_group_key))
                     .collect::<Result<Vec<_>, _>>()?,
-            ))),
+            )),
             ExprIR::Length => match &*(self.run_expr(ir.child(0), env, agg_group_key)?) {
-                Value::List(arr) => Ok(RcValue::new(Value::Int(arr.len() as _))),
+                Value::List(arr) => Ok(RcValue::int(arr.len() as _)),
                 _ => Err(String::from("Length operator requires a list")),
             },
             ExprIR::GetElement => {
@@ -240,7 +240,7 @@ impl<'a> Runtime<'a> {
                 match (&*arr, &*i) {
                     (Value::List(values), Value::Int(i)) => {
                         if *i >= 0 && *i < values.len() as _ {
-                            Ok(values[*i as usize].clone())
+                            Ok(values.get(*i as usize))
                         } else {
                             Ok(RcValue::null())
                         }
@@ -422,9 +422,9 @@ impl<'a> Runtime<'a> {
                     .entry(format!("{:?}_{}", ir.idx(), group_id))
                     .or_default();
                 if value_deduper.is_seen(&values) {
-                    return Ok(RcValue::list(vec![RcValue::null()]));
+                    return Ok(RcValue::list_values(vec![RcValue::null()]));
                 }
-                Ok(RcValue::list(values))
+                Ok(RcValue::list_values(values))
             }
             ExprIR::FuncInvocation(func) => {
                 if agg_group_key.is_none() {
@@ -449,7 +449,7 @@ impl<'a> Runtime<'a> {
                 if ir.num_children() == 2 && matches!(ir.child(0).data(), ExprIR::Distinct) {
                     let arg = &args[0];
                     if let Value::List(values) = &**arg {
-                        let mut values = values.clone();
+                        let mut values: Vec<RcValue> = values.iter().collect();
                         args.remove(0);
                         values.append(&mut args);
                         args = values;
@@ -489,7 +489,7 @@ impl<'a> Runtime<'a> {
                         let mut t = 0;
                         let mut f = 0;
                         let mut n = 0;
-                        for value in values {
+                        for value in values.iter() {
                             env.insert(var, value.clone());
 
                             match &*self.run_expr(ir.child(1), &env, agg_group_key)? {
@@ -526,7 +526,7 @@ impl<'a> Runtime<'a> {
                     acc.push(self.run_expr(ir.child(2), &env, agg_group_key)?);
                 }
 
-                Ok(RcValue::list(acc))
+                Ok(RcValue::list_values(acc))
             }
         }
     }
@@ -555,15 +555,19 @@ impl<'a> Runtime<'a> {
                         if (start > end && step > &0) || (start < end && step < &0) {
                             return Ok(Box::new(empty()));
                         }
-                        let mut curr = *start;
+                        let start = *start;
+                        let end = *end;
                         let step = *step;
+                        if step > 0 {
+                            return Ok(Box::new(
+                                (start..=end).step_by(step as usize).map(RcValue::int),
+                            ));
+                        }
                         Ok(Box::new(
-                            repeat_with(move || {
-                                let tmp = curr;
-                                curr += step;
-                                RcValue::int(tmp)
-                            })
-                            .take(((end - start) / step + 1) as usize),
+                            (end..=start)
+                                .rev()
+                                .step_by((-step) as usize)
+                                .map(RcValue::int),
                         ))
                     }
                     _ => {
@@ -574,7 +578,7 @@ impl<'a> Runtime<'a> {
             _ => {
                 let res = self.run_expr(ir, env, None)?;
                 match &*res {
-                    Value::List(arr) => Ok(Box::new(arr.clone().into_iter())),
+                    Value::List(arr) => Ok(Box::new(arr.iter().collect::<Vec<_>>().into_iter())),
                     _ => Ok(Box::new(once(res))),
                 }
             }
@@ -676,18 +680,20 @@ impl<'a> Runtime<'a> {
                 }
                 let res = (func.func)(self, args)?;
                 match &*res {
-                    Value::List(arr) => Ok(Box::new(arr.clone().into_iter().map(|v| {
-                        let mut env = Env::default();
-                        env.insert(
-                            &Variable {
-                                name: Some(name.clone()),
-                                id: 0,
-                                ty: Type::Any,
-                            },
-                            v,
-                        );
-                        Ok(env)
-                    }))),
+                    Value::List(arr) => Ok(Box::new(
+                        arr.iter().collect::<Vec<_>>().into_iter().map(|v| {
+                            let mut env = Env::default();
+                            env.insert(
+                                &Variable {
+                                    name: Some(name.clone()),
+                                    id: 0,
+                                    ty: Type::Any,
+                                },
+                                v,
+                            );
+                            Ok(env)
+                        }),
+                    )),
                     _ => Err(format!("Function '{name}' must return a list")),
                 }
             }
@@ -1568,7 +1574,7 @@ pub fn evaluate_param(expr: &DynNode<ExprIR>) -> Result<RcValue, String> {
         ExprIR::Integer(x) => Ok(RcValue::int(*x)),
         ExprIR::Float(x) => Ok(RcValue::float(*x)),
         ExprIR::String(x) => Ok(RcValue::string(x.clone())),
-        ExprIR::List => Ok(RcValue::list(
+        ExprIR::List => Ok(RcValue::list_values(
             expr.children()
                 .map(|c| evaluate_param(&c))
                 .collect::<Result<Vec<_>, _>>()?,
@@ -1613,9 +1619,11 @@ fn get_elements(
                 end = end.min(values.len() as i64);
             }
             if start > end {
-                return Ok(RcValue::list(vec![]));
+                return Ok(RcValue::list_values(vec![]));
             }
-            Ok(RcValue::list(values[start as usize..end as usize].to_vec()))
+            Ok(RcValue::list_values(
+                values.get_slice(start as usize, end as usize),
+            ))
         }
         (_, Value::Null, _) | (_, _, Value::Null) => Ok(RcValue::null()),
         _ => Err(String::from("Invalid array range parameters.")),
