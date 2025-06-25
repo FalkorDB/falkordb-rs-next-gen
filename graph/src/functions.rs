@@ -5,7 +5,7 @@
 #![allow(clippy::cast_possible_truncation)]
 
 use crate::runtime::Runtime;
-use crate::value::{ListItem, RcValue, Value};
+use crate::value::{ListItem, RcValue, Value, ValueTypeOf};
 use rand::Rng;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display};
@@ -196,7 +196,7 @@ impl GraphFn {
                                 arg_type
                             ));
                         }
-                    } else if let Some((actual, expected)) = args[i].validate_of_type(arg_type) {
+                    } else if let Some((actual, expected)) = args[i].value_of_type(arg_type) {
                         return Err(format!(
                             "Type mismatch: expected {expected} but was {actual}"
                         ));
