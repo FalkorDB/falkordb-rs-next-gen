@@ -1171,15 +1171,17 @@ def test_percentile_disc(values, percentile):
                 params={"values": values, "p": percentile})
     assert res.result_set == [[float(expected)]]
 
+@pytest.mark.extra
+def test_percentile_extra():
+     # Test with NULL percentile
+    q = "UNWIND [1, 2, 3, 4, 5] AS x RETURN percentileDisc(x, null) AS result"
+    query_exception(q, "Type mismatch: expected Integer or Float but was Null")
+
 def test_percentile_disc_edge_cases():
     # Test with empty list (should return NULL)
     res = query("UNWIND [] AS x RETURN percentileDisc(x, 0.5) AS result")
     assert res.result_set == [[None]]
     
-    # Test with NULL percentile
-    q = "UNWIND [1, 2, 3, 4, 5] AS x RETURN percentileDisc(x, null) AS result"
-    query_exception(q, "Type mismatch: expected Integer or Float but was Null")
-
     # Test with percentile < 0
     q = "UNWIND [1, 2, 3, 4, 5] AS x RETURN percentileDisc(x, -0.5) AS result"
     query_exception(q, "Invalid input - '-0.5' is not a valid argument, must be a number in the range 0.0 to 1.0")
