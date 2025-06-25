@@ -154,6 +154,14 @@ fn reply_compact_value(
                             str.len(),
                         );
                     }
+                    ListItem::String(x) => {
+                        raw::reply_with_long_long(ctx.ctx, 2);
+                        raw::reply_with_string_buffer(
+                            ctx.ctx,
+                            x.as_str().as_ptr().cast::<c_char>(),
+                            x.len(),
+                        );
+                    }
                 }
             }
         }
@@ -301,6 +309,13 @@ fn reply_verbose_value(
                             ctx.ctx,
                             str.as_ptr().cast::<c_char>(),
                             str.len(),
+                        );
+                    }
+                    ListItem::String(x) => {
+                        raw::reply_with_string_buffer(
+                            ctx.ctx,
+                            x.as_str().as_ptr().cast::<c_char>(),
+                            x.len(),
                         );
                     }
                 }

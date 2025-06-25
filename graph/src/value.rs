@@ -100,6 +100,7 @@ pub enum ListItem {
     Bool(bool),
     Int(i64),
     Float(f64),
+    String(Rc<String>),
 }
 
 impl From<&ListItem> for RcValue {
@@ -109,6 +110,7 @@ impl From<&ListItem> for RcValue {
             ListItem::Bool(b) => Self::bool(*b),
             ListItem::Int(i) => Self::int(*i),
             ListItem::Float(f) => Self::float(*f),
+            ListItem::String(s) => Self::string(Rc::clone(s)),
         }
     }
 }
@@ -137,6 +139,10 @@ impl Hash for ListItem {
                 } else {
                     x.to_bits().hash(state);
                 }
+            }
+            Self::String(x) => {
+                3.hash(state);
+                x.hash(state);
             }
         }
     }
@@ -631,6 +637,7 @@ impl ValueGetType for ListItem {
             Self::Bool(_) => Type::Bool,
             Self::Int(_) => Type::Int,
             Self::Float(_) => Type::Float,
+            Self::String(_) => Type::String,
         }
     }
 }

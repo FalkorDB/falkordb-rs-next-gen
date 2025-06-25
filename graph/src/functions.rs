@@ -838,10 +838,7 @@ fn labels(
         Some(Value::Node(id)) => {
             let labels = runtime.get_node_labels(*id);
             Ok(RcValue::list(
-                labels
-                    .into_iter()
-                    .map(|l| ListItem::Rc(RcValue::string(l)))
-                    .collect(),
+                labels.into_iter().map(ListItem::String).collect(),
             ))
         }
         Some(Value::Null) => Ok(RcValue::null()),
@@ -1236,20 +1233,20 @@ fn split(
     match (iter.next().as_deref(), iter.next().as_deref()) {
         (Some(Value::String(string)), Some(Value::String(delimiter))) => {
             if string.is_empty() {
-                Ok(RcValue::list(vec![ListItem::Rc(RcValue::string(Rc::new(
-                    String::new(),
-                )))]))
+                Ok(RcValue::list(vec![ListItem::String(
+                    Rc::new(String::new()),
+                )]))
             } else if delimiter.is_empty() {
                 // split string to characters
                 let parts = string
                     .chars()
-                    .map(|c| ListItem::Rc(RcValue::string(Rc::new(String::from(c)))))
+                    .map(|c| ListItem::String(Rc::new(String::from(c))))
                     .collect();
                 Ok(RcValue::list(parts))
             } else {
                 let parts = string
                     .split(delimiter.as_str())
-                    .map(|s| ListItem::Rc(RcValue::string(Rc::new(String::from(s)))))
+                    .map(|s| ListItem::String(Rc::new(String::from(s))))
                     .collect();
                 Ok(RcValue::list(parts))
             }
@@ -1432,9 +1429,8 @@ fn string_match_reg_ex(
                     for caps in re.captures_iter(text.as_str()) {
                         for i in 0..caps.len() {
                             if let Some(m) = caps.get(i) {
-                                all_matches.push(ListItem::Rc(RcValue::string(Rc::new(
-                                    String::from(m.as_str()),
-                                ))));
+                                all_matches
+                                    .push(ListItem::String(Rc::new(String::from(m.as_str()))));
                             }
                         }
                     }
@@ -1719,22 +1715,22 @@ fn keys(
 ) -> Result<RcValue, String> {
     match args.into_iter().next().as_deref() {
         Some(Value::Map(map)) => Ok(RcValue::list(
-            map.keys()
-                .map(|k| ListItem::Rc(RcValue::string(k.clone())))
-                .collect(),
+            map.keys().cloned().map(ListItem::String).collect(),
         )),
         Some(Value::Node(id)) => Ok(RcValue::list(
             runtime
                 .get_node_attrs(*id)
                 .keys()
-                .map(|k| ListItem::Rc(RcValue::string(k.clone())))
+                .cloned()
+                .map(ListItem::String)
                 .collect::<Vec<_>>(),
         )),
         Some(Value::Relationship(id, _, _)) => Ok(RcValue::list(
             runtime
                 .get_relationship_attrs(*id)
                 .keys()
-                .map(|k| ListItem::Rc(RcValue::string(k.clone())))
+                .cloned()
+                .map(ListItem::String)
                 .collect::<Vec<_>>(),
         )),
         Some(Value::Null) => Ok(RcValue::null()),
@@ -1974,7 +1970,7 @@ fn db_labels(
         runtime
             .get_labels()
             .into_iter()
-            .map(|l| ListItem::Rc(RcValue::string(l)))
+            .map(ListItem::String)
             .collect(),
     ))
 }
@@ -1987,7 +1983,7 @@ fn db_types(
         runtime
             .get_types()
             .into_iter()
-            .map(|l| ListItem::Rc(RcValue::string(l)))
+            .map(ListItem::String)
             .collect(),
     ))
 }
@@ -2000,7 +1996,7 @@ fn db_properties(
         runtime
             .get_attrs()
             .into_iter()
-            .map(|l| ListItem::Rc(RcValue::string(l)))
+            .map(ListItem::String)
             .collect(),
     ))
 }
