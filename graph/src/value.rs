@@ -101,14 +101,14 @@ pub enum ListItem {
     Int(i64),
     Float(f64),
 }
-impl ListItem {
-    #[must_use]
-    pub fn to_rcvalue(&self) -> RcValue {
-        match self {
-            Self::Rc(v) => v.clone(),
-            Self::Bool(b) => RcValue::bool(*b),
-            Self::Int(i) => RcValue::int(*i),
-            Self::Float(f) => RcValue::float(*f),
+
+impl From<&ListItem> for RcValue {
+    fn from(item: &ListItem) -> Self {
+        match item {
+            ListItem::Rc(v) => v.clone(),
+            ListItem::Bool(b) => Self::bool(*b),
+            ListItem::Int(i) => Self::int(*i),
+            ListItem::Float(f) => Self::float(*f),
         }
     }
 }
@@ -532,7 +532,7 @@ impl CompareValue for ListItem {
             (Self::Bool(a), Self::Bool(b)) => (a.cmp(b), DisjointOrNull::None),
             (Self::Int(a), Self::Int(b)) => (a.cmp(b), DisjointOrNull::None),
             (Self::Float(a), Self::Float(b)) => compare_floats(*a, *b),
-            _ => self.to_rcvalue().compare_value(&other.to_rcvalue()),
+            _ => RcValue::from(self).compare_value(&other.into()),
         }
     }
 }

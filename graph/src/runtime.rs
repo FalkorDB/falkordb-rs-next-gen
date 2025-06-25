@@ -228,7 +228,7 @@ impl<'a> Runtime<'a> {
                 match (&*arr, &*i) {
                     (Value::List(values), Value::Int(i)) => {
                         if *i >= 0 && *i < values.len() as _ {
-                            Ok(values[*i as usize].to_rcvalue())
+                            Ok((&values[*i as usize]).into())
                         } else {
                             Ok(RcValue::null())
                         }
@@ -439,10 +439,7 @@ impl<'a> Runtime<'a> {
                 if ir.num_children() == 2 && matches!(ir.child(0).data(), ExprIR::Distinct) {
                     let arg = &args[0];
                     if let Value::List(values) = &**arg {
-                        let mut values: Vec<RcValue> = values
-                            .iter()
-                            .map(super::value::ListItem::to_rcvalue)
-                            .collect();
+                        let mut values: Vec<RcValue> = values.iter().map(RcValue::from).collect();
                         args.remove(0);
                         values.append(&mut args);
                         args = values;
@@ -483,7 +480,7 @@ impl<'a> Runtime<'a> {
                         let mut f = 0;
                         let mut n = 0;
                         for value in values {
-                            env.insert(var, value.to_rcvalue());
+                            env.insert(var, value.into());
 
                             match &*self.run_expr(ir.child(1), &env, agg_group_key)? {
                                 Value::Bool(true) => t += 1,
@@ -577,7 +574,7 @@ impl<'a> Runtime<'a> {
                 match &*res {
                     Value::List(arr) => Ok(Box::new(
                         arr.iter()
-                            .map(super::value::ListItem::to_rcvalue)
+                            .map(RcValue::from)
                             .collect::<Vec<RcValue>>()
                             .into_iter(),
                     )),
@@ -690,7 +687,7 @@ impl<'a> Runtime<'a> {
                                 id: 0,
                                 ty: Type::Any,
                             },
-                            v.to_rcvalue(),
+                            RcValue::from(&v),
                         );
                         Ok(env)
                     }))),

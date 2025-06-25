@@ -1122,7 +1122,7 @@ fn head(
             if v.is_empty() {
                 Ok(RcValue::null())
             } else {
-                Ok(v[0].to_rcvalue())
+                Ok((&v[0]).into())
             }
         }
         Some(Value::Null) => Ok(RcValue::null()),
@@ -1136,9 +1136,7 @@ fn last(
     args: Vec<RcValue>,
 ) -> Result<RcValue, String> {
     match args.into_iter().next().as_deref() {
-        Some(Value::List(v)) => Ok(v
-            .last()
-            .map_or_else(RcValue::null, super::value::ListItem::to_rcvalue)),
+        Some(Value::List(v)) => Ok(v.last().map_or_else(RcValue::null, RcValue::from)),
         Some(Value::Null) => Ok(RcValue::null()),
 
         _ => unreachable!(),
@@ -1373,12 +1371,12 @@ fn string_join(
     fn to_string_vec(vec: &[ListItem]) -> Result<Vec<Rc<String>>, String> {
         vec.iter()
             .map(|item| {
-                if let Value::String(s) = &*item.to_rcvalue() {
+                if let Value::String(s) = &*RcValue::from(item) {
                     Ok(s.clone())
                 } else {
                     Err(format!(
                         "Type mismatch: expected String but was {}",
-                        item.to_rcvalue().name()
+                        RcValue::from(item).name()
                     ))
                 }
             })
@@ -1902,7 +1900,7 @@ fn internal_node_has_labels(
         (Some(Value::Node(id)), Some(Value::List(required_labels))) => {
             let labels = runtime.get_node_labels(*id);
             let all_labels_present = required_labels.iter().all(|label| {
-                if let Value::String(label_str) = &*label.to_rcvalue() {
+                if let Value::String(label_str) = &*RcValue::from(label) {
                     labels.contains(label_str)
                 } else {
                     false
@@ -1943,9 +1941,9 @@ fn internal_case(
     match (iter.next().as_deref(), iter.next(), iter.next()) {
         (Some(Value::List(alts)), Some(else_), None) => {
             for pair in alts.chunks(2) {
-                match (&*pair[0].to_rcvalue(), &pair[1].to_rcvalue()) {
+                match (&*RcValue::from(&pair[0]), RcValue::from(&pair[1])) {
                     (Value::Bool(false) | Value::Null, _) => {}
-                    (_, result) => return Ok(result.clone()),
+                    (_, result) => return Ok(result),
                 }
             }
             Ok(else_)
@@ -1956,8 +1954,8 @@ fn internal_case(
             };
             for pair in alts.chunks(2) {
                 if let [condition, result] = pair {
-                    if &*condition.to_rcvalue() == value {
-                        return Ok(result.to_rcvalue());
+                    if &*RcValue::from(condition) == value {
+                        return Ok(result.into());
                     }
                 }
             }
