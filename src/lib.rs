@@ -1,8 +1,9 @@
 #![allow(clippy::cast_possible_wrap)]
 
+use graph::ast::Variable;
 use graph::functions::init_functions;
 use graph::graph::Plan;
-use graph::runtime::{QueryStatistics, ResultSummary, Runtime, evaluate_param};
+use graph::runtime::{QueryStatistics, ResultSummary, ReturnNames, Runtime, evaluate_param};
 use graph::value::{ListItem, RcValue};
 use graph::{cypher::Parser, graph::Graph, matrix::init, planner::Planner, value::Value};
 #[cfg(feature = "zipkin")]
@@ -433,9 +434,12 @@ fn graph_delete(
 
 #[inline]
 fn query_mut(
+    ctx: &Context,
     graph: &RefCell<Graph>,
     query: &str,
-) -> Result<ResultSummary, RedisError> {
+    compact: bool,
+    write: bool,
+) -> Result<(), RedisError> {
     // Create a child span for parsing and execution
     tracing::debug_span!("query_execution", query = %query).in_scope(|| {
         let Plan {
@@ -446,8 +450,15 @@ fn query_mut(
             .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
             .collect::<Result<HashMap<_, _>, String>>()
             .map_err(RedisError::String)?;
-        let mut runtime = Runtime::new(graph, parameters, true, plan);
-        runtime.query().map_err(RedisError::String)
+        let mut runtime = Runtime::new(graph, parameters, write, plan.clone());
+        let result = runtime.query().map_err(RedisError::String)?;
+        let return_names = plan.root().get_return_names();
+        if compact {
+            reply_compact(ctx, graph, &return_names, result);
+        } else {
+            reply_verbose(ctx, graph, &return_names, result);
+        }
+        Ok(())
     })
 }
 
@@ -536,20 +547,10 @@ fn graph_query(
     let key = ctx.open_key_writable(&key);
 
     if let Some(graph) = key.get_value::<RefCell<Graph>>(&GRAPH_TYPE)? {
-        let result = query_mut(graph, query)?;
-        if compact {
-            reply_compact(ctx, graph, result);
-        } else {
-            reply_verbose(ctx, graph, result);
-        }
+        query_mut(ctx, graph, query, compact, true)?;
     } else {
         let graph = RefCell::new(Graph::new(16384, 16384));
-        let result = query_mut(&graph, query)?;
-        if compact {
-            reply_compact(ctx, &graph, result);
-        } else {
-            reply_verbose(ctx, &graph, result);
-        }
+        query_mut(ctx, &graph, query, compact, true)?;
         key.set_value(&GRAPH_TYPE, graph)?;
     }
 
@@ -559,20 +560,25 @@ fn graph_query(
 fn reply_verbose(
     ctx: &Context,
     g: &RefCell<Graph>,
+    return_names: &Vec<Variable>,
     result: ResultSummary,
 ) {
     raw::reply_with_array(ctx.ctx, 3);
-    raw::reply_with_array(ctx.ctx, result.return_names.len() as _);
-    for name in result.return_names {
+    raw::reply_with_array(ctx.ctx, return_names.len() as _);
+    for name in return_names {
         raw::reply_with_array(ctx.ctx, 2);
         raw::reply_with_long_long(ctx.ctx, 1);
-        raw::reply_with_string_buffer(ctx.ctx, name.as_ptr().cast::<c_char>(), name.len());
+        raw::reply_with_string_buffer(
+            ctx.ctx,
+            name.as_str().as_ptr().cast::<c_char>(),
+            name.as_str().len(),
+        );
     }
     raw::reply_with_array(ctx.ctx, result.result.len() as _);
     for row in result.result {
-        raw::reply_with_array(ctx.ctx, row.len() as _);
-        for value in row {
-            reply_verbose_value(ctx, g, value);
+        raw::reply_with_array(ctx.ctx, return_names.len() as _);
+        for name in return_names {
+            reply_verbose_value(ctx, g, row.get(name).unwrap());
         }
     }
     reply_stats(ctx, &result.stats);
@@ -581,21 +587,26 @@ fn reply_verbose(
 fn reply_compact(
     ctx: &Context,
     g: &RefCell<Graph>,
+    return_names: &Vec<Variable>,
     result: ResultSummary,
 ) {
     raw::reply_with_array(ctx.ctx, 3);
-    raw::reply_with_array(ctx.ctx, result.return_names.len() as _);
-    for name in result.return_names {
+    raw::reply_with_array(ctx.ctx, return_names.len() as _);
+    for name in return_names {
         raw::reply_with_array(ctx.ctx, 2);
         raw::reply_with_long_long(ctx.ctx, 1);
-        raw::reply_with_string_buffer(ctx.ctx, name.as_ptr().cast::<c_char>(), name.len());
+        raw::reply_with_string_buffer(
+            ctx.ctx,
+            name.as_str().as_ptr().cast::<c_char>(),
+            name.as_str().len(),
+        );
     }
     raw::reply_with_array(ctx.ctx, result.result.len() as _);
     for row in result.result {
-        raw::reply_with_array(ctx.ctx, row.len() as _);
-        for value in row {
+        raw::reply_with_array(ctx.ctx, return_names.len() as _);
+        for name in return_names {
             raw::reply_with_array(ctx.ctx, 2);
-            reply_compact_value(ctx, g, value);
+            reply_compact_value(ctx, g, row.get(name).unwrap());
         }
     }
     reply_stats(ctx, &result.stats);
@@ -626,21 +637,7 @@ fn graph_ro_query(
         // If the key does not exist, we return an error
         EMPTY_KEY_ERR,
         |graph| {
-            let Plan {
-                plan, parameters, ..
-            } = graph.borrow().get_plan(query).map_err(RedisError::String)?;
-            let parameters = parameters
-                .into_iter()
-                .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
-                .collect::<Result<HashMap<_, _>, String>>()
-                .map_err(RedisError::String)?;
-            let mut runtime = Runtime::new(graph, parameters, false, plan);
-            let result = runtime.query().map_err(RedisError::String)?;
-            if compact {
-                reply_compact(ctx, graph, result);
-            } else {
-                reply_verbose(ctx, graph, result);
-            }
+            query_mut(ctx, graph, query, compact, false)?;
             RedisResult::Ok(RedisValue::NoReply)
         },
     )

@@ -26,8 +26,7 @@ use tracing::instrument;
 pub struct ResultSummary {
     pub run_duration: Duration,
     pub stats: QueryStatistics,
-    pub return_names: Vec<String>,
-    pub result: Vec<Vec<RcValue>>,
+    pub result: Vec<Env>,
 }
 
 #[derive(Default)]
@@ -54,7 +53,7 @@ pub struct Runtime<'a> {
     value_dedupers: RefCell<HashMap<String, ValuesDeduper>>,
 }
 
-trait ReturnNames {
+pub trait ReturnNames {
     fn get_return_names(&self) -> Vec<Variable>;
 }
 
@@ -84,7 +83,7 @@ impl Debug for Env {
         &self,
         f: &mut std::fmt::Formatter<'_>,
     ) -> std::fmt::Result {
-        f.debug_list().entries(self.iter()).finish()
+        f.debug_list().entries(self.as_ref().iter()).finish()
     }
 }
 
@@ -116,12 +115,7 @@ impl<'a> Runtime<'a> {
         let mut result = vec![];
         for env in self.run(&idx)? {
             let env = env?;
-            result.push(
-                self.return_names
-                    .iter()
-                    .map(|v| env.get(v).unwrap())
-                    .collect::<Vec<RcValue>>(),
-            );
+            result.push(env);
         }
         let run_duration = start.elapsed();
 
@@ -129,11 +123,6 @@ impl<'a> Runtime<'a> {
         Ok(ResultSummary {
             run_duration,
             stats: self.stats.take(),
-            return_names: self
-                .return_names
-                .iter()
-                .map(|v| String::from(v.name.as_ref().unwrap().as_str()))
-                .collect(),
             result,
         })
     }

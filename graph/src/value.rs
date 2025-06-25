@@ -266,9 +266,11 @@ impl Env {
             self.0[key] = value;
         }
     }
+}
 
-    pub fn iter(&self) -> impl Iterator<Item = RcValue> {
-        self.0.iter().cloned()
+impl AsRef<Vec<RcValue>> for Env {
+    fn as_ref(&self) -> &Vec<RcValue> {
+        &self.0
     }
 }
 
