@@ -710,7 +710,7 @@ pub fn init_functions() -> Result<(), Functions> {
     );
     funcs.add(
         "percentileDisc",
-        percentile_disc,
+        percentile,
         false,
         vec![
             Type::Union(vec![Type::Int, Type::Float, Type::Null]),
@@ -719,6 +719,19 @@ pub fn init_functions() -> Result<(), Functions> {
         FnType::Aggregation(
             RcValue::list(vec![RcValue::float(0.0), RcValue::list(vec![])]),
             Some(Box::new(finalize_percentile_disc)),
+        ),
+    );
+    funcs.add(
+        "percentileCont",
+        percentile,
+        false,
+        vec![
+            Type::Union(vec![Type::Int, Type::Float, Type::Null]),
+            Type::Union(vec![Type::Int, Type::Float]),
+        ],
+        FnType::Aggregation(
+            RcValue::list(vec![RcValue::float(0.0), RcValue::list(vec![])]),
+            Some(Box::new(finalize_percentile_cont)),
         ),
     );
 
@@ -1056,7 +1069,7 @@ fn finalize_avg(value: RcValue) -> RcValue {
     }
 }
 
-fn percentile_disc(
+fn percentile(
     _: &Runtime,
     args: Vec<RcValue>,
 ) -> Result<RcValue, String> {
@@ -1118,6 +1131,50 @@ fn finalize_percentile_disc(ctx: RcValue) -> RcValue {
     };
 
     RcValue::float(sorted_values[index])
+}
+
+#[allow(clippy::needless_pass_by_value)]
+fn finalize_percentile_cont(ctx: RcValue) -> RcValue {
+    let Value::List(state) = &*ctx else {
+        unreachable!()
+    };
+    let Value::Float(percentile) = &*state[0] else {
+        unreachable!()
+    };
+    let Value::List(values) = &*state[1] else {
+        unreachable!()
+    };
+
+    if values.is_empty() {
+        return RcValue::null();
+    }
+
+    let mut sorted_values: Vec<f64> = values.iter().map(|v| v.get_numeric()).collect();
+    sorted_values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+    #[allow(clippy::float_cmp)]
+    if *percentile == 1.0 || sorted_values.len() == 1 {
+        return RcValue::float(sorted_values[sorted_values.len() - 1]);
+    }
+
+    let float_idx = (sorted_values.len() - 1) as f64 * percentile;
+
+    let (fraction_val, int_val) = modf(float_idx);
+    let index = int_val as usize;
+
+    if fraction_val == 0.0 {
+        // A valid index was requested, so we can directly return a value
+        return RcValue::float(sorted_values[index]);
+    }
+    let lhs = sorted_values[index] * (1.0 - fraction_val);
+    let rhs = sorted_values[index + 1] * fraction_val;
+    RcValue::float(lhs + rhs)
+}
+
+fn modf(x: f64) -> (f64, f64) {
+    let int_part = x.trunc();
+    let frac_part = x.fract();
+    (frac_part, int_part)
 }
 
 fn value_to_integer(
