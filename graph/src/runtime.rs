@@ -622,9 +622,9 @@ impl<'a> Runtime<'a> {
                         for v in vars {
                             env.insert(v, Value::Null);
                         }
-                        self.run(child0_idx.as_ref().unwrap())
-                            .unwrap()
-                            .lazy_replace(move || Box::new(once(Ok(env))))
+                        Ok(self
+                            .run(child0_idx.as_ref().unwrap())?
+                            .lazy_replace(move || Box::new(once(Ok(env)))))
                     });
                     return Ok(Box::new(iter));
                 }
@@ -665,30 +665,23 @@ impl<'a> Runtime<'a> {
                         );
                         Ok(env)
                     }))),
-                    _ => Err(format!("Function '{name}' must return a list")),
+                    _ => unreachable!(),
                 }
             }
             IR::Unwind(tree, name) => {
-                if let Some(child_idx) = child0_idx {
-                    return Ok(Box::new(self.run(&child_idx)?.try_flat_map(move |vars| {
-                        let value = self.run_iter_expr(tree.root(), &vars);
-                        match value {
-                            Ok(iter) => Box::new(iter.map(move |v| {
-                                let mut vars = vars.clone();
-                                vars.insert(name, v);
-                                Ok(vars)
-                            }))
-                                as Box<dyn Iterator<Item = Result<Env, String>>>,
-                            Err(e) => Box::new(once(Err(e))),
-                        }
-                    })));
-                }
-                let vars = Env::default();
-                let value = self.run_iter_expr(tree.root(), &vars)?;
-                Ok(Box::new(value.map(move |v| {
-                    let mut vars = Env::default();
-                    vars.insert(name, v);
-                    Ok(vars)
+                let iter = if let Some(child_idx) = child0_idx {
+                    self.run(&child_idx)?
+                } else {
+                    Box::new(once(Ok(Env::default())))
+                };
+
+                Ok(Box::new(iter.try_flat_map(move |vars| {
+                    let value = self.run_iter_expr(tree.root(), &vars)?;
+                    Ok(value.map(move |v| {
+                        let mut vars = vars.clone();
+                        vars.insert(name, v);
+                        Ok(vars)
+                    }))
                 })))
             }
             IR::Create(pattern) => {
@@ -702,14 +695,14 @@ impl<'a> Runtime<'a> {
                     return Ok(Box::new(self.run(&child_idx)?.try_flat_map(
                         move |mut vars| {
                             if let Err(e) = self.create(pattern, &mut vars) {
-                                return vec![Err(e)].into_iter();
+                                return Ok(vec![Err(e)].into_iter());
                             }
 
                             if parent_commit {
-                                return vec![].into_iter();
+                                return Ok(vec![].into_iter());
                             }
 
-                            vec![Ok(vars)].into_iter()
+                            Ok(vec![Ok(vars)].into_iter())
                         },
                     )));
                 }
@@ -740,7 +733,7 @@ impl<'a> Runtime<'a> {
                                         Err(e) => Box::new(once(Err(e))),
                                     }
                                 });
-                        Box::new(iter) as Box<dyn Iterator<Item = Result<Env, String>>>
+                        Ok(iter)
                     })));
                 }
                 let iter = self.run(child0_idx.as_ref().unwrap())?.lazy_replace(|| {
@@ -759,7 +752,7 @@ impl<'a> Runtime<'a> {
                         Ok(vars)
                     })));
                 }
-                Ok(Box::new(empty()))
+                unreachable!();
             }
             IR::Set(trees) => {
                 if let Some(child_idx) = child0_idx {
@@ -930,29 +923,37 @@ impl<'a> Runtime<'a> {
                 unreachable!();
             }
             IR::NodeScan(node_pattern) => {
-                if let Some(child_idx) = child0_idx {
-                    return Ok(Box::new(
-                        self.run(&child_idx)?
-                            .try_flat_map(move |vars| self.node_scan(node_pattern, vars)),
-                    ));
-                }
-                Ok(self.node_scan(node_pattern, Env::default()))
+                let iter = if let Some(child_idx) = child0_idx {
+                    self.run(&child_idx)?
+                } else {
+                    Box::new(once(Ok(Env::default())))
+                };
+
+                Ok(Box::new(iter.try_flat_map(move |vars| {
+                    Ok(self.node_scan(node_pattern, vars))
+                })))
             }
             IR::RelationshipScan(relationship_pattern) => {
-                if let Some(child_idx) = child0_idx {
-                    return Ok(Box::new(self.run(&child_idx)?.try_flat_map(move |vars| {
-                        self.relationship_scan(relationship_pattern, vars)
-                    })));
-                }
-                Ok(self.relationship_scan(relationship_pattern, Env::default()))
+                let iter = if let Some(child_idx) = child0_idx {
+                    self.run(&child_idx)?
+                } else {
+                    Box::new(once(Ok(Env::default())))
+                };
+
+                Ok(Box::new(iter.try_flat_map(move |vars| {
+                    Ok(self.relationship_scan(relationship_pattern, vars))
+                })))
             }
             IR::ExpandInto(relationship_pattern) => {
-                if let Some(child_idx) = child0_idx {
-                    return Ok(Box::new(self.run(&child_idx)?.try_flat_map(move |vars| {
-                        self.expand_into(relationship_pattern, vars)
-                    })));
-                }
-                Ok(self.expand_into(relationship_pattern, Env::default()))
+                let iter = if let Some(child_idx) = child0_idx {
+                    self.run(&child_idx)?
+                } else {
+                    Box::new(once(Ok(Env::default())))
+                };
+
+                Ok(Box::new(iter.try_flat_map(move |vars| {
+                    Ok(self.expand_into(relationship_pattern, vars))
+                })))
             }
             IR::PathBuilder(paths) => {
                 if let Some(child_idx) = child0_idx {
@@ -1003,11 +1004,11 @@ impl<'a> Runtime<'a> {
                     for child in node.children().skip(1) {
                         let idx = child.idx();
                         iter = Box::new(iter.try_flat_map(move |vars1| {
-                            self.run(&idx).unwrap().try_map(move |vars2| {
+                            Ok(self.run(&idx)?.try_map(move |vars2| {
                                 let mut vars = vars1.clone();
                                 vars.merge(vars2);
                                 Ok(vars)
-                            })
+                            }))
                         }));
                     }
                     return Ok(iter);
@@ -1416,7 +1417,7 @@ impl<'a> Runtime<'a> {
                 Value::Map(attrs) => {
                     self.pending
                         .borrow_mut()
-                        .set_node_attributes(id, Rc::unwrap_or_clone(attrs.clone()));
+                        .set_node_attributes(id, Rc::unwrap_or_clone(attrs));
                 }
                 _ => unreachable!(),
             }
@@ -1450,7 +1451,7 @@ impl<'a> Runtime<'a> {
                 Value::Map(attrs) => {
                     self.pending
                         .borrow_mut()
-                        .set_relationship_attributes(id, Rc::unwrap_or_clone(attrs.clone()));
+                        .set_relationship_attributes(id, Rc::unwrap_or_clone(attrs));
                 }
                 _ => {
                     return Err(String::from("Invalid relationship properties"));

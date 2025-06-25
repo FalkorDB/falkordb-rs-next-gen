@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     hash::{DefaultHasher, Hasher},
+    iter::once,
 };
 
 pub struct AggregateIter<I, K, V, F, G>
@@ -309,30 +310,35 @@ where
 }
 
 pub trait TryFlatMap {
-    fn try_flat_map<T, E, F, I>(
+    fn try_flat_map<'a, T: 'a, E: 'a, F, I>(
         self,
         func: F,
     ) -> impl Iterator<Item = Result<T, E>>
     where
         Self: Iterator<Item = Result<T, E>>,
-        F: Fn(T) -> I,
-        I: Iterator<Item = Result<T, E>>;
+        F: Fn(T) -> Result<I, E>,
+        I: Iterator<Item = Result<T, E>> + 'a;
 }
 
 impl<I> TryFlatMap for I
 where
     I: Iterator,
 {
-    fn try_flat_map<T, E, F, J>(
+    fn try_flat_map<'a, T: 'a, E: 'a, F, J>(
         self,
         func: F,
     ) -> impl Iterator<Item = Result<T, E>>
     where
         Self: Iterator<Item = Result<T, E>>,
-        F: Fn(T) -> J,
-        J: Iterator<Item = Result<T, E>>,
+        F: Fn(T) -> Result<J, E>,
+        J: Iterator<Item = Result<T, E>> + 'a,
     {
-        self.take_while(Result::is_ok)
-            .flat_map(move |x| x.map_or_else(|_| unreachable!(), &func))
+        self.take_while(Result::is_ok).flat_map(move |x| match x {
+            Ok(x) => match func(x) {
+                Ok(iter) => Box::new(iter) as Box<dyn Iterator<Item = Result<T, E>>>,
+                Err(err) => Box::new(once(Err(err))) as Box<dyn Iterator<Item = Result<T, E>>>,
+            },
+            Err(err) => Box::new(once(Err(err))) as Box<dyn Iterator<Item = Result<T, E>>>,
+        })
     }
 }
