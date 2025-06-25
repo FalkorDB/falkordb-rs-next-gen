@@ -9,7 +9,7 @@ use ordermap::{OrderMap, OrderSet};
 use crate::{
     graph::{Graph, NodeId, RelationshipId},
     runtime::QueryStatistics,
-    value::{RcValue, Value},
+    value::Value,
 };
 
 pub struct PendingRelationship {
@@ -39,8 +39,8 @@ pub struct Pending {
     created_relationships: HashMap<RelationshipId, PendingRelationship>,
     deleted_nodes: HashSet<NodeId>,
     deleted_relationships: HashSet<(RelationshipId, NodeId, NodeId)>,
-    set_nodes_attrs: HashMap<NodeId, OrderMap<Rc<String>, RcValue>>,
-    set_relationships_attrs: HashMap<RelationshipId, OrderMap<Rc<String>, RcValue>>,
+    set_nodes_attrs: HashMap<NodeId, OrderMap<Rc<String>, Value>>,
+    set_relationships_attrs: HashMap<RelationshipId, OrderMap<Rc<String>, Value>>,
     set_node_labels: HashMap<NodeId, OrderSet<Rc<String>>>,
     remove_node_labels: HashMap<NodeId, OrderSet<Rc<String>>>,
 }
@@ -56,7 +56,7 @@ impl Pending {
     pub fn set_node_attributes(
         &mut self,
         id: NodeId,
-        attrs: OrderMap<Rc<String>, RcValue>,
+        attrs: OrderMap<Rc<String>, Value>,
     ) {
         self.set_nodes_attrs.insert(id, attrs);
     }
@@ -65,7 +65,7 @@ impl Pending {
         &mut self,
         id: NodeId,
         key: Rc<String>,
-        value: RcValue,
+        value: Value,
     ) {
         self.set_nodes_attrs
             .entry(id)
@@ -78,7 +78,7 @@ impl Pending {
         &self,
         id: NodeId,
         key: &Rc<String>,
-    ) -> Option<&RcValue> {
+    ) -> Option<&Value> {
         self.set_nodes_attrs
             .get(&id)
             .and_then(|attrs| attrs.get(key))
@@ -87,11 +87,11 @@ impl Pending {
     pub fn update_node_attrs(
         &self,
         id: NodeId,
-        attrs: &mut OrderMap<Rc<String>, RcValue>,
+        attrs: &mut OrderMap<Rc<String>, Value>,
     ) {
         if let Some(added) = self.set_nodes_attrs.get(&id) {
             for (key, value) in added {
-                if **value == Value::Null {
+                if *value == Value::Null {
                     attrs.remove(key);
                 } else {
                     attrs.insert(key.clone(), value.clone());
@@ -152,7 +152,7 @@ impl Pending {
     pub fn set_relationship_attributes(
         &mut self,
         id: RelationshipId,
-        attrs: OrderMap<Rc<String>, RcValue>,
+        attrs: OrderMap<Rc<String>, Value>,
     ) {
         self.set_relationships_attrs.insert(id, attrs);
     }
@@ -161,7 +161,7 @@ impl Pending {
         &mut self,
         id: RelationshipId,
         key: Rc<String>,
-        value: RcValue,
+        value: Value,
     ) {
         self.set_relationships_attrs
             .entry(id)
@@ -174,7 +174,7 @@ impl Pending {
         &self,
         id: RelationshipId,
         key: &Rc<String>,
-    ) -> Option<&RcValue> {
+    ) -> Option<&Value> {
         self.set_relationships_attrs
             .get(&id)
             .and_then(|attrs| attrs.get(key))
@@ -183,11 +183,11 @@ impl Pending {
     pub fn update_relationship_attrs(
         &self,
         id: RelationshipId,
-        attrs: &mut OrderMap<Rc<String>, RcValue>,
+        attrs: &mut OrderMap<Rc<String>, Value>,
     ) {
         if let Some(added) = self.set_relationships_attrs.get(&id) {
             for (key, value) in added {
-                if **value == Value::Null {
+                if *value == Value::Null {
                     attrs.remove(key);
                 } else {
                     attrs.insert(key.clone(), value.clone());
@@ -250,7 +250,7 @@ impl Pending {
                 .set_nodes_attrs
                 .values()
                 .flat_map(|v| v.values())
-                .map(|v| match **v {
+                .map(|v| match *v {
                     Value::Null => 0,
                     _ => 1,
                 })
@@ -284,7 +284,7 @@ impl Pending {
                 .set_relationships_attrs
                 .values()
                 .flat_map(|v| v.values())
-                .map(|v| match **v {
+                .map(|v| match *v {
                     Value::Null => 0,
                     _ => 1,
                 })

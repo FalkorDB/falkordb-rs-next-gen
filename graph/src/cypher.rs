@@ -4,7 +4,7 @@ use crate::ast::{
 use crate::cypher::Token::RParen;
 use crate::functions::{FnType, Type, get_functions};
 use crate::tree;
-use crate::value::RcValue;
+use crate::value::Value;
 use falkordb_macro::parse_binary_expr;
 use ordermap::OrderSet;
 use orx_tree::{DynTree, NodeRef};
@@ -1095,7 +1095,7 @@ impl<'a> Parser<'a> {
                         .or_else(|_| {
                             get_functions().get(
                                 &namespace_and_function,
-                                &FnType::Aggregation(RcValue::null(), None),
+                                &FnType::Aggregation(Value::Null, None),
                             )
                         })?;
 

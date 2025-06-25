@@ -4,7 +4,6 @@ use graph::ast::Variable;
 use graph::functions::init_functions;
 use graph::graph::Plan;
 use graph::runtime::{QueryStatistics, ResultSummary, ReturnNames, Runtime, evaluate_param};
-use graph::value::{ListItem, RcValue};
 use graph::{cypher::Parser, graph::Graph, matrix::init, planner::Planner, value::Value};
 #[cfg(feature = "zipkin")]
 use opentelemetry::global;
@@ -30,6 +29,7 @@ use std::fs::File;
 use std::io::Write;
 use std::os::raw::{c_char, c_void};
 use std::ptr::null_mut;
+use std::rc::Rc;
 #[cfg(feature = "zipkin")]
 use tracing_opentelemetry::OpenTelemetryLayer;
 #[cfg(feature = "zipkin")]
@@ -99,21 +99,21 @@ unsafe extern "C" fn my_free(value: *mut c_void) {
 fn reply_compact_value(
     ctx: &Context,
     g: &RefCell<Graph>,
-    r: RcValue,
+    r: Value,
 ) {
-    match &*r {
+    match r {
         Value::Null => {
             raw::reply_with_long_long(ctx.ctx, 1);
             raw::reply_with_null(ctx.ctx);
         }
         Value::Bool(x) => {
             raw::reply_with_long_long(ctx.ctx, 4);
-            let str = if *x { "true" } else { "false" };
+            let str = if x { "true" } else { "false" };
             raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
         }
         Value::Int(x) => {
             raw::reply_with_long_long(ctx.ctx, 3);
-            raw::reply_with_long_long(ctx.ctx, *x as _);
+            raw::reply_with_long_long(ctx.ctx, x as _);
         }
         Value::Float(x) => {
             raw::reply_with_long_long(ctx.ctx, 5);
@@ -129,48 +129,14 @@ fn reply_compact_value(
             raw::reply_with_array(ctx.ctx, values.len() as _);
             for v in values {
                 raw::reply_with_array(ctx.ctx, 2);
-                match v {
-                    ListItem::Rc(v) => {
-                        reply_compact_value(ctx, g, v.clone());
-                    }
-                    ListItem::Bool(x) => {
-                        raw::reply_with_long_long(ctx.ctx, 4);
-                        let str = if *x { "true" } else { "false" };
-                        raw::reply_with_string_buffer(
-                            ctx.ctx,
-                            str.as_ptr().cast::<c_char>(),
-                            str.len(),
-                        );
-                    }
-                    ListItem::Int(x) => {
-                        raw::reply_with_long_long(ctx.ctx, 3);
-                        raw::reply_with_long_long(ctx.ctx, *x as _);
-                    }
-                    ListItem::Float(x) => {
-                        raw::reply_with_long_long(ctx.ctx, 5);
-                        let str = format!("{x:.14e}");
-                        raw::reply_with_string_buffer(
-                            ctx.ctx,
-                            str.as_ptr().cast::<c_char>(),
-                            str.len(),
-                        );
-                    }
-                    ListItem::String(x) => {
-                        raw::reply_with_long_long(ctx.ctx, 2);
-                        raw::reply_with_string_buffer(
-                            ctx.ctx,
-                            x.as_str().as_ptr().cast::<c_char>(),
-                            x.len(),
-                        );
-                    }
-                }
+                reply_compact_value(ctx, g, v.clone());
             }
         }
         Value::Map(map) => {
             raw::reply_with_long_long(ctx.ctx, 10);
             raw::reply_with_array(ctx.ctx, (map.len() * 2) as _);
 
-            for (key, value) in &**map {
+            for (key, value) in map.iter() {
                 raw::reply_with_string_buffer(
                     ctx.ctx,
                     key.as_str().as_ptr().cast::<c_char>(),
@@ -183,14 +149,14 @@ fn reply_compact_value(
         Value::Node(id) => {
             raw::reply_with_long_long(ctx.ctx, 8);
             raw::reply_with_array(ctx.ctx, 3);
-            raw::reply_with_long_long(ctx.ctx, u64::from(*id) as _);
-            let labels = g.borrow().get_node_label_ids(*id).collect::<Vec<_>>();
+            raw::reply_with_long_long(ctx.ctx, u64::from(id) as _);
+            let labels = g.borrow().get_node_label_ids(id).collect::<Vec<_>>();
             raw::reply_with_array(ctx.ctx, labels.len() as _);
             for label in labels {
                 raw::reply_with_long_long(ctx.ctx, usize::from(label) as _);
             }
             let bg = g.borrow();
-            let props = bg.get_node_attrs(*id);
+            let props = bg.get_node_attrs(id);
             raw::reply_with_array(ctx.ctx, props.len() as _);
             for (key, value) in props {
                 raw::reply_with_array(ctx.ctx, 3);
@@ -201,15 +167,15 @@ fn reply_compact_value(
         Value::Relationship(id, from, to) => {
             raw::reply_with_long_long(ctx.ctx, 7);
             raw::reply_with_array(ctx.ctx, 5);
-            raw::reply_with_long_long(ctx.ctx, u64::from(*id) as _);
+            raw::reply_with_long_long(ctx.ctx, u64::from(id) as _);
             raw::reply_with_long_long(
                 ctx.ctx,
-                usize::from(g.borrow().get_relationship_type_id(*id)) as _,
+                usize::from(g.borrow().get_relationship_type_id(id)) as _,
             );
-            raw::reply_with_long_long(ctx.ctx, u64::from(*from) as _);
-            raw::reply_with_long_long(ctx.ctx, u64::from(*to) as _);
+            raw::reply_with_long_long(ctx.ctx, u64::from(from) as _);
+            raw::reply_with_long_long(ctx.ctx, u64::from(to) as _);
             let bg = g.borrow();
-            let props = bg.get_relationship_attrs(*id);
+            let props = bg.get_relationship_attrs(id);
             raw::reply_with_array(ctx.ctx, props.len() as _);
             for (key, value) in props {
                 raw::reply_with_array(ctx.ctx, 3);
@@ -223,8 +189,8 @@ fn reply_compact_value(
 
             let mut nodes = 0;
             let mut rels = 0;
-            for node in path {
-                match **node {
+            for node in &path {
+                match node {
                     Value::Node(_) => nodes += 1,
                     Value::Relationship(_, _, _) => rels += 1,
                     _ => unreachable!("Path should only contain nodes and relationships"),
@@ -234,8 +200,8 @@ fn reply_compact_value(
             raw::reply_with_array(ctx.ctx, 2);
             raw::reply_with_long_long(ctx.ctx, 6);
             raw::reply_with_array(ctx.ctx, nodes);
-            for node in path {
-                match **node {
+            for node in &path {
+                match node {
                     Value::Node(_) => {
                         raw::reply_with_array(ctx.ctx, 2);
                         reply_compact_value(ctx, g, node.clone());
@@ -249,7 +215,7 @@ fn reply_compact_value(
             raw::reply_with_long_long(ctx.ctx, 6);
             raw::reply_with_array(ctx.ctx, rels);
             for node in path {
-                match **node {
+                match node {
                     Value::Node(_) => {}
                     Value::Relationship(_, _, _) => {
                         raw::reply_with_array(ctx.ctx, 2);
@@ -259,6 +225,9 @@ fn reply_compact_value(
                 }
             }
         }
+        Value::Rc(inner) => {
+            reply_compact_value(ctx, g, (*inner).clone());
+        }
     }
 }
 
@@ -266,18 +235,18 @@ fn reply_compact_value(
 fn reply_verbose_value(
     ctx: &Context,
     g: &RefCell<Graph>,
-    r: RcValue,
+    r: Value,
 ) {
-    match &*r {
+    match r {
         Value::Null => {
             raw::reply_with_null(ctx.ctx);
         }
         Value::Bool(x) => {
-            let str = if *x { "true" } else { "false" };
+            let str = if x { "true" } else { "false" };
             raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
         }
         Value::Int(x) => {
-            raw::reply_with_long_long(ctx.ctx, *x as _);
+            raw::reply_with_long_long(ctx.ctx, x as _);
         }
         Value::Float(x) => {
             let str = format!("{x:.14e}");
@@ -289,43 +258,13 @@ fn reply_verbose_value(
         Value::List(values) => {
             raw::reply_with_array(ctx.ctx, values.len() as _);
             for v in values {
-                match v {
-                    ListItem::Rc(v) => {
-                        reply_verbose_value(ctx, g, v.clone());
-                    }
-                    ListItem::Bool(x) => {
-                        let str = if *x { "true" } else { "false" };
-                        raw::reply_with_string_buffer(
-                            ctx.ctx,
-                            str.as_ptr().cast::<c_char>(),
-                            str.len(),
-                        );
-                    }
-                    ListItem::Int(x) => {
-                        raw::reply_with_long_long(ctx.ctx, *x as _);
-                    }
-                    ListItem::Float(x) => {
-                        let str = format!("{x:.14e}");
-                        raw::reply_with_string_buffer(
-                            ctx.ctx,
-                            str.as_ptr().cast::<c_char>(),
-                            str.len(),
-                        );
-                    }
-                    ListItem::String(x) => {
-                        raw::reply_with_string_buffer(
-                            ctx.ctx,
-                            x.as_str().as_ptr().cast::<c_char>(),
-                            x.len(),
-                        );
-                    }
-                }
+                reply_verbose_value(ctx, g, v.clone());
             }
         }
         Value::Map(map) => {
             raw::reply_with_array(ctx.ctx, (map.len() * 2) as _);
 
-            for (key, value) in &**map {
+            for (key, value) in map.iter() {
                 raw::reply_with_string_buffer(
                     ctx.ctx,
                     key.as_str().as_ptr().cast::<c_char>(),
@@ -336,8 +275,8 @@ fn reply_verbose_value(
         }
         Value::Node(id) => {
             raw::reply_with_array(ctx.ctx, 3);
-            raw::reply_with_long_long(ctx.ctx, u64::from(*id) as _);
-            let labels = g.borrow().get_node_label_ids(*id).collect::<Vec<_>>();
+            raw::reply_with_long_long(ctx.ctx, u64::from(id) as _);
+            let labels = g.borrow().get_node_label_ids(id).collect::<Vec<_>>();
             raw::reply_with_array(ctx.ctx, labels.len() as _);
             for label in labels {
                 let label = g.borrow().get_label_by_id(label);
@@ -348,7 +287,7 @@ fn reply_verbose_value(
                 );
             }
             let bg = g.borrow();
-            let props = bg.get_node_attrs(*id);
+            let props = bg.get_node_attrs(id);
             raw::reply_with_array(ctx.ctx, props.len() as _);
             for (key, value) in props {
                 raw::reply_with_array(ctx.ctx, 2);
@@ -363,20 +302,20 @@ fn reply_verbose_value(
         }
         Value::Relationship(id, from, to) => {
             raw::reply_with_array(ctx.ctx, 5);
-            raw::reply_with_long_long(ctx.ctx, u64::from(*id) as _);
+            raw::reply_with_long_long(ctx.ctx, u64::from(id) as _);
             let rel_type = g
                 .borrow()
-                .get_type(g.borrow().get_relationship_type_id(*id))
+                .get_type(g.borrow().get_relationship_type_id(id))
                 .unwrap();
             raw::reply_with_string_buffer(
                 ctx.ctx,
                 rel_type.as_ptr().cast::<c_char>(),
                 rel_type.len(),
             );
-            raw::reply_with_long_long(ctx.ctx, u64::from(*from) as _);
-            raw::reply_with_long_long(ctx.ctx, u64::from(*to) as _);
+            raw::reply_with_long_long(ctx.ctx, u64::from(from) as _);
+            raw::reply_with_long_long(ctx.ctx, u64::from(to) as _);
             let bg = g.borrow();
-            let props = bg.get_relationship_attrs(*id);
+            let props = bg.get_relationship_attrs(id);
             raw::reply_with_array(ctx.ctx, props.len() as _);
             for (key, value) in props {
                 raw::reply_with_array(ctx.ctx, 2);
@@ -393,13 +332,16 @@ fn reply_verbose_value(
             raw::reply_with_array(ctx.ctx, path.len() as _);
 
             for node in path {
-                match **node {
+                match node {
                     Value::Relationship(_, _, _) | Value::Node(_) => {
                         reply_verbose_value(ctx, g, node.clone());
                     }
                     _ => unreachable!("Path should only contain nodes and relationships"),
                 }
             }
+        }
+        Value::Rc(inner) => {
+            reply_verbose_value(ctx, g, (*inner).clone());
         }
     }
 }
