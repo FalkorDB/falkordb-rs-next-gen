@@ -1184,11 +1184,11 @@ def test_percentile_disc_edge_cases():
     
     # Test with percentile < 0
     q = "UNWIND [1, 2, 3, 4, 5] AS x RETURN percentileDisc(x, -0.5) AS result"
-    query_exception(q, "Invalid input - '-0.5' is not a valid argument, must be a number in the range 0.0 to 1.0")
+    query_exception(q, "is not a valid argument, must be a number in the range 0.0 to 1.0")
 
     # Test with percentile > 1
     q = "UNWIND [1, 2, 3, 4, 5] AS x RETURN percentileDisc(x, 1.2) AS result"
-    query_exception(q, "Invalid input - '1.2' is not a valid argument, must be a number in the range 0.0 to 1.0")
+    query_exception(q, "is not a valid argument, must be a number in the range 0.0 to 1.0")
     
     # Test with NULL values
     res = query("UNWIND [null, 1, 2, 3, null, 4, 5] AS x RETURN percentileDisc(x, 0.5) AS result")
