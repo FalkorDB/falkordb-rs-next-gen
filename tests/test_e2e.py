@@ -1153,6 +1153,60 @@ def test_avg_inf():
     res = query("UNWIND [1, 2, -1/0.0, 1/0.0] AS x RETURN avg(x)")
     assert math.isnan(res.result_set[0][0])
 
+@given(st.lists(st.integers(-100, 100), min_size=1), st.floats(min_value=0.0, max_value=1.0, allow_subnormal=False))
+def test_percentile_disc(values, percentile):
+    if not (0 <= percentile <= 1):
+        percentile = max(0.0, min(1.0, percentile))
+    
+    # Sort the list to calculate expected value
+    sorted_values = sorted(values)
+    
+    # Calculate expected percentile value
+    index = math.ceil(percentile * len(sorted_values)) - 1
+    index = max(0, min(index, len(sorted_values) - 1))  # Ensure index is in bounds
+    expected = sorted_values[index]
+    
+    # Test actual implementation
+    res = query("UNWIND $values AS x RETURN percentileDisc(x, $p) AS result", 
+                params={"values": values, "p": percentile})
+    assert res.result_set == [[float(expected)]]
+
+def test_percentile_disc_edge_cases():
+    # Test with empty list (should return NULL)
+    res = query("UNWIND [] AS x RETURN percentileDisc(x, 0.5) AS result")
+    assert res.result_set == [[None]]
+    
+    # Test with NULL percentile
+    q = "UNWIND [1, 2, 3, 4, 5] AS x RETURN percentileDisc(x, null) AS result"
+    query_exception(q, "Type mismatch: expected Integer or Float but was Null")
+
+    # Test with percentile < 0
+    q = "UNWIND [1, 2, 3, 4, 5] AS x RETURN percentileDisc(x, -0.5) AS result"
+    query_exception(q, "Invalid input - '-0.5' is not a valid argument, must be a number in the range 0.0 to 1.0")
+
+    # Test with percentile > 1
+    q = "UNWIND [1, 2, 3, 4, 5] AS x RETURN percentileDisc(x, 1.2) AS result"
+    query_exception(q, "Invalid input - '1.2' is not a valid argument, must be a number in the range 0.0 to 1.0")
+    
+    # Test with NULL values
+    res = query("UNWIND [null, 1, 2, 3, null, 4, 5] AS x RETURN percentileDisc(x, 0.5) AS result")
+    assert res.result_set == [[3.0]]
+    
+    # Test with extreme percentiles
+    res = query("UNWIND [1, 2, 3, 4, 5] AS x RETURN percentileDisc(x, 0) AS result")
+    assert res.result_set == [[1.0]]
+    
+    res = query("UNWIND [1, 2, 3, 4, 5] AS x RETURN percentileDisc(x, 1) AS result") 
+    assert res.result_set == [[5.0]]
+    
+    # Test with duplicate values
+    res = query("UNWIND [1, 1, 2, 2, 3, 3] AS x RETURN percentileDisc(x, 0.5) AS result")
+    assert res.result_set == [[2.0]]
+    
+    # Test with negative values
+    res = query("UNWIND [-5, -4, -3, -2, -1] AS x RETURN percentileDisc(x, 0.5) AS result")
+    assert res.result_set == [[-3.0]]
+    
 def test_case():
     res = query("RETURN CASE 1 + 2 WHEN 'a' THEN 1 END")
     assert res.result_set == [[None]]
