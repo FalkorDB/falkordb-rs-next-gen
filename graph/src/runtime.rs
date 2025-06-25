@@ -497,7 +497,7 @@ impl<'a> Runtime<'a> {
                 let mut env = env.clone();
                 let mut acc = vec![];
                 for value in iter {
-                    env.insert(var, value.clone());
+                    env.insert(var, RcValue::from(&value));
                     match *self.run_expr(ir.child(1), &env, agg_group_key)? {
                         Value::Bool(true) => {}
                         _ => continue,
@@ -519,7 +519,7 @@ impl<'a> Runtime<'a> {
         &self,
         ir: DynNode<ExprIR>,
         env: &Env,
-    ) -> Result<Box<dyn Iterator<Item = RcValue>>, String> {
+    ) -> Result<Box<dyn Iterator<Item = ListItem>>, String> {
         match ir.data() {
             ExprIR::FuncInvocation(func) if func.name == "range" => {
                 let start = self.run_expr(ir.child(0), env, None)?;
@@ -543,14 +543,14 @@ impl<'a> Runtime<'a> {
                         let step = *step;
                         if step > 0 {
                             return Ok(Box::new(
-                                (start..=end).step_by(step as usize).map(RcValue::int),
+                                (start..=end).step_by(step as usize).map(ListItem::Int),
                             ));
                         }
                         Ok(Box::new(
                             (end..=start)
                                 .rev()
                                 .step_by((-step) as usize)
-                                .map(RcValue::int),
+                                .map(ListItem::Int),
                         ))
                     }
                     _ => {
@@ -561,13 +561,8 @@ impl<'a> Runtime<'a> {
             _ => {
                 let res = self.run_expr(ir, env, None)?;
                 match &*res {
-                    Value::List(arr) => Ok(Box::new(
-                        arr.iter()
-                            .map(RcValue::from)
-                            .collect::<Vec<RcValue>>()
-                            .into_iter(),
-                    )),
-                    _ => Ok(Box::new(once(res))),
+                    Value::List(arr) => Ok(Box::new(arr.clone().into_iter())),
+                    _ => Ok(Box::new(once(ListItem::Rc(res)))),
                 }
             }
         }
@@ -688,15 +683,13 @@ impl<'a> Runtime<'a> {
                     return Ok(Box::new(self.run(&child_idx)?.try_flat_map(move |vars| {
                         let value = self.run_iter_expr(tree.root(), &vars);
                         match value {
-                            Ok(iter) => iter
-                                .map(|v| {
-                                    let mut vars = vars.clone();
-                                    vars.insert(name, v);
-                                    Ok(vars)
-                                })
-                                .collect::<Vec<_>>()
-                                .into_iter(),
-                            Err(e) => vec![Err(e)].into_iter(),
+                            Ok(iter) => Box::new(iter.map(move |v| {
+                                let mut vars = vars.clone();
+                                vars.insert(name, RcValue::from(&v));
+                                Ok(vars)
+                            }))
+                                as Box<dyn Iterator<Item = Result<Env, String>>>,
+                            Err(e) => Box::new(once(Err(e))),
                         }
                     })));
                 }
@@ -704,7 +697,7 @@ impl<'a> Runtime<'a> {
                 let value = self.run_iter_expr(tree.root(), &vars)?;
                 Ok(Box::new(value.map(move |v| {
                     let mut vars = Env::default();
-                    vars.insert(name, v);
+                    vars.insert(name, RcValue::from(&v));
                     Ok(vars)
                 })))
             }
@@ -1075,7 +1068,7 @@ impl<'a> Runtime<'a> {
                 unreachable!();
             }
             IR::Aggregate(_, keys, agg) => {
-                let mut cache = std::collections::HashMap::new();
+                let mut cache = HashMap::new();
                 let mut env = Env::default();
                 for (_var, t) in agg {
                     Self::set_agg_expr_zero(&t.root(), &mut env);
@@ -1259,46 +1252,47 @@ impl<'a> Runtime<'a> {
             let vars = vars.clone();
             let filter_attrs = filter_attrs.clone();
             if from_id.is_some() && from_id.unwrap() != src {
-                return vec![];
+                return Box::new(empty()) as Box<dyn Iterator<Item = Result<Env, String>>>;
             }
             if to_id.is_some() && to_id.unwrap() != dst {
-                return vec![];
+                return Box::new(empty()) as Box<dyn Iterator<Item = Result<Env, String>>>;
             }
-            self.g
-                .borrow()
-                .get_src_dest_relationships(src, dst, &relationship_pattern.types)
-                .into_iter()
-                .filter(move |v| {
-                    if let Value::Map(filter_attrs) = &*filter_attrs {
-                        if !filter_attrs.is_empty() {
-                            let g = self.g.borrow();
-                            let attrs = g.get_relationship_attrs(*v);
-                            for (key, avalue) in &**filter_attrs {
-                                if let Some(key) = g.get_relationship_attribute_id(key) {
-                                    if let Some(pvalue) = attrs.get(&key) {
-                                        if avalue == pvalue {
-                                            continue;
+            Box::new(
+                self.g
+                    .borrow()
+                    .get_src_dest_relationships(src, dst, &relationship_pattern.types)
+                    .into_iter()
+                    .filter(move |v| {
+                        if let Value::Map(filter_attrs) = &*filter_attrs {
+                            if !filter_attrs.is_empty() {
+                                let g = self.g.borrow();
+                                let attrs = g.get_relationship_attrs(*v);
+                                for (key, avalue) in &**filter_attrs {
+                                    if let Some(key) = g.get_relationship_attribute_id(key) {
+                                        if let Some(pvalue) = attrs.get(&key) {
+                                            if avalue == pvalue {
+                                                continue;
+                                            }
+                                            return false;
                                         }
-                                        return false;
                                     }
+                                    return false;
                                 }
-                                return false;
                             }
                         }
-                    }
-                    true
-                })
-                .map(move |id| {
-                    let mut vars = vars.clone();
-                    vars.insert(
-                        &relationship_pattern.alias,
-                        RcValue::relationship(id, src, dst),
-                    );
-                    vars.insert(&relationship_pattern.from.alias, RcValue::node(src));
-                    vars.insert(&relationship_pattern.to.alias, RcValue::node(dst));
-                    Ok(vars)
-                })
-                .collect::<Vec<_>>()
+                        true
+                    })
+                    .map(move |id| {
+                        let mut vars = vars.clone();
+                        vars.insert(
+                            &relationship_pattern.alias,
+                            RcValue::relationship(id, src, dst),
+                        );
+                        vars.insert(&relationship_pattern.from.alias, RcValue::node(src));
+                        vars.insert(&relationship_pattern.to.alias, RcValue::node(dst));
+                        Ok(vars)
+                    }),
+            ) as Box<dyn Iterator<Item = Result<Env, String>>>
         }))
     }
 
@@ -1325,19 +1319,17 @@ impl<'a> Runtime<'a> {
             self.g
                 .borrow()
                 .get_src_dest_relationships(src, dst, &relationship_pattern.types)
-                .iter()
+                .into_iter()
                 .map(move |id| {
                     let mut vars = vars.clone();
                     vars.insert(
                         &relationship_pattern.alias,
-                        RcValue::relationship(*id, src, dst),
+                        RcValue::relationship(id, src, dst),
                     );
                     vars.insert(&relationship_pattern.from.alias, RcValue::node(src));
                     vars.insert(&relationship_pattern.to.alias, RcValue::node(dst));
                     Ok(vars)
-                })
-                .collect::<Vec<_>>()
-                .into_iter(),
+                }),
         )
     }
 
