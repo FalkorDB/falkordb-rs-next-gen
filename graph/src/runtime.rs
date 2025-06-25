@@ -23,31 +23,17 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 use tracing::instrument;
 
-pub trait ReturnCallback {
-    fn return_value(
-        &self,
-        graph: &RefCell<Graph>,
-        env: Env,
-        return_names: &[Variable],
-    );
-}
-
-pub struct ResultSummary<CB: ReturnCallback> {
-    pub callback: CB,
+pub struct ResultSummary {
     pub run_duration: Duration,
-    pub labels_added: usize,
-    pub labels_removed: usize,
-    pub nodes_created: usize,
-    pub relationships_created: usize,
-    pub nodes_deleted: usize,
-    pub relationships_deleted: usize,
-    pub properties_set: usize,
-    pub properties_removed: usize,
+    pub stats: QueryStatistics,
     pub return_names: Vec<String>,
+    pub result: Vec<Vec<RcValue>>,
 }
 
 #[derive(Default)]
-pub struct Stats {
+pub struct QueryStatistics {
+    pub labels_added: usize,
+    pub labels_removed: usize,
     pub nodes_created: usize,
     pub relationships_created: usize,
     pub nodes_deleted: usize,
@@ -62,7 +48,7 @@ pub struct Runtime<'a> {
     g: &'a RefCell<Graph>,
     write: bool,
     pending: Lazy<RefCell<Pending>>,
-    stats: RefCell<Stats>,
+    stats: RefCell<QueryStatistics>,
     plan: Rc<DynTree<IR>>,
     return_names: Vec<Variable>,
     value_dedupers: RefCell<HashMap<String, ValuesDeduper>>,
@@ -116,43 +102,39 @@ impl<'a> Runtime<'a> {
             g,
             write,
             pending: Lazy::new(|| RefCell::new(Pending::default())),
-            stats: RefCell::new(Stats::default()),
+            stats: RefCell::new(QueryStatistics::default()),
             plan: plan.clone(),
             return_names: plan.root().get_return_names(),
             value_dedupers: RefCell::new(HashMap::new()),
         }
     }
 
-    pub fn query<CB: ReturnCallback>(
-        &mut self,
-        callback: CB,
-    ) -> Result<ResultSummary<CB>, String> {
+    pub fn query(&mut self) -> Result<ResultSummary, String> {
         let labels_count = self.g.borrow().get_labels_count();
         let start = Instant::now();
         let idx = self.plan.root().idx();
-        for v in self.run(&idx)? {
-            let v = v?;
-            callback.return_value(self.g, v, &self.return_names);
+        let mut result = vec![];
+        for env in self.run(&idx)? {
+            let env = env?;
+            result.push(
+                self.return_names
+                    .iter()
+                    .map(|v| env.get(v).unwrap())
+                    .collect::<Vec<RcValue>>(),
+            );
         }
         let run_duration = start.elapsed();
 
-        let stats = self.stats.borrow();
+        self.stats.borrow_mut().labels_added = self.g.borrow().get_labels_count() - labels_count;
         Ok(ResultSummary {
-            callback,
             run_duration,
-            labels_added: self.g.borrow().get_labels_count() - labels_count,
-            labels_removed: 0,
-            nodes_created: stats.nodes_created,
-            relationships_created: stats.relationships_created,
-            nodes_deleted: stats.nodes_deleted,
-            relationships_deleted: stats.relationships_deleted,
-            properties_set: stats.properties_set,
-            properties_removed: stats.properties_removed,
+            stats: self.stats.take(),
             return_names: self
                 .return_names
                 .iter()
                 .map(|v| String::from(v.name.as_ref().unwrap().as_str()))
                 .collect(),
+            result,
         })
     }
 

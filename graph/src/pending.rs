@@ -8,7 +8,7 @@ use ordermap::{OrderMap, OrderSet};
 
 use crate::{
     graph::{Graph, NodeId, RelationshipId},
-    runtime::Stats,
+    runtime::QueryStatistics,
     value::{RcValue, Value},
 };
 
@@ -218,7 +218,7 @@ impl Pending {
     pub fn commit(
         &mut self,
         g: &RefCell<Graph>,
-        stats: &RefCell<Stats>,
+        stats: &RefCell<QueryStatistics>,
     ) {
         if !self.created_nodes.is_empty() {
             stats.borrow_mut().nodes_created += self.created_nodes.len();
