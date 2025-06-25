@@ -5,7 +5,7 @@
 #![allow(clippy::cast_possible_truncation)]
 
 use crate::runtime::Runtime;
-use crate::value::{ListValue, RcValue, Value};
+use crate::value::{ListItem, RcValue, Value};
 use rand::Rng;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display};
@@ -663,7 +663,7 @@ pub fn init_functions() -> Result<(), Functions> {
         collect,
         false,
         vec![Type::Any],
-        FnType::Aggregation(RcValue::list_values(vec![]), None),
+        FnType::Aggregation(RcValue::list(vec![]), None),
     );
     funcs.add(
         "count",
@@ -699,10 +699,10 @@ pub fn init_functions() -> Result<(), Functions> {
         false,
         vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
         FnType::Aggregation(
-            RcValue::list_values(vec![
-                RcValue::float(0.0),
-                RcValue::int(0),
-                RcValue::bool(false),
+            RcValue::list(vec![
+                ListItem::Float(0.0),
+                ListItem::Int(0),
+                ListItem::Bool(false),
             ]),
             Some(Box::new(finalize_avg)),
         ),
@@ -837,8 +837,11 @@ fn labels(
     match args.into_iter().next().as_deref() {
         Some(Value::Node(id)) => {
             let labels = runtime.get_node_labels(*id);
-            Ok(RcValue::list_values(
-                labels.into_iter().map(RcValue::string).collect(),
+            Ok(RcValue::list(
+                labels
+                    .into_iter()
+                    .map(|l| ListItem::Rc(RcValue::string(l)))
+                    .collect(),
             ))
         }
         Some(Value::Null) => Ok(RcValue::null()),
@@ -877,21 +880,14 @@ fn collect(
 ) -> Result<RcValue, String> {
     let mut iter = args.into_iter();
     match (iter.next(), iter.next().as_deref()) {
-        (Some(a), Some(Value::Null)) => Ok(RcValue::list_values(vec![a])),
+        (Some(a), Some(Value::Null)) => Ok(RcValue::list(vec![ListItem::Rc(a)])),
         (Some(a), Some(Value::List(l))) => {
+            let mut l = l.clone();
             if *a == Value::Null {
-                match l {
-                    ListValue::Values(l) => {
-                        return Ok(RcValue::list_values(l.clone()));
-                    }
-                    ListValue::Ints(l) => {
-                        return Ok(RcValue::list_ints(l.clone()));
-                    }
-                }
+                return Ok(RcValue::list(l));
             }
-            let mut l = l.iter().collect::<Vec<_>>();
-            l.push(a);
-            Ok(RcValue::list_values(l))
+            l.push(ListItem::Rc(a));
+            Ok(RcValue::list(l))
         }
 
         _ => unreachable!(),
@@ -986,8 +982,8 @@ fn avg(
         (val, Value::List(vec)) => {
             let val = val.get_numeric();
             // Extract existing sum and count
-            let (Value::Float(sum), Value::Int(count), Value::Bool(had_overflow)) =
-                (&*vec.get(0), &*vec.get(1), &*vec.get(2))
+            let (ListItem::Float(sum), ListItem::Int(count), ListItem::Bool(had_overflow)) =
+                (&vec[0], &vec[1], &vec[2])
             else {
                 unreachable!("avg accumulator should be [sum, count, overflow]");
             };
@@ -1013,10 +1009,10 @@ fn avg(
                 }
             };
 
-            Ok(RcValue::list_values(vec![
-                RcValue::float(sum),
-                RcValue::int(count),
-                RcValue::bool(overflow),
+            Ok(RcValue::list(vec![
+                ListItem::Float(sum),
+                ListItem::Int(count),
+                ListItem::Bool(overflow),
             ]))
         }
 
@@ -1035,8 +1031,8 @@ fn finalize_avg(value: RcValue) -> RcValue {
     let Value::List(vec) = &*value else {
         unreachable!("finalize_avg expects a list");
     };
-    let (Value::Float(sum), Value::Int(count), Value::Bool(overflow)) =
-        (&*vec.get(0), &*vec.get(1), &*vec.get(2))
+    let (ListItem::Float(sum), ListItem::Int(count), ListItem::Bool(overflow)) =
+        (&vec[0], &vec[1], &vec[2])
     else {
         unreachable!("avg function should have [sum, count, overflow] format");
     };
@@ -1126,7 +1122,7 @@ fn head(
             if v.is_empty() {
                 Ok(RcValue::null())
             } else {
-                Ok(v.get(0))
+                Ok(v[0].to_rcvalue())
             }
         }
         Some(Value::Null) => Ok(RcValue::null()),
@@ -1140,7 +1136,9 @@ fn last(
     args: Vec<RcValue>,
 ) -> Result<RcValue, String> {
     match args.into_iter().next().as_deref() {
-        Some(Value::List(v)) => Ok(v.last()),
+        Some(Value::List(v)) => Ok(v
+            .last()
+            .map_or_else(RcValue::null, super::value::ListItem::to_rcvalue)),
         Some(Value::Null) => Ok(RcValue::null()),
 
         _ => unreachable!(),
@@ -1154,9 +1152,9 @@ fn tail(
     match args.into_iter().next().as_deref() {
         Some(Value::List(v)) => {
             if v.is_empty() {
-                Ok(RcValue::list_values(vec![]))
+                Ok(RcValue::list(vec![]))
             } else {
-                Ok(RcValue::list_values(v.get_slice(1, v.len())))
+                Ok(RcValue::list(v[1..].to_vec()))
             }
         }
         Some(Value::Null) => Ok(RcValue::null()),
@@ -1170,7 +1168,11 @@ fn reverse(
     args: Vec<RcValue>,
 ) -> Result<RcValue, String> {
     match args.into_iter().next().as_deref() {
-        Some(Value::List(v)) => Ok(RcValue::list(v.reverse())),
+        Some(Value::List(v)) => {
+            let mut v = v.clone();
+            v.reverse();
+            Ok(RcValue::list(v))
+        }
         Some(Value::String(s)) => Ok(RcValue::string(Rc::new(s.chars().rev().collect()))),
         Some(Value::Null) => Ok(RcValue::null()),
 
@@ -1236,22 +1238,22 @@ fn split(
     match (iter.next().as_deref(), iter.next().as_deref()) {
         (Some(Value::String(string)), Some(Value::String(delimiter))) => {
             if string.is_empty() {
-                Ok(RcValue::list_values(vec![RcValue::string(Rc::new(
+                Ok(RcValue::list(vec![ListItem::Rc(RcValue::string(Rc::new(
                     String::new(),
-                ))]))
+                )))]))
             } else if delimiter.is_empty() {
                 // split string to characters
                 let parts = string
                     .chars()
-                    .map(|c| RcValue::string(Rc::new(String::from(c))))
+                    .map(|c| ListItem::Rc(RcValue::string(Rc::new(String::from(c)))))
                     .collect();
-                Ok(RcValue::list_values(parts))
+                Ok(RcValue::list(parts))
             } else {
                 let parts = string
                     .split(delimiter.as_str())
-                    .map(|s| RcValue::string(Rc::new(String::from(s))))
+                    .map(|s| ListItem::Rc(RcValue::string(Rc::new(String::from(s)))))
                     .collect();
-                Ok(RcValue::list_values(parts))
+                Ok(RcValue::list(parts))
             }
         }
         (Some(Value::Null), Some(_)) | (Some(_), Some(Value::Null)) => Ok(RcValue::null()),
@@ -1368,15 +1370,15 @@ fn string_join(
     _: &Runtime,
     args: Vec<RcValue>,
 ) -> Result<RcValue, String> {
-    fn to_string_vec(vec: &ListValue) -> Result<Vec<Rc<String>>, String> {
+    fn to_string_vec(vec: &[ListItem]) -> Result<Vec<Rc<String>>, String> {
         vec.iter()
             .map(|item| {
-                if let Value::String(s) = &*item {
+                if let Value::String(s) = &*item.to_rcvalue() {
                     Ok(s.clone())
                 } else {
                     Err(format!(
                         "Type mismatch: expected String but was {}",
-                        item.name()
+                        item.to_rcvalue().name()
                     ))
                 }
             })
@@ -1432,19 +1434,18 @@ fn string_match_reg_ex(
                     for caps in re.captures_iter(text.as_str()) {
                         for i in 0..caps.len() {
                             if let Some(m) = caps.get(i) {
-                                all_matches
-                                    .push(RcValue::string(Rc::new(String::from(m.as_str()))));
+                                all_matches.push(ListItem::Rc(RcValue::string(Rc::new(
+                                    String::from(m.as_str()),
+                                ))));
                             }
                         }
                     }
-                    Ok(RcValue::list_values(all_matches))
+                    Ok(RcValue::list(all_matches))
                 }
                 Err(e) => Err(format!("Invalid regex, {e}")),
             }
         }
-        (Some(Value::Null), Some(_)) | (Some(_), Some(Value::Null)) => {
-            Ok(RcValue::list_values(vec![]))
-        }
+        (Some(Value::Null), Some(_)) | (Some(_), Some(Value::Null)) => Ok(RcValue::list(vec![])),
 
         _ => unreachable!(),
     }
@@ -1670,7 +1671,7 @@ fn range(
                 ));
             }
             if (start > end && step > &0) || (start < end && step < &0) {
-                return Ok(RcValue::list_values(vec![]));
+                return Ok(RcValue::list(vec![]));
             }
             let start = *start;
             let end = *end;
@@ -1680,12 +1681,19 @@ fn range(
                 return Err(String::from("Range too large"));
             }
             if step > 0 {
-                return Ok(RcValue::list_ints(
-                    (start..=end).step_by(step as usize).collect(),
+                return Ok(RcValue::list(
+                    (start..=end)
+                        .step_by(step as usize)
+                        .map(ListItem::Int)
+                        .collect(),
                 ));
             }
-            Ok(RcValue::list_ints(
-                (end..=start).rev().step_by((-step) as usize).collect(),
+            Ok(RcValue::list(
+                (end..=start)
+                    .rev()
+                    .step_by((-step) as usize)
+                    .map(ListItem::Int)
+                    .collect(),
             ))
         }
 
@@ -1712,21 +1720,23 @@ fn keys(
     args: Vec<RcValue>,
 ) -> Result<RcValue, String> {
     match args.into_iter().next().as_deref() {
-        Some(Value::Map(map)) => Ok(RcValue::list_values(
-            map.keys().map(|k| RcValue::string(k.clone())).collect(),
+        Some(Value::Map(map)) => Ok(RcValue::list(
+            map.keys()
+                .map(|k| ListItem::Rc(RcValue::string(k.clone())))
+                .collect(),
         )),
-        Some(Value::Node(id)) => Ok(RcValue::list_values(
+        Some(Value::Node(id)) => Ok(RcValue::list(
             runtime
                 .get_node_attrs(*id)
                 .keys()
-                .map(|k| RcValue::string(k.clone()))
+                .map(|k| ListItem::Rc(RcValue::string(k.clone())))
                 .collect::<Vec<_>>(),
         )),
-        Some(Value::Relationship(id, _, _)) => Ok(RcValue::list_values(
+        Some(Value::Relationship(id, _, _)) => Ok(RcValue::list(
             runtime
                 .get_relationship_attrs(*id)
                 .keys()
-                .map(|k| RcValue::string(k.clone()))
+                .map(|k| ListItem::Rc(RcValue::string(k.clone())))
                 .collect::<Vec<_>>(),
         )),
         Some(Value::Null) => Ok(RcValue::null()),
@@ -1780,12 +1790,12 @@ fn nodes(
 ) -> Result<RcValue, String> {
     let mut iter = args.into_iter();
     match iter.next().as_deref() {
-        Some(Value::Path(values)) => Ok(RcValue::list_values(
+        Some(Value::Path(values)) => Ok(RcValue::list(
             values
                 .iter()
                 .filter_map(|v| {
                     if let Value::Node(id) = &**v {
-                        Some(RcValue::node(*id))
+                        Some(ListItem::Rc(RcValue::node(*id)))
                     } else {
                         None
                     }
@@ -1803,12 +1813,12 @@ fn relationships(
 ) -> Result<RcValue, String> {
     let mut iter = args.into_iter();
     match iter.next().as_deref() {
-        Some(Value::Path(values)) => Ok(RcValue::list_values(
+        Some(Value::Path(values)) => Ok(RcValue::list(
             values
                 .iter()
                 .filter_map(|v| {
                     if let Value::Relationship(id, src, dest) = &**v {
-                        Some(RcValue::relationship(*id, *src, *dest))
+                        Some(ListItem::Rc(RcValue::relationship(*id, *src, *dest)))
                     } else {
                         None
                     }
@@ -1892,7 +1902,7 @@ fn internal_node_has_labels(
         (Some(Value::Node(id)), Some(Value::List(required_labels))) => {
             let labels = runtime.get_node_labels(*id);
             let all_labels_present = required_labels.iter().all(|label| {
-                if let Value::String(label_str) = &*label {
+                if let Value::String(label_str) = &*label.to_rcvalue() {
                     labels.contains(label_str)
                 } else {
                     false
@@ -1933,7 +1943,7 @@ fn internal_case(
     match (iter.next().as_deref(), iter.next(), iter.next()) {
         (Some(Value::List(alts)), Some(else_), None) => {
             for pair in alts.chunks(2) {
-                match (&*pair[0], &pair[1]) {
+                match (&*pair[0].to_rcvalue(), &pair[1].to_rcvalue()) {
                     (Value::Bool(false) | Value::Null, _) => {}
                     (_, result) => return Ok(result.clone()),
                 }
@@ -1945,9 +1955,9 @@ fn internal_case(
                 unreachable!()
             };
             for pair in alts.chunks(2) {
-                if let [condition, result] = pair.as_slice() {
-                    if &**condition == value {
-                        return Ok(result.clone());
+                if let [condition, result] = pair {
+                    if &*condition.to_rcvalue() == value {
+                        return Ok(result.to_rcvalue());
                     }
                 }
             }
@@ -1962,11 +1972,11 @@ fn db_labels(
     runtime: &Runtime,
     _args: Vec<RcValue>,
 ) -> Result<RcValue, String> {
-    Ok(RcValue::list_values(
+    Ok(RcValue::list(
         runtime
             .get_labels()
             .into_iter()
-            .map(RcValue::string)
+            .map(|l| ListItem::Rc(RcValue::string(l)))
             .collect(),
     ))
 }
@@ -1975,11 +1985,11 @@ fn db_types(
     runtime: &Runtime,
     _args: Vec<RcValue>,
 ) -> Result<RcValue, String> {
-    Ok(RcValue::list_values(
+    Ok(RcValue::list(
         runtime
             .get_types()
             .into_iter()
-            .map(RcValue::string)
+            .map(|l| ListItem::Rc(RcValue::string(l)))
             .collect(),
     ))
 }
@@ -1988,11 +1998,11 @@ fn db_properties(
     runtime: &Runtime,
     _args: Vec<RcValue>,
 ) -> Result<RcValue, String> {
-    Ok(RcValue::list_values(
+    Ok(RcValue::list(
         runtime
             .get_attrs()
             .into_iter()
-            .map(RcValue::string)
+            .map(|l| ListItem::Rc(RcValue::string(l)))
             .collect(),
     ))
 }

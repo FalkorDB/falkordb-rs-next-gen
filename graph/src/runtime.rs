@@ -8,7 +8,7 @@ use crate::functions::{FnType, Functions, Type, get_functions};
 use crate::graph::{NodeId, RelationshipId};
 use crate::iter::{Aggregate, LazyReplace, TryFlatMap, TryMap};
 use crate::pending::Pending;
-use crate::value::{DisjointOrNull, Env, RcValue, ValuesDeduper};
+use crate::value::{CompareValue, DisjointOrNull, Env, ListItem, RcValue, ValuesDeduper};
 use crate::{ast::ExprIR, graph::Graph, planner::IR, value::Contains, value::Value};
 use once_cell::unsync::Lazy;
 use ordermap::{OrderMap, OrderSet};
@@ -211,9 +211,11 @@ impl<'a> Runtime<'a> {
                 || Err(format!("Parameter {x} not found")),
                 |v| Ok(v.clone()),
             ),
-            ExprIR::List => Ok(RcValue::list_values(
+            ExprIR::List => Ok(RcValue::list(
                 ir.children()
-                    .map(|ir| self.run_expr(ir, env, agg_group_key))
+                    .map(|ir| {
+                        Ok::<_, String>(ListItem::Rc(self.run_expr(ir, env, agg_group_key)?))
+                    })
                     .collect::<Result<Vec<_>, _>>()?,
             )),
             ExprIR::Length => match &*(self.run_expr(ir.child(0), env, agg_group_key)?) {
@@ -226,7 +228,7 @@ impl<'a> Runtime<'a> {
                 match (&*arr, &*i) {
                     (Value::List(values), Value::Int(i)) => {
                         if *i >= 0 && *i < values.len() as _ {
-                            Ok(values.get(*i as usize))
+                            Ok(values[*i as usize].to_rcvalue())
                         } else {
                             Ok(RcValue::null())
                         }
@@ -325,7 +327,7 @@ impl<'a> Runtime<'a> {
             ),
             ExprIR::Lt => match self
                 .run_expr(ir.child(0), env, agg_group_key)?
-                .compare_value(&*(self.run_expr(ir.child(1), env, agg_group_key)?))
+                .compare_value(&self.run_expr(ir.child(1), env, agg_group_key)?)
             {
                 (_, DisjointOrNull::ComparedNull | DisjointOrNull::Disjoint) => Ok(RcValue::null()),
                 (_, DisjointOrNull::NaN) => Ok(RcValue::bool(false)),
@@ -334,7 +336,7 @@ impl<'a> Runtime<'a> {
             },
             ExprIR::Gt => match self
                 .run_expr(ir.child(0), env, agg_group_key)?
-                .compare_value(&*(self.run_expr(ir.child(1), env, agg_group_key)?))
+                .compare_value(&self.run_expr(ir.child(1), env, agg_group_key)?)
             {
                 (_, DisjointOrNull::ComparedNull | DisjointOrNull::Disjoint) => Ok(RcValue::null()),
                 (_, DisjointOrNull::NaN) => Ok(RcValue::bool(false)),
@@ -343,7 +345,7 @@ impl<'a> Runtime<'a> {
             },
             ExprIR::Le => match self
                 .run_expr(ir.child(0), env, agg_group_key)?
-                .compare_value(&*(self.run_expr(ir.child(1), env, agg_group_key)?))
+                .compare_value(&self.run_expr(ir.child(1), env, agg_group_key)?)
             {
                 (_, DisjointOrNull::ComparedNull | DisjointOrNull::Disjoint) => Ok(RcValue::null()),
                 (_, DisjointOrNull::NaN) => Ok(RcValue::bool(false)),
@@ -352,7 +354,7 @@ impl<'a> Runtime<'a> {
             },
             ExprIR::Ge => match self
                 .run_expr(ir.child(0), env, agg_group_key)?
-                .compare_value(&*(self.run_expr(ir.child(1), env, agg_group_key)?))
+                .compare_value(&self.run_expr(ir.child(1), env, agg_group_key)?)
             {
                 (_, DisjointOrNull::ComparedNull | DisjointOrNull::Disjoint) => Ok(RcValue::null()),
                 (_, DisjointOrNull::NaN) => Ok(RcValue::bool(false)),
@@ -408,9 +410,11 @@ impl<'a> Runtime<'a> {
                     .entry(format!("{:?}_{}", ir.idx(), group_id))
                     .or_default();
                 if value_deduper.is_seen(&values) {
-                    return Ok(RcValue::list_values(vec![RcValue::null()]));
+                    return Ok(RcValue::list(vec![ListItem::Rc(RcValue::null())]));
                 }
-                Ok(RcValue::list_values(values))
+                Ok(RcValue::list(
+                    values.into_iter().map(ListItem::Rc).collect(),
+                ))
             }
             ExprIR::FuncInvocation(func) => {
                 if agg_group_key.is_none() {
@@ -435,7 +439,10 @@ impl<'a> Runtime<'a> {
                 if ir.num_children() == 2 && matches!(ir.child(0).data(), ExprIR::Distinct) {
                     let arg = &args[0];
                     if let Value::List(values) = &**arg {
-                        let mut values: Vec<RcValue> = values.iter().collect();
+                        let mut values: Vec<RcValue> = values
+                            .iter()
+                            .map(super::value::ListItem::to_rcvalue)
+                            .collect();
                         args.remove(0);
                         values.append(&mut args);
                         args = values;
@@ -475,8 +482,8 @@ impl<'a> Runtime<'a> {
                         let mut t = 0;
                         let mut f = 0;
                         let mut n = 0;
-                        for value in values.iter() {
-                            env.insert(var, value.clone());
+                        for value in values {
+                            env.insert(var, value.to_rcvalue());
 
                             match &*self.run_expr(ir.child(1), &env, agg_group_key)? {
                                 Value::Bool(true) => t += 1,
@@ -509,10 +516,14 @@ impl<'a> Runtime<'a> {
                         Value::Bool(true) => {}
                         _ => continue,
                     }
-                    acc.push(self.run_expr(ir.child(2), &env, agg_group_key)?);
+                    acc.push(ListItem::Rc(self.run_expr(
+                        ir.child(2),
+                        &env,
+                        agg_group_key,
+                    )?));
                 }
 
-                Ok(RcValue::list_values(acc))
+                Ok(RcValue::list(acc))
             }
         }
     }
@@ -564,7 +575,12 @@ impl<'a> Runtime<'a> {
             _ => {
                 let res = self.run_expr(ir, env, None)?;
                 match &*res {
-                    Value::List(arr) => Ok(Box::new(arr.iter().collect::<Vec<_>>().into_iter())),
+                    Value::List(arr) => Ok(Box::new(
+                        arr.iter()
+                            .map(super::value::ListItem::to_rcvalue)
+                            .collect::<Vec<RcValue>>()
+                            .into_iter(),
+                    )),
                     _ => Ok(Box::new(once(res))),
                 }
             }
@@ -666,20 +682,18 @@ impl<'a> Runtime<'a> {
                 }
                 let res = (func.func)(self, args)?;
                 match &*res {
-                    Value::List(arr) => Ok(Box::new(
-                        arr.iter().collect::<Vec<_>>().into_iter().map(|v| {
-                            let mut env = Env::default();
-                            env.insert(
-                                &Variable {
-                                    name: Some(name.clone()),
-                                    id: 0,
-                                    ty: Type::Any,
-                                },
-                                v,
-                            );
-                            Ok(env)
-                        }),
-                    )),
+                    Value::List(arr) => Ok(Box::new(arr.clone().into_iter().map(|v| {
+                        let mut env = Env::default();
+                        env.insert(
+                            &Variable {
+                                name: Some(name.clone()),
+                                id: 0,
+                                ty: Type::Any,
+                            },
+                            v.to_rcvalue(),
+                        );
+                        Ok(env)
+                    }))),
                     _ => Err(format!("Function '{name}' must return a list")),
                 }
             }
@@ -1589,9 +1603,9 @@ pub fn evaluate_param(expr: &DynNode<ExprIR>) -> Result<RcValue, String> {
         ExprIR::Integer(x) => Ok(RcValue::int(*x)),
         ExprIR::Float(x) => Ok(RcValue::float(*x)),
         ExprIR::String(x) => Ok(RcValue::string(x.clone())),
-        ExprIR::List => Ok(RcValue::list_values(
+        ExprIR::List => Ok(RcValue::list(
             expr.children()
-                .map(|c| evaluate_param(&c))
+                .map(|c| Ok::<_, String>(ListItem::Rc(evaluate_param(&c)?)))
                 .collect::<Result<Vec<_>, _>>()?,
         )),
         ExprIR::Map => Ok(RcValue::map(
@@ -1634,11 +1648,9 @@ fn get_elements(
                 end = end.min(values.len() as i64);
             }
             if start > end {
-                return Ok(RcValue::list_values(vec![]));
+                return Ok(RcValue::list(vec![]));
             }
-            Ok(RcValue::list_values(
-                values.get_slice(start as usize, end as usize),
-            ))
+            Ok(RcValue::list(values[start as usize..end as usize].to_vec()))
         }
         (_, Value::Null, _) | (_, _, Value::Null) => Ok(RcValue::null()),
         _ => Err(String::from("Invalid array range parameters.")),

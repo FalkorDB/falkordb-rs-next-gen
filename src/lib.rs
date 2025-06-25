@@ -3,7 +3,7 @@
 use graph::functions::init_functions;
 use graph::graph::Plan;
 use graph::runtime::{QueryStatistics, ResultSummary, Runtime, evaluate_param};
-use graph::value::{Env, ListValue, RcValue};
+use graph::value::{ListItem, RcValue};
 use graph::{cypher::Parser, graph::Graph, matrix::init, planner::Planner, value::Value};
 #[cfg(feature = "zipkin")]
 use opentelemetry::global;
@@ -126,18 +126,33 @@ fn reply_compact_value(
         Value::List(values) => {
             raw::reply_with_long_long(ctx.ctx, 6);
             raw::reply_with_array(ctx.ctx, values.len() as _);
-            match values {
-                ListValue::Values(values) => {
-                    for v in values {
-                        raw::reply_with_array(ctx.ctx, 2);
+            for v in values {
+                raw::reply_with_array(ctx.ctx, 2);
+                match v {
+                    ListItem::Rc(v) => {
                         reply_compact_value(ctx, g, v.clone());
                     }
-                }
-                ListValue::Ints(values) => {
-                    for v in values {
-                        raw::reply_with_array(ctx.ctx, 2);
+                    ListItem::Bool(x) => {
+                        raw::reply_with_long_long(ctx.ctx, 4);
+                        let str = if *x { "true" } else { "false" };
+                        raw::reply_with_string_buffer(
+                            ctx.ctx,
+                            str.as_ptr().cast::<c_char>(),
+                            str.len(),
+                        );
+                    }
+                    ListItem::Int(x) => {
                         raw::reply_with_long_long(ctx.ctx, 3);
-                        raw::reply_with_long_long(ctx.ctx, *v as _);
+                        raw::reply_with_long_long(ctx.ctx, *x as _);
+                    }
+                    ListItem::Float(x) => {
+                        raw::reply_with_long_long(ctx.ctx, 5);
+                        let str = format!("{x:.14e}");
+                        raw::reply_with_string_buffer(
+                            ctx.ctx,
+                            str.as_ptr().cast::<c_char>(),
+                            str.len(),
+                        );
                     }
                 }
             }
@@ -264,15 +279,29 @@ fn reply_verbose_value(
         }
         Value::List(values) => {
             raw::reply_with_array(ctx.ctx, values.len() as _);
-            match values {
-                ListValue::Values(values) => {
-                    for v in values {
+            for v in values {
+                match v {
+                    ListItem::Rc(v) => {
                         reply_verbose_value(ctx, g, v.clone());
                     }
-                }
-                ListValue::Ints(values) => {
-                    for v in values {
-                        raw::reply_with_long_long(ctx.ctx, *v as _);
+                    ListItem::Bool(x) => {
+                        let str = if *x { "true" } else { "false" };
+                        raw::reply_with_string_buffer(
+                            ctx.ctx,
+                            str.as_ptr().cast::<c_char>(),
+                            str.len(),
+                        );
+                    }
+                    ListItem::Int(x) => {
+                        raw::reply_with_long_long(ctx.ctx, *x as _);
+                    }
+                    ListItem::Float(x) => {
+                        let str = format!("{x:.14e}");
+                        raw::reply_with_string_buffer(
+                            ctx.ctx,
+                            str.as_ptr().cast::<c_char>(),
+                            str.len(),
+                        );
                     }
                 }
             }
@@ -507,7 +536,7 @@ fn graph_query(
             reply_verbose(ctx, &graph, result);
         }
         key.set_value(&GRAPH_TYPE, graph)?;
-    };
+    }
 
     RedisResult::Ok(RedisValue::NoReply)
 }
