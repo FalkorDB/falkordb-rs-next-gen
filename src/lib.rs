@@ -3,8 +3,7 @@
 use graph::ast::Variable;
 use graph::functions::init_functions;
 use graph::graph::Plan;
-use graph::runtime::{ResultSummary, ReturnCallback, Runtime, evaluate_param};
-use graph::value::{Env, RcValue};
+use graph::runtime::{QueryStatistics, ResultSummary, ReturnNames, Runtime, evaluate_param};
 use graph::{cypher::Parser, graph::Graph, matrix::init, planner::Planner, value::Value};
 #[cfg(feature = "zipkin")]
 use opentelemetry::global;
@@ -16,21 +15,21 @@ use opentelemetry_sdk::trace::{BatchConfigBuilder, BatchSpanProcessor};
 use opentelemetry_sdk::{Resource, trace::SdkTracerProvider};
 #[cfg(feature = "zipkin")]
 use opentelemetry_zipkin::ZipkinExporter;
-use redis_module::RedisModuleIO;
 use redis_module::{
     Context, NextArg, REDISMODULE_TYPE_METHOD_VERSION, RedisError, RedisModule_Alloc,
     RedisModule_Calloc, RedisModule_Free, RedisModule_Realloc, RedisModuleTypeMethods, RedisResult,
     RedisString, RedisValue, Status, native_types::RedisType, redis_module,
 };
+use redis_module::{RedisModuleIO, raw};
 use std::cell::RefCell;
 use std::collections::HashMap;
 #[cfg(feature = "fuzz")]
 use std::fs::File;
 #[cfg(feature = "fuzz")]
 use std::io::Write;
-use std::marker::PhantomData;
-use std::os::raw::c_void;
+use std::os::raw::{c_char, c_void};
 use std::ptr::null_mut;
+use std::rc::Rc;
 #[cfg(feature = "zipkin")]
 use tracing_opentelemetry::OpenTelemetryLayer;
 #[cfg(feature = "zipkin")]
@@ -97,243 +96,253 @@ unsafe extern "C" fn my_free(value: *mut c_void) {
 }
 
 #[allow(clippy::too_many_lines)]
-fn compact_value_to_redis_value(
+fn reply_compact_value(
+    ctx: &Context,
     g: &RefCell<Graph>,
-    r: &RcValue,
-) -> RedisValue {
-    match &**r {
-        Value::Null => RedisValue::Array(vec![RedisValue::Integer(1), RedisValue::Null]),
-        Value::Bool(x) => RedisValue::Array(vec![
-            RedisValue::Integer(4),
-            RedisValue::SimpleStringStatic(if *x { "true" } else { "false" }),
-        ]),
-        Value::Int(x) => RedisValue::Array(vec![RedisValue::Integer(3), RedisValue::Integer(*x)]),
-        Value::Float(x) => RedisValue::Array(vec![
-            RedisValue::Integer(5),
-            RedisValue::SimpleString(format!("{x:.14e}")),
-        ]),
-        Value::String(x) => RedisValue::Array(vec![
-            RedisValue::Integer(2),
-            RedisValue::BulkString(x.to_string()),
-        ]),
-        Value::List(values) => RedisValue::Array(vec![
-            RedisValue::Integer(6),
-            RedisValue::Array(
-                values
-                    .iter()
-                    .map(|v| compact_value_to_redis_value(g, v))
-                    .collect(),
-            ),
-        ]),
-        Value::Map(map) => {
-            let mut vec = vec![];
-            for (key, value) in map {
-                vec.push(RedisValue::BulkString(key.to_string()));
-                vec.push(compact_value_to_redis_value(g, value));
+    r: Value,
+) {
+    match r {
+        Value::Null => {
+            raw::reply_with_long_long(ctx.ctx, 1);
+            raw::reply_with_null(ctx.ctx);
+        }
+        Value::Bool(x) => {
+            raw::reply_with_long_long(ctx.ctx, 4);
+            let str = if x { "true" } else { "false" };
+            raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
+        }
+        Value::Int(x) => {
+            raw::reply_with_long_long(ctx.ctx, 3);
+            raw::reply_with_long_long(ctx.ctx, x as _);
+        }
+        Value::Float(x) => {
+            raw::reply_with_long_long(ctx.ctx, 5);
+            let str = format!("{x:.14e}");
+            raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
+        }
+        Value::String(x) => {
+            raw::reply_with_long_long(ctx.ctx, 2);
+            raw::reply_with_string_buffer(ctx.ctx, x.as_str().as_ptr().cast::<c_char>(), x.len());
+        }
+        Value::List(values) => {
+            raw::reply_with_long_long(ctx.ctx, 6);
+            raw::reply_with_array(ctx.ctx, values.len() as _);
+            for v in values {
+                raw::reply_with_array(ctx.ctx, 2);
+                reply_compact_value(ctx, g, v.clone());
             }
-            RedisValue::Array(vec![RedisValue::Integer(10), RedisValue::Array(vec)])
+        }
+        Value::Map(map) => {
+            raw::reply_with_long_long(ctx.ctx, 10);
+            raw::reply_with_array(ctx.ctx, (map.len() * 2) as _);
+
+            for (key, value) in map.iter() {
+                raw::reply_with_string_buffer(
+                    ctx.ctx,
+                    key.as_str().as_ptr().cast::<c_char>(),
+                    key.len(),
+                );
+                raw::reply_with_array(ctx.ctx, 2);
+                reply_compact_value(ctx, g, value.clone());
+            }
         }
         Value::Node(id) => {
-            let mut props = Vec::new();
-            for (key, value) in g.borrow().get_node_attrs(*id) {
-                let mut prop = Vec::new();
-                prop.push(RedisValue::Integer(usize::from(*key) as _));
-                if let RedisValue::Array(mut v) = compact_value_to_redis_value(g, value) {
-                    prop.append(&mut v);
-                }
-                props.push(RedisValue::Array(prop));
+            raw::reply_with_long_long(ctx.ctx, 8);
+            raw::reply_with_array(ctx.ctx, 3);
+            raw::reply_with_long_long(ctx.ctx, u64::from(id) as _);
+            let labels = g.borrow().get_node_label_ids(id).collect::<Vec<_>>();
+            raw::reply_with_array(ctx.ctx, labels.len() as _);
+            for label in labels {
+                raw::reply_with_long_long(ctx.ctx, usize::from(label) as _);
             }
-            RedisValue::Array(vec![
-                RedisValue::Integer(8),
-                RedisValue::Array(vec![
-                    RedisValue::Integer(u64::from(*id) as _),
-                    RedisValue::Array(
-                        g.borrow()
-                            .get_node_label_ids(*id)
-                            .map(|l| RedisValue::Integer(usize::from(l) as _))
-                            .collect(),
-                    ),
-                    RedisValue::Array(props),
-                ]),
-            ])
+            let bg = g.borrow();
+            let props = bg.get_node_attrs(id);
+            raw::reply_with_array(ctx.ctx, props.len() as _);
+            for (key, value) in props {
+                raw::reply_with_array(ctx.ctx, 3);
+                raw::reply_with_long_long(ctx.ctx, usize::from(*key) as _);
+                reply_compact_value(ctx, g, value.clone());
+            }
         }
         Value::Relationship(id, from, to) => {
-            let mut props = Vec::new();
-            for (key, value) in g.borrow().get_relationship_attrs(*id) {
-                let mut prop = Vec::new();
-                prop.push(RedisValue::Integer(usize::from(*key) as _));
-                if let RedisValue::Array(mut v) = compact_value_to_redis_value(g, value) {
-                    prop.append(&mut v);
-                }
-                props.push(RedisValue::Array(prop));
+            raw::reply_with_long_long(ctx.ctx, 7);
+            raw::reply_with_array(ctx.ctx, 5);
+            raw::reply_with_long_long(ctx.ctx, u64::from(id) as _);
+            raw::reply_with_long_long(
+                ctx.ctx,
+                usize::from(g.borrow().get_relationship_type_id(id)) as _,
+            );
+            raw::reply_with_long_long(ctx.ctx, u64::from(from) as _);
+            raw::reply_with_long_long(ctx.ctx, u64::from(to) as _);
+            let bg = g.borrow();
+            let props = bg.get_relationship_attrs(id);
+            raw::reply_with_array(ctx.ctx, props.len() as _);
+            for (key, value) in props {
+                raw::reply_with_array(ctx.ctx, 3);
+                raw::reply_with_long_long(ctx.ctx, usize::from(*key) as _);
+                reply_compact_value(ctx, g, value.clone());
             }
-            RedisValue::Array(vec![
-                RedisValue::Integer(7),
-                RedisValue::Array(vec![
-                    RedisValue::Integer(u64::from(*id) as _),
-                    RedisValue::Integer(usize::from(g.borrow().get_relationship_type_id(*id)) as _),
-                    RedisValue::Integer(u64::from(*from) as _),
-                    RedisValue::Integer(u64::from(*to) as _),
-                    RedisValue::Array(props),
-                ]),
-            ])
         }
         Value::Path(path) => {
-            let mut nodes = Vec::new();
-            let mut rels = Vec::new();
-            for node in path {
-                match **node {
-                    Value::Node(_) => nodes.push(compact_value_to_redis_value(g, node)),
-                    Value::Relationship(_, _, _) => {
-                        rels.push(compact_value_to_redis_value(g, node));
-                    }
+            raw::reply_with_long_long(ctx.ctx, 9);
+            raw::reply_with_array(ctx.ctx, 2);
+
+            let mut nodes = 0;
+            let mut rels = 0;
+            for node in &path {
+                match node {
+                    Value::Node(_) => nodes += 1,
+                    Value::Relationship(_, _, _) => rels += 1,
                     _ => unreachable!("Path should only contain nodes and relationships"),
                 }
             }
 
-            RedisValue::Array(vec![
-                RedisValue::Integer(9),
-                RedisValue::Array(vec![
-                    RedisValue::Array(vec![RedisValue::Integer(6), RedisValue::Array(nodes)]),
-                    RedisValue::Array(vec![RedisValue::Integer(6), RedisValue::Array(rels)]),
-                ]),
-            ])
-        }
-    }
-}
+            raw::reply_with_array(ctx.ctx, 2);
+            raw::reply_with_long_long(ctx.ctx, 6);
+            raw::reply_with_array(ctx.ctx, nodes);
+            for node in &path {
+                match node {
+                    Value::Node(_) => {
+                        raw::reply_with_array(ctx.ctx, 2);
+                        reply_compact_value(ctx, g, node.clone());
+                    }
+                    Value::Relationship(_, _, _) => {}
+                    _ => unreachable!("Path should only contain nodes and relationships"),
+                }
+            }
 
-fn verbose_value_to_redis_value(
-    g: &RefCell<Graph>,
-    r: &RcValue,
-) -> RedisValue {
-    match &**r {
-        Value::Null => RedisValue::Null,
-        Value::Bool(x) => RedisValue::Bool(*x),
-        Value::Int(x) => RedisValue::Integer(*x),
-        Value::Float(x) => RedisValue::SimpleString(format!("{x:.14e}")),
-        Value::String(x) => RedisValue::BulkString(x.to_string()),
-        Value::List(values) => RedisValue::Array(
-            values
-                .iter()
-                .map(|v| verbose_value_to_redis_value(g, v))
-                .collect(),
-        ),
-        Value::Map(map) => {
-            let mut vec = vec![];
-            for (key, value) in map {
-                vec.push(RedisValue::BulkString(key.to_string()));
-                vec.push(verbose_value_to_redis_value(g, value));
-            }
-            RedisValue::Array(vec)
-        }
-        Value::Node(id) => {
-            let mut props = Vec::new();
-            for (key, value) in g.borrow().get_node_attrs(*id) {
-                let mut prop = Vec::new();
-                prop.push(RedisValue::Integer(usize::from(*key) as _));
-                if let RedisValue::Array(mut v) = verbose_value_to_redis_value(g, value) {
-                    prop.append(&mut v);
-                }
-                props.push(RedisValue::Array(prop));
-            }
-            RedisValue::Array(vec![
-                RedisValue::Integer(u64::from(*id) as _),
-                RedisValue::Array(
-                    g.borrow()
-                        .get_node_label_ids(*id)
-                        .map(|l| RedisValue::BulkString(g.borrow().get_label_by_id(l).to_string()))
-                        .collect(),
-                ),
-                RedisValue::Array(props),
-            ])
-        }
-        Value::Relationship(id, from, to) => {
-            let mut props = Vec::new();
-            for (key, value) in g.borrow().get_relationship_attrs(*id) {
-                let mut prop = Vec::new();
-                prop.push(RedisValue::Integer(usize::from(*key) as _));
-                if let RedisValue::Array(mut v) = verbose_value_to_redis_value(g, value) {
-                    prop.append(&mut v);
-                }
-                props.push(RedisValue::Array(prop));
-            }
-            RedisValue::Array(vec![
-                RedisValue::Integer(u64::from(*id) as _),
-                RedisValue::Integer(usize::from(g.borrow().get_relationship_type_id(*id)) as _),
-                RedisValue::Integer(u64::from(*from) as _),
-                RedisValue::Integer(u64::from(*to) as _),
-                RedisValue::Array(props),
-            ])
-        }
-        Value::Path(path) => {
-            let mut nodes = Vec::new();
-            let mut rels = Vec::new();
+            raw::reply_with_array(ctx.ctx, 2);
+            raw::reply_with_long_long(ctx.ctx, 6);
+            raw::reply_with_array(ctx.ctx, rels);
             for node in path {
-                match **node {
-                    Value::Node(_) => nodes.push(verbose_value_to_redis_value(g, node)),
+                match node {
+                    Value::Node(_) => {}
                     Value::Relationship(_, _, _) => {
-                        rels.push(verbose_value_to_redis_value(g, node));
+                        raw::reply_with_array(ctx.ctx, 2);
+                        reply_compact_value(ctx, g, node.clone());
                     }
                     _ => unreachable!("Path should only contain nodes and relationships"),
                 }
             }
-            RedisValue::Array(vec![RedisValue::Array(nodes), RedisValue::Array(rels)])
+        }
+        Value::Rc(inner) => {
+            reply_compact_value(ctx, g, (*inner).clone());
         }
     }
 }
 
-struct RedisValuesCollector<T> {
-    res: RefCell<Vec<RedisValue>>,
-    phantom: PhantomData<T>,
-}
-
-pub struct Compact;
-pub struct Verbose;
-
-impl<T> RedisValuesCollector<T> {
-    const fn new() -> Self {
-        Self {
-            res: RefCell::new(Vec::new()),
-            phantom: PhantomData,
+#[allow(clippy::too_many_lines)]
+fn reply_verbose_value(
+    ctx: &Context,
+    g: &RefCell<Graph>,
+    r: Value,
+) {
+    match r {
+        Value::Null => {
+            raw::reply_with_null(ctx.ctx);
         }
-    }
+        Value::Bool(x) => {
+            let str = if x { "true" } else { "false" };
+            raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
+        }
+        Value::Int(x) => {
+            raw::reply_with_long_long(ctx.ctx, x as _);
+        }
+        Value::Float(x) => {
+            let str = format!("{x:.14e}");
+            raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
+        }
+        Value::String(x) => {
+            raw::reply_with_string_buffer(ctx.ctx, x.as_str().as_ptr().cast::<c_char>(), x.len());
+        }
+        Value::List(values) => {
+            raw::reply_with_array(ctx.ctx, values.len() as _);
+            for v in values {
+                reply_verbose_value(ctx, g, v.clone());
+            }
+        }
+        Value::Map(map) => {
+            raw::reply_with_array(ctx.ctx, (map.len() * 2) as _);
 
-    fn take(&self) -> Vec<RedisValue> {
-        std::mem::take(&mut *self.res.borrow_mut())
-    }
-}
+            for (key, value) in map.iter() {
+                raw::reply_with_string_buffer(
+                    ctx.ctx,
+                    key.as_str().as_ptr().cast::<c_char>(),
+                    key.len(),
+                );
+                reply_verbose_value(ctx, g, value.clone());
+            }
+        }
+        Value::Node(id) => {
+            raw::reply_with_array(ctx.ctx, 3);
+            raw::reply_with_long_long(ctx.ctx, u64::from(id) as _);
+            let labels = g.borrow().get_node_label_ids(id).collect::<Vec<_>>();
+            raw::reply_with_array(ctx.ctx, labels.len() as _);
+            for label in labels {
+                let label = g.borrow().get_label_by_id(label);
+                raw::reply_with_string_buffer(
+                    ctx.ctx,
+                    label.as_ptr().cast::<c_char>(),
+                    label.len(),
+                );
+            }
+            let bg = g.borrow();
+            let props = bg.get_node_attrs(id);
+            raw::reply_with_array(ctx.ctx, props.len() as _);
+            for (key, value) in props {
+                raw::reply_with_array(ctx.ctx, 2);
+                let key_name = bg.get_node_attribute_string(*key).unwrap();
+                raw::reply_with_string_buffer(
+                    ctx.ctx,
+                    key_name.as_ptr().cast::<c_char>(),
+                    key_name.len(),
+                );
+                reply_verbose_value(ctx, g, value.clone());
+            }
+        }
+        Value::Relationship(id, from, to) => {
+            raw::reply_with_array(ctx.ctx, 5);
+            raw::reply_with_long_long(ctx.ctx, u64::from(id) as _);
+            let rel_type = g
+                .borrow()
+                .get_type(g.borrow().get_relationship_type_id(id))
+                .unwrap();
+            raw::reply_with_string_buffer(
+                ctx.ctx,
+                rel_type.as_ptr().cast::<c_char>(),
+                rel_type.len(),
+            );
+            raw::reply_with_long_long(ctx.ctx, u64::from(from) as _);
+            raw::reply_with_long_long(ctx.ctx, u64::from(to) as _);
+            let bg = g.borrow();
+            let props = bg.get_relationship_attrs(id);
+            raw::reply_with_array(ctx.ctx, props.len() as _);
+            for (key, value) in props {
+                raw::reply_with_array(ctx.ctx, 2);
+                let key_name = bg.get_relationship_attribute_string(*key).unwrap();
+                raw::reply_with_string_buffer(
+                    ctx.ctx,
+                    key_name.as_ptr().cast::<c_char>(),
+                    key_name.len(),
+                );
+                reply_verbose_value(ctx, g, value.clone());
+            }
+        }
+        Value::Path(path) => {
+            raw::reply_with_array(ctx.ctx, path.len() as _);
 
-impl ReturnCallback for RedisValuesCollector<Compact> {
-    fn return_value(
-        &self,
-        graph: &RefCell<Graph>,
-        env: Env,
-        return_names: &[Variable],
-    ) {
-        self.res.borrow_mut().push(
-            return_names
-                .iter()
-                .map(|v| compact_value_to_redis_value(graph, &env.get(v).unwrap()))
-                .collect::<Vec<RedisValue>>()
-                .into(),
-        );
-    }
-}
-
-impl ReturnCallback for RedisValuesCollector<Verbose> {
-    fn return_value(
-        &self,
-        graph: &RefCell<Graph>,
-        env: Env,
-        return_names: &[Variable],
-    ) {
-        self.res.borrow_mut().push(
-            return_names
-                .iter()
-                .map(|v| verbose_value_to_redis_value(graph, &env.get(v).unwrap()))
-                .collect::<Vec<RedisValue>>()
-                .into(),
-        );
+            for node in path {
+                match node {
+                    Value::Relationship(_, _, _) | Value::Node(_) => {
+                        reply_verbose_value(ctx, g, node.clone());
+                    }
+                    _ => unreachable!("Path should only contain nodes and relationships"),
+                }
+            }
+        }
+        Value::Rc(inner) => {
+            reply_verbose_value(ctx, g, (*inner).clone());
+        }
     }
 }
 
@@ -367,10 +376,12 @@ fn graph_delete(
 
 #[inline]
 fn query_mut(
+    ctx: &Context,
     graph: &RefCell<Graph>,
     query: &str,
     compact: bool,
-) -> Result<RedisValue, RedisError> {
+    write: bool,
+) -> Result<(), RedisError> {
     // Create a child span for parsing and execution
     tracing::debug_span!("query_execution", query = %query).in_scope(|| {
         let Plan {
@@ -381,82 +392,74 @@ fn query_mut(
             .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
             .collect::<Result<HashMap<_, _>, String>>()
             .map_err(RedisError::String)?;
-        let mut runtime = Runtime::new(graph, parameters, true, plan);
+        let mut runtime = Runtime::new(graph, parameters, write, plan.clone());
+        let result = runtime.query().map_err(RedisError::String)?;
+        let return_names = plan.root().get_return_names();
         if compact {
-            runtime
-                .query(RedisValuesCollector::<Compact>::new())
-                .map(|summary| {
-                    let stats = stats_to_redis_value(&summary);
-                    let columns = summary
-                        .return_names
-                        .into_iter()
-                        .map(|n| vec![RedisValue::Integer(1), RedisValue::BulkString(n)].into())
-                        .collect();
-                    vec![columns, summary.callback.take(), stats].into()
-                })
-                .map_err(RedisError::String)
+            reply_compact(ctx, graph, &return_names, result);
         } else {
-            runtime
-                .query(RedisValuesCollector::<Verbose>::new())
-                .map(|summary| {
-                    let stats = stats_to_redis_value(&summary);
-                    let columns = summary
-                        .return_names
-                        .into_iter()
-                        .map(|n| vec![RedisValue::Integer(1), RedisValue::BulkString(n)].into())
-                        .collect();
-                    vec![columns, summary.callback.take(), stats].into()
-                })
-                .map_err(RedisError::String)
+            reply_verbose(ctx, graph, &return_names, result);
         }
+        Ok(())
     })
 }
 
-fn stats_to_redis_value<CB: ReturnCallback>(summary: &ResultSummary<CB>) -> Vec<RedisValue> {
-    let mut stats = vec![];
-    if summary.labels_added > 0 {
-        stats.push(RedisValue::SimpleString(format!(
-            "Labels added: {}",
-            summary.labels_added
-        )));
+fn reply_stats(
+    ctx: &Context,
+    stats: &QueryStatistics,
+) {
+    let mut stats_len = 0;
+    if stats.labels_added > 0 {
+        stats_len += 1;
     }
-    if summary.nodes_created > 0 {
-        stats.push(RedisValue::SimpleString(format!(
-            "Nodes created: {}",
-            summary.nodes_created
-        )));
+    if stats.nodes_created > 0 {
+        stats_len += 1;
     }
-    if summary.nodes_deleted > 0 {
-        stats.push(RedisValue::SimpleString(format!(
-            "Nodes deleted: {}",
-            summary.nodes_deleted
-        )));
+    if stats.nodes_deleted > 0 {
+        stats_len += 1;
     }
-    if summary.properties_set > 0 {
-        stats.push(RedisValue::SimpleString(format!(
-            "Properties set: {}",
-            summary.properties_set
-        )));
+    if stats.properties_set > 0 {
+        stats_len += 1;
     }
-    if summary.properties_removed > 0 {
-        stats.push(RedisValue::SimpleString(format!(
-            "Properties removed: {}",
-            summary.properties_removed
-        )));
+    if stats.properties_removed > 0 {
+        stats_len += 1;
     }
-    if summary.relationships_created > 0 {
-        stats.push(RedisValue::SimpleString(format!(
-            "Relationships created: {}",
-            summary.relationships_created
-        )));
+    if stats.relationships_created > 0 {
+        stats_len += 1;
     }
-    if summary.relationships_deleted > 0 {
-        stats.push(RedisValue::SimpleString(format!(
-            "Relationships deleted: {}",
-            summary.relationships_deleted
-        )));
+    if stats.relationships_deleted > 0 {
+        stats_len += 1;
     }
-    stats
+
+    raw::reply_with_array(ctx.ctx, stats_len as _);
+    if stats.labels_added > 0 {
+        let str = format!("Labels added: {}", stats.labels_added);
+        raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
+    }
+    if stats.nodes_created > 0 {
+        let str = format!("Nodes created: {}", stats.nodes_created);
+        raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
+    }
+    if stats.nodes_deleted > 0 {
+        let str = format!("Nodes deleted: {}", stats.nodes_deleted);
+        raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
+    }
+    if stats.properties_set > 0 {
+        let str = format!("Properties set: {}", stats.properties_set);
+        raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
+    }
+    if stats.properties_removed > 0 {
+        let str = format!("Properties removed: {}", stats.properties_removed);
+        raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
+    }
+    if stats.relationships_created > 0 {
+        let str = format!("Relationships created: {}", stats.relationships_created);
+        raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
+    }
+    if stats.relationships_deleted > 0 {
+        let str = format!("Relationships deleted: {}", stats.relationships_deleted);
+        raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
+    }
 }
 
 #[cfg(feature = "fuzz")]
@@ -486,13 +489,69 @@ fn graph_query(
     let key = ctx.open_key_writable(&key);
 
     if let Some(graph) = key.get_value::<RefCell<Graph>>(&GRAPH_TYPE)? {
-        query_mut(graph, query, compact)
+        query_mut(ctx, graph, query, compact, true)?;
     } else {
-        let value = RefCell::new(Graph::new(16384, 16384));
-        let res = query_mut(&value, query, compact);
-        key.set_value(&GRAPH_TYPE, value)?;
-        res
+        let graph = RefCell::new(Graph::new(16384, 16384));
+        query_mut(ctx, &graph, query, compact, true)?;
+        key.set_value(&GRAPH_TYPE, graph)?;
     }
+
+    RedisResult::Ok(RedisValue::NoReply)
+}
+
+fn reply_verbose(
+    ctx: &Context,
+    g: &RefCell<Graph>,
+    return_names: &Vec<Variable>,
+    result: ResultSummary,
+) {
+    raw::reply_with_array(ctx.ctx, 3);
+    raw::reply_with_array(ctx.ctx, return_names.len() as _);
+    for name in return_names {
+        raw::reply_with_array(ctx.ctx, 2);
+        raw::reply_with_long_long(ctx.ctx, 1);
+        raw::reply_with_string_buffer(
+            ctx.ctx,
+            name.as_str().as_ptr().cast::<c_char>(),
+            name.as_str().len(),
+        );
+    }
+    raw::reply_with_array(ctx.ctx, result.result.len() as _);
+    for row in result.result {
+        raw::reply_with_array(ctx.ctx, return_names.len() as _);
+        for name in return_names {
+            reply_verbose_value(ctx, g, row.get(name).unwrap());
+        }
+    }
+    reply_stats(ctx, &result.stats);
+}
+
+fn reply_compact(
+    ctx: &Context,
+    g: &RefCell<Graph>,
+    return_names: &Vec<Variable>,
+    result: ResultSummary,
+) {
+    raw::reply_with_array(ctx.ctx, 3);
+    raw::reply_with_array(ctx.ctx, return_names.len() as _);
+    for name in return_names {
+        raw::reply_with_array(ctx.ctx, 2);
+        raw::reply_with_long_long(ctx.ctx, 1);
+        raw::reply_with_string_buffer(
+            ctx.ctx,
+            name.as_str().as_ptr().cast::<c_char>(),
+            name.as_str().len(),
+        );
+    }
+    raw::reply_with_array(ctx.ctx, result.result.len() as _);
+    for row in result.result {
+        raw::reply_with_array(ctx.ctx, return_names.len() as _);
+        for name in return_names {
+            raw::reply_with_array(ctx.ctx, 2);
+            reply_compact_value(ctx, g, row.get(name).unwrap());
+        }
+    }
+    reply_stats(ctx, &result.stats);
 }
 
 /// This function is used to execute a read only query on a graph
@@ -520,40 +579,8 @@ fn graph_ro_query(
         // If the key does not exist, we return an error
         EMPTY_KEY_ERR,
         |graph| {
-            let Plan {
-                plan, parameters, ..
-            } = graph.borrow().get_plan(query).map_err(RedisError::String)?;
-            let parameters = parameters
-                .into_iter()
-                .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
-                .collect::<Result<HashMap<_, _>, String>>()
-                .map_err(RedisError::String)?;
-            let mut runtime = Runtime::new(graph, parameters, false, plan);
-            if compact {
-                runtime
-                    .query(RedisValuesCollector::<Compact>::new())
-                    .map(|summary| {
-                        let columns = summary
-                            .return_names
-                            .into_iter()
-                            .map(|n| vec![RedisValue::Integer(1), RedisValue::BulkString(n)].into())
-                            .collect();
-                        vec![columns, summary.callback.take(), vec![]].into()
-                    })
-                    .map_err(RedisError::String)
-            } else {
-                runtime
-                    .query(RedisValuesCollector::<Verbose>::new())
-                    .map(|summary| {
-                        let columns = summary
-                            .return_names
-                            .into_iter()
-                            .map(|n| vec![RedisValue::Integer(1), RedisValue::BulkString(n)].into())
-                            .collect();
-                        vec![columns, summary.callback.take(), vec![]].into()
-                    })
-                    .map_err(RedisError::String)
-            }
+            query_mut(ctx, graph, query, compact, false)?;
+            RedisResult::Ok(RedisValue::NoReply)
         },
     )
 }

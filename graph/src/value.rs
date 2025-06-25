@@ -4,7 +4,7 @@ use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::ops::{Add, Deref, Div, Mul, Rem, Sub};
+use std::ops::{Add, Div, Mul, Rem, Sub};
 use std::rc::Rc;
 
 use ordermap::OrderMap;
@@ -14,98 +14,18 @@ use crate::functions::Type;
 use crate::graph::{NodeId, RelationshipId};
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct RcValue(Rc<Value>);
-
-impl RcValue {
-    #[must_use]
-    pub fn new(value: Value) -> Self {
-        Self(Rc::new(value))
-    }
-
-    #[must_use]
-    pub fn list(vec: Vec<Self>) -> Self {
-        Self::new(Value::List(vec))
-    }
-
-    #[must_use]
-    pub fn string(str: Rc<String>) -> Self {
-        Self::new(Value::String(str))
-    }
-
-    #[must_use]
-    pub fn node(id: NodeId) -> Self {
-        Self::new(Value::Node(id))
-    }
-
-    #[must_use]
-    pub fn int(i: i64) -> Self {
-        Self::new(Value::Int(i))
-    }
-
-    #[must_use]
-    pub fn float(f: f64) -> Self {
-        Self::new(Value::Float(f))
-    }
-
-    #[must_use]
-    pub fn bool(b: bool) -> Self {
-        Self::new(Value::Bool(b))
-    }
-
-    #[must_use]
-    pub fn map(map: OrderMap<Rc<String>, Self>) -> Self {
-        Self::new(Value::Map(map))
-    }
-
-    #[must_use]
-    pub fn null() -> Self {
-        Self::new(Value::Null)
-    }
-
-    #[must_use]
-    pub fn relationship(
-        id: RelationshipId,
-        from_id: NodeId,
-        to_id: NodeId,
-    ) -> Self {
-        Self::new(Value::Relationship(id, from_id, to_id))
-    }
-
-    #[must_use]
-    pub fn path(path: Vec<Self>) -> Self {
-        Self::new(Value::Path(path))
-    }
-}
-
-impl Hash for RcValue {
-    fn hash<H: std::hash::Hasher>(
-        &self,
-        state: &mut H,
-    ) {
-        self.0.hash(state);
-    }
-}
-
-impl Deref for RcValue {
-    type Target = Value;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-#[derive(Debug, PartialEq)]
 pub enum Value {
     Null,
     Bool(bool),
     Int(i64),
     Float(f64),
     String(Rc<String>),
-    List(Vec<RcValue>),
-    Map(OrderMap<Rc<String>, RcValue>),
+    List(Vec<Value>),
+    Map(Rc<OrderMap<Rc<String>, Value>>),
     Node(NodeId),
     Relationship(RelationshipId, NodeId, NodeId),
-    Path(Vec<RcValue>),
+    Path(Vec<Value>),
+    Rc(Rc<Value>),
 }
 
 impl Value {
@@ -171,21 +91,24 @@ impl Hash for Value {
                 8.hash(state);
                 x.hash(state);
             }
+            Self::Rc(x) => {
+                x.hash(state);
+            }
         }
     }
 }
 
 #[derive(Default)]
-pub struct Env(Vec<RcValue>);
+pub struct Env(Vec<Value>);
 
 impl Env {
     pub fn insert(
         &mut self,
         key: &Variable,
-        value: RcValue,
+        value: Value,
     ) {
         while self.0.len() <= key.id as _ {
-            self.0.push(RcValue::null());
+            self.0.push(Value::Null);
         }
         self.0[key.id as usize] = value;
     }
@@ -194,7 +117,7 @@ impl Env {
     pub fn get(
         &self,
         key: &Variable,
-    ) -> Option<RcValue> {
+    ) -> Option<Value> {
         self.0.get(key.id as usize).cloned()
     }
 
@@ -203,18 +126,20 @@ impl Env {
         other: Self,
     ) {
         while self.0.len() < other.0.len() {
-            self.0.push(RcValue::null());
+            self.0.push(Value::Null);
         }
         for (key, value) in other.0.into_iter().enumerate() {
-            if *value == Value::Null {
+            if value == Value::Null {
                 continue;
             }
             self.0[key] = value;
         }
     }
+}
 
-    pub fn iter(&self) -> impl Iterator<Item = RcValue> {
-        self.0.iter().cloned()
+impl AsRef<Vec<Value>> for Env {
+    fn as_ref(&self) -> &Vec<Value> {
+        &self.0
     }
 }
 
@@ -224,7 +149,7 @@ impl Hash for Env {
         state: &mut H,
     ) {
         for (key, value) in self.0.iter().enumerate() {
-            if **value == Value::Null {
+            if *value == Value::Null {
                 continue;
             }
             key.hash(state);
@@ -239,41 +164,33 @@ impl Clone for Env {
     }
 }
 
-impl Add for RcValue {
+impl Add for Value {
     type Output = Result<Self, String>;
 
     fn add(
         self,
         rhs: Self,
     ) -> Self::Output {
-        match (&*self, &*rhs) {
-            (Value::Null, _) | (_, Value::Null) => Ok(Self::null()),
-            (Value::Int(a), Value::Int(b)) => Ok(Self::int(a.wrapping_add(*b))),
-            (Value::Float(a), Value::Float(b)) => Ok(Self::float(a + b)),
-            (Value::Float(a), Value::Int(b)) => Ok(Self::float(a + *b as f64)),
-            (Value::Int(a), Value::Float(b)) => Ok(Self::float(*a as f64 + b)),
-
-            (Value::List(a), Value::List(b)) => {
-                Ok(Self::list(a.iter().chain(b).cloned().collect()))
+        match (self, rhs) {
+            (Self::Null, _) | (_, Self::Null) => Ok(Self::Null),
+            (Self::Int(a), Self::Int(b)) => Ok(Self::Int(a.wrapping_add(b))),
+            (Self::Float(a), Self::Float(b)) => Ok(Self::Float(a + b)),
+            (Self::Float(a), Self::Int(b)) => Ok(Self::Float(a + b as f64)),
+            (Self::Int(a), Self::Float(b)) => Ok(Self::Float(a as f64 + b)),
+            (Self::List(a), Self::List(b)) => Ok(Self::List(a.into_iter().chain(b).collect())),
+            (Self::List(mut l), rhs) => {
+                l.push(rhs);
+                Ok(Self::List(l))
             }
-            (Value::List(l), _) => {
-                let mut l = l.clone();
-                if l.is_empty() {
-                    Ok(Self::list(vec![rhs]))
-                } else {
-                    l.push(rhs);
-                    Ok(Self::list(l))
-                }
+            (lhs, Self::List(l)) => {
+                let mut new_list = vec![lhs];
+                new_list.extend(l);
+                Ok(Self::List(new_list))
             }
-            (_, Value::List(l)) => {
-                let mut new_list = vec![self];
-                new_list.extend(l.clone());
-                Ok(Self::list(new_list))
-            }
-            (Value::String(a), Value::String(b)) => Ok(Self::string(Rc::new(format!("{a}{b}")))),
-            (Value::String(s), Value::Int(i)) => Ok(Self::string(Rc::new(format!("{s}{i}")))),
-            (Value::String(s), Value::Float(f)) => Ok(Self::string(Rc::new(format!("{s}{f}")))),
-            (Value::String(s), Value::Bool(f)) => Ok(Self::string(Rc::new(format!("{s}{f}")))),
+            (Self::String(a), Self::String(b)) => Ok(Self::String(Rc::new(format!("{a}{b}")))),
+            (Self::String(s), Self::Int(i)) => Ok(Self::String(Rc::new(format!("{s}{i}")))),
+            (Self::String(s), Self::Float(f)) => Ok(Self::String(Rc::new(format!("{s}{f}")))),
+            (Self::String(s), Self::Bool(f)) => Ok(Self::String(Rc::new(format!("{s}{f}")))),
             (a, b) => Err(format!(
                 "Unexpected types for add operator ({}, {})",
                 a.name(),
@@ -283,19 +200,19 @@ impl Add for RcValue {
     }
 }
 
-impl Sub for RcValue {
+impl Sub for Value {
     type Output = Result<Self, String>;
 
     fn sub(
         self,
         rhs: Self,
     ) -> Self::Output {
-        match (&*self, &*rhs) {
-            (Value::Null, _) | (_, Value::Null) => Ok(Self::null()),
-            (Value::Int(a), Value::Int(b)) => Ok(Self::int(a.wrapping_sub(*b))),
-            (Value::Float(a), Value::Float(b)) => Ok(Self::float(a - b)),
-            (Value::Float(a), Value::Int(b)) => Ok(Self::float(a - *b as f64)),
-            (Value::Int(a), Value::Float(b)) => Ok(Self::float(*a as f64 - b)),
+        match (self, rhs) {
+            (Self::Null, _) | (_, Self::Null) => Ok(Self::Null),
+            (Self::Int(a), Self::Int(b)) => Ok(Self::Int(a.wrapping_sub(b))),
+            (Self::Float(a), Self::Float(b)) => Ok(Self::Float(a - b)),
+            (Self::Float(a), Self::Int(b)) => Ok(Self::Float(a - b as f64)),
+            (Self::Int(a), Self::Float(b)) => Ok(Self::Float(a as f64 - b)),
             (a, b) => Err(format!(
                 "Unexpected types for sub operator ({}, {})",
                 a.name(),
@@ -305,19 +222,19 @@ impl Sub for RcValue {
     }
 }
 
-impl Mul for RcValue {
+impl Mul for Value {
     type Output = Result<Self, String>;
 
     fn mul(
         self,
         rhs: Self,
     ) -> Self::Output {
-        match (&*self, &*rhs) {
-            (Value::Null, _) | (_, Value::Null) => Ok(Self::null()),
-            (Value::Int(a), Value::Int(b)) => Ok(Self::int(a.wrapping_mul(*b))),
-            (Value::Float(a), Value::Float(b)) => Ok(Self::float(a * b)),
-            (Value::Float(a), Value::Int(b)) => Ok(Self::float(a * *b as f64)),
-            (Value::Int(a), Value::Float(b)) => Ok(Self::float(*a as f64 * b)),
+        match (self, rhs) {
+            (Self::Null, _) | (_, Self::Null) => Ok(Self::Null),
+            (Self::Int(a), Self::Int(b)) => Ok(Self::Int(a.wrapping_mul(b))),
+            (Self::Float(a), Self::Float(b)) => Ok(Self::Float(a * b)),
+            (Self::Float(a), Self::Int(b)) => Ok(Self::Float(a * b as f64)),
+            (Self::Int(a), Self::Float(b)) => Ok(Self::Float(a as f64 * b)),
             (a, b) => Err(format!(
                 "Unexpected types for mul operator ({}, {})",
                 a.name(),
@@ -327,28 +244,25 @@ impl Mul for RcValue {
     }
 }
 
-impl Div for RcValue {
+impl Div for Value {
     type Output = Result<Self, String>;
 
     fn div(
         self,
         rhs: Self,
     ) -> Self::Output {
-        match (&*self, &*rhs) {
-            (Value::Null, _) | (_, Value::Null) => Ok(Self::null()),
-            (Value::Int(a), Value::Int(b)) => {
-                if *b == 0 {
+        match (self, rhs) {
+            (Self::Null, _) | (_, Self::Null) => Ok(Self::Null),
+            (Self::Int(a), Self::Int(b)) => {
+                if b == 0 {
                     Err(String::from("Division by zero"))
                 } else {
-                    Ok(Self::int(a.wrapping_div(*b)))
+                    Ok(Self::Int(a.wrapping_div(b)))
                 }
             }
-            (Value::Float(a), Value::Float(b)) => Ok(Self::float(a / b)),
-
-            (Value::Float(a), Value::Int(b)) => Ok(Self::float(a / *b as f64)),
-
-            (Value::Int(a), Value::Float(b)) => Ok(Self::float(*a as f64 / b)),
-
+            (Self::Float(a), Self::Float(b)) => Ok(Self::Float(a / b)),
+            (Self::Float(a), Self::Int(b)) => Ok(Self::Float(a / b as f64)),
+            (Self::Int(a), Self::Float(b)) => Ok(Self::Float(a as f64 / b)),
             (a, b) => Err(format!(
                 "Type mismatch: expected Integer, Float, or Null but was ({}, {})",
                 a.name(),
@@ -358,41 +272,41 @@ impl Div for RcValue {
     }
 }
 
-impl Rem for RcValue {
+impl Rem for Value {
     type Output = Result<Self, String>;
 
     fn rem(
         self,
         rhs: Self,
     ) -> Self::Output {
-        match (&*self, &*rhs) {
-            (Value::Null, _) | (_, Value::Null) => Ok(Self::null()),
-            (Value::Int(a), Value::Int(b)) => {
-                if *b == 0 {
+        match (self, rhs) {
+            (Self::Null, _) | (_, Self::Null) => Ok(Self::Null),
+            (Self::Int(a), Self::Int(b)) => {
+                if b == 0 {
                     Err(String::from("Division by zero"))
                 } else {
-                    Ok(Self::int(a.wrapping_rem(*b)))
+                    Ok(Self::Int(a.wrapping_rem(b)))
                 }
             }
-            (Value::Float(a), Value::Float(b)) => {
-                if *b == 0.0 {
+            (Self::Float(a), Self::Float(b)) => {
+                if b == 0.0 {
                     Err(String::from("Division by zero"))
                 } else {
-                    Ok(Self::float(a % b))
+                    Ok(Self::Float(a % b))
                 }
             }
-            (Value::Float(a), Value::Int(b)) => {
-                if *b == 0 {
+            (Self::Float(a), Self::Int(b)) => {
+                if b == 0 {
                     Err(String::from("Division by zero"))
                 } else {
-                    Ok(Self::float(a % *b as f64))
+                    Ok(Self::Float(a % b as f64))
                 }
             }
-            (Value::Int(a), Value::Float(b)) => {
-                if *b == 0.0 {
+            (Self::Int(a), Self::Float(b)) => {
+                if b == 0.0 {
                     Err(String::from("Division by zero"))
                 } else {
-                    Ok(Self::float(*a as f64 % b))
+                    Ok(Self::Float(a as f64 % b))
                 }
             }
             (a, b) => Err(format!(
@@ -421,6 +335,7 @@ impl OrderedEnum for Value {
             Self::Node(_) => 1 << 1,
             Self::Relationship(_, _, _) => 1 << 2,
             Self::Path(_) => 1 << 4,
+            Self::Rc(inner) => inner.order(),
         }
     }
 }
@@ -433,24 +348,15 @@ pub enum DisjointOrNull {
     None,
 }
 
-impl Value {
-    pub(crate) fn name(&self) -> String {
-        match self {
-            Self::Null => String::from("Null"),
-            Self::Bool(_) => String::from("Boolean"),
-            Self::Int(_) => String::from("Integer"),
-            Self::Float(_) => String::from("Float"),
-            Self::String(_) => String::from("String"),
-            Self::List(_) => String::from("List"),
-            Self::Map(_) => String::from("Map"),
-            Self::Node(_) => String::from("Node"),
-            Self::Relationship(_, _, _) => String::from("Relationship"),
-            Self::Path(_) => String::from("Path"),
-        }
-    }
+pub trait CompareValue {
+    fn compare_value(
+        &self,
+        other: &Self,
+    ) -> (Ordering, DisjointOrNull);
+}
 
-    #[must_use]
-    pub fn compare_value(
+impl CompareValue for Value {
+    fn compare_value(
         &self,
         b: &Self,
     ) -> (Ordering, DisjointOrNull) {
@@ -477,10 +383,97 @@ impl Value {
             _ => (self.order().cmp(&b.order()), DisjointOrNull::Disjoint),
         }
     }
+}
 
-    fn compare_list(
-        a: &[RcValue],
-        b: &[RcValue],
+pub trait ValueTypeOf {
+    fn value_of_type(
+        &self,
+        arg_type: &Type,
+    ) -> Option<(Type, Type)>;
+}
+
+impl ValueTypeOf for Value {
+    fn value_of_type(
+        &self,
+        arg_type: &Type,
+    ) -> Option<(Type, Type)> {
+        match (self, arg_type) {
+            (Self::List(vs), Type::List(ty)) => {
+                for v in vs {
+                    if let Some(res) = v.value_of_type(ty) {
+                        return Some(res);
+                    }
+                }
+                None
+            }
+            (Self::Null, Type::Null)
+            | (Self::Bool(_), Type::Bool)
+            | (Self::Int(_), Type::Int)
+            | (Self::Float(_), Type::Float)
+            | (Self::String(_), Type::String)
+            | (Self::Map(_), Type::Map)
+            | (Self::Node(_), Type::Node)
+            | (Self::Relationship(_, _, _), Type::Relationship)
+            | (Self::Path(_), Type::Path)
+            | (_, Type::Any) => None,
+            (Self::Rc(inner), ty) => {
+                // If the inner value is a Rc, we need to check its type
+                inner.value_of_type(ty)
+            }
+            (v, Type::Optional(ty)) => v.value_of_type(ty),
+            (v, Type::Union(tys)) => {
+                for ty in tys {
+                    v.value_of_type(ty)?;
+                }
+                Some((v.get_type(), Type::Union(tys.clone())))
+            }
+            (v, e) => Some((v.get_type(), e.clone())),
+        }
+    }
+}
+
+pub trait ValueGetType {
+    fn get_type(&self) -> Type;
+}
+
+impl ValueGetType for Value {
+    fn get_type(&self) -> Type {
+        match self {
+            Self::Null => Type::Null,
+            Self::Bool(_) => Type::Bool,
+            Self::Int(_) => Type::Int,
+            Self::Float(_) => Type::Float,
+            Self::String(_) => Type::String,
+            Self::List(_) => Type::List(Box::new(Type::Any)),
+            Self::Map(_) => Type::Map,
+            Self::Node(_) => Type::Node,
+            Self::Relationship(_, _, _) => Type::Relationship,
+            Self::Path(_) => Type::Path,
+            Self::Rc(inner) => inner.get_type(),
+        }
+    }
+}
+
+impl Value {
+    pub(crate) fn name(&self) -> String {
+        match self {
+            Self::Null => String::from("Null"),
+            Self::Bool(_) => String::from("Boolean"),
+            Self::Int(_) => String::from("Integer"),
+            Self::Float(_) => String::from("Float"),
+            Self::String(_) => String::from("String"),
+            Self::List(_) => String::from("List"),
+            Self::Map(_) => String::from("Map"),
+            Self::Node(_) => String::from("Node"),
+            Self::Relationship(_, _, _) => String::from("Relationship"),
+            Self::Path(_) => String::from("Path"),
+            Self::Rc(inner) => inner.name(),
+        }
+    }
+
+    fn compare_list<T: CompareValue>(
+        a: &[T],
+        b: &[T],
     ) -> (Ordering, DisjointOrNull) {
         let array_a_len = a.len();
         let array_b_len = b.len();
@@ -530,8 +523,8 @@ impl Value {
     }
 
     fn compare_map(
-        a: &OrderMap<Rc<String>, RcValue>,
-        b: &OrderMap<Rc<String>, RcValue>,
+        a: &OrderMap<Rc<String>, Self>,
+        b: &OrderMap<Rc<String>, Self>,
     ) -> (Ordering, DisjointOrNull) {
         let a_key_count = a.len();
         let b_key_count = b.len();
@@ -567,87 +560,36 @@ impl Value {
         }
         (Ordering::Equal, DisjointOrNull::None)
     }
-
-    #[must_use]
-    pub fn get_type(&self) -> Type {
-        match self {
-            Self::Null => Type::Null,
-            Self::Bool(_) => Type::Bool,
-            Self::Int(_) => Type::Int,
-            Self::Float(_) => Type::Float,
-            Self::String(_) => Type::String,
-            Self::List(_) => Type::List(Box::new(Type::Any)),
-            Self::Map(_) => Type::Map,
-            Self::Node(_) => Type::Node,
-            Self::Relationship(_, _, _) => Type::Relationship,
-            Self::Path(_) => Type::Path,
-        }
-    }
-
-    #[must_use]
-    pub fn validate_of_type(
-        &self,
-        arg_type: &Type,
-    ) -> Option<(Type, Type)> {
-        match (self, arg_type) {
-            (Self::List(vs), Type::List(ty)) => {
-                for v in vs {
-                    if let Some(res) = v.validate_of_type(ty) {
-                        return Some(res);
-                    }
-                }
-                None
-            }
-            (Self::Null, Type::Null)
-            | (Self::Bool(_), Type::Bool)
-            | (Self::Int(_), Type::Int)
-            | (Self::Float(_), Type::Float)
-            | (Self::String(_), Type::String)
-            | (Self::Map(_), Type::Map)
-            | (Self::Node(_), Type::Node)
-            | (Self::Relationship(_, _, _), Type::Relationship)
-            | (Self::Path(_), Type::Path)
-            | (_, Type::Any) => None,
-            (v, Type::Optional(ty)) => v.validate_of_type(ty),
-            (v, Type::Union(tys)) => {
-                for ty in tys {
-                    v.validate_of_type(ty)?;
-                }
-                Some((v.get_type(), Type::Union(tys.clone())))
-            }
-            (v, e) => Some((v.get_type(), e.clone())),
-        }
-    }
 }
 
 pub trait Contains {
     fn contains(
         &self,
-        value: RcValue,
-    ) -> RcValue;
+        value: Value,
+    ) -> Value;
 }
 
-impl Contains for Vec<RcValue> {
+impl Contains for Vec<Value> {
     fn contains(
         &self,
-        value: RcValue,
-    ) -> RcValue {
+        value: Value,
+    ) -> Value {
         let mut is_null = false;
         for item in self {
             let (res, dis) = value.compare_value(item);
             is_null = is_null || dis == DisjointOrNull::ComparedNull;
             if res == Ordering::Equal {
                 return if dis == DisjointOrNull::ComparedNull {
-                    RcValue::null()
+                    Value::Null
                 } else {
-                    RcValue::bool(true)
+                    Value::Bool(true)
                 };
             }
         }
         if is_null {
-            RcValue::null()
+            Value::Null
         } else {
-            RcValue::bool(false)
+            Value::Bool(false)
         }
     }
 }
@@ -686,7 +628,7 @@ impl ValuesDeduper {
     #[must_use]
     pub fn is_seen(
         &self,
-        values: &[RcValue],
+        values: &[Value],
     ) -> bool {
         let mut hasher = DefaultHasher::new();
         values.hash(&mut hasher);

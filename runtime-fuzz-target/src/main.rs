@@ -2,28 +2,13 @@ use std::{cell::RefCell, collections::HashMap};
 
 use graph::{
     GraphBLAS::{GrB_Mode, GrB_init},
-    ast::Variable,
     functions::init_functions,
     graph::{Graph, Plan},
-    runtime::{ReturnCallback, Runtime, evaluate_param},
-    value::Env,
+    runtime::{Runtime, evaluate_param},
 };
 
 #[macro_use]
 extern crate afl;
-
-#[derive(Default)]
-struct FuzzValuesCollector;
-
-impl ReturnCallback for FuzzValuesCollector {
-    fn return_value(
-        &self,
-        _: &RefCell<Graph>,
-        _: Env,
-        _: &[Variable],
-    ) {
-    }
-}
 
 fn main() {
     unsafe {
@@ -47,7 +32,7 @@ fn main() {
                 return;
             };
             let mut runtime = Runtime::new(&g, parameters, true, plan);
-            let _ = runtime.query(FuzzValuesCollector);
+            let _ = runtime.query();
         }
     });
 }

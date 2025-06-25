@@ -145,6 +145,7 @@ impl Planner {
         res
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn plan_project(
         &mut self,
         exprs: Vec<(Variable, DynTree<ExprIR>)>,

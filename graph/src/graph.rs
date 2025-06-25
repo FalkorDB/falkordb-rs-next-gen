@@ -16,7 +16,7 @@ use crate::{
     pending::PendingRelationship,
     planner::{IR, Planner},
     tensor::Tensor,
-    value::{RcValue, Value},
+    value::Value,
 };
 
 pub struct Plan {
@@ -100,9 +100,9 @@ pub struct Graph {
     all_nodes_matrix: Matrix<bool>,
     labels_matices: HashMap<usize, Matrix<bool>>,
     relationship_matrices: HashMap<usize, Tensor>,
-    empty_map: OrderMap<AttrId, RcValue>,
-    node_attrs: HashMap<NodeId, OrderMap<AttrId, RcValue>>,
-    relationship_attrs: HashMap<RelationshipId, OrderMap<AttrId, RcValue>>,
+    empty_map: OrderMap<AttrId, Value>,
+    node_attrs: HashMap<NodeId, OrderMap<AttrId, Value>>,
+    relationship_attrs: HashMap<RelationshipId, OrderMap<AttrId, Value>>,
     node_labels: Vec<Rc<String>>,
     relationship_types: Vec<Rc<String>>,
     node_attrs_name: Vec<Rc<String>>,
@@ -411,10 +411,10 @@ impl Graph {
         &mut self,
         id: NodeId,
         attr_id: AttrId,
-        value: RcValue,
+        value: Value,
     ) -> bool {
         let attrs = self.node_attrs.entry(id).or_default();
-        if *value == Value::Null {
+        if value == Value::Null {
             let removed = attrs.remove(&attr_id).is_some();
             if attrs.is_empty() {
                 self.node_attrs.remove(&id);
@@ -533,7 +533,7 @@ impl Graph {
         &self,
         id: NodeId,
         attr_id: AttrId,
-    ) -> Option<RcValue> {
+    ) -> Option<Value> {
         self.node_attrs
             .get(&id)
             .map_or_else(|| None, |attrs| attrs.get(&attr_id).cloned())
@@ -605,10 +605,10 @@ impl Graph {
         &mut self,
         id: RelationshipId,
         attr_id: AttrId,
-        value: RcValue,
+        value: Value,
     ) -> bool {
         let attrs = self.relationship_attrs.entry(id).or_default();
-        if *value == Value::Null {
+        if value == Value::Null {
             attrs.remove(&attr_id).is_some()
         } else {
             attrs.insert(attr_id, value).is_some()
@@ -718,7 +718,7 @@ impl Graph {
         &self,
         id: RelationshipId,
         attr_id: AttrId,
-    ) -> Option<RcValue> {
+    ) -> Option<Value> {
         self.relationship_attrs
             .get(&id)
             .map_or_else(|| None, |attrs| attrs.get(&attr_id).cloned())
@@ -763,14 +763,14 @@ impl Graph {
     pub fn get_node_attrs(
         &self,
         id: NodeId,
-    ) -> &OrderMap<AttrId, RcValue> {
+    ) -> &OrderMap<AttrId, Value> {
         self.node_attrs.get(&id).unwrap_or(&self.empty_map)
     }
 
     pub fn get_relationship_attrs(
         &self,
         id: RelationshipId,
-    ) -> &OrderMap<AttrId, RcValue> {
+    ) -> &OrderMap<AttrId, Value> {
         self.relationship_attrs.get(&id).unwrap_or(&self.empty_map)
     }
 }
