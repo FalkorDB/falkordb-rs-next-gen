@@ -1096,15 +1096,7 @@ fn percentile(
 
 #[allow(clippy::needless_pass_by_value)]
 fn finalize_percentile_disc(ctx: Value) -> Value {
-    let Value::List(state) = ctx else {
-        unreachable!()
-    };
-    let Value::Float(percentile) = state[0] else {
-        unreachable!()
-    };
-    let Value::List(values) = &state[1] else {
-        unreachable!()
-    };
+    let (percentile, values) = unpack_percentile_ctx(&ctx);
 
     if values.is_empty() {
         return Value::Null;
@@ -1123,15 +1115,7 @@ fn finalize_percentile_disc(ctx: Value) -> Value {
 
 #[allow(clippy::needless_pass_by_value)]
 fn finalize_percentile_cont(ctx: Value) -> Value {
-    let Value::List(state) = ctx else {
-        unreachable!()
-    };
-    let Value::Float(percentile) = state[0] else {
-        unreachable!()
-    };
-    let Value::List(values) = &state[1] else {
-        unreachable!()
-    };
+    let (percentile, values) = unpack_percentile_ctx(&ctx);
 
     if values.is_empty() {
         return Value::Null;
@@ -1150,7 +1134,6 @@ fn finalize_percentile_cont(ctx: Value) -> Value {
     let index = int_val as usize;
 
     if fraction_val == 0.0 {
-        // A valid index was requested, so we can directly return a value
         return Value::Float(sorted_values[index]);
     }
     let lhs = sorted_values[index] * (1.0 - fraction_val);
@@ -1171,6 +1154,19 @@ fn sort_numeric_values(values: &[Value]) -> Vec<f64> {
         .collect();
     sorted_values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     sorted_values
+}
+
+fn unpack_percentile_ctx(ctx: &Value) -> (f64, &[Value]) {
+    let Value::List(state) = ctx else {
+        unreachable!()
+    };
+    let Value::Float(percentile) = &state[0] else {
+        unreachable!()
+    };
+    let Value::List(values) = &state[1] else {
+        unreachable!()
+    };
+    (*percentile, values)
 }
 
 fn value_to_integer(
