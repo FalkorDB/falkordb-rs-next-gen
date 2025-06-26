@@ -4,26 +4,11 @@ use std::{cell::RefCell, collections::HashMap};
 
 use graph::{
     GraphBLAS::{GrB_Mode, GrB_init},
-    ast::Variable,
     functions::init_functions,
     graph::{Graph, Plan},
-    runtime::{ReturnCallback, Runtime, evaluate_param},
-    value::Env,
+    runtime::{Runtime, evaluate_param},
 };
 use libfuzzer_sys::{Corpus, fuzz_target};
-
-#[derive(Default)]
-struct FuzzValuesCollector;
-
-impl ReturnCallback for FuzzValuesCollector {
-    fn return_value(
-        &self,
-        _: &RefCell<Graph>,
-        _: Env,
-        _: &[Variable],
-    ) {
-    }
-}
 
 fuzz_target!(init: {
         unsafe {
@@ -47,7 +32,7 @@ fuzz_target!(init: {
             return Corpus::Reject;
         };
         let mut runtime = Runtime::new(&g, parameters, true, plan);
-        match runtime.query(FuzzValuesCollector) {
+        match runtime.query() {
             Ok(_) => Corpus::Keep,
             _ => Corpus::Reject,
         }
