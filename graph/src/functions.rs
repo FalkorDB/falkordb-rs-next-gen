@@ -1099,7 +1099,7 @@ fn finalize_percentile_disc(ctx: Value) -> Value {
     let Value::List(state) = ctx else {
         unreachable!()
     };
-    let Value::Float(percentile) = &state[0] else {
+    let Value::Float(percentile) = state[0] else {
         unreachable!()
     };
     let Value::List(values) = &state[1] else {
@@ -1110,13 +1110,9 @@ fn finalize_percentile_disc(ctx: Value) -> Value {
         return Value::Null;
     }
 
-    let mut sorted_values: Vec<f64> = values
-        .iter()
-        .map(super::value::Value::get_numeric)
-        .collect::<Vec<f64>>();
-    sorted_values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let sorted_values: Vec<f64> = sort_numeric_values(values);
 
-    let index = if *percentile > 0.0 {
+    let index = if percentile > 0.0 {
         (sorted_values.len() as f64 * percentile).ceil() as usize - 1
     } else {
         0
@@ -1141,11 +1137,7 @@ fn finalize_percentile_cont(ctx: Value) -> Value {
         return Value::Null;
     }
 
-    let mut sorted_values: Vec<f64> = values
-        .iter()
-        .map(super::value::Value::get_numeric)
-        .collect();
-    sorted_values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let sorted_values: Vec<f64> = sort_numeric_values(values);
 
     #[allow(clippy::float_cmp)]
     if percentile == 1.0 || sorted_values.len() == 1 {
@@ -1170,6 +1162,15 @@ fn modf(x: f64) -> (f64, f64) {
     let int_part = x.trunc();
     let frac_part = x.fract();
     (frac_part, int_part)
+}
+
+fn sort_numeric_values(values: &[Value]) -> Vec<f64> {
+    let mut sorted_values: Vec<f64> = values
+        .iter()
+        .map(super::value::Value::get_numeric)
+        .collect();
+    sorted_values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    sorted_values
 }
 
 fn value_to_integer(
