@@ -1153,6 +1153,77 @@ def test_avg_inf():
     res = query("UNWIND [1, 2, -1/0.0, 1/0.0] AS x RETURN avg(x)")
     assert math.isnan(res.result_set[0][0])
 
+@pytest.mark.extra
+@given(st.lists(st.none() | st.integers(-100, 100) | st.floats(-100, 100, allow_subnormal=False)),  st.integers(0, 1) | st.floats(min_value=0.0, max_value=1.0, allow_subnormal=False))
+def test_percentile_disc(values, percentile):    
+    sorted_values = sorted([x for x in values if x is not None])
+    
+    index = math.ceil(percentile * len(sorted_values)) - 1
+    index = max(0, min(index, len(sorted_values) - 1))  # Ensure index is in bounds
+    expected = sorted_values[index] if len(sorted_values) > 0 else None
+    
+    res = query("UNWIND $values AS x RETURN percentileDisc(x, $p) AS result", 
+                params={"values": values, "p": percentile})
+    if expected is None:
+        assert res.result_set == [[None]]
+    else:
+        assert_float_equal(res.result_set[0][0], float(expected))
+
+
+@pytest.mark.extra
+def test_percentile_extra():
+     # Test with NULL percentile
+    q = "UNWIND [1, 2, 3, 4, 5] AS x RETURN percentileDisc(x, null) AS result"
+    query_exception(q, "Type mismatch: expected Integer or Float but was Null")
+
+def test_percentile_disc_edge_cases():
+    # Test with percentile < 0
+    q = "UNWIND [1, 2, 3, 4, 5] AS x RETURN percentileDisc(x, -0.5) AS result"
+    query_exception(q, "is not a valid argument, must be a number in the range 0.0 to 1.0")
+
+    # Test with percentile > 1
+    q = "UNWIND [1, 2, 3, 4, 5] AS x RETURN percentileDisc(x, 1.2) AS result"
+    query_exception(q, "is not a valid argument, must be a number in the range 0.0 to 1.0")
+ 
+@pytest.mark.extra  
+@given(st.lists(st.none() | st.integers(-100, 100) | st.floats(-100, 100, allow_subnormal=False)),  st.integers(0, 1) | st.floats(min_value=0.0, max_value=1.0, allow_subnormal=False))
+def test_percentile_cont(values, percentile):
+    sorted_values = sorted([x for x in values if x is not None])
+    
+    if len(sorted_values) == 0:
+        expected = None
+    elif percentile == 1.0 or len(sorted_values) == 1:
+        expected = float(sorted_values[-1])
+    else:
+        float_idx = (len(sorted_values) - 1) * percentile
+        int_idx = int(float_idx)
+        fraction = float_idx - int_idx
+        
+        if fraction == 0.0:
+            expected = float(sorted_values[int_idx])
+        else:
+            lhs = sorted_values[int_idx] * (1.0 - fraction)
+            rhs = sorted_values[int_idx + 1] * fraction
+            expected = lhs + rhs
+    
+    res = query("UNWIND $values AS x RETURN percentileCont(x, $p) AS result", 
+                params={"values": values, "p": percentile})
+    if expected is None:
+        assert res.result_set == [[None]]
+    else:
+        assert_float_equal(res.result_set[0][0], expected)
+
+
+def test_percentile_cont_edge_cases():
+    # Test with percentile < 0
+    q = "UNWIND [1, 2, 3, 4, 5] AS x RETURN percentileCont(x, -0.5) AS result"
+    query_exception(q, "is not a valid argument, must be a number in the range 0.0 to 1.0")
+
+    # Test with percentile > 1
+    q = "UNWIND [1, 2, 3, 4, 5] AS x RETURN percentileCont(x, 1.2) AS result"
+    query_exception(q, "is not a valid argument, must be a number in the range 0.0 to 1.0")
+    
+     
 def test_case():
     res = query("RETURN CASE 1 + 2 WHEN 'a' THEN 1 END")
     assert res.result_set == [[None]]

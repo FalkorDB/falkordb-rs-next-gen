@@ -703,6 +703,32 @@ pub fn init_functions() -> Result<(), Functions> {
             Some(Box::new(finalize_avg)),
         ),
     );
+    funcs.add(
+        "percentileDisc",
+        percentile,
+        false,
+        vec![
+            Type::Union(vec![Type::Int, Type::Float, Type::Null]),
+            Type::Union(vec![Type::Int, Type::Float]),
+        ],
+        FnType::Aggregation(
+            Value::List(vec![Value::Float(0.0), Value::List(vec![])]),
+            Some(Box::new(finalize_percentile_disc)),
+        ),
+    );
+    funcs.add(
+        "percentileCont",
+        percentile,
+        false,
+        vec![
+            Type::Union(vec![Type::Int, Type::Float, Type::Null]),
+            Type::Union(vec![Type::Int, Type::Float]),
+        ],
+        FnType::Aggregation(
+            Value::List(vec![Value::Float(0.0), Value::List(vec![])]),
+            Some(Box::new(finalize_percentile_cont)),
+        ),
+    );
 
     // Internal functions
     funcs.add(
@@ -1032,6 +1058,113 @@ fn finalize_avg(value: Value) -> Value {
     } else {
         Value::Float(sum / *count as f64)
     }
+}
+
+fn percentile(
+    _: &Runtime,
+    mut args: Vec<Value>,
+) -> Result<Value, String> {
+    let val = args.remove(0);
+    let percentile = args.remove(0).get_numeric();
+
+    if !(0.0..=1.0).contains(&percentile) {
+        return Err(format!(
+            "Invalid input - '{percentile}' is not a valid argument, must be a number in the range 0.0 to 1.0"
+        ));
+    }
+
+    let mut ctx = args.remove(0);
+    if matches!(val, Value::Null) {
+        return Ok(ctx);
+    }
+
+    let Value::List(state) = &mut ctx else {
+        unreachable!("Context must be a List");
+    };
+
+    let Value::List(mut collected_values) = std::mem::take(&mut state[1]) else {
+        unreachable!("Second element of state must be a List")
+    };
+
+    collected_values.push(Value::Float(val.get_numeric()));
+
+    Ok(Value::List(vec![
+        Value::Float(percentile),
+        Value::List(collected_values),
+    ]))
+}
+
+#[allow(clippy::needless_pass_by_value)]
+fn finalize_percentile_disc(ctx: Value) -> Value {
+    let Value::List(mut state) = ctx else {
+        unreachable!()
+    };
+
+    let [Value::Float(percentile), Value::List(values)] = state.as_mut_slice() else {
+        unreachable!()
+    };
+
+    if values.is_empty() {
+        return Value::Null;
+    }
+
+    values.sort_by(|a, b| {
+        a.get_numeric()
+            .partial_cmp(&b.get_numeric())
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let index = if *percentile > 0.0 {
+        (values.len() as f64 * *percentile).ceil() as usize - 1
+    } else {
+        0
+    };
+
+    Value::Float(values[index].get_numeric())
+}
+
+#[allow(clippy::needless_pass_by_value)]
+fn finalize_percentile_cont(ctx: Value) -> Value {
+    let Value::List(mut state) = ctx else {
+        unreachable!()
+    };
+
+    let [Value::Float(percentile), Value::List(values)] = state.as_mut_slice() else {
+        unreachable!()
+    };
+
+    if values.is_empty() {
+        return Value::Null;
+    }
+
+    values.sort_by(|a, b| {
+        a.get_numeric()
+            .partial_cmp(&b.get_numeric())
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    #[allow(clippy::float_cmp)]
+    if *percentile == 1.0 || values.len() == 1 {
+        return Value::Float(values[values.len() - 1].get_numeric());
+    }
+
+    let float_idx = (values.len() - 1) as f64 * *percentile;
+
+    let (fraction_val, int_val) = modf(float_idx);
+    let index = int_val as usize;
+
+    if fraction_val == 0.0 {
+        return Value::Float(values[index].get_numeric());
+    }
+    let lhs = values[index].get_numeric() * (1.0 - fraction_val);
+    let rhs = values[index + 1].get_numeric() * fraction_val;
+    Value::Float(lhs + rhs)
+}
+
+fn modf(x: f64) -> (f64, f64) {
+    let int_part = x.trunc();
+    let frac_part = x.fract();
+    (frac_part, int_part)
 }
 
 fn value_to_integer(
@@ -1560,6 +1693,7 @@ fn pow(
     }
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn rand(
     _: &Runtime,
     args: Vec<Value>,
@@ -1644,6 +1778,7 @@ fn range(
             }
 
             let length = (end - start) / step + 1;
+            #[allow(clippy::cast_lossless)]
             if length > u32::MAX as i64 {
                 return Err(String::from("Range too large"));
             }
