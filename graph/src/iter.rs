@@ -142,18 +142,18 @@ where
     type Item = I::Item;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some(ref mut iter) = self.iter {
-            if let Some(item) = iter.next() {
-                self.yielded = true; // Mark that an item has been yielded
-                return Some(item);
-            }
+        if let Some(ref mut iter) = self.iter
+            && let Some(item) = iter.next()
+        {
+            self.yielded = true; // Mark that an item has been yielded
+            return Some(item);
         }
 
-        if !self.yielded {
-            if let Some(replacement) = self.replacement.take() {
-                self.iter = Some(replacement());
-                return self.iter.as_mut().unwrap().next();
-            }
+        if !self.yielded
+            && let Some(replacement) = self.replacement.take()
+        {
+            self.iter = Some(replacement());
+            return self.iter.as_mut().unwrap().next();
         }
 
         None

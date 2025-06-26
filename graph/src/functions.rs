@@ -2053,10 +2053,10 @@ fn internal_case(
                 unreachable!()
             };
             for pair in alts.chunks(2) {
-                if let [condition, result] = pair {
-                    if *condition == value {
-                        return Ok(result.clone());
-                    }
+                if let [condition, result] = pair
+                    && *condition == value
+                {
+                    return Ok(result.clone());
                 }
             }
             Ok(else_)

@@ -402,20 +402,16 @@ impl<'a> Runtime<'a> {
                 Ok(Value::List(values))
             }
             ExprIR::FuncInvocation(func) => {
-                if agg_group_key.is_none() {
-                    if let FnType::Aggregation(_, finalize) = &func.fn_type {
-                        let ExprIR::Variable(key) = ir.child(ir.num_children() - 1).data() else {
-                            unreachable!(
-                                "Aggregation function invocation must end with an accumulator variable"
-                            );
-                        };
-                        let acc = env.get(key).unwrap();
+                if agg_group_key.is_none()
+                    && let FnType::Aggregation(_, finalize) = &func.fn_type
+                    && let ExprIR::Variable(key) = ir.child(ir.num_children() - 1).data()
+                {
+                    let acc = env.get(key).unwrap();
 
-                        return match finalize {
-                            Some(func) => Ok((func)(acc)),
-                            None => Ok(acc),
-                        };
-                    }
+                    return match finalize {
+                        Some(func) => Ok((func)(acc)),
+                        None => Ok(acc),
+                    };
                 }
                 let mut args = ir
                     .children()
@@ -686,10 +682,11 @@ impl<'a> Runtime<'a> {
             }
             IR::Create(pattern) => {
                 let mut parent_commit = false;
-                if let Some(parent) = self.plan.node(idx).parent() {
-                    if matches!(parent.data(), IR::Commit) && parent.parent().is_none() {
-                        parent_commit = true;
-                    }
+                if let Some(parent) = self.plan.node(idx).parent()
+                    && matches!(parent.data(), IR::Commit)
+                    && parent.parent().is_none()
+                {
+                    parent_commit = true;
                 }
                 if let Some(child_idx) = child0_idx {
                     return Ok(Box::new(self.run(&child_idx)?.try_flat_map(
@@ -1252,21 +1249,21 @@ impl<'a> Runtime<'a> {
                     .get_src_dest_relationships(src, dst, &relationship_pattern.types)
                     .into_iter()
                     .filter(move |v| {
-                        if let Value::Map(filter_attrs) = &filter_attrs {
-                            if !filter_attrs.is_empty() {
-                                let g = self.g.borrow();
-                                let attrs = g.get_relationship_attrs(*v);
-                                for (key, avalue) in filter_attrs.iter() {
-                                    if let Some(key) = g.get_relationship_attribute_id(key) {
-                                        if let Some(pvalue) = attrs.get(&key) {
-                                            if *avalue == *pvalue {
-                                                continue;
-                                            }
-                                            return false;
-                                        }
+                        if let Value::Map(filter_attrs) = &filter_attrs
+                            && !filter_attrs.is_empty()
+                        {
+                            let g = self.g.borrow();
+                            let attrs = g.get_relationship_attrs(*v);
+                            for (key, avalue) in filter_attrs.iter() {
+                                if let Some(key) = g.get_relationship_attribute_id(key)
+                                    && let Some(pvalue) = attrs.get(&key)
+                                {
+                                    if *avalue == *pvalue {
+                                        continue;
                                     }
                                     return false;
                                 }
+                                return false;
                             }
                         }
                         true
@@ -1336,21 +1333,21 @@ impl<'a> Runtime<'a> {
         let iter = self.g.borrow().get_nodes(&node_pattern.labels);
         Box::new(iter.filter_map(move |v| {
             let mut vars = vars.clone();
-            if let Value::Map(attrs) = &attrs {
-                if !attrs.is_empty() {
-                    let g = self.g.borrow();
-                    let properties = g.get_node_attrs(v);
-                    for (key, avalue) in attrs.iter() {
-                        if let Some(key) = g.get_node_attribute_id(key) {
-                            if let Some(pvalue) = properties.get(&key) {
-                                if *avalue == *pvalue {
-                                    continue;
-                                }
-                                return None;
-                            }
+            if let Value::Map(attrs) = &attrs
+                && !attrs.is_empty()
+            {
+                let g = self.g.borrow();
+                let properties = g.get_node_attrs(v);
+                for (key, avalue) in attrs.iter() {
+                    if let Some(key) = g.get_node_attribute_id(key)
+                        && let Some(pvalue) = properties.get(&key)
+                    {
+                        if *avalue == *pvalue {
+                            continue;
                         }
                         return None;
                     }
+                    return None;
                 }
             }
             vars.insert(&node_pattern.alias, Value::Node(v));
