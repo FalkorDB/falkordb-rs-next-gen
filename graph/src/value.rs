@@ -13,8 +13,9 @@ use crate::ast::Variable;
 use crate::functions::Type;
 use crate::graph::{NodeId, RelationshipId};
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub enum Value {
+    #[default]
     Null,
     Bool(bool),
     Int(i64),

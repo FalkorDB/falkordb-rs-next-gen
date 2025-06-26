@@ -29,7 +29,6 @@ use std::fs::File;
 use std::io::Write;
 use std::os::raw::{c_char, c_void};
 use std::ptr::null_mut;
-use std::rc::Rc;
 #[cfg(feature = "zipkin")]
 use tracing_opentelemetry::OpenTelemetryLayer;
 #[cfg(feature = "zipkin")]

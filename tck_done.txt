@@ -1,10 +1,4 @@
-expressions/aggregation/Aggregation1.feature
-expressions/aggregation/Aggregation2.feature
-expressions/aggregation/Aggregation3.feature
-expressions/aggregation/Aggregation4.feature
-expressions/aggregation/Aggregation5.feature
-expressions/aggregation/Aggregation7.feature
-expressions/aggregation/Aggregation8.feature
+expressions/aggregation
 expressions/boolean
 expressions/comparison/Comparison1.feature
 expressions/conditional

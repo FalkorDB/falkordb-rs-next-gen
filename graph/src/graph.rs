@@ -707,6 +707,7 @@ impl Graph {
         &self,
         id: RelationshipId,
     ) -> TypeId {
+        #[allow(clippy::cast_possible_truncation)]
         self.relationship_type_matrix
             .iter(id.0, id.0)
             .map(|(_, l)| TypeId(l as usize))
