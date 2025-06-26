@@ -712,7 +712,7 @@ pub fn init_functions() -> Result<(), Functions> {
             Type::Union(vec![Type::Int, Type::Float]),
         ],
         FnType::Aggregation(
-            RcValue::list(vec![RcValue::float(0.0), RcValue::list(vec![])]),
+            Value::List(vec![Value::Float(0.0), Value::List(vec![])]),
             Some(Box::new(finalize_percentile_disc)),
         ),
     );
@@ -725,7 +725,7 @@ pub fn init_functions() -> Result<(), Functions> {
             Type::Union(vec![Type::Int, Type::Float]),
         ],
         FnType::Aggregation(
-            RcValue::list(vec![RcValue::float(0.0), RcValue::list(vec![])]),
+            Value::List(vec![Value::Float(0.0), Value::List(vec![])]),
             Some(Box::new(finalize_percentile_cont)),
         ),
     );
@@ -1062,11 +1062,10 @@ fn finalize_avg(value: Value) -> Value {
 
 fn percentile(
     _: &Runtime,
-    args: Vec<RcValue>,
-) -> Result<RcValue, String> {
-    let mut iter = args.into_iter();
-    let val = iter.next().unwrap();
-    let percentile = iter.next().unwrap().get_numeric();
+    mut args: Vec<Value>,
+) -> Result<Value, String> {
+    let val = args.remove(0);
+    let percentile = args.remove(0).get_numeric();
 
     if !(0.0..=1.0).contains(&percentile) {
         return Err(format!(
@@ -1074,45 +1073,47 @@ fn percentile(
         ));
     }
 
-    let ctx = iter.next().unwrap();
-    if matches!(&*val, Value::Null) {
+    let mut ctx = args.remove(0);
+    if matches!(val, Value::Null) {
         return Ok(ctx);
     }
 
-    let Value::List(state) = &*ctx else {
-        unreachable!()
+    let Value::List(state) = &mut ctx else {
+        unreachable!("Context must be a List");
     };
 
-    let Value::List(collected_values) = &*state[1] else {
-        unreachable!()
+    let Value::List(mut collected_values) = std::mem::take(&mut state[1]) else {
+        unreachable!("Second element of state must be a List")
     };
 
-    let mut new_values = collected_values.clone();
-    new_values.push(RcValue::float(val.get_numeric()));
+    collected_values.push(Value::Float(val.get_numeric()));
 
-    Ok(RcValue::list(vec![
-        RcValue::float(percentile),
-        RcValue::list(new_values),
+    Ok(Value::List(vec![
+        Value::Float(percentile),
+        Value::List(collected_values),
     ]))
 }
 
 #[allow(clippy::needless_pass_by_value)]
-fn finalize_percentile_disc(ctx: RcValue) -> RcValue {
-    let Value::List(state) = &*ctx else {
+fn finalize_percentile_disc(ctx: Value) -> Value {
+    let Value::List(state) = ctx else {
         unreachable!()
     };
-    let Value::Float(percentile) = &*state[0] else {
+    let Value::Float(percentile) = &state[0] else {
         unreachable!()
     };
-    let Value::List(values) = &*state[1] else {
+    let Value::List(values) = &state[1] else {
         unreachable!()
     };
 
     if values.is_empty() {
-        return RcValue::null();
+        return Value::Null;
     }
 
-    let mut sorted_values: Vec<f64> = values.iter().map(|v| v.get_numeric()).collect();
+    let mut sorted_values: Vec<f64> = values
+        .iter()
+        .map(super::value::Value::get_numeric)
+        .collect::<Vec<f64>>();
     sorted_values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
     let index = if *percentile > 0.0 {
@@ -1121,31 +1122,34 @@ fn finalize_percentile_disc(ctx: RcValue) -> RcValue {
         0
     };
 
-    RcValue::float(sorted_values[index])
+    Value::Float(sorted_values[index])
 }
 
 #[allow(clippy::needless_pass_by_value)]
-fn finalize_percentile_cont(ctx: RcValue) -> RcValue {
-    let Value::List(state) = &*ctx else {
+fn finalize_percentile_cont(ctx: Value) -> Value {
+    let Value::List(state) = ctx else {
         unreachable!()
     };
-    let Value::Float(percentile) = &*state[0] else {
+    let Value::Float(percentile) = state[0] else {
         unreachable!()
     };
-    let Value::List(values) = &*state[1] else {
+    let Value::List(values) = &state[1] else {
         unreachable!()
     };
 
     if values.is_empty() {
-        return RcValue::null();
+        return Value::Null;
     }
 
-    let mut sorted_values: Vec<f64> = values.iter().map(|v| v.get_numeric()).collect();
+    let mut sorted_values: Vec<f64> = values
+        .iter()
+        .map(super::value::Value::get_numeric)
+        .collect();
     sorted_values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
     #[allow(clippy::float_cmp)]
-    if *percentile == 1.0 || sorted_values.len() == 1 {
-        return RcValue::float(sorted_values[sorted_values.len() - 1]);
+    if percentile == 1.0 || sorted_values.len() == 1 {
+        return Value::Float(sorted_values[sorted_values.len() - 1]);
     }
 
     let float_idx = (sorted_values.len() - 1) as f64 * percentile;
@@ -1155,11 +1159,11 @@ fn finalize_percentile_cont(ctx: RcValue) -> RcValue {
 
     if fraction_val == 0.0 {
         // A valid index was requested, so we can directly return a value
-        return RcValue::float(sorted_values[index]);
+        return Value::Float(sorted_values[index]);
     }
     let lhs = sorted_values[index] * (1.0 - fraction_val);
     let rhs = sorted_values[index + 1] * fraction_val;
-    RcValue::float(lhs + rhs)
+    Value::Float(lhs + rhs)
 }
 
 fn modf(x: f64) -> (f64, f64) {
@@ -1694,6 +1698,7 @@ fn pow(
     }
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn rand(
     _: &Runtime,
     args: Vec<Value>,
@@ -1778,6 +1783,7 @@ fn range(
             }
 
             let length = (end - start) / step + 1;
+            #[allow(clippy::cast_lossless)]
             if length > u32::MAX as i64 {
                 return Err(String::from("Range too large"));
             }
