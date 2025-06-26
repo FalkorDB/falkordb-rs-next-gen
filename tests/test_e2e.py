@@ -1153,6 +1153,7 @@ def test_avg_inf():
     res = query("UNWIND [1, 2, -1/0.0, 1/0.0] AS x RETURN avg(x)")
     assert math.isnan(res.result_set[0][0])
 
+@pytest.mark.extra
 @given(st.lists(st.none() | st.integers(-100, 100) | st.floats(-100, 100, allow_subnormal=False)),  st.integers(0, 1) | st.floats(min_value=0.0, max_value=1.0, allow_subnormal=False))
 def test_percentile_disc(values, percentile):    
     sorted_values = sorted([x for x in values if x is not None])
@@ -1183,7 +1184,8 @@ def test_percentile_disc_edge_cases():
     # Test with percentile > 1
     q = "UNWIND [1, 2, 3, 4, 5] AS x RETURN percentileDisc(x, 1.2) AS result"
     query_exception(q, "is not a valid argument, must be a number in the range 0.0 to 1.0")
-    
+ 
+@pytest.mark.extra  
 @given(st.lists(st.none() | st.integers(-100, 100) | st.floats(-100, 100, allow_subnormal=False)),  st.integers(0, 1) | st.floats(min_value=0.0, max_value=1.0, allow_subnormal=False))
 def test_percentile_cont(values, percentile):
     sorted_values = sorted([x for x in values if x is not None])
