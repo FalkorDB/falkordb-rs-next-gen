@@ -782,7 +782,13 @@ impl<'a> Parser<'a> {
     ) -> Result<QueryIR, String> {
         let distinct = optional_match_token!(self.lexer => Distinct);
         let exprs = if optional_match_token!(self.lexer, Star) {
-            vec![]
+            let mut res: Vec<(Variable, DynTree<ExprIR>)> = self
+                .vars
+                .values()
+                .map(|v| (v.clone(), tree!(ExprIR::Variable(v.clone()))))
+                .collect();
+            res.sort_by(|a, b| a.0.name.cmp(&b.0.name));
+            res
         } else {
             self.parse_named_exprs()?
         };

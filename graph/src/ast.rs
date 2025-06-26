@@ -831,21 +831,22 @@ impl QueryIR {
                 for (_, expr) in exprs {
                     expr.root().validate(true, env)?;
                 }
-                if !exprs.is_empty() {
-                    env.clear();
-                    let mut seen_aliases = HashSet::new();
-                    for (name, _) in exprs {
-                        let alias = name.as_str();
-                        if !seen_aliases.insert(alias) {
-                            return Err(String::from(
-                                "Error: Multiple result columns with the same name are not supported.",
-                            ));
-                        }
-                        env.insert(name.id);
+                let mut seen_aliases = HashSet::new();
+                for (name, _) in exprs {
+                    let alias = name.as_str();
+                    if !seen_aliases.insert(alias) {
+                        return Err(String::from(
+                            "Error: Multiple result columns with the same name are not supported.",
+                        ));
                     }
+                    env.insert(name.id);
                 }
                 for (expr, _) in orderby {
                     expr.root().validate(false, env)?;
+                }
+                env.clear();
+                for (name, _) in exprs {
+                    env.insert(name.id);
                 }
                 iter.next()
                     .map_or(Ok(()), |first| first.inner_validate(iter, env))
