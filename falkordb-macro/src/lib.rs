@@ -97,17 +97,18 @@ fn generate_token_stream(
     });
 
     quote::quote! {
+        let expr = #parse_exp;
         if let #(| #tokens1)* = &self.lexer.current() {
-        } else {
-            return Ok(#parse_exp);
-        }
-        let mut vec = vec![#parse_exp];
-        loop {
-            #(#whiles)*
-            if let #(| #tokens2)* = &self.lexer.current() {
-            } else {
-                return Ok(vec.pop().unwrap());
+            let mut vec = vec![expr];
+            loop {
+                #(#whiles)*
+                if let #(| #tokens2)* = &self.lexer.current() {
+                } else {
+                    return Ok(vec.pop().unwrap());
+                }
             }
+        } else {
+            return Ok(expr);
         }
     }
 }
