@@ -1,5 +1,6 @@
 use std::{collections::HashSet, fmt::Display, hash::Hash, rc::Rc};
 
+use itertools::Itertools;
 use ordermap::{OrderMap, OrderSet};
 use orx_tree::{Dfs, DynNode, DynTree, NodeRef};
 
@@ -327,11 +328,7 @@ impl Display for QueryNode {
             f,
             "({}:{})",
             self.alias.as_str(),
-            self.labels
-                .iter()
-                .map(|label| label.as_str())
-                .collect::<Vec<_>>()
-                .join(":")
+            self.labels.iter().map(|label| label.as_str()).join(":")
         )
     }
 }
@@ -383,11 +380,7 @@ impl Display for QueryRelationship {
             "({})-[{}:{}]-{}({})",
             self.from.alias.as_str(),
             self.alias.as_str(),
-            self.types
-                .iter()
-                .map(|label| label.as_str())
-                .collect::<Vec<_>>()
-                .join("|"),
+            self.types.iter().map(|label| label.as_str()).join("|"),
             direction,
             self.to.alias.as_str()
         )

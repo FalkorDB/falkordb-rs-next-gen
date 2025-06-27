@@ -6,6 +6,7 @@
 
 use crate::runtime::Runtime;
 use crate::value::{Value, ValueTypeOf};
+use itertools::Itertools;
 use rand::Rng;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display};
@@ -1505,24 +1506,14 @@ fn string_join(
             let result = to_string_vec(&vec);
             result.map(|strings| {
                 Value::String(Rc::new(
-                    strings
-                        .iter()
-                        .map(|label| label.as_str())
-                        .collect::<Vec<_>>()
-                        .join(s.as_str()),
+                    strings.iter().map(|label| label.as_str()).join(s.as_str()),
                 ))
             })
         }
         (Value::List(vec), None) => {
             let result = to_string_vec(&vec);
             result.map(|strings| {
-                Value::String(Rc::new(
-                    strings
-                        .iter()
-                        .map(|label| label.as_str())
-                        .collect::<Vec<_>>()
-                        .join(""),
-                ))
+                Value::String(Rc::new(strings.iter().map(|label| label.as_str()).join("")))
             })
         }
         (Value::Null, _) => Ok(Value::Null),

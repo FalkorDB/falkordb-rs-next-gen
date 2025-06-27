@@ -6,6 +6,7 @@ use crate::functions::{FnType, Type, get_functions};
 use crate::tree;
 use crate::value::Value;
 use falkordb_macro::parse_binary_expr;
+use itertools::Itertools;
 use ordermap::OrderSet;
 use orx_tree::{DynTree, NodeRef};
 use std::collections::{HashMap, HashSet};
@@ -720,13 +721,7 @@ impl<'a> Parser<'a> {
             self.lexer.next();
             idents.push(self.parse_ident()?);
         }
-        Ok(Rc::new(
-            idents
-                .iter()
-                .map(|label| label.as_str())
-                .collect::<Vec<_>>()
-                .join("."),
-        ))
+        Ok(Rc::new(idents.iter().map(|label| label.as_str()).join(".")))
     }
 
     fn parse_match_clause(
@@ -1078,31 +1073,16 @@ impl<'a> Parser<'a> {
     #[allow(clippy::too_many_lines)]
     fn parse_primary_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
         match self.lexer.current() {
-            Token::Ident(ident) => {
-                let mut namespace_and_function = ident.to_lowercase();
-                self.lexer.next();
+            Token::Ident(_) => {
                 let pos = self.lexer.pos;
-                while self.lexer.current() == Token::Dot {
-                    self.lexer.next();
-                    match self.lexer.current() {
-                        Token::Ident(id) => {
-                            self.lexer.next();
-                            namespace_and_function.push('.');
-                            namespace_and_function.push_str(&id.to_lowercase());
-                        }
-                        _ => break,
-                    }
-                }
+                let ident = self.parse_dotted_ident()?;
                 if self.lexer.current() == Token::LParen {
                     self.lexer.next();
 
                     let func = get_functions()
-                        .get(&namespace_and_function, &FnType::Function)
+                        .get(&ident, &FnType::Function)
                         .or_else(|_| {
-                            get_functions().get(
-                                &namespace_and_function,
-                                &FnType::Aggregation(Value::Null, None),
-                            )
+                            get_functions().get(&ident, &FnType::Aggregation(Value::Null, None))
                         })?;
 
                     let distinct = optional_match_token!(self.lexer => Distinct);
@@ -1140,6 +1120,7 @@ impl<'a> Parser<'a> {
                     return Ok(tree!(ExprIR::FuncInvocation(func); args));
                 }
                 self.lexer.set_pos(pos);
+                let ident = self.parse_ident()?;
                 Ok(tree!(ExprIR::Variable(
                     self.create_var(Some(ident), Type::Any)?
                 )))
