@@ -1473,14 +1473,8 @@ impl<'a> Parser<'a> {
             }
         }
 
-        if self.lexer.current() == Token::RBrace {
-            self.lexer.next();
-            Ok(tree!(ExprIR::List ; exprs))
-        } else {
-            Err(self
-                .lexer
-                .format_error(&format!("Invalid input {:?}", self.lexer.current())))
-        }
+        match_token!(self.lexer, RBrace);
+        Ok(tree!(ExprIR::List ; exprs))
     }
 
     fn parse_list_comprehension(

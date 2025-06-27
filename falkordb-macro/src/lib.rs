@@ -83,7 +83,13 @@ fn generate_token_stream(
             }
         }
     });
-    let tokens = alts.iter().map(|alt| {
+    let tokens1 = alts.iter().map(|alt| {
+        let token_match = &alt.token_match;
+        quote::quote! {
+            #token_match
+        }
+    });
+    let tokens2 = alts.iter().map(|alt| {
         let token_match = &alt.token_match;
         quote::quote! {
             #token_match
@@ -91,12 +97,14 @@ fn generate_token_stream(
     });
 
     quote::quote! {
-        let mut vec = Vec::new();
-        vec.push(#parse_exp);
+        if let #(| #tokens1)* = &self.lexer.current() {
+        } else {
+            return Ok(#parse_exp);
+        }
+        let mut vec = vec![#parse_exp];
         loop {
             #(#whiles)*
-            if let #(| #tokens)* = &self.lexer.current() {
-
+            if let #(| #tokens2)* = &self.lexer.current() {
             } else {
                 return Ok(vec.pop().unwrap());
             }
