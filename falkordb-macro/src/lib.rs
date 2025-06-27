@@ -100,13 +100,10 @@ fn generate_token_stream(
         let expr = #parse_exp;
         if let #(| #tokens1)* = &self.lexer.current() {
             let mut vec = vec![expr];
-            loop {
+            while let #(| #tokens2)* = &self.lexer.current() {
                 #(#whiles)*
-                if let #(| #tokens2)* = &self.lexer.current() {
-                } else {
-                    return Ok(vec.pop().unwrap());
-                }
             }
+            return Ok(vec.pop().unwrap());
         } else {
             return Ok(expr);
         }
