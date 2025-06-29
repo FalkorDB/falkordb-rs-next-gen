@@ -640,10 +640,10 @@ impl Graph {
         } else {
             types
         } {
-            if let Some(relationship_matrix) = self.get_relationship_matrix(relationship_type) {
-                if let Some(id) = relationship_matrix.get(src.0, dest.0) {
-                    vec.push(RelationshipId(id));
-                }
+            if let Some(relationship_matrix) = self.get_relationship_matrix(relationship_type)
+                && let Some(id) = relationship_matrix.get(src.0, dest.0)
+            {
+                vec.push(RelationshipId(id));
             }
         }
         vec

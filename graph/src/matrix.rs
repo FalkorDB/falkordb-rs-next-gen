@@ -281,7 +281,7 @@ impl<T> Size<T> for Matrix<T> {
     fn nrows(&self) -> u64 {
         unsafe {
             let mut nrows = 0u64;
-            let info = GrB_Matrix_nrows(&mut nrows, *self.m);
+            let info = GrB_Matrix_nrows(&raw mut nrows, *self.m);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             nrows
         }
@@ -290,7 +290,7 @@ impl<T> Size<T> for Matrix<T> {
     fn ncols(&self) -> u64 {
         unsafe {
             let mut ncols = 0u64;
-            let info = GrB_Matrix_ncols(&mut ncols, *self.m);
+            let info = GrB_Matrix_ncols(&raw mut ncols, *self.m);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             ncols
         }
@@ -310,7 +310,7 @@ impl<T> Size<T> for Matrix<T> {
     fn nvals(&self) -> u64 {
         unsafe {
             let mut nvals = 0u64;
-            let info = GrB_Matrix_nvals(&mut nvals, *self.m);
+            let info = GrB_Matrix_nvals(&raw mut nvals, *self.m);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             nvals
         }
@@ -431,7 +431,7 @@ unsafe impl<T> Sync for UnaryOp<T> {}
 impl<T> Drop for UnaryOp<T> {
     fn drop(&mut self) {
         unsafe {
-            GrB_UnaryOp_free(&mut self.op);
+            GrB_UnaryOp_free(&raw mut self.op);
         }
     }
 }
@@ -607,7 +607,7 @@ impl<T> Drop for Iter<T> {
                 let info = GrB_Matrix_free(m);
                 debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             }
-            GxB_Iterator_free(&mut self.inner);
+            GxB_Iterator_free(&raw mut self.inner);
         }
     }
 }
@@ -657,7 +657,7 @@ impl Iterator for Iter<bool> {
         unsafe {
             let mut row = 0u64;
             let mut col = 0u64;
-            GxB_Matrix_Iterator_getIndex(self.inner, &mut row, &mut col);
+            GxB_Matrix_Iterator_getIndex(self.inner, &raw mut row, &raw mut col);
             if row > self.max_row {
                 self.depleted = true;
                 return None;
@@ -679,7 +679,7 @@ impl Iterator for Iter<u64> {
             let mut row = 0u64;
             let mut col = 0u64;
             let value = GxB_Iterator_get_UINT64(self.inner);
-            GxB_Matrix_Iterator_getIndex(self.inner, &mut row, &mut col);
+            GxB_Matrix_Iterator_getIndex(self.inner, &raw mut row, &raw mut col);
             if row > self.max_row {
                 self.depleted = true;
                 return None;

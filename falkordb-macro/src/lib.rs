@@ -74,12 +74,14 @@ fn generate_token_stream(
         let token_match = &alt.token_match;
         let ast_constructor = &alt.ast_constructor;
         quote::quote! {
-            while let #token_match = self.lexer.current() {
-               self.lexer.next();
-               vec.push(#parse_exp);
-            }
-            if vec.len() > 1 {
-                vec = vec![tree!(ExprIR::#ast_constructor ; vec)];
+            if let #token_match = self.lexer.current() {
+                self.lexer.next();
+                expr = tree!(ExprIR::#ast_constructor, expr, #parse_exp);
+                let mut root = expr.root_mut();
+                while let #token_match = self.lexer.current() {
+                    self.lexer.next();
+                    root.push_child_tree(#parse_exp);
+                }
             }
         }
     });
@@ -91,15 +93,10 @@ fn generate_token_stream(
     });
 
     quote::quote! {
-        let mut vec = Vec::new();
-        vec.push(#parse_exp);
-        loop {
+        let mut expr = #parse_exp;
+        while let #(| #tokens)* = &self.lexer.current() {
             #(#whiles)*
-            if let #(| #tokens)* = &self.lexer.current() {
-
-            } else {
-                return Ok(vec.pop().unwrap());
-            }
         }
+        return Ok(expr);
     }
 }

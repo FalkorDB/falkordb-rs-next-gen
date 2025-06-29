@@ -17,6 +17,7 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin)'] }
 
 [dependencies]
 falkordb-macro = { path = "../falkordb-macro" }
+itertools = "0.14.0"
 once_cell = "1.21.3"
 ordermap = "0.5.7"
 orx-tree = "1.7.1"
