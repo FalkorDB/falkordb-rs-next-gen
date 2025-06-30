@@ -499,6 +499,7 @@ impl<'a> Runtime<'a> {
 
                 Ok(Value::List(acc))
             }
+            ExprIR::Paren => self.run_expr(ir.child(0), env, agg_group_key),
         }
     }
 

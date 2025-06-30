@@ -2,7 +2,7 @@ use std::{collections::HashSet, fmt::Display, hash::Hash, rc::Rc};
 
 use itertools::Itertools;
 use ordermap::{OrderMap, OrderSet};
-use orx_tree::{Dfs, DynNode, DynTree, NodeRef};
+use orx_tree::{Bfs, Collection, Dfs, DynTree, NodeRef};
 
 use crate::functions::{GraphFn, Type};
 
@@ -78,6 +78,7 @@ pub enum ExprIR {
     FuncInvocation(Rc<GraphFn>),
     Quantifier(QuantifierType, Variable),
     ListComprehension(Variable),
+    Paren,
 }
 
 #[cfg_attr(tarpaulin, skip)]
@@ -127,6 +128,7 @@ impl Display for ExprIR {
             Self::ListComprehension(var) => {
                 write!(f, "list comp({})", var.as_str())
             }
+            Self::Paren => write!(f, "()"),
         }
     }
 }
@@ -156,140 +158,123 @@ impl Display for QuantifierType {
 
 pub trait Validate {
     fn validate(
-        self,
+        &self,
         allow_aggregation: bool,
         env: &mut HashSet<u32>,
     ) -> Result<(), String>;
 }
 
-impl Validate for DynNode<'_, ExprIR> {
+impl Validate for DynTree<ExprIR> {
     #[allow(clippy::too_many_lines)]
     #[allow(clippy::cognitive_complexity)]
     fn validate(
-        self,
+        &self,
         allow_aggregation: bool,
         env: &mut HashSet<u32>,
     ) -> Result<(), String> {
-        match self.data() {
-            ExprIR::Null
-            | ExprIR::Bool(_)
-            | ExprIR::Integer(_)
-            | ExprIR::Float(_)
-            | ExprIR::String(_)
-            | ExprIR::Parameter(_) => {
-                debug_assert_eq!(self.num_children(), 0);
-                Ok(())
-            }
-            ExprIR::Variable(var) => {
-                debug_assert_eq!(self.num_children(), 0);
-                if env.contains(&var.id) {
-                    Ok(())
-                } else {
-                    Err(format!("'{}' not defined", var.as_str()))
+        for child in self.root().indices::<Bfs>() {
+            let child = self.node(&child);
+
+            match child.data() {
+                ExprIR::Null
+                | ExprIR::Bool(_)
+                | ExprIR::Integer(_)
+                | ExprIR::Float(_)
+                | ExprIR::Parameter(_) => {
+                    debug_assert_eq!(child.num_children(), 0);
                 }
-            }
-            ExprIR::And | ExprIR::Or | ExprIR::Xor => {
-                debug_assert!(self.num_children() >= 2);
-                for expr in self.children() {
-                    if let _e @ (ExprIR::Integer(_)
-                    | ExprIR::Float(_)
-                    | ExprIR::String(_)
-                    | ExprIR::List
-                    | ExprIR::Map) = expr.data()
-                    {
-                        return Err("Type mismatch: expected bool".to_string());
-                    }
-                    expr.validate(allow_aggregation, env)?;
+                ExprIR::String(_) => {
+                    debug_assert_eq!(
+                        child.num_children(),
+                        if let Some(parent) = child.parent()
+                            && matches!(parent.data(), ExprIR::Map)
+                        {
+                            1
+                        } else {
+                            0
+                        }
+                    );
                 }
-                Ok(())
-            }
-            ExprIR::List
-            | ExprIR::Eq
-            | ExprIR::Neq
-            | ExprIR::Lt
-            | ExprIR::Gt
-            | ExprIR::Le
-            | ExprIR::Ge
-            | ExprIR::Add
-            | ExprIR::Sub
-            | ExprIR::Mul
-            | ExprIR::Div
-            | ExprIR::Pow
-            | ExprIR::Modulo
-            | ExprIR::GetElement => {
-                for expr in self.children() {
-                    expr.validate(allow_aggregation, env)?;
-                }
-                Ok(())
-            }
-            ExprIR::FuncInvocation(func) => {
-                if func.is_aggregate() {
-                    if !allow_aggregation {
-                        return Err(format!(
-                            "Invalid use of aggregating function '{}'",
-                            func.name
-                        ));
-                    }
-                    for i in 0..self.num_children() - 1 {
-                        self.child(i).validate(allow_aggregation, env)?;
-                    }
-                } else {
-                    for expr in self.children() {
-                        expr.validate(allow_aggregation, env)?;
+                ExprIR::Variable(var) => {
+                    debug_assert_eq!(child.num_children(), 0);
+                    if !env.contains(&var.id) {
+                        return Err(format!("'{}' not defined", var.as_str()));
                     }
                 }
-                Ok(())
-            }
-            ExprIR::Map => {
-                for expr in self.children() {
-                    debug_assert!(matches!(expr.data(), ExprIR::String(_)));
-                    debug_assert_eq!(expr.num_children(), 1);
-                    expr.child(0).validate(allow_aggregation, env)?;
+                ExprIR::And | ExprIR::Or | ExprIR::Xor => {
+                    debug_assert!(child.num_children() >= 2);
+                    for expr in child.children() {
+                        if let _e @ (ExprIR::Integer(_)
+                        | ExprIR::Float(_)
+                        | ExprIR::String(_)
+                        | ExprIR::List
+                        | ExprIR::Map) = expr.data()
+                        {
+                            return Err("Type mismatch: expected bool".to_string());
+                        }
+                    }
                 }
-                Ok(())
-            }
-            ExprIR::In => {
-                debug_assert_eq!(self.num_children(), 2);
-                for expr in self.children() {
-                    expr.validate(allow_aggregation, env)?;
+                ExprIR::List
+                | ExprIR::Eq
+                | ExprIR::Neq
+                | ExprIR::Lt
+                | ExprIR::Gt
+                | ExprIR::Le
+                | ExprIR::Ge
+                | ExprIR::Add
+                | ExprIR::Sub
+                | ExprIR::Mul
+                | ExprIR::Div
+                | ExprIR::Pow
+                | ExprIR::Modulo
+                | ExprIR::GetElement => {}
+                ExprIR::FuncInvocation(func) => {
+                    if func.is_aggregate() {
+                        if !allow_aggregation {
+                            return Err(format!(
+                                "Invalid use of aggregating function '{}'",
+                                func.name
+                            ));
+                        }
+                        let ExprIR::Variable(var) = child.child(child.num_children() - 1).data()
+                        else {
+                            unreachable!();
+                        };
+                        env.insert(var.id);
+                    }
                 }
-                Ok(())
-            }
-            ExprIR::Not
-            | ExprIR::Negate
-            | ExprIR::Length
-            | ExprIR::IsNode
-            | ExprIR::IsRelationship
-            | ExprIR::Distinct => {
-                debug_assert_eq!(self.num_children(), 1);
-                self.child(0).validate(allow_aggregation, env)
-            }
-            ExprIR::GetElements => {
-                debug_assert_eq!(self.num_children(), 3);
-                for expr in self.children() {
-                    expr.validate(allow_aggregation, env)?;
+                ExprIR::Map => {
+                    for expr in child.children() {
+                        debug_assert!(matches!(expr.data(), ExprIR::String(_)));
+                        debug_assert_eq!(expr.num_children(), 1);
+                    }
                 }
-                Ok(())
-            }
-            ExprIR::Quantifier(_quantifier_type, var) => {
-                debug_assert_eq!(self.num_children(), 2);
-                self.child(0).validate(allow_aggregation, env)?;
-                env.insert(var.id);
-                self.child(1).validate(allow_aggregation, env)?;
-                env.remove(&var.id);
-                Ok(())
-            }
-            ExprIR::ListComprehension(var) => {
-                debug_assert!(0 < self.num_children() && self.num_children() <= 3);
-                self.child(0).validate(allow_aggregation, env)?;
-                env.insert(var.id);
-                for expr in self.children().skip(1) {
-                    expr.validate(allow_aggregation, env)?;
+                ExprIR::In => {
+                    debug_assert_eq!(child.num_children(), 2);
                 }
-                env.remove(&var.id);
-                Ok(())
+                ExprIR::Not
+                | ExprIR::Negate
+                | ExprIR::Length
+                | ExprIR::IsNode
+                | ExprIR::IsRelationship
+                | ExprIR::Distinct
+                | ExprIR::Paren => {
+                    debug_assert_eq!(child.num_children(), 1);
+                }
+                ExprIR::GetElements => {
+                    debug_assert_eq!(child.num_children(), 3);
+                }
+                ExprIR::Quantifier(_quantifier_type, var) => {
+                    debug_assert_eq!(child.num_children(), 2);
+                    env.insert(var.id);
+                }
+                ExprIR::ListComprehension(var) => {
+                    debug_assert!(0 < child.num_children() && child.num_children() <= 3);
+                    env.insert(var.id);
+                }
             }
         }
+        Ok(())
     }
 }
 
@@ -695,7 +680,7 @@ impl QueryIR {
         match self {
             Self::Call(_, args) => {
                 for arg in args {
-                    arg.root().validate(false, env)?;
+                    arg.validate(false, env)?;
                 }
                 Ok(())
             }
@@ -703,11 +688,11 @@ impl QueryIR {
                 pattern, filter, ..
             } => {
                 for node in pattern.nodes.values() {
-                    node.attrs.root().validate(false, env)?;
+                    node.attrs.validate(false, env)?;
                     env.insert(node.alias.id);
                 }
                 for relationship in pattern.relationships.values() {
-                    relationship.attrs.root().validate(false, env)?;
+                    relationship.attrs.validate(false, env)?;
                     env.insert(relationship.alias.id);
                 }
                 for path in pattern.paths.values() {
@@ -717,14 +702,14 @@ impl QueryIR {
                     env.insert(path.var.id);
                 }
                 if let Some(filter) = filter {
-                    filter.root().validate(false, env)?;
+                    filter.validate(false, env)?;
                 }
                 iter.next().map_or_else(|| Err(String::from(
                         "Query cannot conclude with MATCH (must be a RETURN clause, an update clause, a procedure call or a non-returning subquery)",
                     )), |first| first.inner_validate(iter, env))
             }
             Self::Unwind(l, v) => {
-                l.root().validate(false, env)?;
+                l.validate(false, env)?;
                 if env.contains(&v.id) {
                     return Err(format!("Duplicate alias {}", v.as_str()));
                 }
@@ -741,7 +726,7 @@ impl QueryIR {
                             node.alias.as_str()
                         ));
                     }
-                    node.attrs.root().validate(false, env)?;
+                    node.attrs.validate(false, env)?;
                 }
                 for node in p.nodes.values() {
                     env.insert(node.alias.id);
@@ -752,7 +737,7 @@ impl QueryIR {
                             "Exactly one relationship type must be specified for each relation in a MERGE pattern.",
                         ));
                     }
-                    relationship.attrs.root().validate(false, env)?;
+                    relationship.attrs.validate(false, env)?;
                     env.insert(relationship.alias.id);
                 }
                 iter.next()
@@ -775,7 +760,7 @@ impl QueryIR {
                             node.alias.as_str()
                         ));
                     }
-                    node.attrs.root().validate(false, env)?;
+                    node.attrs.validate(false, env)?;
                 }
                 for node in p.nodes.values() {
                     env.insert(node.alias.id);
@@ -792,7 +777,7 @@ impl QueryIR {
                             "Exactly one relationship type must be specified for each relation in a CREATE pattern.",
                         ));
                     }
-                    relationship.attrs.root().validate(false, env)?;
+                    relationship.attrs.validate(false, env)?;
                     env.insert(relationship.alias.id);
                 }
                 iter.next()
@@ -800,29 +785,29 @@ impl QueryIR {
             }
             Self::Delete(exprs, _) => {
                 for expr in exprs {
-                    expr.root().validate(false, env)?;
+                    expr.validate(false, env)?;
                 }
                 iter.next()
                     .map_or(Ok(()), |first| first.inner_validate(iter, env))
             }
             Self::Set(items) => {
                 for (target, value, _) in items {
-                    target.root().validate(false, env)?;
-                    value.root().validate(false, env)?;
+                    target.validate(false, env)?;
+                    value.validate(false, env)?;
                 }
                 iter.next()
                     .map_or(Ok(()), |first| first.inner_validate(iter, env))
             }
             Self::Remove(items) => {
                 for item in items {
-                    item.root().validate(false, env)?;
+                    item.validate(false, env)?;
                 }
                 iter.next()
                     .map_or(Ok(()), |first| first.inner_validate(iter, env))
             }
             Self::With { exprs, orderby, .. } | Self::Return { exprs, orderby, .. } => {
                 for (_, expr) in exprs {
-                    expr.root().validate(true, env)?;
+                    expr.validate(true, env)?;
                 }
                 let mut seen_aliases = HashSet::new();
                 for (name, _) in exprs {
@@ -835,7 +820,7 @@ impl QueryIR {
                     env.insert(name.id);
                 }
                 for (expr, _) in orderby {
-                    expr.root().validate(false, env)?;
+                    expr.validate(false, env)?;
                 }
                 env.clear();
                 for (name, _) in exprs {
