@@ -670,7 +670,7 @@ pub fn init_functions() -> Result<(), Functions> {
         "count",
         count,
         false,
-        vec![Type::Optional(Box::new(Type::Any))],
+        vec![Type::Any],
         FnType::Aggregation(Value::Int(0), None),
     );
     funcs.add(
