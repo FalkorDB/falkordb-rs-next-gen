@@ -1331,12 +1331,14 @@ def test_list_comprehension():
     res = query("RETURN [x IN range(1, 10) WHERE x < -5] AS result")
     assert res.result_set == [[[]]]
 
+@pytest.mark.extra
 def test_parentheses():
     lparen = "(" * 10000
     rparen = ")" * 10000
     res = query(f"RETURN {lparen}1{rparen}")
     assert res.result_set == [[1]]
 
+@pytest.mark.extra
 def test_nested_list():
     lparen = "[" * 100
     rparen = "]" * 100
