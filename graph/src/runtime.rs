@@ -1130,24 +1130,36 @@ impl<'a> Runtime<'a> {
             }
             IR::Sort(trees) => {
                 if let Some(child_idx) = child0_idx {
-                    let mut items = self.run(&child_idx)?.collect::<Result<Vec<_>, String>>()?;
-                    items.sort_by(|a, b| {
-                        trees.iter().fold(Ordering::Equal, |acc, (tree, desc)| {
-                            if acc != Ordering::Equal {
-                                return acc;
-                            }
-                            let a_value = self.run_expr(tree, tree.root().idx(), a, None);
-                            let b_value = self.run_expr(tree, tree.root().idx(), b, None);
-                            match (a_value, b_value) {
-                                (Ok(a_value), Ok(b_value)) => {
-                                    let ordering = a_value.compare_value(&b_value).0;
-                                    if *desc { ordering.reverse() } else { ordering }
-                                }
-                                (Err(_), _) | (_, Err(_)) => Ordering::Equal,
-                            }
+                    let mut items = self
+                        .run(&child_idx)?
+                        .try_map(|env| {
+                            Ok((
+                                env.clone(),
+                                trees
+                                    .into_iter()
+                                    .map(|(tree, desc)| {
+                                        Ok((
+                                            self.run_expr(tree, tree.root().idx(), &env, None)?,
+                                            desc,
+                                        ))
+                                    })
+                                    .collect::<Result<Vec<_>, String>>()?,
+                            ))
                         })
+                        .collect::<Result<Vec<_>, String>>()?;
+                    items.sort_by(|(_, a), (_, b)| {
+                        a.iter()
+                            .zip(b)
+                            .fold(Ordering::Equal, |acc, ((a, desc), (b, _))| {
+                                if acc != Ordering::Equal {
+                                    return acc;
+                                }
+
+                                let (ordering, _) = a.compare_value(b);
+                                if **desc { ordering.reverse() } else { ordering }
+                            })
                     });
-                    return Ok(Box::new(items.into_iter().map(Ok)));
+                    return Ok(Box::new(items.into_iter().map(|(env, _)| Ok(env))));
                 }
                 unreachable!();
             }

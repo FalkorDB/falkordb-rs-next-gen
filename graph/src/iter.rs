@@ -221,26 +221,26 @@ where
 }
 
 pub trait TryMap {
-    fn try_map<T, E, F>(
+    fn try_map<T1, T2, E, F>(
         self,
         func: F,
-    ) -> impl Iterator<Item = Result<T, E>>
+    ) -> impl Iterator<Item = Result<T2, E>>
     where
-        Self: Iterator<Item = Result<T, E>>,
-        F: Fn(T) -> Result<T, E>;
+        Self: Iterator<Item = Result<T1, E>>,
+        F: Fn(T1) -> Result<T2, E>;
 }
 
 impl<I> TryMap for I
 where
     I: Iterator,
 {
-    fn try_map<T, E, F>(
+    fn try_map<T1, T2, E, F>(
         self,
         func: F,
-    ) -> impl Iterator<Item = Result<T, E>>
+    ) -> impl Iterator<Item = Result<T2, E>>
     where
-        Self: Iterator<Item = Result<T, E>>,
-        F: Fn(T) -> Result<T, E>,
+        Self: Iterator<Item = Result<T1, E>>,
+        F: Fn(T1) -> Result<T2, E>,
     {
         self.map(move |x| x.and_then(&func))
     }
