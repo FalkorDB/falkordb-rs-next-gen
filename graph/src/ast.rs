@@ -554,8 +554,7 @@ impl QueryGraph {
         }
 
         for path in self.paths.values() {
-            if path.vars.iter().any(|id| visited.contains(&id.id)) && visited.insert(path.var.id) {
-                debug_assert!(path.vars.iter().all(|id| visited.contains(&id.id)));
+            if path.vars.iter().all(|id| visited.contains(&id.id)) && visited.insert(path.var.id) {
                 component.add_path(path.clone());
             }
         }
