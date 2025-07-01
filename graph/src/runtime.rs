@@ -190,8 +190,8 @@ impl<'a> Runtime<'a> {
         agg_group_key: Option<u64>,
     ) -> Result<Value, String> {
         let mut res = vec![];
-        let mut stack = vec![idx];
-        while let Some(idx) = stack.pop() {
+        let mut stack = vec![(idx, false)];
+        while let Some((idx, reenter)) = stack.pop() {
             let node = ir.node(&idx);
             match node.data() {
                 ExprIR::Null => res.push(Value::Null),
@@ -207,11 +207,22 @@ impl<'a> Runtime<'a> {
                     || Err(format!("Parameter {x} not found")),
                     |v| Ok(v.clone()),
                 )?),
-                ExprIR::List => res.push(Value::List(
-                    node.children()
-                        .map(|child| self.run_expr(ir, child.idx(), env, agg_group_key))
-                        .collect::<Result<Vec<_>, _>>()?,
-                )),
+                ExprIR::List => {
+                    if reenter {
+                        let mut list = vec![];
+                        for _ in 0..node.num_children() {
+                            list.push(res.pop().unwrap());
+                        }
+                        res.push(Value::List(list));
+                    } else if node.num_children() > 0 {
+                        stack.push((idx, true));
+                        for idx in node.children().map(|c| c.idx()) {
+                            stack.push((idx, false));
+                        }
+                    } else {
+                        res.push(Value::List(vec![]));
+                    }
+                }
                 ExprIR::Length => {
                     match self.run_expr(ir, node.child(0).idx(), env, agg_group_key)? {
                         Value::List(arr) => res.push(Value::Int(arr.len() as _)),
@@ -274,13 +285,12 @@ impl<'a> Runtime<'a> {
                             }
                         }
                     }
-                    if found {
-                        continue;
-                    }
-                    if is_null {
-                        res.push(Value::Null);
-                    } else {
-                        res.push(Value::Bool(false));
+                    if !found {
+                        if is_null {
+                            res.push(Value::Null);
+                        } else {
+                            res.push(Value::Bool(false));
+                        }
                     }
                 }
                 ExprIR::Xor => {
@@ -299,10 +309,9 @@ impl<'a> Runtime<'a> {
                             }
                         }
                     }
-                    if found {
-                        continue;
+                    if !found {
+                        res.push(Value::Bool(last.unwrap_or(false)));
                     }
-                    res.push(Value::Bool(last.unwrap_or(false)));
                 }
                 ExprIR::And => {
                     let mut is_null = false;
@@ -321,13 +330,12 @@ impl<'a> Runtime<'a> {
                             }
                         }
                     }
-                    if found {
-                        continue;
-                    }
-                    if is_null {
-                        res.push(Value::Null);
-                    } else {
-                        res.push(Value::Bool(true));
+                    if !found {
+                        if is_null {
+                            res.push(Value::Null);
+                        } else {
+                            res.push(Value::Bool(true));
+                        }
                     }
                 }
                 ExprIR::Not => match self.run_expr(ir, node.child(0).idx(), env, agg_group_key)? {
@@ -377,7 +385,7 @@ impl<'a> Runtime<'a> {
                     .compare_value(&self.run_expr(ir, node.child(1).idx(), env, agg_group_key)?)
                 {
                     (_, DisjointOrNull::ComparedNull | DisjointOrNull::Disjoint) => {
-                        res.push(Value::Null)
+                        res.push(Value::Null);
                     }
                     (_, DisjointOrNull::NaN) => res.push(Value::Bool(false)),
                     (Ordering::Greater, _) => res.push(Value::Bool(true)),
@@ -583,6 +591,7 @@ impl<'a> Runtime<'a> {
                 }
             }
         }
+        debug_assert_eq!(res.len(), 1);
         Ok(res.pop().unwrap())
     }
 
