@@ -239,15 +239,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "falkordb-macro"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote 1.0.40",
- "syn 2.0.104",
-]
-
-[[package]]
 name = "falkordb-rs"
 version = "0.1.0"
 dependencies = [
@@ -399,7 +390,7 @@ checksum = "a8d1add55171497b4705a648c6b583acafb01d58050a51727785f0b2c8e0a2b2"
 name = "graph"
 version = "0.1.0"
 dependencies = [
- "falkordb-macro",
+ "itertools",
  "once_cell",
  "ordermap",
  "orx-tree",
@@ -669,6 +660,15 @@ checksum = "dbc5ebe9c3a1a7a5127f920a418f7585e9e758e911d0466ed004f393b0e380b2"
 dependencies = [
  "memchr",
  "serde",
+]
+
+[[package]]
+name = "itertools"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
+dependencies = [
+ "either",
 ]
 
 [[package]]

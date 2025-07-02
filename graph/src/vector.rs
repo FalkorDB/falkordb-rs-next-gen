@@ -105,7 +105,7 @@ impl Size<bool> for Vector<bool> {
     fn size(&self) -> u64 {
         unsafe {
             let mut size: u64 = 0;
-            let info = GrB_Vector_size(&mut size, self.v);
+            let info = GrB_Vector_size(&raw mut size, self.v);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             size
         }

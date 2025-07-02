@@ -1,7 +1,6 @@
 [workspace]
 members = [
     "graph",
-    "falkordb-macro",
     "fuzz",
     "runtime-fuzz-target", ]
 

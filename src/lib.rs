@@ -430,7 +430,7 @@ fn reply_stats(
         stats_len += 1;
     }
 
-    raw::reply_with_array(ctx.ctx, stats_len as _);
+    raw::reply_with_array(ctx.ctx, stats_len.into());
     if stats.labels_added > 0 {
         let str = format!("Labels added: {}", stats.labels_added);
         raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());

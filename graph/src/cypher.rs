@@ -5,7 +5,7 @@ use crate::cypher::Token::RParen;
 use crate::functions::{FnType, Type, get_functions};
 use crate::tree;
 use crate::value::Value;
-use falkordb_macro::parse_binary_expr;
+use itertools::Itertools;
 use ordermap::OrderSet;
 use orx_tree::{DynTree, NodeRef};
 use std::collections::{HashMap, HashSet};
@@ -529,6 +529,70 @@ macro_rules! optional_match_token {
     () => {};
 }
 
+#[macro_export]
+macro_rules! parse_expr_return {
+    ($stack:ident, $res:ident) => {
+        match &mut $stack.last_mut() {
+            Some((_, Some(expr))) => {
+                expr.root_mut().push_child_tree($res);
+            }
+            Some((_, expr)) => {
+                *expr = Some($res);
+            }
+            _ => return Ok($res),
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! parse_operators {
+    ($self:ident, $stack:ident, $res:ident, $current:ident, $token:pat => $expr:ident) => {
+        if let $token = $self.lexer.current() {
+            $self.lexer.next();
+            let res = if matches!($res.root().data(), ExprIR::$expr) {
+                $res
+            } else {
+                tree!(ExprIR::$expr, $res)
+            };
+            $stack.push(($current, Some(res)));
+            $stack.push(($current + 1, None));
+        } else {
+            match &mut $stack.last_mut() {
+                Some((_, Some(expr))) => {
+                    expr.root_mut().push_child_tree($res);
+                }
+                Some((_, expr)) => {
+                    *expr = Some($res);
+                }
+                _ => return Ok($res),
+            }
+        }
+    };
+    ($self:ident, $stack:ident, $res:ident, $current:ident, $($token:pat => $expr:ident),*) => {
+        let mut res = $res;
+        $(if let $token = $self.lexer.current() {
+            $self.lexer.next();
+            if matches!(res.root().data(), ExprIR::$expr) {
+            } else {
+                res = tree!(ExprIR::$expr, res);
+            };
+            $stack.push(($current, Some(res)));
+            $stack.push(($current + 1, None));
+            continue;
+        })*
+
+        match &mut $stack.last_mut() {
+            Some((_, Some(expr))) => {
+                expr.root_mut().push_child_tree(res);
+            }
+            Some((_, expr)) => {
+                *expr = Some(res);
+            }
+            _ => return Ok(res),
+        }
+    };
+}
+
 pub struct Parser<'a> {
     lexer: Lexer<'a>,
     var_id: u32,
@@ -720,13 +784,7 @@ impl<'a> Parser<'a> {
             self.lexer.next();
             idents.push(self.parse_ident()?);
         }
-        Ok(Rc::new(
-            idents
-                .iter()
-                .map(|label| label.as_str())
-                .collect::<Vec<_>>()
-                .join("."),
-        ))
+        Ok(Rc::new(idents.iter().map(|label| label.as_str()).join(".")))
     }
 
     fn parse_match_clause(
@@ -782,7 +840,13 @@ impl<'a> Parser<'a> {
     ) -> Result<QueryIR, String> {
         let distinct = optional_match_token!(self.lexer => Distinct);
         let exprs = if optional_match_token!(self.lexer, Star) {
-            vec![]
+            let mut res: Vec<(Variable, DynTree<ExprIR>)> = self
+                .vars
+                .values()
+                .map(|v| (v.clone(), tree!(ExprIR::Variable(v.clone()))))
+                .collect();
+            res.sort_by(|a, b| a.0.name.cmp(&b.0.name));
+            res
         } else {
             self.parse_named_exprs()?
         };
@@ -1070,33 +1134,16 @@ impl<'a> Parser<'a> {
     }
 
     #[allow(clippy::too_many_lines)]
-    fn parse_primary_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
+    fn parse_primary_expr(&mut self) -> Result<(DynTree<ExprIR>, bool), String> {
         match self.lexer.current() {
-            Token::Ident(ident) => {
-                let mut namespace_and_function = ident.to_lowercase();
-                self.lexer.next();
+            Token::Ident(_) => {
                 let pos = self.lexer.pos;
-                while self.lexer.current() == Token::Dot {
-                    self.lexer.next();
-                    match self.lexer.current() {
-                        Token::Ident(id) => {
-                            self.lexer.next();
-                            namespace_and_function.push('.');
-                            namespace_and_function.push_str(&id.to_lowercase());
-                        }
-                        _ => break,
-                    }
-                }
-                if self.lexer.current() == Token::LParen {
-                    self.lexer.next();
-
+                let ident = self.parse_dotted_ident()?;
+                if optional_match_token!(self.lexer, LParen) {
                     let func = get_functions()
-                        .get(&namespace_and_function, &FnType::Function)
+                        .get(&ident, &FnType::Function)
                         .or_else(|_| {
-                            get_functions().get(
-                                &namespace_and_function,
-                                &FnType::Aggregation(Value::Null, None),
-                            )
+                            get_functions().get(&ident, &FnType::Aggregation(Value::Null, None))
                         })?;
 
                     let distinct = optional_match_token!(self.lexer => Distinct);
@@ -1109,7 +1156,7 @@ impl<'a> Parser<'a> {
                                 arg = tree!(ExprIR::Distinct, arg);
                             }
                             match_token!(self.lexer, RParen);
-                            return Ok(tree!(ExprIR::FuncInvocation(func), arg));
+                            return Ok((tree!(ExprIR::FuncInvocation(func), arg), false));
                         }
 
                         let mut args = self.parse_expression_list(
@@ -1120,7 +1167,7 @@ impl<'a> Parser<'a> {
                             args = vec![tree!(ExprIR::Distinct; args)];
                         }
                         args.push(tree!(ExprIR::Variable(self.create_var(None, Type::Any)?)));
-                        return Ok(tree!(ExprIR::FuncInvocation(func); args));
+                        return Ok((tree!(ExprIR::FuncInvocation(func); args), false));
                     }
 
                     let args =
@@ -1131,56 +1178,57 @@ impl<'a> Parser<'a> {
                             "DISTINCT can only be used with function calls that have arguments",
                         ));
                     }
-                    return Ok(tree!(ExprIR::FuncInvocation(func); args));
+                    return Ok((tree!(ExprIR::FuncInvocation(func); args), false));
                 }
                 self.lexer.set_pos(pos);
-                Ok(tree!(ExprIR::Variable(
-                    self.create_var(Some(ident), Type::Any)?
-                )))
+                let ident = self.parse_ident()?;
+                Ok((
+                    tree!(ExprIR::Variable(self.create_var(Some(ident), Type::Any)?)),
+                    false,
+                ))
             }
             Token::Parameter(param) => {
                 self.lexer.next();
-                Ok(tree!(ExprIR::Parameter(param)))
+                Ok((tree!(ExprIR::Parameter(param)), false))
             }
-            Token::Keyword(Keyword::Case, _) => self.parse_case_expression(),
+            Token::Keyword(Keyword::Case, _) => Ok((self.parse_case_expression()?, false)),
             Token::Keyword(Keyword::All | Keyword::Any | Keyword::None | Keyword::Single, _) => {
-                self.parse_quantifier_expr()
+                Ok((self.parse_quantifier_expr()?, false))
             }
 
             Token::Keyword(Keyword::Null, _) => {
                 self.lexer.next();
-                Ok(tree!(ExprIR::Null))
+                Ok((tree!(ExprIR::Null), false))
             }
             Token::Keyword(Keyword::True, _) => {
                 self.lexer.next();
-                Ok(tree!(ExprIR::Bool(true)))
+                Ok((tree!(ExprIR::Bool(true)), false))
             }
             Token::Keyword(Keyword::False, _) => {
                 self.lexer.next();
-                Ok(tree!(ExprIR::Bool(false)))
+                Ok((tree!(ExprIR::Bool(false)), false))
             }
             Token::Integer(i) => {
                 self.lexer.next();
-                Ok(tree!(ExprIR::Integer(i)))
+                Ok((tree!(ExprIR::Integer(i)), false))
             }
             Token::Float(f) => {
                 self.lexer.next();
-                Ok(tree!(ExprIR::Float(f)))
+                Ok((tree!(ExprIR::Float(f)), false))
             }
             Token::String(s) => {
                 self.lexer.next();
-                Ok(tree!(ExprIR::String(s)))
+                Ok((tree!(ExprIR::String(s)), false))
             }
             Token::LBrace => {
                 self.lexer.next();
                 self.parse_list_literal_or_comprehension()
             }
-            Token::LBracket => self.parse_map(),
+            Token::LBracket => Ok((self.parse_map()?, false)),
             Token::LParen => {
                 self.lexer.next();
-                let expr = self.parse_expr()?;
-                match_token!(self.lexer, RParen);
-                Ok(expr)
+                let expr = tree!(ExprIR::Paren);
+                Ok((expr, true))
             }
             token => Err(self.lexer.format_error(&format!("Invalid input {token:?}"))),
         }
@@ -1209,53 +1257,6 @@ impl<'a> Parser<'a> {
         Ok(lhs)
     }
 
-    fn parse_unary_add_or_subtract_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
-        optional_match_token!(self.lexer, Plus);
-        let minus = optional_match_token!(self.lexer, Dash);
-        let expr = self.parse_non_arithmetic_operator_expr()?;
-        if matches!(expr.root().data(), ExprIR::Integer(i64::MIN)) {
-            if minus {
-                return Ok(tree!(ExprIR::Integer(i64::MIN)));
-            }
-            return Err(self
-                .lexer
-                .format_error(format!("Integer overflow '{}'", i64::MAX).as_str()));
-        }
-        if minus {
-            return Ok(tree!(ExprIR::Negate, expr));
-        }
-        Ok(expr)
-    }
-
-    fn parse_non_arithmetic_operator_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
-        let mut lhs = self.parse_primary_expr()?;
-        loop {
-            match self.lexer.current() {
-                Token::LBrace => {
-                    self.lexer.next();
-                    lhs = self.parse_list_operator_expression(lhs)?;
-                }
-                Token::Dot => {
-                    self.lexer.next();
-                    lhs = self.parse_property_lookup(lhs)?;
-                }
-                _ => break,
-            }
-        }
-        if self.lexer.current() == Token::Colon {
-            let labels = tree!(ExprIR::List; self
-                .parse_labels()?
-                .into_iter()
-                .map(|l| tree!(ExprIR::String(l))));
-            return Ok(tree!(
-                ExprIR::FuncInvocation(get_functions().get("node_has_labels", &FnType::Internal)?),
-                lhs,
-                labels
-            ));
-        }
-        Ok(lhs)
-    }
-
     fn parse_property_lookup(
         &mut self,
         expr: DynTree<ExprIR>,
@@ -1268,122 +1269,218 @@ impl<'a> Parser<'a> {
         ))
     }
 
-    fn parse_power_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
-        parse_binary_expr!(self.parse_unary_add_or_subtract_expr()?, Token::Power => Pow);
-    }
-
-    fn parse_mul_div_modulo_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
-        parse_binary_expr!(self.parse_power_expr()?, Token::Star => Mul, Token::Slash =>  Div, Token::Modulo => Modulo);
-    }
-
-    fn parse_add_sub_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
-        parse_binary_expr!(self.parse_mul_div_modulo_expr()?, Token::Plus => Add, Token::Dash => Sub);
-    }
-
-    fn parse_string_list_null_predicate_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
-        let mut lhs = self.parse_add_sub_expr()?;
-        loop {
-            match self.lexer.current() {
-                Token::Keyword(Keyword::In, _) => {
-                    self.lexer.next();
-                    let rhs = self.parse_add_sub_expr()?;
-                    lhs = tree!(ExprIR::In, lhs, rhs);
+    #[allow(clippy::too_many_lines)]
+    fn parse_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
+        let mut stack = vec![(0, None::<DynTree<ExprIR>>)];
+        while let Some((current, res)) = stack.pop() {
+            let Some(res) = res else {
+                if current < 3 || (current > 3 && current < 9) || current == 10 {
+                    stack.push((current, None));
+                    stack.push((current + 1, None));
+                } else if current == 3 {
+                    // Not
+                    let mut not_count = 0;
+                    while let Token::Keyword(Keyword::Not, _) = self.lexer.current() {
+                        self.lexer.next();
+                        not_count += 1;
+                    }
+                    let res = if not_count % 2 == 1 {
+                        Some(tree!(ExprIR::Not))
+                    } else {
+                        None
+                    };
+                    stack.push((current, res));
+                    stack.push((current + 1, None));
+                } else if current == 9 {
+                    // unary add or subtract
+                    optional_match_token!(self.lexer, Plus);
+                    let res = if optional_match_token!(self.lexer, Dash) {
+                        Some(tree!(ExprIR::Negate))
+                    } else {
+                        None
+                    };
+                    stack.push((current, res));
+                    stack.push((current + 1, None));
+                } else {
+                    // primary expression
+                    let (res, recurse) = self.parse_primary_expr()?;
+                    if recurse {
+                        stack.push((current, Some(res)));
+                        stack.push((0, None));
+                        continue;
+                    }
+                    parse_expr_return!(stack, res);
                 }
-                Token::Keyword(Keyword::Starts, _) => {
-                    self.lexer.next();
-                    match_token!(self.lexer => With);
-                    let rhs = self.parse_add_sub_expr()?;
-                    lhs = tree!(
-                        ExprIR::FuncInvocation(
-                            get_functions().get("starts_with", &FnType::Internal)?
-                        ),
-                        lhs,
-                        rhs
-                    );
+                continue;
+            };
+            match current {
+                0 => {
+                    // Or
+                    parse_operators!(self, stack, res, current, Token::Keyword(Keyword::Or, _) => Or);
                 }
-                Token::Keyword(Keyword::Ends, _) => {
-                    self.lexer.next();
-                    match_token!(self.lexer => With);
-                    let rhs = self.parse_add_sub_expr()?;
-                    lhs = tree!(
-                        ExprIR::FuncInvocation(
-                            get_functions().get("ends_with", &FnType::Internal)?,
-                        ),
-                        lhs,
-                        rhs
-                    );
+                1 => {
+                    // Xor
+                    parse_operators!(self, stack, res, current, Token::Keyword(Keyword::Xor, _) => Xor);
                 }
-                Token::Keyword(Keyword::Contains, _) => {
-                    self.lexer.next();
-                    let rhs = self.parse_add_sub_expr()?;
-                    lhs = tree!(
-                        ExprIR::FuncInvocation(get_functions().get("contains", &FnType::Internal)?,),
-                        lhs,
-                        rhs
-                    );
+                2 => {
+                    // And
+                    parse_operators!(self, stack, res, current, Token::Keyword(Keyword::And, _) => And);
                 }
-                Token::RegexMatches => {
-                    self.lexer.next();
-                    let rhs = self.parse_add_sub_expr()?;
-                    lhs = tree!(
-                        ExprIR::FuncInvocation(
-                            get_functions().get("regex_matches", &FnType::Internal)?,
-                        ),
-                        lhs,
-                        rhs
-                    );
+                3 => {
+                    // Not
+                    parse_expr_return!(stack, res);
                 }
-                Token::Keyword(Keyword::Is, _) => {
-                    self.lexer.next();
-                    let is_not = tree!(ExprIR::Bool(optional_match_token!(self.lexer => Not)));
-                    match_token!(self.lexer => Null);
-                    lhs = tree!(
-                        ExprIR::FuncInvocation(get_functions().get("is_null", &FnType::Internal)?),
-                        is_not,
-                        lhs
-                    );
+                4 => {
+                    // Comparison
+                    parse_operators!(self, stack, res, current, Token::Equal => Eq, Token::NotEqual => Neq, Token::LessThan => Lt, Token::LessThanOrEqual => Le, Token::GreaterThan => Gt, Token::GreaterThanOrEqual => Ge);
                 }
-
-                _ => return Ok(lhs),
+                5 => {
+                    // String, List, Null predicates
+                    let mut res = res;
+                    match self.lexer.current() {
+                        Token::Keyword(Keyword::In, _) => {
+                            self.lexer.next();
+                            res = tree!(ExprIR::In, res);
+                        }
+                        Token::Keyword(Keyword::Starts, _) => {
+                            self.lexer.next();
+                            match_token!(self.lexer => With);
+                            res = tree!(
+                                ExprIR::FuncInvocation(
+                                    get_functions().get("starts_with", &FnType::Internal)?,
+                                ),
+                                res
+                            );
+                        }
+                        Token::Keyword(Keyword::Ends, _) => {
+                            self.lexer.next();
+                            match_token!(self.lexer => With);
+                            res = tree!(
+                                ExprIR::FuncInvocation(
+                                    get_functions().get("ends_with", &FnType::Internal)?,
+                                ),
+                                res
+                            );
+                        }
+                        Token::Keyword(Keyword::Contains, _) => {
+                            self.lexer.next();
+                            res = tree!(
+                                ExprIR::FuncInvocation(
+                                    get_functions().get("contains", &FnType::Internal)?,
+                                ),
+                                res
+                            );
+                        }
+                        Token::RegexMatches => {
+                            self.lexer.next();
+                            res = tree!(
+                                ExprIR::FuncInvocation(
+                                    get_functions().get("regex_matches", &FnType::Internal)?,
+                                ),
+                                res
+                            );
+                        }
+                        Token::Keyword(Keyword::Is, _) => {
+                            while optional_match_token!(self.lexer => Is) {
+                                let is_not =
+                                    tree!(ExprIR::Bool(optional_match_token!(self.lexer => Not)));
+                                match_token!(self.lexer => Null);
+                                res = tree!(
+                                    ExprIR::FuncInvocation(
+                                        get_functions().get("is_null", &FnType::Internal)?
+                                    ),
+                                    is_not,
+                                    res
+                                );
+                            }
+                            parse_expr_return!(stack, res);
+                            continue;
+                        }
+                        _ => {
+                            parse_expr_return!(stack, res);
+                            continue;
+                        }
+                    }
+                    stack.push((current, Some(res)));
+                    stack.push((current + 1, None));
+                }
+                6 => {
+                    // Add, Sub
+                    parse_operators!(self, stack, res, current, Token::Plus => Add, Token::Dash => Sub);
+                }
+                7 => {
+                    // Mul, Div, Modulo
+                    parse_operators!(self, stack, res, current, Token::Star => Mul, Token::Slash => Div, Token::Modulo => Modulo);
+                }
+                8 => {
+                    // Power
+                    parse_operators!(self, stack, res, current, Token::Power => Pow);
+                }
+                9 => {
+                    // unary add or subtract
+                    if matches!(res.root().data(), ExprIR::Negate)
+                        && matches!(res.root().child(0).data(), ExprIR::Integer(i64::MIN))
+                    {
+                        let res = tree!(ExprIR::Integer(i64::MIN));
+                        parse_expr_return!(stack, res);
+                        continue;
+                    } else if matches!(res.root().data(), ExprIR::Integer(i64::MIN)) {
+                        return Err(self
+                            .lexer
+                            .format_error(format!("Integer overflow '{}'", i64::MAX).as_str()));
+                    }
+                    parse_expr_return!(stack, res);
+                }
+                10 => {
+                    // None arithmetic operators
+                    let mut res = res;
+                    loop {
+                        match self.lexer.current() {
+                            Token::LBrace => {
+                                self.lexer.next();
+                                res = self.parse_list_operator_expression(res)?;
+                            }
+                            Token::Dot => {
+                                self.lexer.next();
+                                res = self.parse_property_lookup(res)?;
+                            }
+                            _ => break,
+                        };
+                    }
+                    if self.lexer.current() == Token::Colon {
+                        let labels = tree!(ExprIR::List; self.parse_labels()?.into_iter().map(|l| tree!(ExprIR::String(l))));
+                        res = tree!(
+                            ExprIR::FuncInvocation(
+                                get_functions().get("node_has_labels", &FnType::Internal)?
+                            ),
+                            res,
+                            labels
+                        );
+                    }
+                    parse_expr_return!(stack, res);
+                }
+                11 => {
+                    // primary expression
+                    let mut res = res;
+                    if matches!(res.root().data(), ExprIR::Paren) {
+                        match_token!(self.lexer, RParen);
+                        if matches!(res.root().child(0).data(), ExprIR::Paren) {
+                            res.root_mut().child_mut(0).take_out();
+                        }
+                    } else if matches!(res.root().data(), ExprIR::List) {
+                        if optional_match_token!(self.lexer, Comma) {
+                            stack.push((current, Some(res)));
+                            stack.push((0, None));
+                            continue;
+                        }
+                        match_token!(self.lexer, RBrace);
+                    }
+                    parse_expr_return!(stack, res);
+                }
+                _ => unreachable!(),
             }
         }
-    }
-
-    fn parse_comparison_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
-        parse_binary_expr!(self.parse_string_list_null_predicate_expr()?, Token::Equal => Eq, Token::NotEqual => Neq, Token::LessThan => Lt, Token::LessThanOrEqual => Le, Token::GreaterThan => Gt, Token::GreaterThanOrEqual => Ge);
-    }
-
-    fn parse_not_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
-        let mut not_count = 0;
-
-        while let Token::Keyword(Keyword::Not, _) = self.lexer.current() {
-            self.lexer.next();
-            not_count += 1;
-        }
-
-        let expr = self.parse_comparison_expr()?;
-
-        if not_count % 2 == 0 {
-            Ok(expr)
-        } else {
-            Ok(tree!(ExprIR::Not, expr))
-        }
-    }
-
-    fn parse_and_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
-        parse_binary_expr!(self.parse_not_expr()?, Token::Keyword(Keyword::And, _) => And);
-    }
-
-    fn parse_xor_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
-        parse_binary_expr!(self.parse_and_expr()?, Token::Keyword(Keyword::Xor, _) => Xor);
-    }
-
-    fn parse_or_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
-        parse_binary_expr!(self.parse_xor_expr()?, Token::Keyword(Keyword::Or, _) => Or);
-    }
-
-    fn parse_expr(&mut self) -> Result<DynTree<ExprIR>, String> {
-        self.parse_or_expr()
+        unreachable!()
     }
 
     fn parse_ident(&mut self) -> Result<Rc<String>, String> {
@@ -1446,35 +1543,21 @@ impl<'a> Parser<'a> {
         Ok(exprs)
     }
 
-    fn parse_list_literal_or_comprehension(&mut self) -> Result<DynTree<ExprIR>, String> {
+    fn parse_list_literal_or_comprehension(&mut self) -> Result<(DynTree<ExprIR>, bool), String> {
         // Check if the second token is 'IN' for list comprehension
         if let Token::Ident(var) = self.lexer.current() {
             let pos = self.lexer.pos;
             self.lexer.next();
             if optional_match_token!(self.lexer => In) {
-                return self.parse_list_comprehension(var);
+                return Ok((self.parse_list_comprehension(var)?, false));
             }
             self.lexer.set_pos(pos); // Reset lexer position
         }
 
-        let mut exprs = Vec::new();
-
-        while self.lexer.current() != Token::RBrace {
-            exprs.push(self.parse_expr()?);
-            match self.lexer.current() {
-                Token::Comma => self.lexer.next(),
-                _ => break,
-            }
-        }
-
-        if self.lexer.current() == Token::RBrace {
-            self.lexer.next();
-            Ok(tree!(ExprIR::List ; exprs))
-        } else {
-            Err(self
-                .lexer
-                .format_error(&format!("Invalid input {:?}", self.lexer.current())))
-        }
+        Ok((
+            tree!(ExprIR::List),
+            !optional_match_token!(self.lexer, RBrace),
+        ))
     }
 
     fn parse_list_comprehension(
@@ -1696,7 +1779,11 @@ impl<'a> Parser<'a> {
     fn parse_set_clause(&mut self) -> Result<QueryIR, String> {
         let mut set_items = vec![];
         loop {
-            let mut expr = self.parse_primary_expr()?;
+            let (mut expr, recurse) = self.parse_primary_expr()?;
+            if recurse {
+                expr = self.parse_expr()?;
+                match_token!(self.lexer, RParen);
+            }
             if self.lexer.current() == Token::Dot {
                 while self.lexer.current() == Token::Dot {
                     self.lexer.next();
@@ -1758,7 +1845,11 @@ impl<'a> Parser<'a> {
     fn parse_remove_clause(&mut self) -> Result<QueryIR, String> {
         let mut remove_items = vec![];
         loop {
-            let mut expr = self.parse_primary_expr()?;
+            let (mut expr, recurse) = self.parse_primary_expr()?;
+            if recurse {
+                expr = self.parse_expr()?;
+                match_token!(self.lexer, RParen);
+            }
             if self.lexer.current() == Token::Dot {
                 while self.lexer.current() == Token::Dot {
                     self.lexer.next();

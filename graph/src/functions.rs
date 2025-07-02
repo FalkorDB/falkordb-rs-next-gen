@@ -6,6 +6,7 @@
 
 use crate::runtime::Runtime;
 use crate::value::{Value, ValueTypeOf};
+use itertools::Itertools;
 use rand::Rng;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display};
@@ -669,7 +670,7 @@ pub fn init_functions() -> Result<(), Functions> {
         "count",
         count,
         false,
-        vec![Type::Optional(Box::new(Type::Any))],
+        vec![Type::Any],
         FnType::Aggregation(Value::Int(0), None),
     );
     funcs.add(
@@ -1505,24 +1506,14 @@ fn string_join(
             let result = to_string_vec(&vec);
             result.map(|strings| {
                 Value::String(Rc::new(
-                    strings
-                        .iter()
-                        .map(|label| label.as_str())
-                        .collect::<Vec<_>>()
-                        .join(s.as_str()),
+                    strings.iter().map(|label| label.as_str()).join(s.as_str()),
                 ))
             })
         }
         (Value::List(vec), None) => {
             let result = to_string_vec(&vec);
             result.map(|strings| {
-                Value::String(Rc::new(
-                    strings
-                        .iter()
-                        .map(|label| label.as_str())
-                        .collect::<Vec<_>>()
-                        .join(""),
-                ))
+                Value::String(Rc::new(strings.iter().map(|label| label.as_str()).join("")))
             })
         }
         (Value::Null, _) => Ok(Value::Null),
@@ -2053,10 +2044,10 @@ fn internal_case(
                 unreachable!()
             };
             for pair in alts.chunks(2) {
-                if let [condition, result] = pair {
-                    if *condition == value {
-                        return Ok(result.clone());
-                    }
+                if let [condition, result] = pair
+                    && *condition == value
+                {
+                    return Ok(result.clone());
                 }
             }
             Ok(else_)
