@@ -1136,7 +1136,7 @@ impl<'a> Runtime<'a> {
                             Ok((
                                 env.clone(),
                                 trees
-                                    .into_iter()
+                                    .iter()
                                     .map(|(tree, desc)| {
                                         Ok((
                                             self.run_expr(tree, tree.root().idx(), &env, None)?,
