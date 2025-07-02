@@ -1228,7 +1228,6 @@ impl<'a> Parser<'a> {
             Token::LParen => {
                 self.lexer.next();
                 let expr = tree!(ExprIR::Paren);
-                // match_token!(self.lexer, RParen);
                 Ok((expr, true))
             }
             token => Err(self.lexer.format_error(&format!("Invalid input {token:?}"))),
@@ -1279,6 +1278,7 @@ impl<'a> Parser<'a> {
                     stack.push((current, None));
                     stack.push((current + 1, None));
                 } else if current == 3 {
+                    // Not
                     let mut not_count = 0;
                     while let Token::Keyword(Keyword::Not, _) = self.lexer.current() {
                         self.lexer.next();
@@ -1292,6 +1292,7 @@ impl<'a> Parser<'a> {
                     stack.push((current, res));
                     stack.push((current + 1, None));
                 } else if current == 9 {
+                    // unary add or subtract
                     optional_match_token!(self.lexer, Plus);
                     let res = if optional_match_token!(self.lexer, Dash) {
                         Some(tree!(ExprIR::Negate))
@@ -1301,6 +1302,7 @@ impl<'a> Parser<'a> {
                     stack.push((current, res));
                     stack.push((current + 1, None));
                 } else {
+                    // primary expression
                     let (res, recurse) = self.parse_primary_expr()?;
                     if recurse {
                         stack.push((current, Some(res)));
@@ -1403,7 +1405,7 @@ impl<'a> Parser<'a> {
                     stack.push((current + 1, None));
                 }
                 6 => {
-                    // Add
+                    // Add, Sub
                     parse_operators!(self, stack, res, current, Token::Plus => Add, Token::Dash => Sub);
                 }
                 7 => {
@@ -1458,6 +1460,7 @@ impl<'a> Parser<'a> {
                     parse_expr_return!(stack, res);
                 }
                 11 => {
+                    // primary expression
                     let mut res = res;
                     if matches!(res.root().data(), ExprIR::Paren) {
                         match_token!(self.lexer, RParen);
