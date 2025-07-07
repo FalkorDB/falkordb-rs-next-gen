@@ -246,6 +246,7 @@ dependencies = [
  "opentelemetry",
  "opentelemetry-zipkin",
  "opentelemetry_sdk",
+ "orx-tree",
  "redis-module",
  "redis-module-macros",
  "tracing",

@@ -6,7 +6,7 @@
 use crate::ast::{QuantifierType, QueryGraph, QueryNode, QueryRelationship, Variable};
 use crate::functions::{FnType, Functions, Type, get_functions};
 use crate::graph::{NodeId, RelationshipId};
-use crate::iter::{Aggregate, LazyReplace, TryFlatMap, TryMap};
+use crate::iter::{Aggregate, CondInspectIter, LazyReplace, TryFlatMap, TryMap};
 use crate::pending::Pending;
 use crate::value::{CompareValue, DisjointOrNull, Env, ValuesDeduper};
 use crate::{ast::ExprIR, graph::Graph, planner::IR, value::Contains, value::Value};
@@ -49,11 +49,13 @@ pub struct Runtime<'a> {
     pending: Lazy<RefCell<Pending>>,
     stats: RefCell<QueryStatistics>,
     plan: Rc<DynTree<IR>>,
-    return_names: Vec<Variable>,
     value_dedupers: RefCell<HashMap<String, ValuesDeduper>>,
+    pub return_names: Vec<Variable>,
+    inspect: bool,
+    pub record: RefCell<Vec<(NodeIdx<Dyn<IR>>, Result<Env, String>)>>,
 }
 
-pub trait ReturnNames {
+trait ReturnNames {
     fn get_return_names(&self) -> Vec<Variable>;
 }
 
@@ -94,7 +96,9 @@ impl<'a> Runtime<'a> {
         parameters: HashMap<String, Value>,
         write: bool,
         plan: Rc<DynTree<IR>>,
+        inspect: bool,
     ) -> Self {
+        let return_names = plan.root().get_return_names();
         Self {
             functions: get_functions(),
             parameters,
@@ -102,9 +106,11 @@ impl<'a> Runtime<'a> {
             write,
             pending: Lazy::new(|| RefCell::new(Pending::default())),
             stats: RefCell::new(QueryStatistics::default()),
-            plan: plan.clone(),
-            return_names: plan.root().get_return_names(),
+            plan,
+            return_names,
             value_dedupers: RefCell::new(HashMap::new()),
+            inspect,
+            record: RefCell::new(vec![]),
         }
     }
 
@@ -621,6 +627,11 @@ impl<'a> Runtime<'a> {
                         if (start > end && step > 0) || (start < end && step < 0) {
                             return Ok(Box::new(empty()));
                         }
+                        let length = (end - start) / step + 1;
+                        #[allow(clippy::cast_lossless)]
+                        if length > u32::MAX as i64 {
+                            return Err(String::from("Range too large"));
+                        }
 
                         if step > 0 {
                             return Ok(Box::new(
@@ -700,9 +711,9 @@ impl<'a> Runtime<'a> {
     #[allow(clippy::too_many_lines)]
     #[instrument(name = "run", level = "debug", skip(self, idx))]
     fn run(
-        &self,
+        &'a self,
         idx: &NodeIdx<Dyn<IR>>,
-    ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + '_>, String> {
+    ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + 'a>, String> {
         let child0_idx = self.plan.node(idx).get_child(0).map(|n| n.idx());
         let child1_idx = self.plan.node(idx).get_child(1).map(|n| n.idx());
         match self.plan.node(idx).data() {
@@ -766,16 +777,28 @@ impl<'a> Runtime<'a> {
                     Box::new(once(Ok(Env::default())))
                 };
 
-                Ok(Box::new(iter.try_flat_map(move |vars| {
-                    let value = self.run_iter_expr(tree, tree.root().idx(), &vars)?;
-                    Ok(value.map(move |v| {
-                        let mut vars = vars.clone();
-                        vars.insert(name, v);
-                        Ok(vars)
-                    }))
-                })))
+                let idx = idx.clone();
+                Ok(Box::new(
+                    iter.try_flat_map(move |vars| {
+                        let value = self.run_iter_expr(tree, tree.root().idx(), &vars)?;
+                        Ok(value.map(move |v| {
+                            let mut vars = vars.clone();
+                            vars.insert(name, v);
+                            Ok(vars)
+                        }))
+                    })
+                    .cond_inspect(self.inspect, move |res| {
+                        self.record.borrow_mut().push((idx.clone(), res.clone()));
+                    }),
+                ))
             }
             IR::Create(pattern) => {
+                let iter = if let Some(child_idx) = child0_idx {
+                    self.run(&child_idx)?
+                } else {
+                    Box::new(once(Ok(Env::default())))
+                };
+
                 let mut parent_commit = false;
                 if let Some(parent) = self.plan.node(idx).parent()
                     && matches!(parent.data(), IR::Commit)
@@ -783,27 +806,17 @@ impl<'a> Runtime<'a> {
                 {
                     parent_commit = true;
                 }
-                if let Some(child_idx) = child0_idx {
-                    return Ok(Box::new(self.run(&child_idx)?.try_flat_map(
-                        move |mut vars| {
-                            if let Err(e) = self.create(pattern, &mut vars) {
-                                return Ok(vec![Err(e)].into_iter());
-                            }
+                Ok(Box::new(iter.try_flat_map(move |mut vars| {
+                    self.create(pattern, &mut vars)?;
 
-                            if parent_commit {
-                                return Ok(vec![].into_iter());
-                            }
+                    if parent_commit {
+                        return Ok(
+                            Box::new(empty()) as Box<dyn Iterator<Item = Result<Env, String>>>
+                        );
+                    }
 
-                            Ok(vec![Ok(vars)].into_iter())
-                        },
-                    )));
-                }
-                let mut vars = Env::default();
-                self.create(pattern, &mut vars)?;
-                if parent_commit {
-                    return Ok(Box::new(empty()));
-                }
-                Ok(Box::new(once(Ok(vars))))
+                    Ok(Box::new(once(Ok(vars))) as Box<dyn Iterator<Item = Result<Env, String>>>)
+                })))
             }
             IR::Merge(pattern) => {
                 if let Some(child_idx) = child1_idx {
@@ -1042,7 +1055,7 @@ impl<'a> Runtime<'a> {
                 };
 
                 Ok(Box::new(iter.try_flat_map(move |vars| {
-                    Ok(self.node_scan(node_pattern, vars))
+                    self.node_scan(node_pattern, vars)
                 })))
             }
             IR::RelationshipScan(relationship_pattern) => {
@@ -1053,7 +1066,7 @@ impl<'a> Runtime<'a> {
                 };
 
                 Ok(Box::new(iter.try_flat_map(move |vars| {
-                    Ok(self.relationship_scan(relationship_pattern, vars))
+                    self.relationship_scan(relationship_pattern, vars)
                 })))
             }
             IR::ExpandInto(relationship_pattern) => {
@@ -1064,7 +1077,7 @@ impl<'a> Runtime<'a> {
                 };
 
                 Ok(Box::new(iter.try_flat_map(move |vars| {
-                    Ok(self.expand_into(relationship_pattern, vars))
+                    self.expand_into(relationship_pattern, vars)
                 })))
             }
             IR::PathBuilder(paths) => {
@@ -1288,43 +1301,26 @@ impl<'a> Runtime<'a> {
                 ))
             }
             IR::Project(trees) => {
-                if let Some(child_idx) = child0_idx {
-                    Ok(Box::new(self.run(&child_idx)?.try_map(move |vars| {
-                        if trees.is_empty() {
-                            return Ok(vars);
-                        }
-                        let mut return_vars = Env::default();
-                        for (name, tree) in trees {
-                            let value = self.run_expr(tree, tree.root().idx(), &vars, None)?;
-                            return_vars.insert(name, value);
-                        }
-                        Ok(return_vars)
-                    })))
+                let iter = if let Some(child_idx) = child0_idx {
+                    self.run(&child_idx)?
                 } else {
-                    Ok(Box::new(once(()).map(move |()| {
-                        let vars = Env::default();
+                    Box::new(once(Ok(Env::default())))
+                };
+
+                let idx = idx.clone();
+                Ok(Box::new(
+                    iter.try_map(move |vars| {
                         let mut return_vars = Env::default();
                         for (name, tree) in trees {
                             let value = self.run_expr(tree, tree.root().idx(), &vars, None)?;
                             return_vars.insert(name, value);
                         }
                         Ok(return_vars)
-                    })))
-                }
-            }
-            IR::Commit => {
-                if !self.write {
-                    return Err(String::from(
-                        "graph.RO_QUERY is to be executed only on read-only queries",
-                    ));
-                }
-                let iter = self
-                    .run(&child0_idx.ok_or("nothing to commit")?)?
-                    .collect::<Result<Vec<_>, String>>()?
-                    .into_iter()
-                    .map(Ok);
-                self.commit();
-                Ok(Box::new(iter))
+                    })
+                    .cond_inspect(self.inspect, move |res| {
+                        self.record.borrow_mut().push((idx.clone(), res.clone()));
+                    }),
+                ))
             }
             IR::Distinct => {
                 if let Some(child_idx) = child0_idx {
@@ -1355,6 +1351,20 @@ impl<'a> Runtime<'a> {
                 }
                 unreachable!();
             }
+            IR::Commit => {
+                if !self.write {
+                    return Err(String::from(
+                        "graph.RO_QUERY is to be executed only on read-only queries",
+                    ));
+                }
+                let iter = self
+                    .run(&child0_idx.ok_or("nothing to commit")?)?
+                    .collect::<Result<Vec<_>, String>>()?
+                    .into_iter()
+                    .map(Ok);
+                self.pending.borrow_mut().commit(self.g, &self.stats);
+                Ok(Box::new(iter))
+            }
         }
     }
 
@@ -1362,18 +1372,13 @@ impl<'a> Runtime<'a> {
         &self,
         relationship_pattern: &'a QueryRelationship,
         vars: Env,
-    ) -> Box<dyn Iterator<Item = Result<Env, String>> + '_> {
-        let filter_attrs = match self.run_expr(
+    ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + '_>, String> {
+        let filter_attrs = self.run_expr(
             &relationship_pattern.attrs,
             relationship_pattern.attrs.root().idx(),
             &vars,
             None,
-        ) {
-            Ok(attrs) => attrs,
-            Err(e) => {
-                return Box::new(once(Err(e)));
-            }
-        };
+        )?;
         let from_id = vars
             .get(&relationship_pattern.from.alias)
             .and_then(|v| match v {
@@ -1391,7 +1396,7 @@ impl<'a> Runtime<'a> {
             &relationship_pattern.from.labels,
             &relationship_pattern.to.labels,
         );
-        Box::new(iter.flat_map(move |(src, dst)| {
+        Ok(Box::new(iter.flat_map(move |(src, dst)| {
             let vars = vars.clone();
             let filter_attrs = filter_attrs.clone();
             if from_id.is_some() && from_id.unwrap() != src {
@@ -1436,29 +1441,33 @@ impl<'a> Runtime<'a> {
                         Ok(vars)
                     }),
             ) as Box<dyn Iterator<Item = Result<Env, String>>>
-        }))
+        })))
     }
 
     fn expand_into(
         &self,
         relationship_pattern: &'a QueryRelationship,
         vars: Env,
-    ) -> Box<dyn Iterator<Item = Result<Env, String>> + '_> {
-        let src = vars
-            .get(&relationship_pattern.from.alias)
-            .and_then(|v| match v {
-                Value::Node(id) => Some(id),
-                _ => None,
-            })
-            .unwrap();
-        let dst = vars
-            .get(&relationship_pattern.to.alias)
-            .and_then(|v| match v {
-                Value::Node(id) => Some(id),
-                _ => None,
-            })
-            .unwrap();
-        Box::new(
+    ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + '_>, String> {
+        let src = vars.get(&relationship_pattern.from.alias).map_or_else(
+            || Err(String::from("Node not found")),
+            |v| match v {
+                Value::Node(id) => Ok(id),
+                _ => Err(String::from(
+                    "Invalid node id for 'from' in relationship pattern",
+                )),
+            },
+        )?;
+        let dst = vars.get(&relationship_pattern.to.alias).map_or_else(
+            || Err(String::from("Node not found")),
+            |v| match v {
+                Value::Node(id) => Ok(id),
+                _ => Err(String::from(
+                    "Invalid node id for 'from' in relationship pattern",
+                )),
+            },
+        )?;
+        Ok(Box::new(
             self.g
                 .borrow()
                 .get_src_dest_relationships(src, dst, &relationship_pattern.types)
@@ -1473,27 +1482,22 @@ impl<'a> Runtime<'a> {
                     vars.insert(&relationship_pattern.to.alias, Value::Node(dst));
                     Ok(vars)
                 }),
-        )
+        ))
     }
 
     fn node_scan(
         &self,
         node_pattern: &'a QueryNode,
         vars: Env,
-    ) -> Box<dyn Iterator<Item = Result<Env, String>> + '_> {
-        let attrs = match self.run_expr(
+    ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + '_>, String> {
+        let attrs = self.run_expr(
             &node_pattern.attrs,
             node_pattern.attrs.root().idx(),
             &vars,
             None,
-        ) {
-            Ok(attrs) => attrs,
-            Err(e) => {
-                return Box::new(once(Err(e)));
-            }
-        };
+        )?;
         let iter = self.g.borrow().get_nodes(&node_pattern.labels);
-        Box::new(iter.filter_map(move |v| {
+        Ok(Box::new(iter.filter_map(move |v| {
             let mut vars = vars.clone();
             if let Value::Map(attrs) = &attrs
                 && !attrs.is_empty()
@@ -1514,7 +1518,7 @@ impl<'a> Runtime<'a> {
             }
             vars.insert(&node_pattern.alias, Value::Node(v));
             Some(Ok(vars))
-        }))
+        })))
     }
 
     fn delete(
@@ -1619,11 +1623,6 @@ impl<'a> Runtime<'a> {
             vars.insert(&rel.alias, Value::Relationship(id, from_id, to_id));
         }
         Ok(())
-    }
-
-    #[allow(clippy::too_many_lines)]
-    fn commit(&self) {
-        self.pending.borrow_mut().commit(self.g, &self.stats);
     }
 
     pub fn get_node_attribute(

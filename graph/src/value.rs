@@ -3,6 +3,7 @@
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::HashSet;
+use std::fmt::Debug;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::ops::{Add, Div, Mul, Rem, Sub};
 use std::rc::Rc;
@@ -13,7 +14,7 @@ use crate::ast::Variable;
 use crate::functions::Type;
 use crate::graph::{NodeId, RelationshipId};
 
-#[derive(Clone, Debug, PartialEq, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub enum Value {
     #[default]
     Null,

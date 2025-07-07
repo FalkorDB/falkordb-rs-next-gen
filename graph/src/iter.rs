@@ -342,3 +342,36 @@ where
         })
     }
 }
+
+pub trait CondInspectIter<'a, I>
+where
+    I: Iterator + 'a,
+{
+    fn cond_inspect<F>(
+        self,
+        cond: bool,
+        func: F,
+    ) -> Box<dyn Iterator<Item = I::Item> + 'a>
+    where
+        F: FnMut(&I::Item) + 'a;
+}
+
+impl<'a, I> CondInspectIter<'a, I> for I
+where
+    I: Iterator + 'a,
+{
+    fn cond_inspect<F>(
+        self,
+        cond: bool,
+        func: F,
+    ) -> Box<dyn Iterator<Item = I::Item> + 'a>
+    where
+        F: FnMut(&I::Item) + 'a,
+    {
+        if cond {
+            Box::new(self.inspect(func))
+        } else {
+            Box::new(self)
+        }
+    }
+}
