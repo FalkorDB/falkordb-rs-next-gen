@@ -778,8 +778,8 @@ impl<'a> Runtime<'a> {
                 };
 
                 let idx = idx.clone();
-                Ok(Box::new(
-                    iter.try_flat_map(move |vars| {
+                Ok(iter
+                    .try_flat_map(move |vars| {
                         let value = self.run_iter_expr(tree, tree.root().idx(), &vars)?;
                         Ok(value.map(move |v| {
                             let mut vars = vars.clone();
@@ -789,8 +789,7 @@ impl<'a> Runtime<'a> {
                     })
                     .cond_inspect(self.inspect, move |res| {
                         self.record.borrow_mut().push((idx.clone(), res.clone()));
-                    }),
-                ))
+                    }))
             }
             IR::Create(pattern) => {
                 let iter = if let Some(child_idx) = child0_idx {
@@ -806,17 +805,24 @@ impl<'a> Runtime<'a> {
                 {
                     parent_commit = true;
                 }
-                Ok(Box::new(iter.try_flat_map(move |mut vars| {
-                    self.create(pattern, &mut vars)?;
 
-                    if parent_commit {
-                        return Ok(
-                            Box::new(empty()) as Box<dyn Iterator<Item = Result<Env, String>>>
-                        );
-                    }
+                let idx = idx.clone();
+                Ok(iter
+                    .try_flat_map(move |mut vars| {
+                        self.create(pattern, &mut vars)?;
 
-                    Ok(Box::new(once(Ok(vars))) as Box<dyn Iterator<Item = Result<Env, String>>>)
-                })))
+                        if parent_commit {
+                            return Ok(
+                                Box::new(empty()) as Box<dyn Iterator<Item = Result<Env, String>>>
+                            );
+                        }
+
+                        Ok(Box::new(once(Ok(vars)))
+                            as Box<dyn Iterator<Item = Result<Env, String>>>)
+                    })
+                    .cond_inspect(self.inspect, move |res| {
+                        self.record.borrow_mut().push((idx.clone(), res.clone()));
+                    }))
             }
             IR::Merge(pattern) => {
                 if let Some(child_idx) = child1_idx {
@@ -852,10 +858,16 @@ impl<'a> Runtime<'a> {
             }
             IR::Delete(trees, _) => {
                 if let Some(child_idx) = child0_idx {
-                    return Ok(Box::new(self.run(&child_idx)?.try_map(move |vars| {
-                        self.delete(trees, &vars)?;
-                        Ok(vars)
-                    })));
+                    let idx = idx.clone();
+                    return Ok(self
+                        .run(&child_idx)?
+                        .try_map(move |vars| {
+                            self.delete(trees, &vars)?;
+                            Ok(vars)
+                        })
+                        .cond_inspect(self.inspect, move |res| {
+                            self.record.borrow_mut().push((idx.clone(), res.clone()));
+                        }));
                 }
                 unreachable!();
             }
@@ -1054,9 +1066,12 @@ impl<'a> Runtime<'a> {
                     Box::new(once(Ok(Env::default())))
                 };
 
-                Ok(Box::new(iter.try_flat_map(move |vars| {
-                    self.node_scan(node_pattern, vars)
-                })))
+                let idx = idx.clone();
+                Ok(iter
+                    .try_flat_map(move |vars| self.node_scan(node_pattern, vars))
+                    .cond_inspect(self.inspect, move |res| {
+                        self.record.borrow_mut().push((idx.clone(), res.clone()));
+                    }))
             }
             IR::RelationshipScan(relationship_pattern) => {
                 let iter = if let Some(child_idx) = child0_idx {
@@ -1065,9 +1080,12 @@ impl<'a> Runtime<'a> {
                     Box::new(once(Ok(Env::default())))
                 };
 
-                Ok(Box::new(iter.try_flat_map(move |vars| {
-                    self.relationship_scan(relationship_pattern, vars)
-                })))
+                let idx = idx.clone();
+                Ok(iter
+                    .try_flat_map(move |vars| self.relationship_scan(relationship_pattern, vars))
+                    .cond_inspect(self.inspect, move |res| {
+                        self.record.borrow_mut().push((idx.clone(), res.clone()));
+                    }))
             }
             IR::ExpandInto(relationship_pattern) => {
                 let iter = if let Some(child_idx) = child0_idx {
@@ -1076,37 +1094,48 @@ impl<'a> Runtime<'a> {
                     Box::new(once(Ok(Env::default())))
                 };
 
-                Ok(Box::new(iter.try_flat_map(move |vars| {
-                    self.expand_into(relationship_pattern, vars)
-                })))
+                let idx = idx.clone();
+                Ok(iter
+                    .try_flat_map(move |vars| self.expand_into(relationship_pattern, vars))
+                    .cond_inspect(self.inspect, move |res| {
+                        self.record.borrow_mut().push((idx.clone(), res.clone()));
+                    }))
             }
             IR::PathBuilder(paths) => {
                 if let Some(child_idx) = child0_idx {
-                    return Ok(Box::new(self.run(&child_idx)?.try_map(move |mut vars| {
-                        let mut paths = paths.clone();
-                        for path in &mut paths {
-                            let p = path
-                                .vars
-                                .iter()
-                                .map(|v| {
-                                    vars.get(v).map_or_else(
-                                        || Err(format!("Variable {} not found", v.as_str())),
-                                        Ok,
-                                    )
-                                })
-                                .collect::<Result<_, String>>()?;
-                            vars.insert(&path.var, Value::Path(p));
-                        }
-                        Ok(vars)
-                    })));
+                    let idx = idx.clone();
+                    return Ok(self
+                        .run(&child_idx)?
+                        .try_map(move |mut vars| {
+                            let mut paths = paths.clone();
+                            for path in &mut paths {
+                                let p = path
+                                    .vars
+                                    .iter()
+                                    .map(|v| {
+                                        vars.get(v).map_or_else(
+                                            || Err(format!("Variable {} not found", v.as_str())),
+                                            Ok,
+                                        )
+                                    })
+                                    .collect::<Result<_, String>>()?;
+                                vars.insert(&path.var, Value::Path(p));
+                            }
+                            Ok(vars)
+                        })
+                        .cond_inspect(self.inspect, move |res| {
+                            self.record.borrow_mut().push((idx.clone(), res.clone()));
+                        }));
                 }
 
                 unreachable!();
             }
             IR::Filter(tree) => {
                 if let Some(child_idx) = child0_idx {
-                    return Ok(Box::new(self.run(&child_idx)?.filter_map(
-                        move |vars| match vars {
+                    let idx = idx.clone();
+                    return Ok(self
+                        .run(&child_idx)?
+                        .filter_map(move |vars| match vars {
                             Ok(vars) => {
                                 if self.run_expr(tree, tree.root().idx(), &vars, None)
                                     == Ok(Value::Bool(true))
@@ -1117,8 +1146,10 @@ impl<'a> Runtime<'a> {
                                 }
                             }
                             Err(e) => Some(Err(e)),
-                        },
-                    )));
+                        })
+                        .cond_inspect(self.inspect, move |res| {
+                            self.record.borrow_mut().push((idx.clone(), res.clone()));
+                        }));
                 }
 
                 unreachable!();
@@ -1137,7 +1168,10 @@ impl<'a> Runtime<'a> {
                             }))
                         }));
                     }
-                    return Ok(iter);
+                    let idx = idx.clone();
+                    return Ok(iter.cond_inspect(self.inspect, move |res| {
+                        self.record.borrow_mut().push((idx.clone(), res.clone()));
+                    }));
                 }
                 unreachable!();
             }
@@ -1172,7 +1206,13 @@ impl<'a> Runtime<'a> {
                                 if **desc { ordering.reverse() } else { ordering }
                             })
                     });
-                    return Ok(Box::new(items.into_iter().map(|(env, _)| Ok(env))));
+                    let idx = idx.clone();
+                    return Ok(items.into_iter().map(|(env, _)| Ok(env)).cond_inspect(
+                        self.inspect,
+                        move |res| {
+                            self.record.borrow_mut().push((idx.clone(), res.clone()));
+                        },
+                    ));
                 }
                 unreachable!();
             }
@@ -1183,7 +1223,13 @@ impl<'a> Runtime<'a> {
                     return Err(String::from("Skip operator requires an integer argument"));
                 };
                 if let Some(child_idx) = child0_idx {
-                    return Ok(Box::new(self.run(&child_idx)?.skip(skip as usize)));
+                    let idx = idx.clone();
+                    return Ok(self.run(&child_idx)?.skip(skip as usize).cond_inspect(
+                        self.inspect,
+                        move |res| {
+                            self.record.borrow_mut().push((idx.clone(), res.clone()));
+                        },
+                    ));
                 }
                 unreachable!();
             }
@@ -1194,7 +1240,13 @@ impl<'a> Runtime<'a> {
                     return Err(String::from("Limit operator requires an integer argument"));
                 };
                 if let Some(child_idx) = child0_idx {
-                    return Ok(Box::new(self.run(&child_idx)?.take(limit as usize)));
+                    let idx = idx.clone();
+                    return Ok(self.run(&child_idx)?.take(limit as usize).cond_inspect(
+                        self.inspect,
+                        move |res| {
+                            self.record.borrow_mut().push((idx.clone(), res.clone()));
+                        },
+                    ));
                 }
                 unreachable!();
             }
@@ -1308,8 +1360,8 @@ impl<'a> Runtime<'a> {
                 };
 
                 let idx = idx.clone();
-                Ok(Box::new(
-                    iter.try_map(move |vars| {
+                Ok(iter
+                    .try_map(move |vars| {
                         let mut return_vars = Env::default();
                         for (name, tree) in trees {
                             let value = self.run_expr(tree, tree.root().idx(), &vars, None)?;
@@ -1319,35 +1371,40 @@ impl<'a> Runtime<'a> {
                     })
                     .cond_inspect(self.inspect, move |res| {
                         self.record.borrow_mut().push((idx.clone(), res.clone()));
-                    }),
-                ))
+                    }))
             }
             IR::Distinct => {
                 if let Some(child_idx) = child0_idx {
                     let deduper = ValuesDeduper::default();
-                    return Ok(Box::new(self.run(&child_idx)?.filter_map(move |item| {
-                        // Propagate errors immediately
-                        let vars = match item {
-                            Err(e) => return Some(Err(e)),
-                            Ok(vars) => vars,
-                        };
+                    let idx = idx.clone();
+                    return Ok(self
+                        .run(&child_idx)?
+                        .filter_map(move |item| {
+                            // Propagate errors immediately
+                            let vars = match item {
+                                Err(e) => return Some(Err(e)),
+                                Ok(vars) => vars,
+                            };
 
-                        // compute the hash of all the values in return_names
-                        // by order
-                        let mut hasher = DefaultHasher::new();
-                        for name in &self.return_names {
-                            vars.get(name)
-                                .unwrap_or_else(|| {
-                                    unreachable!("Variable {} not found", name.as_str())
-                                })
-                                .hash(&mut hasher);
-                        }
-                        if deduper.has_hash(hasher.finish()) {
-                            None
-                        } else {
-                            Some(Ok(vars))
-                        }
-                    })));
+                            // compute the hash of all the values in return_names
+                            // by order
+                            let mut hasher = DefaultHasher::new();
+                            for name in &self.return_names {
+                                vars.get(name)
+                                    .unwrap_or_else(|| {
+                                        unreachable!("Variable {} not found", name.as_str())
+                                    })
+                                    .hash(&mut hasher);
+                            }
+                            if deduper.has_hash(hasher.finish()) {
+                                None
+                            } else {
+                                Some(Ok(vars))
+                            }
+                        })
+                        .cond_inspect(self.inspect, move |res| {
+                            self.record.borrow_mut().push((idx.clone(), res.clone()));
+                        }));
                 }
                 unreachable!();
             }
@@ -1363,7 +1420,10 @@ impl<'a> Runtime<'a> {
                     .into_iter()
                     .map(Ok);
                 self.pending.borrow_mut().commit(self.g, &self.stats);
-                Ok(Box::new(iter))
+                let idx = idx.clone();
+                Ok(iter.cond_inspect(self.inspect, move |res| {
+                    self.record.borrow_mut().push((idx.clone(), res.clone()));
+                }))
             }
         }
     }
