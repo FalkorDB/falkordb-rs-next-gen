@@ -26,6 +26,15 @@ def setup_function(function):
 
 
 def query(query: str, params=None, write: bool = False, compare_results: bool = True):
+    try:
+        common.g.execute_command("GRAPH.PARSE", query)
+        common.g.execute_command("GRAPH.PLAN", query)
+        if not write:
+            record_query = common.g._build_params_header(params) + query
+            common.g.execute_command("GRAPH.RECORD", common.g.name, record_query)
+        assert True
+    except:
+        assert False
     if write:
         try:
             common.g.query("RETURN 1")
