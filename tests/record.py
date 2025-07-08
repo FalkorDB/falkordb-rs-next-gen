@@ -41,7 +41,7 @@ class QueryVisualizerApp(App):
         yield tree
         label = ReactiveLabel(id="step_label")
         label.text_value = f"Step: {self.current_index + 1}/{len(self.record[0])}"
-        yield Horizontal(label, ProgressBar(len(self.record[0]), show_eta=0, show_percentage=False))
+        yield Horizontal(label, ProgressBar(len(self.record[0]) - 1, show_eta=0, show_percentage=False))
         yield Input(placeholder="Enter query")
 
     def on_ready(self):
