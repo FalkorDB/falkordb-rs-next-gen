@@ -14,8 +14,7 @@ class ReactiveLabel(Label):
         self.update(new_value)
 
 class QueryVisualizerApp(App):
-    CSS = "Input { width: 70%; }" \
-    "Label { margin: 0 2 0 0; }" \
+    CSS = "Label { margin: 0 2 0 0; }" \
     "Horizontal { height: auto; }"
     current_index = reactive(0)
     last_query = None
@@ -23,7 +22,7 @@ class QueryVisualizerApp(App):
     def __init__(self, query: str):
         super().__init__()
         self.record = []
-        self.query_string = [query]
+        self.query_string = []
         self.run_query(query)
 
     def compose(self) -> ComposeResult:
@@ -90,8 +89,12 @@ class QueryVisualizerApp(App):
             self.query_one(Input).value = self.query_string[self.last_query]
         elif event.key == "down":
             if self.last_query is not None:
-                self.last_query = min(len(self.query_string) - 1, self.last_query + 1)
-                self.query_one(Input).value = self.query_string[self.last_query] if self.last_query is not None else ""
+                if self.last_query == len(self.query_string) - 1:
+                    self.last_query = None
+                    self.query_one(Input).clear()
+                else:
+                    self.last_query = min(len(self.query_string) - 1, self.last_query + 1)
+                    self.query_one(Input).value = self.query_string[self.last_query] if self.last_query is not None else ""
 
 if __name__ == "__main__":
     app = QueryVisualizerApp("UNWIND range(1, 10) AS x UNWIND range(x, 10) AS y RETURN x, y")
