@@ -30,11 +30,11 @@ class QueryVisualizerApp(App):
         for row in self.record[1][1:]:
             self.tree_map[row[0]] = (self.tree_map[row[1]][0].add_leaf(row[2]), row[2])
         row = self.record[0][0]
-        self.tree_map[row[0]][0].label += f" ({row[2]})"
+        self.tree_map[row[0]][0].label += f" | Env: ({row[2]})"
         tree.root.expand_all()
         yield tree
         label = ReactiveLabel()
-        label.text_value = f"Step: {self.current_index}"
+        label.text_value = f"Step: {self.current_index + 1}/{len(self.record[0])}"
         yield Horizontal(label, ProgressBar(len(self.record[0]), show_eta=0, show_percentage=False))
         yield Horizontal(Input(placeholder="Enter query"), Button("Execute", id="execute_button"))
 
@@ -49,11 +49,11 @@ class QueryVisualizerApp(App):
         self.refresh(recompose=True)
 
     def update_tree(self):
-        self.query_one(ReactiveLabel).text_value = f"Step: {self.current_index}"
+        self.query_one(ReactiveLabel).text_value = f"Step: {self.current_index + 1}/{len(self.record[0])}"
         for node in self.tree_map.values():
             node[0].label = node[1]
         row = self.record[0][self.current_index]
-        self.tree_map[row[0]][0].label += f" ({row[2]})"
+        self.tree_map[row[0]][0].label += f" | Env: ({row[2]})"
     
     def on_key(self, event) -> None:
         if event.key == "left":
