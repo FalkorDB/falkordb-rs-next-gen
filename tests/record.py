@@ -81,6 +81,8 @@ class QueryVisualizerApp(App):
                 self.current_index = self.current_index + 1
                 self.query_one(ProgressBar).advance(1)
                 self.update_tree()
+        elif event.key == "up":
+            self.query_one(Input).value = self.query_string
 
 if __name__ == "__main__":
     app = QueryVisualizerApp("UNWIND range(1, 10) AS x UNWIND range(x, 10) AS y RETURN x, y")
