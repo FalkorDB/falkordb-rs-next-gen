@@ -18,16 +18,17 @@ class QueryVisualizerApp(App):
     "Label { margin: 0 2 0 0; }" \
     "Horizontal { height: auto; }"
     current_index = reactive(0)
+    last_query = None
 
     def __init__(self, query: str):
         super().__init__()
         self.record = []
-        self.query_string = query
+        self.query_string = [query]
         self.run_query(query)
 
     def compose(self) -> ComposeResult:
         query = ReactiveLabel(id="query_label")
-        query.text_value = self.query_string
+        query.text_value = self.query_string[self.last_query if self.last_query is not None else -1]
         yield query
         self.tree_map: dict[str, (TreeNode, str)] = {}
         tree = Tree(self.record[1][0][2])
@@ -53,7 +54,7 @@ class QueryVisualizerApp(App):
             record = r.execute_command("GRAPH.RECORD", "g", query)
             self.record = record
             self.current_index = 0
-            self.query_string = query
+            self.query_string.append(query)
         except:
             pass
         
@@ -82,7 +83,15 @@ class QueryVisualizerApp(App):
                 self.query_one(ProgressBar).advance(1)
                 self.update_tree()
         elif event.key == "up":
-            self.query_one(Input).value = self.query_string
+            if self.last_query is None:
+                self.last_query = len(self.query_string) - 1
+            else:
+                self.last_query = max(0, self.last_query - 1)
+            self.query_one(Input).value = self.query_string[self.last_query]
+        elif event.key == "down":
+            if self.last_query is not None:
+                self.last_query = min(len(self.query_string) - 1, self.last_query + 1)
+                self.query_one(Input).value = self.query_string[self.last_query] if self.last_query is not None else ""
 
 if __name__ == "__main__":
     app = QueryVisualizerApp("UNWIND range(1, 10) AS x UNWIND range(x, 10) AS y RETURN x, y")
