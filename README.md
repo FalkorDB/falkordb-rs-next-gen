@@ -17,12 +17,12 @@ dependencies:
   sudo make install
  ```
 
-- pytest - create virtualenv and install tests/requirement.txt
+- pytest - create virtualenv and install tests/requirements.txt
 
 ```bash
   python3 -m venv venv
   source venv/bin/activate
-  pip install -r  tests/requierment.txt
+  pip install -r  tests/requierments.txt
 ```
 
 - build with `cargo build`
@@ -44,3 +44,17 @@ TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
 - run unit tests with `cargo test -p graph`
 
 - [benchmark](https://falkordb.github.io/falkordb-rs-next-gen/dev/bench/)
+
+##### Query record
+
+To be able to understand how query run in the database run the server
+then use the record.py utility
+```
+python3 tests/record.py
+```
+
+It will show a UI with 3 parts
+1. execution plan tree
+   use the left and right keys to move between the query steps
+2. progress of the query
+3. input that you can record new query and visualize
