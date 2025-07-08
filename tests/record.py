@@ -1,7 +1,7 @@
 import redis
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal
-from textual.widgets import Tree, ProgressBar, Label, Input, Button
+from textual.widgets import Tree, ProgressBar, Label, Input
 from textual.widgets.tree import TreeNode
 from textual.reactive import reactive
 
@@ -19,13 +19,19 @@ class QueryVisualizerApp(App):
     "Horizontal { height: auto; }"
     current_index = reactive(0)
 
-    def __init__(self, record):
+    def __init__(self, query: str):
         super().__init__()
-        self.record = record
+        self.record = []
+        self.query_string = query
+        self.run_query(query)
 
     def compose(self) -> ComposeResult:
+        query = ReactiveLabel(id="query_label")
+        query.text_value = self.query_string
+        yield query
         self.tree_map: dict[str, (TreeNode, str)] = {}
         tree = Tree(self.record[1][0][2])
+        tree.root.allow_expand = False
         self.tree_map[self.record[1][0][0]] = (tree.root, self.record[1][0][2])
         for row in self.record[1][1:]:
             self.tree_map[row[0]] = (self.tree_map[row[1]][0].add_leaf(row[2]), row[2])
@@ -33,27 +39,36 @@ class QueryVisualizerApp(App):
         self.tree_map[row[0]][0].label += f" | Env: ({row[2]})"
         tree.root.expand_all()
         yield tree
-        label = ReactiveLabel()
+        label = ReactiveLabel(id="step_label")
         label.text_value = f"Step: {self.current_index + 1}/{len(self.record[0])}"
         yield Horizontal(label, ProgressBar(len(self.record[0]), show_eta=0, show_percentage=False))
-        yield Horizontal(Input(placeholder="Enter query"), Button("Execute", id="execute_button"))
+        yield Input(placeholder="Enter query")
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
+    def on_ready(self):
+        row = self.record[0][0]
+        self.query_one(Tree).select_node(self.tree_map[row[0]][0])
+
+    def run_query(self, query: str) -> None:
         try:
-            record = r.execute_command("GRAPH.RECORD", "g", self.query_one(Input).value)
+            record = r.execute_command("GRAPH.RECORD", "g", query)
             self.record = record
             self.current_index = 0
+            self.query_string = query
         except:
             pass
         
         self.refresh(recompose=True)
+    
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        self.run_query(event.value)
 
     def update_tree(self):
-        self.query_one(ReactiveLabel).text_value = f"Step: {self.current_index + 1}/{len(self.record[0])}"
+        self.get_widget_by_id("step_label").text_value = f"Step: {self.current_index + 1}/{len(self.record[0])}"
         for node in self.tree_map.values():
             node[0].label = node[1]
         row = self.record[0][self.current_index]
         self.tree_map[row[0]][0].label += f" | Env: ({row[2]})"
+        self.query_one(Tree).select_node(self.tree_map[row[0]][0])
     
     def on_key(self, event) -> None:
         if event.key == "left":
@@ -68,6 +83,5 @@ class QueryVisualizerApp(App):
                 self.update_tree()
 
 if __name__ == "__main__":
-    res = r.execute_command("GRAPH.RECORD", "g", "UNWIND range(1, 10) AS x UNWIND range(x, 10) AS y RETURN x, y")
-    app = QueryVisualizerApp(res)
+    app = QueryVisualizerApp("UNWIND range(1, 10) AS x UNWIND range(x, 10) AS y RETURN x, y")
     app.run()
