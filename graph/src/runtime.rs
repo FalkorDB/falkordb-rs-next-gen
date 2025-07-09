@@ -933,190 +933,34 @@ impl<'a> Runtime<'a> {
                 }
                 unreachable!();
             }
-            IR::Set(trees) => {
+            IR::Set(items) => {
                 if let Some(child_idx) = child0_idx {
-                    return Ok(Box::new(self.run(&child_idx)?.try_map(move |vars| {
-                        for (entity, value, replace) in trees {
-                            let value = self.run_expr(value, value.root().idx(), &vars, None)?;
-                            let (entity, property, labels) = match entity.root().data() {
-                                ExprIR::Variable(name) => (vars.get(name).unwrap(), None, None),
-                                ExprIR::FuncInvocation(func) if func.name == "property" => {
-                                    let ExprIR::String(property) = entity.root().child(1).data()
-                                    else {
-                                        unreachable!();
-                                    };
-                                    (
-                                        self.run_expr(
-                                            entity,
-                                            entity.root().child(0).idx(),
-                                            &vars,
-                                            None,
-                                        )?,
-                                        Some(property),
-                                        None,
-                                    )
-                                }
-                                ExprIR::FuncInvocation(func) if func.name == "node_set_labels" => {
-                                    let labels = entity
-                                        .root()
-                                        .child(1)
-                                        .children()
-                                        .filter_map(|c| match c.data() {
-                                            ExprIR::String(label) => Some(label.clone()),
-                                            _ => None,
-                                        })
-                                        .collect::<OrderSet<_>>();
-
-                                    (
-                                        self.run_expr(
-                                            entity,
-                                            entity.root().child(0).idx(),
-                                            &vars,
-                                            None,
-                                        )?,
-                                        None,
-                                        Some(labels),
-                                    )
-                                }
-                                _ => {
-                                    unreachable!();
-                                }
-                            };
-                            match entity {
-                                Value::Node(node) => {
-                                    if let Some(property) = property {
-                                        self.pending.borrow_mut().set_node_attribute(
-                                            node,
-                                            property.clone(),
-                                            value,
-                                        );
-                                    } else if let Value::Map(map) = value {
-                                        if *replace {
-                                            for key in self.g.borrow().get_node_attrs(node).keys() {
-                                                self.pending.borrow_mut().set_node_attribute(
-                                                    node,
-                                                    self.g
-                                                        .borrow()
-                                                        .get_node_attribute_string(*key)
-                                                        .unwrap(),
-                                                    Value::Null,
-                                                );
-                                            }
-                                        }
-                                        for (key, value) in map.iter() {
-                                            self.pending.borrow_mut().set_node_attribute(
-                                                node,
-                                                key.clone(),
-                                                value.clone(),
-                                            );
-                                        }
-                                    }
-                                    if let Some(labels) = labels {
-                                        self.pending.borrow_mut().set_node_labels(node, labels);
-                                    }
-                                }
-                                Value::Relationship(relationship, _, _) => {
-                                    self.pending.borrow_mut().set_relationship_attribute(
-                                        relationship,
-                                        property.unwrap().clone(),
-                                        value,
-                                    );
-                                }
-                                Value::Null => {}
-                                _ => {
-                                    return Err(format!(
-                                        "Type mismatch: expected Node or Relationship but was {}",
-                                        entity.name()
-                                    ));
-                                }
-                            }
-                        }
-                        Ok(vars)
-                    })));
+                    let idx = idx.clone();
+                    return Ok(self
+                        .run(&child_idx)?
+                        .try_map(move |vars| {
+                            self.set(items, &vars)?;
+                            Ok(vars)
+                        })
+                        .cond_inspect(self.inspect, move |res| {
+                            self.record.borrow_mut().push((idx.clone(), res.clone()));
+                        }));
                 }
 
                 unreachable!();
             }
             IR::Remove(items) => {
                 if let Some(child_idx) = child0_idx {
-                    return Ok(Box::new(self.run(&child_idx)?.try_map(move |vars| {
-                        for item in items {
-                            let (entity, property, labels) = match item.root().data() {
-                                ExprIR::FuncInvocation(func) if func.name == "property" => {
-                                    let ExprIR::String(property) = item.root().child(1).data()
-                                    else {
-                                        unreachable!();
-                                    };
-                                    (
-                                        self.run_expr(
-                                            item,
-                                            item.root().child(0).idx(),
-                                            &vars,
-                                            None,
-                                        )?,
-                                        Some(property),
-                                        None,
-                                    )
-                                }
-                                ExprIR::FuncInvocation(func) if func.name == "node_set_labels" => {
-                                    let labels = item
-                                        .root()
-                                        .child(1)
-                                        .children()
-                                        .filter_map(|c| match c.data() {
-                                            ExprIR::String(label) => Some(label.clone()),
-                                            _ => None,
-                                        })
-                                        .collect::<OrderSet<_>>();
-
-                                    (
-                                        self.run_expr(
-                                            item,
-                                            item.root().child(0).idx(),
-                                            &vars,
-                                            None,
-                                        )?,
-                                        None,
-                                        Some(labels),
-                                    )
-                                }
-                                _ => {
-                                    unreachable!();
-                                }
-                            };
-                            match entity {
-                                Value::Node(node) => {
-                                    if let Some(property) = property {
-                                        self.pending.borrow_mut().set_node_attribute(
-                                            node,
-                                            property.clone(),
-                                            Value::Null,
-                                        );
-                                    }
-                                    if let Some(labels) = labels {
-                                        self.pending.borrow_mut().remove_node_labels(node, labels);
-                                    }
-                                }
-                                Value::Relationship(relationship, _, _) => {
-                                    if let Some(property) = property {
-                                        self.pending.borrow_mut().set_relationship_attribute(
-                                            relationship,
-                                            property.clone(),
-                                            Value::Null,
-                                        );
-                                    }
-                                }
-                                Value::Null => {}
-                                _ => {
-                                    return Err(format!(
-                                        "Type mismatch: expected Node or Relationship but was {}",
-                                        entity.name()
-                                    ));
-                                }
-                            }
-                        }
-                        Ok(vars)
-                    })));
+                    let idx = idx.clone();
+                    return Ok(self
+                        .run(&child_idx)?
+                        .try_map(move |vars| {
+                            self.remove(items, &vars)?;
+                            Ok(vars)
+                        })
+                        .cond_inspect(self.inspect, move |res| {
+                            self.record.borrow_mut().push((idx.clone(), res.clone()));
+                        }));
                 }
 
                 unreachable!();
@@ -1327,92 +1171,51 @@ impl<'a> Runtime<'a> {
                     let k = hasher.finish();
                     cache.insert(k, (key, Ok(env.clone())));
                 }
-                if let Some(child_idx) = child0_idx {
-                    let aggregator = self
-                        .run(&child_idx)?
-                        .aggregate(
-                            move |vars| {
-                                let vars = vars.clone()?;
-                                let mut return_vars = Env::default();
-                                for (name, tree) in keys {
-                                    let value =
-                                        self.run_expr(tree, tree.root().idx(), &vars, None)?;
-                                    return_vars.insert(name, value);
-                                }
-                                Ok::<Env, String>(return_vars)
-                            },
-                            Ok(env),
-                            move |group_key, x, acc| {
-                                let mut x = x?;
-                                let mut acc: Env = acc?;
-                                for (_, tree) in agg {
-                                    self.run_agg_expr(
-                                        tree,
-                                        tree.root().idx(),
-                                        &mut x,
-                                        &mut acc,
-                                        group_key,
-                                    )?;
-                                }
-                                Ok(acc)
-                            },
-                            cache,
-                        )
-                        .map(move |(key, v)| {
-                            let mut vars = v?;
-                            vars.merge(key?);
-                            for (name, tree) in agg {
-                                vars.insert(
-                                    name,
-                                    self.run_expr(tree, tree.root().idx(), &vars, None)?,
-                                );
+                let iter = if let Some(child_idx) = child0_idx {
+                    self.run(&child_idx)?
+                } else {
+                    Box::new(once(Ok(Env::default())))
+                };
+                let idx = idx.clone();
+                Ok(iter
+                    .aggregate(
+                        move |vars| {
+                            let vars = vars.clone()?;
+                            let mut return_vars = Env::default();
+                            for (name, tree) in keys {
+                                let value = self.run_expr(tree, tree.root().idx(), &vars, None)?;
+                                return_vars.insert(name, value);
                             }
-                            Ok(vars)
-                        });
-                    return Ok(Box::new(aggregator));
-                }
-                Ok(Box::new(
-                    once(Ok(Env::default()))
-                        .aggregate(
-                            move |vars| {
-                                let vars = vars.clone()?;
-                                let mut return_vars = Env::default();
-                                for (name, tree) in keys {
-                                    let value =
-                                        self.run_expr(tree, tree.root().idx(), &vars, None)?;
-                                    return_vars.insert(name, value);
-                                }
-                                Ok::<Env, String>(return_vars)
-                            },
-                            Ok(env),
-                            move |group_key, x, acc| {
-                                let mut x = x?;
-                                let mut acc: Env = acc?;
-                                for (_, tree) in agg {
-                                    self.run_agg_expr(
-                                        tree,
-                                        tree.root().idx(),
-                                        &mut x,
-                                        &mut acc,
-                                        group_key,
-                                    )?;
-                                }
-                                Ok(acc)
-                            },
-                            cache,
-                        )
-                        .map(move |(key, v)| {
-                            let mut vars = v?;
-                            vars.merge(key?);
-                            for (name, tree) in agg {
-                                vars.insert(
-                                    name,
-                                    self.run_expr(tree, tree.root().idx(), &vars, None)?,
-                                );
+                            Ok::<Env, String>(return_vars)
+                        },
+                        Ok(env),
+                        move |group_key, x, acc| {
+                            let mut x = x?;
+                            let mut acc: Env = acc?;
+                            for (_, tree) in agg {
+                                self.run_agg_expr(
+                                    tree,
+                                    tree.root().idx(),
+                                    &mut x,
+                                    &mut acc,
+                                    group_key,
+                                )?;
                             }
-                            Ok(vars)
-                        }),
-                ))
+                            Ok(acc)
+                        },
+                        cache,
+                    )
+                    .map(move |(key, v)| {
+                        let mut vars = v?;
+                        vars.merge(key?);
+                        for (name, tree) in agg {
+                            vars.insert(name, self.run_expr(tree, tree.root().idx(), &vars, None)?);
+                        }
+                        Ok(vars)
+                    })
+                    .cond_inspect(self.inspect, move |res| {
+                        self.record.borrow_mut().push((idx.clone(), res.clone()));
+                    }))
             }
             IR::Project(trees) => {
                 let iter = if let Some(child_idx) = child0_idx {
@@ -1488,6 +1291,166 @@ impl<'a> Runtime<'a> {
                 }))
             }
         }
+    }
+
+    fn remove(
+        &self,
+        items: &Vec<DynTree<ExprIR>>,
+        vars: &Env,
+    ) -> Result<(), String> {
+        for item in items {
+            let (entity, property, labels) = match item.root().data() {
+                ExprIR::FuncInvocation(func) if func.name == "property" => {
+                    let ExprIR::String(property) = item.root().child(1).data() else {
+                        unreachable!();
+                    };
+                    (
+                        self.run_expr(item, item.root().child(0).idx(), vars, None)?,
+                        Some(property),
+                        None,
+                    )
+                }
+                ExprIR::FuncInvocation(func) if func.name == "node_set_labels" => {
+                    let labels = item
+                        .root()
+                        .child(1)
+                        .children()
+                        .filter_map(|c| match c.data() {
+                            ExprIR::String(label) => Some(label.clone()),
+                            _ => None,
+                        })
+                        .collect::<OrderSet<_>>();
+
+                    (
+                        self.run_expr(item, item.root().child(0).idx(), vars, None)?,
+                        None,
+                        Some(labels),
+                    )
+                }
+                _ => {
+                    unreachable!();
+                }
+            };
+            match entity {
+                Value::Node(node) => {
+                    if let Some(property) = property {
+                        self.pending.borrow_mut().set_node_attribute(
+                            node,
+                            property.clone(),
+                            Value::Null,
+                        );
+                    }
+                    if let Some(labels) = labels {
+                        self.pending.borrow_mut().remove_node_labels(node, labels);
+                    }
+                }
+                Value::Relationship(relationship, _, _) => {
+                    if let Some(property) = property {
+                        self.pending.borrow_mut().set_relationship_attribute(
+                            relationship,
+                            property.clone(),
+                            Value::Null,
+                        );
+                    }
+                }
+                Value::Null => {}
+                _ => {
+                    return Err(format!(
+                        "Type mismatch: expected Node or Relationship but was {}",
+                        entity.name()
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn set(
+        &self,
+        items: &Vec<(DynTree<ExprIR>, DynTree<ExprIR>, bool)>,
+        vars: &Env,
+    ) -> Result<(), String> {
+        for (entity, value, replace) in items {
+            let run_expr = self.run_expr(value, value.root().idx(), vars, None)?;
+            let value = run_expr;
+            let (entity, property, labels) = match entity.root().data() {
+                ExprIR::Variable(name) => (vars.get(name).unwrap(), None, None),
+                ExprIR::FuncInvocation(func) if func.name == "property" => {
+                    let ExprIR::String(property) = entity.root().child(1).data() else {
+                        unreachable!();
+                    };
+                    (
+                        self.run_expr(entity, entity.root().child(0).idx(), vars, None)?,
+                        Some(property),
+                        None,
+                    )
+                }
+                ExprIR::FuncInvocation(func) if func.name == "node_set_labels" => {
+                    let labels = entity
+                        .root()
+                        .child(1)
+                        .children()
+                        .filter_map(|c| match c.data() {
+                            ExprIR::String(label) => Some(label.clone()),
+                            _ => None,
+                        })
+                        .collect::<OrderSet<_>>();
+
+                    (
+                        self.run_expr(entity, entity.root().child(0).idx(), vars, None)?,
+                        None,
+                        Some(labels),
+                    )
+                }
+                _ => {
+                    unreachable!();
+                }
+            };
+            match entity {
+                Value::Node(node) => {
+                    if let Some(property) = property {
+                        self.pending
+                            .borrow_mut()
+                            .set_node_attribute(node, property.clone(), value);
+                    } else if let Value::Map(map) = value {
+                        if *replace {
+                            for key in self.g.borrow().get_node_attrs(node).keys() {
+                                self.pending.borrow_mut().set_node_attribute(
+                                    node,
+                                    self.g.borrow().get_node_attribute_string(*key).unwrap(),
+                                    Value::Null,
+                                );
+                            }
+                        }
+                        for (key, value) in map.iter() {
+                            self.pending.borrow_mut().set_node_attribute(
+                                node,
+                                key.clone(),
+                                value.clone(),
+                            );
+                        }
+                    }
+                    if let Some(labels) = labels {
+                        self.pending.borrow_mut().set_node_labels(node, labels);
+                    }
+                }
+                Value::Relationship(relationship, _, _) => {
+                    self.pending.borrow_mut().set_relationship_attribute(
+                        relationship,
+                        property.unwrap().clone(),
+                        value,
+                    );
+                }
+                Value::Null => {}
+                _ => {
+                    return Err(format!(
+                        "Type mismatch: expected Node or Relationship but was {}",
+                        entity.name()
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 
     fn relationship_scan(
