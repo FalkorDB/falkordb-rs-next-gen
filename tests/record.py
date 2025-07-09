@@ -68,11 +68,14 @@ class QueryVisualizerApp(App):
                 if i <= self.current_index:
                     continue
                 env = {a[0]: a[1] for a in zip(self.tree_map[row[0]][1][3], row[2])}
-                if eval(event.value, env):
-                    self.current_index = i
-                    self.query_one(ProgressBar).progress = i
-                    self.update_tree()
-                    break
+                try:
+                    if eval(event.value, env):
+                        self.current_index = i
+                        self.query_one(ProgressBar).progress = i
+                        self.update_tree()
+                        break
+                except:
+                    pass
         elif event.control.id == "input_query":
             self.last_query = None
             self.run_query(event.value)
