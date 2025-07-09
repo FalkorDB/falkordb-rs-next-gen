@@ -29,6 +29,7 @@ class QueryVisualizerApp(App):
         query = ReactiveLabel(id="query_label")
         query.text_value = self.query_string[self.last_query if self.last_query is not None else -1]
         yield query
+        yield Input(placeholder="Search", compact=True, id="search_input")
         self.tree_map: dict[str, (TreeNode, str)] = {}
         tree = Tree(self.record[1][0][2])
         tree.root.allow_expand = False
@@ -44,7 +45,7 @@ class QueryVisualizerApp(App):
         label = ReactiveLabel(id="step_label")
         label.text_value = f"Step: {self.current_index + 1}/{len(self.record[0])}"
         yield Horizontal(label, ProgressBar(len(self.record[0]) - 1, show_eta=0, show_percentage=False))
-        yield Input(placeholder="Enter query")
+        yield Input(placeholder="Enter query", id="input_query")
 
     def on_ready(self):
         row = self.record[0][0]
@@ -62,8 +63,19 @@ class QueryVisualizerApp(App):
         self.refresh(recompose=True)
     
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        self.last_query = None
-        self.run_query(event.value)
+        if event.control.id == "search_input":
+            for i, row in enumerate(self.record[0]):
+                if i <= self.current_index:
+                    continue
+                env = {a[0]: a[1] for a in zip(self.tree_map[row[0]][1][3], row[2])}
+                if eval(event.value, env):
+                    self.current_index = i
+                    self.query_one(ProgressBar).progress = i
+                    self.update_tree()
+                    break
+        elif event.control.id == "input_query":
+            self.last_query = None
+            self.run_query(event.value)
 
     def update_tree(self):
         self.get_widget_by_id("step_label").text_value = f"Step: {self.current_index + 1}/{len(self.record[0])}"
@@ -86,21 +98,21 @@ class QueryVisualizerApp(App):
                     self.current_index = self.current_index + 1
                     self.query_one(ProgressBar).advance(1)
                     self.update_tree()
-        elif self.query_one(Input).has_focus:
+        elif self.get_widget_by_id("input_query").has_focus:
             if event.key == "up":
                 if self.last_query is None:
                     self.last_query = len(self.query_string) - 1
                 else:
                     self.last_query = max(0, self.last_query - 1)
-                self.query_one(Input).value = self.query_string[self.last_query]
+                self.get_widget_by_id("input_query").value = self.query_string[self.last_query]
             elif event.key == "down":
                 if self.last_query is not None:
                     if self.last_query == len(self.query_string) - 1:
                         self.last_query = None
-                        self.query_one(Input).clear()
+                        self.get_widget_by_id("input_query").clear()
                     else:
                         self.last_query = min(len(self.query_string) - 1, self.last_query + 1)
-                        self.query_one(Input).value = self.query_string[self.last_query] if self.last_query is not None else ""
+                        self.get_widget_by_id("input_query").value = self.query_string[self.last_query] if self.last_query is not None else ""
 
 if __name__ == "__main__":
     app = QueryVisualizerApp("UNWIND range(1, 10) AS x UNWIND range(x, 10) AS y RETURN x, y")
