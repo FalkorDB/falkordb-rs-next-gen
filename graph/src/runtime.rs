@@ -12,7 +12,7 @@ use crate::value::{CompareValue, DisjointOrNull, Env, ValuesDeduper};
 use crate::{ast::ExprIR, graph::Graph, planner::IR, value::Contains, value::Value};
 use once_cell::unsync::Lazy;
 use ordermap::{OrderMap, OrderSet};
-use orx_tree::{Dyn, DynNode, DynTree, NodeIdx, NodeRef};
+use orx_tree::{Bfs, Dyn, DynNode, DynTree, NodeIdx, NodeRef};
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -53,6 +53,62 @@ pub struct Runtime<'a> {
     pub return_names: Vec<Variable>,
     inspect: bool,
     pub record: RefCell<Vec<(NodeIdx<Dyn<IR>>, Result<Env, String>)>>,
+}
+
+pub trait GetVariables {
+    fn get_variables(&self) -> Vec<Variable>;
+}
+
+impl GetVariables for DynNode<'_, IR> {
+    fn get_variables(&self) -> Vec<Variable> {
+        let mut vars = vec![];
+        for node in self.walk::<Bfs>() {
+            match node {
+                IR::Optional(variables) => vars.extend(variables.iter().cloned()),
+                IR::Call(_, _) => todo!(),
+                IR::Unwind(_, variable) => vars.push(variable.clone()),
+                IR::Create(query_graph) | IR::Merge(query_graph) => {
+                    for node in query_graph.nodes() {
+                        vars.push(node.alias.clone());
+                    }
+                    for relationship in query_graph.relationships() {
+                        vars.push(relationship.alias.clone());
+                    }
+                    for path in query_graph.paths() {
+                        vars.push(path.var.clone());
+                    }
+                }
+                IR::Delete(_, _)
+                | IR::Empty
+                | IR::Set(_)
+                | IR::Remove(_)
+                | IR::Filter(_)
+                | IR::CartesianProduct
+                | IR::Sort(_)
+                | IR::Skip(_)
+                | IR::Limit(_)
+                | IR::Distinct
+                | IR::Commit => {}
+                IR::NodeScan(query_node) => vars.push(query_node.alias.clone()),
+                IR::RelationshipScan(query_relationship) => {
+                    vars.push(query_relationship.alias.clone());
+                }
+                IR::ExpandInto(query_relationship) => vars.push(query_relationship.alias.clone()),
+                IR::PathBuilder(query_paths) => {
+                    for path in query_paths {
+                        vars.push(path.var.clone());
+                    }
+                }
+                IR::Aggregate(variables, _, _) => {
+                    vars.extend(variables.iter().cloned());
+                }
+                IR::Project(items) => {
+                    vars.extend(items.iter().map(|v| v.0.clone()));
+                }
+            }
+        }
+        vars
+    }
 }
 
 trait ReturnNames {

@@ -3,7 +3,7 @@
 use graph::ast::Variable;
 use graph::functions::init_functions;
 use graph::graph::Plan;
-use graph::runtime::{QueryStatistics, ResultSummary, Runtime, evaluate_param};
+use graph::runtime::{GetVariables, QueryStatistics, ResultSummary, Runtime, evaluate_param};
 use graph::{cypher::Parser, graph::Graph, matrix::init, planner::Planner, value::Value};
 #[cfg(feature = "zipkin")]
 use opentelemetry::global;
@@ -518,9 +518,9 @@ fn record_mut(
     raw::reply_with_array(ctx.ctx, 2);
     raw::reply_with_array(ctx.ctx, runtime.record.borrow().len() as _);
     for (idx, res) in runtime.record.borrow().iter() {
-        let idx = format!("{idx:?}");
+        let idx_str = format!("{idx:?}");
         raw::reply_with_array(ctx.ctx, 3);
-        raw::reply_with_string_buffer(ctx.ctx, idx[17..].as_ptr().cast::<c_char>(), 9);
+        raw::reply_with_string_buffer(ctx.ctx, idx_str[17..].as_ptr().cast::<c_char>(), 9);
         match res {
             Err(err) => {
                 raw::reply_with_long_long(ctx.ctx, 0);
@@ -528,8 +528,9 @@ fn record_mut(
             }
             Ok(env) => {
                 raw::reply_with_long_long(ctx.ctx, 1);
-                raw::reply_with_array(ctx.ctx, runtime.return_names.len() as _);
-                for name in &runtime.return_names {
+                let vars = plan.node(idx).get_variables();
+                raw::reply_with_array(ctx.ctx, vars.len() as _);
+                for name in &vars {
                     match env.get(name) {
                         None => {
                             raw::reply_with_null(ctx.ctx);
@@ -542,10 +543,11 @@ fn record_mut(
             }
         }
     }
+
     let len = plan.root().indices::<Bfs>().count();
     raw::reply_with_array(ctx.ctx, len as _);
     for idx in plan.root().indices::<Bfs>() {
-        raw::reply_with_array(ctx.ctx, 3);
+        raw::reply_with_array(ctx.ctx, 4);
         let idx_str = format!("{idx:?}");
         raw::reply_with_string_buffer(ctx.ctx, idx_str[17..].as_ptr().cast::<c_char>(), 9);
         match plan.node(&idx).parent() {
@@ -563,6 +565,15 @@ fn record_mut(
         }
         let node = plan.node(&idx).data().to_string();
         raw::reply_with_string_buffer(ctx.ctx, node.as_ptr().cast::<c_char>(), node.len());
+        let vars = plan.node(&idx).get_variables();
+        raw::reply_with_array(ctx.ctx, vars.len() as _);
+        for var in vars {
+            raw::reply_with_string_buffer(
+                ctx.ctx,
+                var.as_str().as_ptr().cast::<c_char>(),
+                var.as_str().len(),
+            );
+        }
     }
     Ok(())
 }
