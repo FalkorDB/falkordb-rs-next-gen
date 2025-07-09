@@ -65,7 +65,11 @@ impl GetVariables for DynNode<'_, IR> {
         for node in self.walk::<Bfs>() {
             match node {
                 IR::Optional(variables) => vars.extend(variables.iter().cloned()),
-                IR::Call(_, _) => todo!(),
+                IR::Call(name, _) => vars.push(Variable {
+                    name: Some(name.clone()),
+                    id: 0,
+                    ty: Type::Any,
+                }),
                 IR::Unwind(_, variable) => vars.push(variable.clone()),
                 IR::Create(query_graph) | IR::Merge(query_graph) => {
                     for node in query_graph.nodes() {
@@ -775,28 +779,25 @@ impl<'a> Runtime<'a> {
         match self.plan.node(idx).data() {
             IR::Empty => Ok(Box::new(empty())),
             IR::Optional(vars) => {
-                if let Some(child_idx) = child1_idx {
-                    let iter = self.run(&child_idx)?.try_flat_map(move |mut env| {
+                let iter = if let Some(child_idx) = child1_idx {
+                    self.run(&child_idx)?
+                } else {
+                    Box::new(once(Ok(Env::default())))
+                };
+
+                let idx = idx.clone();
+                Ok(iter
+                    .try_flat_map(move |mut env| {
                         for v in vars {
                             env.insert(v, Value::Null);
                         }
                         Ok(self
                             .run(child0_idx.as_ref().unwrap())?
-                            .lazy_replace(move || Box::new(once(Ok(env)))))
-                    });
-                    return Ok(Box::new(iter));
-                }
-                if let Some(child_idx) = child0_idx {
-                    let iter = self.run(&child_idx)?.lazy_replace(move || {
-                        let mut env = Env::default();
-                        for v in vars {
-                            env.insert(v, Value::Null);
-                        }
-                        Box::new(once(Ok(env)))
-                    });
-                    return Ok(Box::new(iter));
-                }
-                Ok(Box::new(empty()))
+                            .lazy_replace(move || once(Ok(env))))
+                    })
+                    .cond_inspect(self.inspect, move |res| {
+                        self.record.borrow_mut().push((idx.clone(), res.clone()));
+                    }))
             }
             IR::Call(name, trees) => {
                 let func = self.functions.get(name, &FnType::Procedure)?;
@@ -810,19 +811,25 @@ impl<'a> Runtime<'a> {
                     ));
                 }
                 let res = (func.func)(self, args)?;
+                let idx = idx.clone();
                 match res {
-                    Value::List(arr) => Ok(Box::new(arr.into_iter().map(|v| {
-                        let mut env = Env::default();
-                        env.insert(
-                            &Variable {
-                                name: Some(name.clone()),
-                                id: 0,
-                                ty: Type::Any,
-                            },
-                            v,
-                        );
-                        Ok(env)
-                    }))),
+                    Value::List(arr) => Ok(arr
+                        .into_iter()
+                        .map(|v| {
+                            let mut env = Env::default();
+                            env.insert(
+                                &Variable {
+                                    name: Some(name.clone()),
+                                    id: 0,
+                                    ty: Type::Any,
+                                },
+                                v,
+                            );
+                            Ok(env)
+                        })
+                        .cond_inspect(self.inspect, move |res| {
+                            self.record.borrow_mut().push((idx.clone(), res.clone()));
+                        })),
                     _ => unreachable!(),
                 }
             }
@@ -881,36 +888,35 @@ impl<'a> Runtime<'a> {
                     }))
             }
             IR::Merge(pattern) => {
-                if let Some(child_idx) = child1_idx {
-                    return Ok(Box::new(self.run(&child_idx)?.try_flat_map(move |vars| {
+                let iter = if let Some(child_idx) = child1_idx {
+                    self.run(&child_idx)?
+                } else {
+                    Box::new(once(Ok(Env::default())))
+                };
+
+                let idx = idx.clone();
+                Ok(iter
+                    .try_flat_map(move |vars| {
                         let cvars = vars.clone();
-                        let iter =
-                            (Box::new(self.run(child0_idx.as_ref().unwrap()).unwrap().try_map(
-                                move |v| {
-                                    let mut vars = vars.clone();
-                                    vars.merge(v);
-                                    Ok(vars)
-                                },
-                            ))
-                                as Box<dyn Iterator<Item = Result<Env, String>>>)
-                                .lazy_replace(move || {
-                                    let mut vars = cvars.clone();
-                                    match self.create(pattern, &mut vars) {
-                                        Ok(()) => Box::new(vec![Ok(vars)].into_iter()),
-                                        Err(e) => Box::new(once(Err(e))),
-                                    }
-                                });
+                        let iter = self
+                            .run(child0_idx.as_ref().unwrap())?
+                            .try_map(move |v| {
+                                let mut vars = vars.clone();
+                                vars.merge(v);
+                                Ok(vars)
+                            })
+                            .lazy_replace(move || {
+                                let mut vars = cvars.clone();
+                                match self.create(pattern, &mut vars) {
+                                    Ok(()) => once(Ok(vars)),
+                                    Err(e) => once(Err(e)),
+                                }
+                            });
                         Ok(iter)
-                    })));
-                }
-                let iter = self.run(child0_idx.as_ref().unwrap())?.lazy_replace(|| {
-                    let mut vars = Env::default();
-                    match self.create(pattern, &mut vars) {
-                        Ok(()) => Box::new(vec![Ok(vars)].into_iter()),
-                        Err(e) => Box::new(once(Err(e))),
-                    }
-                });
-                Ok(Box::new(iter))
+                    })
+                    .cond_inspect(self.inspect, move |res| {
+                        self.record.borrow_mut().push((idx.clone(), res.clone()));
+                    }))
             }
             IR::Delete(trees, _) => {
                 if let Some(child_idx) = child0_idx {

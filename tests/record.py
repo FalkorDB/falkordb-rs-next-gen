@@ -35,9 +35,10 @@ class QueryVisualizerApp(App):
         self.tree_map[self.record[1][0][0]] = (tree.root, self.record[1][0])
         for row in self.record[1][1:]:
             self.tree_map[row[0]] = (self.tree_map[row[1]][0].add_leaf(row[2]), row)
-        row = self.record[0][0]
-        env = {a[0]: a[1] for a in zip(self.tree_map[row[0]][1][3], row[2])}
-        self.tree_map[row[0]][0].label += f" | Env: {env}"
+        if len(self.record[0]) > 1:
+            row = self.record[0][0]
+            env = {a[0]: a[1] for a in zip(self.tree_map[row[0]][1][3], row[2])}
+            self.tree_map[row[0]][0].label += f" | Env: {env}"
         tree.root.expand_all()
         yield tree
         label = ReactiveLabel(id="step_label")
@@ -61,6 +62,7 @@ class QueryVisualizerApp(App):
         self.refresh(recompose=True)
     
     def on_input_submitted(self, event: Input.Submitted) -> None:
+        self.last_query = None
         self.run_query(event.value)
 
     def update_tree(self):

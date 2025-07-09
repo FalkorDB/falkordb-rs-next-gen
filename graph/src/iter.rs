@@ -107,42 +107,47 @@ where
     }
 }
 
-pub struct LazyReplaceIter<I, F>
+pub struct LazyReplaceIter<I, J, F>
 where
     I: Iterator,
-    F: FnOnce() -> I,
+    F: FnOnce() -> J,
+    J: Iterator<Item = I::Item>,
 {
-    iter: Option<I>,
+    iter_i: Option<I>,
+    iter_j: Option<J>,
     replacement: Option<F>,
     yielded: bool, // Tracks whether any item has been yielded
 }
 
-impl<I, F> LazyReplaceIter<I, F>
+impl<I, J, F> LazyReplaceIter<I, J, F>
 where
     I: Iterator,
-    F: FnOnce() -> I,
+    F: FnOnce() -> J,
+    J: Iterator<Item = I::Item>,
 {
     pub const fn new(
         iter: I,
         replacement: F,
     ) -> Self {
         Self {
-            iter: Some(iter),
+            iter_i: Some(iter),
+            iter_j: None,
             replacement: Some(replacement),
             yielded: false,
         }
     }
 }
 
-impl<I, F> Iterator for LazyReplaceIter<I, F>
+impl<I, J, F> Iterator for LazyReplaceIter<I, J, F>
 where
     I: Iterator,
-    F: FnOnce() -> I,
+    F: FnOnce() -> J,
+    J: Iterator<Item = I::Item>,
 {
     type Item = I::Item;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some(ref mut iter) = self.iter
+        if let Some(ref mut iter) = self.iter_i
             && let Some(item) = iter.next()
         {
             self.yielded = true; // Mark that an item has been yielded
@@ -152,8 +157,8 @@ where
         if !self.yielded
             && let Some(replacement) = self.replacement.take()
         {
-            self.iter = Some(replacement());
-            return self.iter.as_mut().unwrap().next();
+            self.iter_j = Some(replacement());
+            return self.iter_j.as_mut().unwrap().next();
         }
 
         None
@@ -164,23 +169,29 @@ pub trait LazyReplace
 where
     Self: Iterator,
 {
-    fn lazy_replace<F>(
+    fn lazy_replace<I, F>(
         self,
         replacement: F,
-    ) -> LazyReplaceIter<Self, F>
+    ) -> LazyReplaceIter<Self, I, F>
     where
         Self: Sized,
-        F: FnOnce() -> Self;
+        F: FnOnce() -> I,
+        I: Iterator<Item = Self::Item>;
 }
 
 impl<I> LazyReplace for I
 where
     I: Iterator,
 {
-    fn lazy_replace<F: FnOnce() -> I>(
+    fn lazy_replace<J, F>(
         self,
         replacement: F,
-    ) -> LazyReplaceIter<Self, F> {
+    ) -> LazyReplaceIter<Self, J, F>
+    where
+        Self: Sized,
+        F: FnOnce() -> J,
+        J: Iterator<Item = Self::Item>,
+    {
         LazyReplaceIter::new(self, replacement)
     }
 }
