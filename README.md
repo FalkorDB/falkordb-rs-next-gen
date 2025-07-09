@@ -1,4 +1,4 @@
-# The Rust implemenation of falkordb
+# The Rust implementation of falkordb
 
 [![Rust](https://github.com/FalkorDB/falkordb-rs-next-gen/actions/workflows/rust-push.yml/badge.svg)](https://github.com/FalkorDB/falkordb-rs-next-gen/actions/workflows/rust-push.yml)
 [![codecov](https://codecov.io/gh/FalkorDB/falkordb-rs-next-gen/branch/main/graph/badge.svg)](https://codecov.io/gh/FalkorDB/falkordb-rs-next-gen)
@@ -12,17 +12,21 @@ dependencies:
 
 - building [GraphBLAS](https://github.com/DrTimothyAldenDavis/GraphBLAS.git)
 
+GraphBLAS must be built and installed before building this project.
+
 ```bash
   make static CMAKE_OPTIONS='-DGRAPHBLAS_COMPACT=1 -DCMAKE_POSITION_INDEPENDENT_CODE=on'
   sudo make install
- ```
+```
 
 - pytest - create virtualenv and install tests/requirements.txt
+
+The virtual environment should be activated before running tests.
 
 ```bash
   python3 -m venv venv
   source venv/bin/activate
-  pip install -r  tests/requierments.txt
+  pip install -r  tests/requirements.txt
 ```
 
 - build with `cargo build`
@@ -68,7 +72,7 @@ The Query Visualizer is a terminal-based application for interactively exploring
    ```bash
    python tests/record.py
    ```
-3. Optionally run it as server
+3. Optionally, run it as a server
    ```bash
    textual serve tests/record.py
    ```
@@ -105,7 +109,7 @@ The Query Visualizer is a terminal-based application for interactively exploring
 #### Tree Interaction
 
 - The tree updates to highlight the current step.
-- The label shows the environment (variable values) for the selected step.
+- The label shows the environment (i.e., variable values) for the selected step.
 
 ## Example Usage
 
