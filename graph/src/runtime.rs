@@ -108,6 +108,7 @@ impl GetVariables for DynNode<'_, IR> {
                 }
                 IR::Project(items) => {
                     vars.extend(items.iter().map(|v| v.0.clone()));
+                    break;
                 }
             }
         }
