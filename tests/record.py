@@ -1,11 +1,11 @@
-import redis
+from falkordb import FalkorDB
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal
 from textual.widgets import Tree, ProgressBar, Label, Input
 from textual.widgets.tree import TreeNode
 from textual.reactive import reactive
 
-r = redis.Redis(decode_responses=True)
+db = FalkorDB()
 
 class ReactiveLabel(Label):
     text_value = reactive("Initial text")
@@ -53,7 +53,7 @@ class QueryVisualizerApp(App):
 
     def run_query(self, query: str) -> None:
         try:
-            record = r.execute_command("GRAPH.RECORD", "g", query)
+            record = db.execute_command("GRAPH.RECORD", "g", query)
             self.record = record
             self.current_index = 0
             self.query_string.append(query)
