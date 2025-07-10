@@ -11,8 +11,12 @@ from redis import ResponseError
 
 text_st = st.text().filter(lambda s: all(0x00 < ord(c) < 0x80 for c in s))
 at_least_1_text_st = st.text("abcdefghijklmnopqrstuvwxyz", min_size=1)
+is_extra = False
 
 def setup_module(module):
+    global is_extra
+    from conftest import pytest_config
+    is_extra = 'extra' in  pytest_config.getoption('-m')
     common.start_redis()
 
 
@@ -26,6 +30,17 @@ def setup_function(function):
 
 
 def query(query: str, params=None, write: bool = False, compare_results: bool = True):
+    global is_extra
+    if not is_extra:
+        try:
+            common.g.execute_command("GRAPH.PARSE", query)
+            common.g.execute_command("GRAPH.PLAN", query)
+            if not write:
+                record_query = common.g._build_params_header(params) + query
+                common.g.execute_command("GRAPH.RECORD", common.g.name, record_query)
+            assert True
+        except:
+            assert False
     if write:
         try:
             common.g.query("RETURN 1")

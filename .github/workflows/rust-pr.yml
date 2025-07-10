@@ -247,5 +247,5 @@ jobs:
           sudo apt install -y python3-venv
           python3 -m venv venv
           . venv/bin/activate
-          pip install -r  tests/requierment.txt
+          pip install -r  tests/requirements.txt
           pytest -v -m "not extra" tests/test_e2e.py tests/test_functions.py -vv

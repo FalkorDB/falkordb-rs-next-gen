@@ -31,7 +31,7 @@ fn main() {
             else {
                 return;
             };
-            let mut runtime = Runtime::new(&g, parameters, true, plan);
+            let mut runtime = Runtime::new(&g, parameters, true, plan, false);
             let _ = runtime.query();
         }
     });

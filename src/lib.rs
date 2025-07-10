@@ -3,7 +3,7 @@
 use graph::ast::Variable;
 use graph::functions::init_functions;
 use graph::graph::Plan;
-use graph::runtime::{QueryStatistics, ResultSummary, ReturnNames, Runtime, evaluate_param};
+use graph::runtime::{GetVariables, QueryStatistics, ResultSummary, Runtime, evaluate_param};
 use graph::{cypher::Parser, graph::Graph, matrix::init, planner::Planner, value::Value};
 #[cfg(feature = "zipkin")]
 use opentelemetry::global;
@@ -15,6 +15,7 @@ use opentelemetry_sdk::trace::{BatchConfigBuilder, BatchSpanProcessor};
 use opentelemetry_sdk::{Resource, trace::SdkTracerProvider};
 #[cfg(feature = "zipkin")]
 use opentelemetry_zipkin::ZipkinExporter;
+use orx_tree::{Bfs, NodeRef};
 use redis_module::{
     Context, NextArg, REDISMODULE_TYPE_METHOD_VERSION, RedisError, RedisModule_Alloc,
     RedisModule_Calloc, RedisModule_Free, RedisModule_Realloc, RedisModuleTypeMethods, RedisResult,
@@ -391,13 +392,12 @@ fn query_mut(
             .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
             .collect::<Result<HashMap<_, _>, String>>()
             .map_err(RedisError::String)?;
-        let mut runtime = Runtime::new(graph, parameters, write, plan.clone());
+        let mut runtime = Runtime::new(graph, parameters, write, plan, false);
         let result = runtime.query().map_err(RedisError::String)?;
-        let return_names = plan.root().get_return_names();
         if compact {
-            reply_compact(ctx, graph, &return_names, result);
+            reply_compact(ctx, graph, &runtime.return_names, result);
         } else {
-            reply_verbose(ctx, graph, &return_names, result);
+            reply_verbose(ctx, graph, &runtime.return_names, result);
         }
         Ok(())
     })
@@ -492,6 +492,107 @@ fn graph_query(
     } else {
         let graph = RefCell::new(Graph::new(16384, 16384));
         query_mut(ctx, &graph, query, compact, true)?;
+        key.set_value(&GRAPH_TYPE, graph)?;
+    }
+
+    RedisResult::Ok(RedisValue::NoReply)
+}
+
+#[inline]
+fn record_mut(
+    ctx: &Context,
+    graph: &RefCell<Graph>,
+    query: &str,
+) -> Result<(), RedisError> {
+    // Create a child span for parsing and execution
+    let Plan {
+        plan, parameters, ..
+    } = graph.borrow().get_plan(query).map_err(RedisError::String)?;
+    let parameters = parameters
+        .into_iter()
+        .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
+        .collect::<Result<HashMap<_, _>, String>>()
+        .map_err(RedisError::String)?;
+    let mut runtime = Runtime::new(graph, parameters, true, plan.clone(), true);
+    let _ = runtime.query().map_err(RedisError::String)?;
+    raw::reply_with_array(ctx.ctx, 2);
+    raw::reply_with_array(ctx.ctx, runtime.record.borrow().len() as _);
+    for (idx, res) in runtime.record.borrow().iter() {
+        let idx_str = format!("{idx:?}");
+        raw::reply_with_array(ctx.ctx, 3);
+        raw::reply_with_string_buffer(ctx.ctx, idx_str[17..].as_ptr().cast::<c_char>(), 9);
+        match res {
+            Err(err) => {
+                raw::reply_with_long_long(ctx.ctx, 0);
+                raw::reply_with_string_buffer(ctx.ctx, err.as_ptr().cast::<c_char>(), err.len());
+            }
+            Ok(env) => {
+                raw::reply_with_long_long(ctx.ctx, 1);
+                let vars = plan.node(idx).get_variables();
+                raw::reply_with_array(ctx.ctx, vars.len() as _);
+                for name in &vars {
+                    match env.get(name) {
+                        None => {
+                            raw::reply_with_null(ctx.ctx);
+                        }
+                        Some(value) => {
+                            reply_verbose_value(ctx, graph, value);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let len = plan.root().indices::<Bfs>().count();
+    raw::reply_with_array(ctx.ctx, len as _);
+    for idx in plan.root().indices::<Bfs>() {
+        raw::reply_with_array(ctx.ctx, 4);
+        let idx_str = format!("{idx:?}");
+        raw::reply_with_string_buffer(ctx.ctx, idx_str[17..].as_ptr().cast::<c_char>(), 9);
+        match plan.node(&idx).parent() {
+            Some(parent_idx) => {
+                let parent_idx_str = format!("{:?}", parent_idx.idx());
+                raw::reply_with_string_buffer(
+                    ctx.ctx,
+                    parent_idx_str[17..].as_ptr().cast::<c_char>(),
+                    9,
+                );
+            }
+            None => {
+                raw::reply_with_null(ctx.ctx);
+            }
+        }
+        let node = plan.node(&idx).data().to_string();
+        raw::reply_with_string_buffer(ctx.ctx, node.as_ptr().cast::<c_char>(), node.len());
+        let vars = plan.node(&idx).get_variables();
+        raw::reply_with_array(ctx.ctx, vars.len() as _);
+        for var in vars {
+            raw::reply_with_string_buffer(
+                ctx.ctx,
+                var.as_str().as_ptr().cast::<c_char>(),
+                var.as_str().len(),
+            );
+        }
+    }
+    Ok(())
+}
+
+fn graph_record(
+    ctx: &Context,
+    args: Vec<RedisString>,
+) -> RedisResult {
+    let mut args = args.into_iter().skip(1);
+    let key = args.next_arg()?;
+    let query = args.next_str()?;
+
+    let key = ctx.open_key_writable(&key);
+
+    if let Some(graph) = key.get_value::<RefCell<Graph>>(&GRAPH_TYPE)? {
+        record_mut(ctx, graph, query)?;
+    } else {
+        let graph = RefCell::new(Graph::new(16384, 16384));
+        record_mut(ctx, &graph, query)?;
         key.set_value(&GRAPH_TYPE, graph)?;
     }
 
@@ -730,5 +831,6 @@ redis_module! {
         ["graph.LIST", graph_list, "readonly", 0, 0, 0, ""],
         ["graph.PARSE", graph_parse, "readonly", 0, 0, 0, ""],
         ["graph.PLAN", graph_plan, "readonly", 0, 0, 0, ""],
+        ["graph.RECORD", graph_record, "write deny-oom", 1, 1, 1, ""],
     ],
 }
