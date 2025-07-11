@@ -27,6 +27,11 @@ pub enum IR {
     PathBuilder(Vec<Rc<QueryPath>>),
     Filter(DynTree<ExprIR>),
     CartesianProduct,
+    LoadCsv {
+        file_path: DynTree<ExprIR>,
+        headers: bool,
+        var: Variable,
+    },
     Sort(Vec<(DynTree<ExprIR>, bool)>),
     Skip(DynTree<ExprIR>),
     Limit(DynTree<ExprIR>),
@@ -64,6 +69,7 @@ impl Display for IR {
             Self::PathBuilder(_) => write!(f, "PathBuilder"),
             Self::Filter(_) => write!(f, "Filter"),
             Self::CartesianProduct => write!(f, "CartesianProduct"),
+            Self::LoadCsv { .. } => write!(f, "LoadCsv"),
             Self::Sort(_) => write!(f, "Sort"),
             Self::Skip(_) => write!(f, "Skip"),
             Self::Limit(_) => write!(f, "Limit"),
@@ -274,6 +280,17 @@ impl Planner {
             QueryIR::Delete(exprs, is_detach) => tree!(IR::Delete(exprs, is_detach)),
             QueryIR::Set(items) => tree!(IR::Set(items)),
             QueryIR::Remove(items) => tree!(IR::Remove(items)),
+            QueryIR::LoadCsv {
+                file_path,
+                headers,
+                var,
+            } => {
+                tree!(IR::LoadCsv {
+                    file_path,
+                    headers,
+                    var,
+                })
+            }
             QueryIR::With {
                 distinct,
                 exprs,

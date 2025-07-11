@@ -60,6 +60,10 @@ enum Keyword {
     Descending,
     Skip,
     Limit,
+    Load,
+    Csv,
+    Headers,
+    From,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -144,6 +148,10 @@ const KEYWORDS: &[(&str, Keyword)] = &[
     ("DESCENDING", Keyword::Descending),
     ("SKIP", Keyword::Skip),
     ("LIMIT", Keyword::Limit),
+    ("LOAD", Keyword::Load),
+    ("CSV", Keyword::Csv),
+    ("HEADERS", Keyword::Headers),
+    ("FROM", Keyword::From),
 ];
 
 const MIN_I64: [&str; 5] = [
@@ -681,7 +689,11 @@ impl<'a> Parser<'a> {
         let mut write = false;
         loop {
             while let Token::Keyword(
-                Keyword::Optional | Keyword::Match | Keyword::Unwind | Keyword::Call,
+                Keyword::Optional
+                | Keyword::Match
+                | Keyword::Unwind
+                | Keyword::Call
+                | Keyword::Load,
                 _,
             ) = self.lexer.current()
             {
@@ -737,6 +749,21 @@ impl<'a> Parser<'a> {
             Token::Keyword(Keyword::Call, _) => {
                 self.lexer.next();
                 self.parse_call_clause()
+            }
+            Token::Keyword(Keyword::Load, _) => {
+                self.lexer.next();
+                match_token!(self.lexer => Csv);
+                let headers = optional_match_token!(self.lexer => With)
+                    && optional_match_token!(self.lexer => Headers);
+                match_token!(self.lexer => From);
+                let file_path = self.parse_expr()?;
+                match_token!(self.lexer => As);
+                let ident = self.parse_ident()?;
+                Ok(QueryIR::LoadCsv {
+                    file_path,
+                    headers,
+                    var: self.create_var(Some(ident), Type::Any)?,
+                })
             }
             _ => unreachable!(),
         }
