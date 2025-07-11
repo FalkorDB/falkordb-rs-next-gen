@@ -1516,7 +1516,7 @@ impl<'a> Runtime<'a> {
                         }
                         true
                     })
-                    .map(move |id| {
+                    .flat_map(move |id| {
                         let mut vars = vars.clone();
                         vars.insert(
                             &relationship_pattern.alias,
@@ -1524,7 +1524,17 @@ impl<'a> Runtime<'a> {
                         );
                         vars.insert(&relationship_pattern.from.alias, Value::Node(src));
                         vars.insert(&relationship_pattern.to.alias, Value::Node(dst));
-                        Ok(vars)
+                        if relationship_pattern.bidirectional && src != dst {
+                            let mut vars2 = vars.clone();
+                            vars2.insert(
+                                &relationship_pattern.alias,
+                                Value::Relationship(id, src, dst),
+                            );
+                            vars2.insert(&relationship_pattern.from.alias, Value::Node(dst));
+                            vars2.insert(&relationship_pattern.to.alias, Value::Node(src));
+                            return vec![Ok(vars), Ok(vars2)];
+                        }
+                        vec![Ok(vars)]
                     }),
             ) as Box<dyn Iterator<Item = Result<Env, String>>>
         })))

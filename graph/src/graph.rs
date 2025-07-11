@@ -33,7 +33,7 @@ pub struct TypeId(usize);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct AttrId(usize);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct NodeId(u64);
+pub struct NodeId(pub u64);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct RelationshipId(u64);
 
@@ -388,7 +388,7 @@ impl Graph {
 
     pub fn create_nodes(
         &mut self,
-        nodes: &Vec<NodeId>,
+        nodes: &RoaringTreemap,
     ) {
         self.node_count += nodes.len() as u64;
         self.reserved_node_count -= nodes.len() as u64;
@@ -397,13 +397,13 @@ impl Graph {
             if self.deleted_nodes.is_empty() {
                 break;
             }
-            self.deleted_nodes.remove(id.0);
+            self.deleted_nodes.remove(id);
         }
 
         self.resize();
 
         for id in nodes {
-            self.all_nodes_matrix.set(id.0, id.0, true);
+            self.all_nodes_matrix.set(id, id, true);
         }
     }
 
@@ -477,7 +477,7 @@ impl Graph {
     ) -> impl Iterator<Item = (NodeId, NodeId, RelationshipId)> + '_ {
         self.relationship_matrices
             .values()
-            .flat_map(move |m| m.iter(id.0, id.0).chain(m.transpose().iter(id.0, id.0)))
+            .flat_map(move |m| m.iter(id.0, id.0, false).chain(m.iter(id.0, id.0, true)))
             .map(|(src, dest, id)| {
                 let src_node = NodeId(src);
                 let dest_node = NodeId(dest);
@@ -640,10 +640,10 @@ impl Graph {
         } else {
             types
         } {
-            if let Some(relationship_matrix) = self.get_relationship_matrix(relationship_type)
-                && let Some(id) = relationship_matrix.get(src.0, dest.0)
-            {
-                vec.push(RelationshipId(id));
+            if let Some(relationship_matrix) = self.get_relationship_matrix(relationship_type) {
+                for id in relationship_matrix.get(src.0, dest.0) {
+                    vec.push(RelationshipId(id));
+                }
             }
         }
         vec

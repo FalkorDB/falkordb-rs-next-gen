@@ -5,6 +5,7 @@ use std::{
 };
 
 use ordermap::{OrderMap, OrderSet};
+use roaring::RoaringTreemap;
 
 use crate::{
     graph::{Graph, NodeId, RelationshipId},
@@ -35,9 +36,9 @@ impl PendingRelationship {
 
 #[derive(Default)]
 pub struct Pending {
-    created_nodes: Vec<NodeId>,
+    created_nodes: RoaringTreemap,
     created_relationships: HashMap<RelationshipId, PendingRelationship>,
-    deleted_nodes: HashSet<NodeId>,
+    deleted_nodes: RoaringTreemap,
     deleted_relationships: HashSet<(RelationshipId, NodeId, NodeId)>,
     set_nodes_attrs: HashMap<NodeId, OrderMap<Rc<String>, Value>>,
     set_relationships_attrs: HashMap<RelationshipId, OrderMap<Rc<String>, Value>>,
@@ -50,7 +51,7 @@ impl Pending {
         &mut self,
         id: NodeId,
     ) {
-        self.created_nodes.push(id);
+        self.created_nodes.insert(id.into());
     }
 
     pub fn set_node_attributes(
@@ -135,7 +136,7 @@ impl Pending {
         &mut self,
         id: NodeId,
     ) {
-        self.deleted_nodes.insert(id);
+        self.deleted_nodes.insert(id.into());
     }
 
     pub fn created_relationship(
@@ -221,7 +222,7 @@ impl Pending {
         stats: &RefCell<QueryStatistics>,
     ) {
         if !self.created_nodes.is_empty() {
-            stats.borrow_mut().nodes_created += self.created_nodes.len();
+            stats.borrow_mut().nodes_created += self.created_nodes.len() as usize;
             g.borrow_mut().create_nodes(&self.created_nodes);
             self.created_nodes.clear();
         }
@@ -239,9 +240,9 @@ impl Pending {
             self.deleted_relationships.clear();
         }
         if !self.deleted_nodes.is_empty() {
-            stats.borrow_mut().nodes_deleted += self.deleted_nodes.len();
+            stats.borrow_mut().nodes_deleted += self.deleted_nodes.len() as usize;
             for id in self.deleted_nodes.clone() {
-                g.borrow_mut().delete_node(id);
+                g.borrow_mut().delete_node(NodeId(id));
             }
             self.deleted_nodes.clear();
         }
