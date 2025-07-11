@@ -578,6 +578,7 @@ pub enum QueryIR {
     LoadCsv {
         file_path: DynTree<ExprIR>,
         headers: bool,
+        delimiter: DynTree<ExprIR>,
         var: Variable,
     },
     With {
@@ -642,16 +643,8 @@ impl Display for QueryIR {
                 }
                 Ok(())
             }
-            Self::LoadCsv {
-                file_path,
-                headers,
-                var,
-            } => {
-                writeln!(f, "LOAD CSV FROM {file_path} AS {var:?}:")?;
-                if *headers {
-                    write!(f, "HEADERS")?;
-                }
-                Ok(())
+            Self::LoadCsv { file_path, var, .. } => {
+                writeln!(f, "LOAD CSV FROM {file_path} AS {var:?}:")
             }
             Self::With { exprs, .. } => {
                 writeln!(f, "WITH:")?;

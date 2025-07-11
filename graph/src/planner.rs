@@ -30,6 +30,7 @@ pub enum IR {
     LoadCsv {
         file_path: DynTree<ExprIR>,
         headers: bool,
+        delimiter: DynTree<ExprIR>,
         var: Variable,
     },
     Sort(Vec<(DynTree<ExprIR>, bool)>),
@@ -283,11 +284,13 @@ impl Planner {
             QueryIR::LoadCsv {
                 file_path,
                 headers,
+                delimiter,
                 var,
             } => {
                 tree!(IR::LoadCsv {
                     file_path,
                     headers,
+                    delimiter,
                     var,
                 })
             }

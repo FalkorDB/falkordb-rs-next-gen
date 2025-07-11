@@ -64,6 +64,7 @@ enum Keyword {
     Csv,
     Headers,
     From,
+    Delimiter,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -152,6 +153,7 @@ const KEYWORDS: &[(&str, Keyword)] = &[
     ("CSV", Keyword::Csv),
     ("HEADERS", Keyword::Headers),
     ("FROM", Keyword::From),
+    ("DELIMITER", Keyword::Delimiter),
 ];
 
 const MIN_I64: [&str; 5] = [
@@ -758,10 +760,16 @@ impl<'a> Parser<'a> {
                 match_token!(self.lexer => From);
                 let file_path = self.parse_expr()?;
                 match_token!(self.lexer => As);
-                let ident = self.parse_ident()?;
+                let ident: Rc<String> = self.parse_ident()?;
+                let delimiter = if optional_match_token!(self.lexer => Delimiter) {
+                    self.parse_expr()?
+                } else {
+                    tree!(ExprIR::String(Rc::new(String::from(','))))
+                };
                 Ok(QueryIR::LoadCsv {
                     file_path,
                     headers,
+                    delimiter,
                     var: self.create_var(Some(ident), Type::Any)?,
                 })
             }

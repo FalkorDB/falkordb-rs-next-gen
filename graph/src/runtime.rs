@@ -1088,6 +1088,7 @@ impl<'a> Runtime<'a> {
             IR::LoadCsv {
                 file_path,
                 headers,
+                delimiter,
                 var,
             } => {
                 let iter = if let Some(child_idx) = child0_idx {
@@ -1100,7 +1101,15 @@ impl<'a> Runtime<'a> {
                 Ok(iter
                     .try_flat_map(move |vars| {
                         let path = self.run_expr(file_path, file_path.root().idx(), &vars, None)?;
-                        self.load_csv(path, *headers, var, &vars)
+                        let Value::String(delimiter) =
+                            self.run_expr(delimiter, delimiter.root().idx(), &vars, None)?
+                        else {
+                            return Err(String::from("Delimiter must be a string"));
+                        };
+                        if delimiter.len() != 1 {
+                            return Err(String::from("Delimiter must be a single character"));
+                        }
+                        self.load_csv(path, *headers, delimiter, var, &vars)
                     })
                     .cond_inspect(self.inspect, move |res| {
                         self.record.borrow_mut().push((idx.clone(), res.clone()));
@@ -1322,6 +1331,7 @@ impl<'a> Runtime<'a> {
         &'a self,
         file_path: Value,
         headers: bool,
+        delimiter: Rc<String>,
         var: &'a Variable,
         vars: &Env,
     ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + 'a>, String> {
@@ -1331,7 +1341,7 @@ impl<'a> Runtime<'a> {
 
         let mut reader = csv::ReaderBuilder::new()
             .has_headers(headers)
-            .delimiter(b'|')
+            .delimiter(delimiter.as_bytes()[0])
             .from_path(path.as_str())
             .map_err(|e| format!("Failed to read CSV file: {e}"))?;
 
