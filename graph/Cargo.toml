@@ -16,6 +16,7 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin)'] }
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+csv = "1.3.1"
 itertools = "0.14.0"
 once_cell = "1.21.3"
 ordermap = "0.5.8"

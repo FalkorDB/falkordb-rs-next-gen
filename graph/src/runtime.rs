@@ -103,6 +103,9 @@ impl GetVariables for DynNode<'_, IR> {
                         vars.push(path.var.clone());
                     }
                 }
+                IR::LoadCsv { var, .. } => {
+                    vars.push(var.clone());
+                }
                 IR::Aggregate(variables, _, _) => {
                     vars.extend(variables.iter().cloned());
                 }
@@ -1082,6 +1085,36 @@ impl<'a> Runtime<'a> {
                 }
                 unreachable!();
             }
+            IR::LoadCsv {
+                file_path,
+                headers,
+                delimiter,
+                var,
+            } => {
+                let iter = if let Some(child_idx) = child0_idx {
+                    self.run(&child_idx)?
+                } else {
+                    Box::new(once(Ok(Env::default())))
+                };
+
+                let idx = idx.clone();
+                Ok(iter
+                    .try_flat_map(move |vars| {
+                        let path = self.run_expr(file_path, file_path.root().idx(), &vars, None)?;
+                        let Value::String(delimiter) =
+                            self.run_expr(delimiter, delimiter.root().idx(), &vars, None)?
+                        else {
+                            return Err(String::from("Delimiter must be a string"));
+                        };
+                        if delimiter.len() != 1 {
+                            return Err(String::from("Delimiter must be a single character"));
+                        }
+                        self.load_csv(path, *headers, delimiter, var, &vars)
+                    })
+                    .cond_inspect(self.inspect, move |res| {
+                        self.record.borrow_mut().push((idx.clone(), res.clone()));
+                    }))
+            }
             IR::Sort(trees) => {
                 if let Some(child_idx) = child0_idx {
                     let mut items = self
@@ -1292,6 +1325,65 @@ impl<'a> Runtime<'a> {
                 }))
             }
         }
+    }
+
+    fn load_csv(
+        &'a self,
+        file_path: Value,
+        headers: bool,
+        delimiter: Rc<String>,
+        var: &'a Variable,
+        vars: &Env,
+    ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + 'a>, String> {
+        let Value::String(path) = file_path else {
+            return Err(String::from("File path must be a string"));
+        };
+
+        let mut reader = csv::ReaderBuilder::new()
+            .has_headers(headers)
+            .delimiter(delimiter.as_bytes()[0])
+            .from_path(path.as_str())
+            .map_err(|e| format!("Failed to read CSV file: {e}"))?;
+
+        let headers = if headers {
+            reader
+                .headers()
+                .map_err(|e| format!("Failed to read CSV headers: {e}"))?
+                .iter()
+                .map(|s| Rc::new(String::from(s)))
+                .collect::<Vec<_>>()
+        } else {
+            vec![]
+        };
+
+        let vars = vars.clone();
+        Ok(Box::new(reader.into_records().map(
+            move |record| match record {
+                Ok(record) => {
+                    let mut env = vars.clone();
+                    env.insert(
+                        var,
+                        Value::Map(Rc::new(
+                            record
+                                .iter()
+                                .enumerate()
+                                .map(|(i, field)| {
+                                    (
+                                        headers
+                                            .get(i)
+                                            .cloned()
+                                            .unwrap_or_else(|| Rc::new(format!("col_{i}"))),
+                                        Value::String(Rc::new(String::from(field))),
+                                    )
+                                })
+                                .collect::<OrderMap<_, _>>(),
+                        )),
+                    );
+                    Ok(env)
+                }
+                Err(e) => Err(format!("Failed to read CSV record: {e}")),
+            },
+        )))
     }
 
     fn remove(
@@ -1516,7 +1608,7 @@ impl<'a> Runtime<'a> {
                         }
                         true
                     })
-                    .map(move |id| {
+                    .flat_map(move |id| {
                         let mut vars = vars.clone();
                         vars.insert(
                             &relationship_pattern.alias,
@@ -1524,7 +1616,17 @@ impl<'a> Runtime<'a> {
                         );
                         vars.insert(&relationship_pattern.from.alias, Value::Node(src));
                         vars.insert(&relationship_pattern.to.alias, Value::Node(dst));
-                        Ok(vars)
+                        if relationship_pattern.bidirectional && src != dst {
+                            let mut vars2 = vars.clone();
+                            vars2.insert(
+                                &relationship_pattern.alias,
+                                Value::Relationship(id, src, dst),
+                            );
+                            vars2.insert(&relationship_pattern.from.alias, Value::Node(dst));
+                            vars2.insert(&relationship_pattern.to.alias, Value::Node(src));
+                            return vec![Ok(vars), Ok(vars2)];
+                        }
+                        vec![Ok(vars)]
                     }),
             ) as Box<dyn Iterator<Item = Result<Env, String>>>
         })))

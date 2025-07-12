@@ -575,6 +575,12 @@ pub enum QueryIR {
     Delete(Vec<DynTree<ExprIR>>, bool),
     Set(Vec<(DynTree<ExprIR>, DynTree<ExprIR>, bool)>),
     Remove(Vec<DynTree<ExprIR>>),
+    LoadCsv {
+        file_path: DynTree<ExprIR>,
+        headers: bool,
+        delimiter: DynTree<ExprIR>,
+        var: Variable,
+    },
     With {
         distinct: bool,
         exprs: Vec<(Variable, DynTree<ExprIR>)>,
@@ -636,6 +642,9 @@ impl Display for QueryIR {
                     write!(f, "{item}")?;
                 }
                 Ok(())
+            }
+            Self::LoadCsv { file_path, var, .. } => {
+                writeln!(f, "LOAD CSV FROM {file_path} AS {var:?}:")
             }
             Self::With { exprs, .. } => {
                 writeln!(f, "WITH:")?;
@@ -801,6 +810,12 @@ impl QueryIR {
                 for item in items {
                     item.validate(false, env)?;
                 }
+                iter.next()
+                    .map_or(Ok(()), |first| first.inner_validate(iter, env))
+            }
+            Self::LoadCsv { file_path, var, .. } => {
+                file_path.validate(false, env)?;
+                env.insert(var.id);
                 iter.next()
                     .map_or(Ok(()), |first| first.inner_validate(iter, env))
             }
