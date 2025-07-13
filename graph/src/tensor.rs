@@ -151,7 +151,6 @@ impl Iterator for Iter<'_> {
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(vit) = &mut self.vit {
             if let Some((_, id)) = vit.next() {
-                println!("src: {}, dest: {}, id: {}", self.src, self.dest, id);
                 return Some((self.src, self.dest, id));
             }
             self.vit = None;

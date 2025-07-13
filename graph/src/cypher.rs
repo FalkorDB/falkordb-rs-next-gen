@@ -666,9 +666,13 @@ impl<'a> Parser<'a> {
                 if id.as_str() == "CYPHER" {
                     self.lexer.next();
                     let mut params = HashMap::new();
-                    while let Token::Ident(id) = self.lexer.current() {
+                    while let Token::Ident(id) | Token::Keyword(_, id) = self.lexer.current() {
+                        let pos = self.lexer.pos;
                         self.lexer.next();
-                        match_token!(self.lexer, Equal);
+                        if !optional_match_token!(self.lexer, Equal) {
+                            self.lexer.set_pos(pos);
+                            break;
+                        }
                         params.insert(String::from(id.as_str()), self.parse_expr()?);
                     }
                     Ok((params, &self.lexer.str[self.lexer.pos..]))
