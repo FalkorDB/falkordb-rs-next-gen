@@ -12,11 +12,13 @@ use roaring::RoaringTreemap;
 use crate::{
     ast::ExprIR,
     cypher::Parser,
-    matrix::{Dup, ElementWiseAdd, ElementWiseMultiply, Matrix, MxM, New, Remove, Set, Size},
-    pending::PendingRelationship,
+    graph::{
+        matrix::{Dup, ElementWiseAdd, ElementWiseMultiply, Matrix, MxM, New, Remove, Set, Size},
+        tensor::Tensor,
+    },
+    indexer::{self, Document, Indexer},
     planner::{IR, Planner},
-    tensor::Tensor,
-    value::Value,
+    runtime::{pending::PendingRelationship, value::Value},
 };
 
 pub struct Plan {
@@ -57,7 +59,7 @@ impl From<AttrId> for usize {
 
 impl From<u64> for NodeId {
     fn from(value: u64) -> Self {
-        NodeId(value)
+        Self(value)
     }
 }
 
@@ -109,6 +111,7 @@ pub struct Graph {
     empty_map: OrderMap<AttrId, Value>,
     node_attrs: HashMap<NodeId, OrderMap<AttrId, Value>>,
     relationship_attrs: HashMap<RelationshipId, OrderMap<AttrId, Value>>,
+    node_indexer: Indexer,
     node_labels: Vec<Rc<String>>,
     relationship_types: Vec<Rc<String>>,
     node_attrs_name: Vec<Rc<String>>,
@@ -141,6 +144,7 @@ impl Graph {
             empty_map: OrderMap::new(),
             node_attrs: HashMap::new(),
             relationship_attrs: HashMap::new(),
+            node_indexer: Indexer::new(n),
             node_labels: Vec::new(),
             relationship_types: Vec::new(),
             node_attrs_name: Vec::new(),
@@ -427,6 +431,15 @@ impl Graph {
             }
             removed
         } else {
+            if let Value::Int(i) = &value {
+                let mut doc = Document::new(u64::from(id));
+                doc.set(usize::from(attr_id) as u64, indexer::Value::Int(*i as u64));
+                for (_, label) in self.node_labels_matrix.iter(id.into(), id.into()) {
+                    if self.node_indexer.is_indexed(label, attr_id.0 as u64) {
+                        self.node_indexer.add(label, doc.clone());
+                    }
+                }
+            }
             attrs.insert(attr_id, value).is_some()
         }
     }
@@ -736,6 +749,7 @@ impl Graph {
             while self.node_count > self.node_cap {
                 self.node_cap *= 2;
             }
+            self.node_indexer.resize(self.node_cap);
             self.adjacancy_matrix.resize(self.node_cap, self.node_cap);
             self.node_labels_matrix
                 .resize(self.node_cap, self.labels_matices.len() as u64);
@@ -779,5 +793,51 @@ impl Graph {
         id: RelationshipId,
     ) -> &OrderMap<AttrId, Value> {
         self.relationship_attrs.get(&id).unwrap_or(&self.empty_map)
+    }
+
+    pub fn create_node_index(
+        &mut self,
+        label: Rc<String>,
+        prop: Rc<String>,
+    ) {
+        self.get_label_matrix_mut(&label);
+        let label_id = self.get_label_id(&label).unwrap();
+        let prop_id = self.get_or_add_node_attribute_id(&prop);
+        self.node_indexer
+            .create_index(label_id.0 as u64, prop_id.0 as u64);
+    }
+
+    pub fn is_indexed(
+        &self,
+        label: &Rc<String>,
+        key: &Rc<String>,
+    ) -> bool {
+        if let Some(label_id) = self.get_label_id(label)
+            && let Some(prop_id) = self.get_node_attribute_id(key)
+        {
+            return self
+                .node_indexer
+                .is_indexed(label_id.0 as u64, prop_id.0 as u64);
+        }
+        false
+    }
+
+    pub fn get_indexed_nodes(
+        &self,
+        label: &Rc<String>,
+        key: &Rc<String>,
+        value: u64,
+    ) -> Vec<NodeId> {
+        if let Some(label_id) = self.get_label_id(label)
+            && let Some(prop_id) = self.get_node_attribute_id(key)
+        {
+            self.node_indexer
+                .get(label_id.0 as u64, prop_id.0 as u64, value)
+                .into_iter()
+                .map(NodeId)
+                .collect()
+        } else {
+            Vec::new()
+        }
     }
 }

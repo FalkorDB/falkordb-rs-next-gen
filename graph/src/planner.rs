@@ -44,6 +44,10 @@ pub enum IR {
     Project(Vec<(Variable, DynTree<ExprIR>)>),
     Distinct,
     Commit,
+    CreateIndex {
+        label: Rc<String>,
+        prop: Rc<String>,
+    },
 }
 
 #[cfg_attr(tarpaulin, skip)]
@@ -78,6 +82,9 @@ impl Display for IR {
             Self::Project(_) => write!(f, "Project"),
             Self::Commit => write!(f, "Commit"),
             Self::Distinct => write!(f, "Distinct"),
+            Self::CreateIndex { label, prop } => {
+                write!(f, "CreateIndex on :{label}({prop})")
+            }
         }
     }
 }
@@ -313,6 +320,7 @@ impl Planner {
                 write,
                 ..
             } => self.plan_project(exprs, orderby, skip, limit, None, distinct, write),
+            QueryIR::CreateIndex { label, prop } => tree!(IR::CreateIndex { label, prop }),
             QueryIR::Query(q, write) => self.plan_query(q, write),
         }
     }

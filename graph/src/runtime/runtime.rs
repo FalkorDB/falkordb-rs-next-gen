@@ -3,28 +3,33 @@
 #![allow(clippy::cast_possible_truncation)]
 #![allow(clippy::cast_precision_loss)]
 
-use crate::ast::{QuantifierType, QueryGraph, QueryNode, QueryRelationship, Variable};
-use crate::functions::{FnType, Functions, Type, get_functions};
-use crate::graph::{NodeId, RelationshipId};
-use crate::iter::{Aggregate, CondInspectIter, LazyReplace, TryFlatMap, TryMap};
-use crate::pending::Pending;
-use crate::value::{CompareValue, DisjointOrNull, Env, ValuesDeduper};
-use crate::{ast::ExprIR, graph::Graph, planner::IR, value::Contains, value::Value};
+use crate::{
+    ast::{ExprIR, QuantifierType, QueryGraph, QueryNode, QueryRelationship, Variable},
+    graph::graph::{Graph, NodeId, RelationshipId},
+    planner::IR,
+    runtime::{
+        functions::{FnType, Functions, Type, get_functions},
+        iter::{Aggregate, CondInspectIter, LazyReplace, TryFlatMap, TryMap},
+        pending::Pending,
+        value::{CompareValue, Contains, DisjointOrNull, Env, Value, ValuesDeduper},
+    },
+};
 use once_cell::unsync::Lazy;
 use ordermap::{OrderMap, OrderSet};
 use orx_tree::{Bfs, Dyn, DynNode, DynTree, NodeIdx, NodeRef};
-use std::cell::RefCell;
-use std::cmp::Ordering;
-use std::collections::HashMap;
-use std::fmt::Debug;
-use std::hash::{DefaultHasher, Hash, Hasher};
-use std::iter::{empty, once};
-use std::rc::Rc;
-use std::time::{Duration, Instant};
+use std::{
+    cell::RefCell,
+    cmp::Ordering,
+    collections::HashMap,
+    fmt::Debug,
+    hash::{DefaultHasher, Hash, Hasher},
+    iter::{empty, once},
+    rc::Rc,
+    time::Instant,
+};
 use tracing::instrument;
 
 pub struct ResultSummary {
-    pub run_duration: Duration,
     pub stats: QueryStatistics,
     pub result: Vec<Env>,
 }
@@ -39,6 +44,7 @@ pub struct QueryStatistics {
     pub relationships_deleted: usize,
     pub properties_set: usize,
     pub properties_removed: usize,
+    pub execution_time: f64,
 }
 
 pub struct Runtime<'a> {
@@ -92,7 +98,8 @@ impl GetVariables for DynNode<'_, IR> {
                 | IR::Skip(_)
                 | IR::Limit(_)
                 | IR::Distinct
-                | IR::Commit => {}
+                | IR::Commit
+                | IR::CreateIndex { .. } => {}
                 IR::NodeScan(query_node) => vars.push(query_node.alias.clone()),
                 IR::RelationshipScan(query_relationship) => {
                     vars.push(query_relationship.alias.clone());
@@ -190,8 +197,8 @@ impl<'a> Runtime<'a> {
         let run_duration = start.elapsed();
 
         self.stats.borrow_mut().labels_added = self.g.borrow().get_labels_count() - labels_count;
+        self.stats.borrow_mut().execution_time = run_duration.as_secs_f64() * 1000.0;
         Ok(ResultSummary {
-            run_duration,
             stats: self.stats.take(),
             result,
         })
@@ -1324,6 +1331,17 @@ impl<'a> Runtime<'a> {
                     self.record.borrow_mut().push((idx.clone(), res.clone()));
                 }))
             }
+            IR::CreateIndex { label, prop } => {
+                if !self.write {
+                    return Err(String::from(
+                        "graph.RO_QUERY is to be executed only on read-only queries",
+                    ));
+                }
+                self.g
+                    .borrow_mut()
+                    .create_node_index(label.clone(), prop.clone());
+                Ok(Box::new(empty()))
+            }
         }
     }
 
@@ -1345,45 +1363,61 @@ impl<'a> Runtime<'a> {
             .from_path(path.as_str())
             .map_err(|e| format!("Failed to read CSV file: {e}"))?;
 
-        let headers = if headers {
-            reader
+        let vars = vars.clone();
+        if headers {
+            let headers = reader
                 .headers()
                 .map_err(|e| format!("Failed to read CSV headers: {e}"))?
                 .iter()
                 .map(|s| Rc::new(String::from(s)))
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+            Ok(Box::new(reader.into_records().map(
+                move |record| match record {
+                    Ok(record) => {
+                        let mut env = vars.clone();
+                        env.insert(
+                            var,
+                            Value::Map(Rc::new(
+                                record
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(i, field)| {
+                                        (
+                                            headers
+                                                .get(i)
+                                                .cloned()
+                                                .unwrap_or_else(|| Rc::new(format!("col_{i}"))),
+                                            Value::String(Rc::new(String::from(field))),
+                                        )
+                                    })
+                                    .collect::<OrderMap<_, _>>(),
+                            )),
+                        );
+                        Ok(env)
+                    }
+                    Err(e) => Err(format!("Failed to read CSV record: {e}")),
+                },
+            )))
         } else {
-            vec![]
-        };
-
-        let vars = vars.clone();
-        Ok(Box::new(reader.into_records().map(
-            move |record| match record {
-                Ok(record) => {
-                    let mut env = vars.clone();
-                    env.insert(
-                        var,
-                        Value::Map(Rc::new(
-                            record
-                                .iter()
-                                .enumerate()
-                                .map(|(i, field)| {
-                                    (
-                                        headers
-                                            .get(i)
-                                            .cloned()
-                                            .unwrap_or_else(|| Rc::new(format!("col_{i}"))),
-                                        Value::String(Rc::new(String::from(field))),
-                                    )
-                                })
-                                .collect::<OrderMap<_, _>>(),
-                        )),
-                    );
-                    Ok(env)
-                }
-                Err(e) => Err(format!("Failed to read CSV record: {e}")),
-            },
-        )))
+            Ok(Box::new(reader.into_records().map(
+                move |record| match record {
+                    Ok(record) => {
+                        let mut env = vars.clone();
+                        env.insert(
+                            var,
+                            Value::List(
+                                record
+                                    .iter()
+                                    .map(|field| Value::String(Rc::new(String::from(field))))
+                                    .collect(),
+                            ),
+                        );
+                        Ok(env)
+                    }
+                    Err(e) => Err(format!("Failed to read CSV record: {e}")),
+                },
+            )))
+        }
     }
 
     fn remove(
@@ -1684,6 +1718,27 @@ impl<'a> Runtime<'a> {
             &vars,
             None,
         )?;
+        if let Value::Map(attrs) = &attrs {
+            for label in &node_pattern.labels {
+                for (key, value) in attrs.iter() {
+                    if let Value::Int(value) = value
+                        && self.g.borrow().is_indexed(label, key)
+                    {
+                        return Ok(Box::new(
+                            self.g
+                                .borrow()
+                                .get_indexed_nodes(label, key, *value as u64)
+                                .into_iter()
+                                .map(move |id| {
+                                    let mut vars = vars.clone();
+                                    vars.insert(&node_pattern.alias, Value::Node(id));
+                                    Ok(vars)
+                                }),
+                        ));
+                    }
+                }
+            }
+        }
         let iter = self.g.borrow().get_nodes(&node_pattern.labels);
         Ok(Box::new(iter.filter_map(move |v| {
             let mut vars = vars.clone();

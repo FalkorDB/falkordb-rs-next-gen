@@ -1,18 +1,22 @@
 #![allow(clippy::cast_precision_loss)]
 
-use std::cell::RefCell;
-use std::cmp::Ordering;
-use std::collections::HashSet;
-use std::fmt::Debug;
-use std::hash::{DefaultHasher, Hash, Hasher};
-use std::ops::{Add, Div, Mul, Rem, Sub};
-use std::rc::Rc;
+use std::{
+    cell::RefCell,
+    cmp::Ordering,
+    collections::HashSet,
+    fmt::Debug,
+    hash::{DefaultHasher, Hash, Hasher},
+    ops::{Add, Div, Mul, Rem, Sub},
+    rc::Rc,
+};
 
 use ordermap::OrderMap;
 
-use crate::ast::Variable;
-use crate::functions::Type;
-use crate::graph::{NodeId, RelationshipId};
+use crate::{
+    ast::Variable,
+    graph::graph::{NodeId, RelationshipId},
+    runtime::functions::Type,
+};
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub enum Value {

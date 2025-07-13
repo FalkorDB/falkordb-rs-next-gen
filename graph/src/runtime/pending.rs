@@ -8,9 +8,9 @@ use ordermap::{OrderMap, OrderSet};
 use roaring::RoaringTreemap;
 
 use crate::{
-    graph::{Graph, NodeId, RelationshipId},
-    runtime::QueryStatistics,
-    value::Value,
+    graph::graph::{Graph, NodeId, RelationshipId},
+    runtime::runtime::QueryStatistics,
+    runtime::value::Value,
 };
 
 pub struct PendingRelationship {
@@ -246,6 +246,18 @@ impl Pending {
             }
             self.deleted_nodes.clear();
         }
+        if !self.set_node_labels.is_empty() {
+            for (id, labels) in &self.set_node_labels {
+                g.borrow_mut().set_node_labels(*id, labels);
+            }
+            self.set_node_labels.clear();
+        }
+        if !self.remove_node_labels.is_empty() {
+            for (id, labels) in &self.remove_node_labels {
+                g.borrow_mut().remove_node_labels(*id, labels);
+            }
+            self.remove_node_labels.clear();
+        }
         if !self.set_nodes_attrs.is_empty() {
             stats.borrow_mut().properties_set += self
                 .set_nodes_attrs
@@ -267,18 +279,6 @@ impl Pending {
                 }
             }
             self.set_nodes_attrs.clear();
-        }
-        if !self.set_node_labels.is_empty() {
-            for (id, labels) in &self.set_node_labels {
-                g.borrow_mut().set_node_labels(*id, labels);
-            }
-            self.set_node_labels.clear();
-        }
-        if !self.remove_node_labels.is_empty() {
-            for (id, labels) in &self.remove_node_labels {
-                g.borrow_mut().remove_node_labels(*id, labels);
-            }
-            self.remove_node_labels.clear();
         }
         if !self.set_relationships_attrs.is_empty() {
             stats.borrow_mut().properties_set += self

@@ -4,14 +4,18 @@
 #![allow(clippy::cast_precision_loss)]
 #![allow(clippy::cast_possible_truncation)]
 
-use crate::runtime::Runtime;
-use crate::value::{Value, ValueTypeOf};
+use crate::runtime::{
+    runtime::Runtime,
+    value::{Value, ValueTypeOf},
+};
 use itertools::Itertools;
 use rand::Rng;
-use std::collections::HashMap;
-use std::fmt::{Debug, Display};
-use std::rc::Rc;
-use std::sync::OnceLock;
+use std::{
+    collections::HashMap,
+    fmt::{Debug, Display},
+    rc::Rc,
+    sync::OnceLock,
+};
 
 type RuntimeFn = fn(&Runtime, Vec<Value>) -> Result<Value, String>;
 

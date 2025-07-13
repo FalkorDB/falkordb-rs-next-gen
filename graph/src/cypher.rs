@@ -1,17 +1,23 @@
 use crate::ast::{
     ExprIR, QuantifierType, QueryGraph, QueryIR, QueryNode, QueryPath, QueryRelationship, Variable,
 };
-use crate::cypher::Token::RParen;
-use crate::functions::{FnType, Type, get_functions};
-use crate::tree;
-use crate::value::Value;
+use crate::{
+    cypher::Token::RParen,
+    runtime::{
+        functions::{FnType, Type, get_functions},
+        value::Value,
+    },
+    tree,
+};
 use itertools::Itertools;
 use ordermap::OrderSet;
 use orx_tree::{DynTree, NodeRef};
-use std::collections::{HashMap, HashSet};
-use std::num::IntErrorKind;
-use std::rc::Rc;
-use std::str::Chars;
+use std::{
+    collections::{HashMap, HashSet},
+    num::IntErrorKind,
+    rc::Rc,
+    str::Chars,
+};
 use unescaper::unescape;
 
 #[derive(Debug, PartialEq, Clone)]
@@ -65,6 +71,9 @@ enum Keyword {
     Headers,
     From,
     Delimiter,
+    Index,
+    For,
+    On,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -154,6 +163,9 @@ const KEYWORDS: &[(&str, Keyword)] = &[
     ("HEADERS", Keyword::Headers),
     ("FROM", Keyword::From),
     ("DELIMITER", Keyword::Delimiter),
+    ("INDEX", Keyword::Index),
+    ("FOR", Keyword::For),
+    ("ON", Keyword::On),
 ];
 
 const MIN_I64: [&str; 5] = [
@@ -685,6 +697,28 @@ impl<'a> Parser<'a> {
     }
 
     pub fn parse(&mut self) -> Result<QueryIR, String> {
+        let pos = self.lexer.pos;
+        if optional_match_token!(self.lexer => Create)
+            && optional_match_token!(self.lexer => Index)
+            && optional_match_token!(self.lexer => For)
+        {
+            match_token!(self.lexer, LParen);
+            let nkey = self.parse_ident()?;
+            match_token!(self.lexer, Colon);
+            let label = self.parse_ident()?;
+            match_token!(self.lexer, RParen);
+            match_token!(self.lexer => On);
+            let key = self.parse_ident()?;
+            if nkey.as_str() != key.as_str() {
+                return Err(self.lexer.format_error(&format!(
+                    "Invalid index name '{nkey}' for label '{label}' on property '{key}'"
+                )));
+            }
+            match_token!(self.lexer, Dot);
+            let prop = self.parse_ident()?;
+            return Ok(QueryIR::CreateIndex { label, prop });
+        }
+        self.lexer.set_pos(pos);
         let mut ir = self.parse_query()?;
         ir.validate()?;
         Ok(ir)
@@ -761,15 +795,15 @@ impl<'a> Parser<'a> {
                 match_token!(self.lexer => Csv);
                 let headers = optional_match_token!(self.lexer => With)
                     && optional_match_token!(self.lexer => Headers);
-                match_token!(self.lexer => From);
-                let file_path = self.parse_expr()?;
-                match_token!(self.lexer => As);
-                let ident: Rc<String> = self.parse_ident()?;
                 let delimiter = if optional_match_token!(self.lexer => Delimiter) {
                     self.parse_expr()?
                 } else {
                     tree!(ExprIR::String(Rc::new(String::from(','))))
                 };
+                match_token!(self.lexer => From);
+                let file_path = self.parse_expr()?;
+                match_token!(self.lexer => As);
+                let ident: Rc<String> = self.parse_ident()?;
                 Ok(QueryIR::LoadCsv {
                     file_path,
                     headers,

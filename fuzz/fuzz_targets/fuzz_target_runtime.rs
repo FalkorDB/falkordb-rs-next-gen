@@ -3,10 +3,14 @@
 use std::{cell::RefCell, collections::HashMap};
 
 use graph::{
-    GraphBLAS::{GrB_Mode, GrB_init},
-    functions::init_functions,
-    graph::{Graph, Plan},
-    runtime::{Runtime, evaluate_param},
+    graph::{
+        GraphBLAS::{GrB_Mode, GrB_init},
+        graph::{Graph, Plan},
+    },
+    runtime::{
+        functions::init_functions,
+        runtime::{Runtime, evaluate_param},
+    },
 };
 use libfuzzer_sys::{Corpus, fuzz_target};
 

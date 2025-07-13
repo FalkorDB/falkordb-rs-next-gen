@@ -4,7 +4,7 @@ use std::{
     ptr::{addr_of_mut, null_mut},
 };
 
-use crate::GraphBLAS::{
+use crate::graph::GraphBLAS::{
     GrB_BOOL, GrB_Info, GrB_Vector, GrB_Vector_free, GrB_Vector_new, GrB_Vector_removeElement,
     GrB_Vector_resize, GrB_Vector_setElement_BOOL, GrB_Vector_size, GrB_Vector_wait, GrB_WaitMode,
     GxB_Iterator, GxB_Iterator_free, GxB_Iterator_new, GxB_Vector_Iterator_attach,

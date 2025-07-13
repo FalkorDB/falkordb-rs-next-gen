@@ -4,7 +4,7 @@ use itertools::Itertools;
 use ordermap::{OrderMap, OrderSet};
 use orx_tree::{Bfs, Collection, Dfs, DynTree, NodeRef};
 
-use crate::functions::{GraphFn, Type};
+use crate::runtime::functions::{GraphFn, Type};
 
 #[derive(Clone, Debug)]
 pub struct Variable {
@@ -598,6 +598,10 @@ pub enum QueryIR {
         limit: Option<DynTree<ExprIR>>,
         write: bool,
     },
+    CreateIndex {
+        label: Rc<String>,
+        prop: Rc<String>,
+    },
     Query(Vec<QueryIR>, bool),
 }
 
@@ -659,6 +663,9 @@ impl Display for QueryIR {
                     write!(f, "{}", name.as_str())?;
                 }
                 Ok(())
+            }
+            Self::CreateIndex { label, prop } => {
+                writeln!(f, "CREATE NODE INDEX ON :{label}({prop})")
             }
             Self::Query(qs, _) => {
                 for q in qs {
@@ -849,6 +856,9 @@ impl QueryIR {
                 iter.next()
                     .map_or(Ok(()), |first| first.inner_validate(iter, env))
             }
+            Self::CreateIndex { .. } => iter
+                .next()
+                .map_or(Ok(()), |first| first.inner_validate(iter, env)),
             Self::Query(q, _) => {
                 let mut iter = q.iter();
                 let first = iter.next().ok_or("Empty query")?;

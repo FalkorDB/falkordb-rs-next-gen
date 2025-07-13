@@ -1,7 +1,7 @@
-use crate::matrix::{self, Dup, ElementWiseAdd, Get, Matrix, New, Remove, Set, Size};
+use crate::graph::matrix::{self, Dup, ElementWiseAdd, Get, Matrix, New, Remove, Set, Size};
 
 #[allow(non_upper_case_globals)]
-const GrB_INDEX_MAX: u64 = (1u64 << 60) - 1;
+pub const GrB_INDEX_MAX: u64 = (1u64 << 60) - 1;
 
 pub struct Tensor {
     m: Matrix<bool>,

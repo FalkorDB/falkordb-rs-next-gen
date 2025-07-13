@@ -1,10 +1,19 @@
 #![allow(clippy::cast_possible_wrap)]
 
-use graph::ast::Variable;
-use graph::functions::init_functions;
-use graph::graph::Plan;
-use graph::runtime::{GetVariables, QueryStatistics, ResultSummary, Runtime, evaluate_param};
-use graph::{cypher::Parser, graph::Graph, matrix::init, planner::Planner, value::Value};
+use graph::{
+    ast::Variable,
+    cypher::Parser,
+    graph::{
+        graph::{Graph, Plan},
+        matrix::init,
+    },
+    planner::Planner,
+    runtime::{
+        functions::init_functions,
+        runtime::{GetVariables, QueryStatistics, ResultSummary, Runtime, evaluate_param},
+        value::Value,
+    },
+};
 #[cfg(feature = "zipkin")]
 use opentelemetry::global;
 #[cfg(feature = "zipkin")]
@@ -18,18 +27,18 @@ use opentelemetry_zipkin::ZipkinExporter;
 use orx_tree::{Bfs, NodeRef};
 use redis_module::{
     Context, NextArg, REDISMODULE_TYPE_METHOD_VERSION, RedisError, RedisModule_Alloc,
-    RedisModule_Calloc, RedisModule_Free, RedisModule_Realloc, RedisModuleTypeMethods, RedisResult,
-    RedisString, RedisValue, Status, native_types::RedisType, redis_module,
+    RedisModule_Calloc, RedisModule_Free, RedisModule_Realloc, RedisModuleIO,
+    RedisModuleTypeMethods, RedisResult, RedisString, RedisValue, Status, native_types::RedisType,
+    raw, redis_module,
 };
-use redis_module::{RedisModuleIO, raw};
-use std::cell::RefCell;
-use std::collections::HashMap;
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    os::raw::{c_char, c_void},
+    ptr::null_mut,
+};
 #[cfg(feature = "fuzz")]
-use std::fs::File;
-#[cfg(feature = "fuzz")]
-use std::io::Write;
-use std::os::raw::{c_char, c_void};
-use std::ptr::null_mut;
+use std::{fs::File, io::Write};
 #[cfg(feature = "zipkin")]
 use tracing_opentelemetry::OpenTelemetryLayer;
 #[cfg(feature = "zipkin")]
@@ -407,7 +416,7 @@ fn reply_stats(
     ctx: &Context,
     stats: &QueryStatistics,
 ) {
-    let mut stats_len = 0;
+    let mut stats_len = 1;
     if stats.labels_added > 0 {
         stats_len += 1;
     }
@@ -459,6 +468,11 @@ fn reply_stats(
         let str = format!("Relationships deleted: {}", stats.relationships_deleted);
         raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
     }
+    let str = format!(
+        "Query internal execution time: {} milliseconds",
+        stats.execution_time
+    );
+    raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
 }
 
 #[cfg(feature = "fuzz")]
