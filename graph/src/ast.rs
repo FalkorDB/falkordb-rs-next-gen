@@ -813,8 +813,14 @@ impl QueryIR {
                 iter.next()
                     .map_or(Ok(()), |first| first.inner_validate(iter, env))
             }
-            Self::LoadCsv { file_path, var, .. } => {
+            Self::LoadCsv {
+                file_path,
+                delimiter,
+                var,
+                ..
+            } => {
                 file_path.validate(false, env)?;
+                delimiter.validate(false, env)?;
                 env.insert(var.id);
                 iter.next()
                     .map_or(Ok(()), |first| first.inner_validate(iter, env))

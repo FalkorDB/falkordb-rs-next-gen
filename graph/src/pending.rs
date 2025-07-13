@@ -242,7 +242,7 @@ impl Pending {
         if !self.deleted_nodes.is_empty() {
             stats.borrow_mut().nodes_deleted += self.deleted_nodes.len() as usize;
             for id in self.deleted_nodes.clone() {
-                g.borrow_mut().delete_node(NodeId(id));
+                g.borrow_mut().delete_node(NodeId::from(id));
             }
             self.deleted_nodes.clear();
         }

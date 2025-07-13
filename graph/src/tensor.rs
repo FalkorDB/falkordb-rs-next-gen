@@ -111,6 +111,8 @@ impl Tensor {
 
     pub fn wait(&self) {
         self.m.wait();
+        self.mt.wait();
+        self.me.wait();
     }
 }
 

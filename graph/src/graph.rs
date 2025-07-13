@@ -33,7 +33,7 @@ pub struct TypeId(usize);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct AttrId(usize);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct NodeId(pub u64);
+pub struct NodeId(u64);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct RelationshipId(u64);
 
@@ -52,6 +52,12 @@ impl From<TypeId> for usize {
 impl From<AttrId> for usize {
     fn from(val: AttrId) -> Self {
         val.0
+    }
+}
+
+impl From<u64> for NodeId {
+    fn from(value: u64) -> Self {
+        NodeId(value)
     }
 }
 
