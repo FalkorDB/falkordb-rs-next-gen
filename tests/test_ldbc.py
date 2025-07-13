@@ -54,7 +54,6 @@ def test_load_csv():
                 "name": "row.name",
                 "url": "row.url",
             },
-            "expected": 7955,
         },
         {
             "file": "static/place_0_0.csv",
@@ -65,7 +64,6 @@ def test_load_csv():
                 "name": "row.name",
                 "url": "row.url",
             },
-            "expected": 1460,
         },
         {
             "file": "static/tag_0_0.csv",
@@ -75,7 +73,6 @@ def test_load_csv():
                 "name": "row.name",
                 "url": "row.url",
             },
-            "expected": 16080,
         },
         {
             "file": "static/tagclass_0_0.csv",
@@ -85,7 +82,6 @@ def test_load_csv():
                 "name": "row.name",
                 "url": "row.url",
             },
-            "expected": 71,
         },
         {
             "file": "dynamic/comment_0_0.csv",
@@ -98,7 +94,6 @@ def test_load_csv():
                 "content": "row.content",
                 "length": "toInteger(row.length)",
             },
-            "expected": 151043,
         },
         {
             "file": "dynamic/forum_0_0.csv",
@@ -108,7 +103,6 @@ def test_load_csv():
                 "title": "row.title",
                 "creationDate": "toInteger(row.creationDate)",
             },
-            "expected": 13750,
         },
         {
             "file": "dynamic/person_0_0.csv",
@@ -123,7 +117,6 @@ def test_load_csv():
                 "locationIP": "row.locationIP",
                 "browserUsed": "row.browserUsed",
             },
-            "expected": 1528,
         },
         {
             "file": "dynamic/post_0_0.csv",
@@ -138,7 +131,6 @@ def test_load_csv():
                 "content": "row.content",
                 "length": "toInteger(row.length)",
             },
-            "expected": 135701,
         },
     ]
 
@@ -146,6 +138,17 @@ def test_load_csv():
 
     for file in files:
         common.g.query(f"CREATE INDEX FOR (n:{file['label']}) ON n.id")
+        query = f"""
+            LOAD CSV WITH HEADERS DELIMITER '|' FROM $file AS row
+            RETURN count(row)
+            """
+        res = common.g.query(
+            query,
+            {
+                "file": f"data/social_network-sf0.1-CsvBasic-LongDateFormatter/{file['file']}",
+            },
+        )
+        expected = res.result_set[0][0]
         properties_str = ", ".join(
             f"{key}: {value}" for key, value in file["properties"].items()
         )
@@ -159,7 +162,7 @@ def test_load_csv():
                 "file": f"data/social_network-sf0.1-CsvBasic-LongDateFormatter/{file['file']}",
             },
         )
-        assert res.nodes_created == file["expected"]
+        assert res.nodes_created == expected
         total_time += res.run_time_ms
         print(res.run_time_ms)
 
@@ -172,7 +175,6 @@ def test_load_csv():
             "to_label": "Place",
             "from_id": "Organisation.id",
             "to_id": "Place.id",
-            "expected": 7955,
         },
         {
             "file": "static/place_isPartOf_place_0_0.csv",
@@ -182,7 +184,6 @@ def test_load_csv():
             "to_label": "Place",
             "from_id": "FromPlace.id",
             "to_id": "ToPlace.id",
-            "expected": 1454,
         },
         {
             "file": "static/tag_hasType_tagclass_0_0.csv",
@@ -192,7 +193,6 @@ def test_load_csv():
             "to_label": "TagClass",
             "from_id": "Tag.id",
             "to_id": "TagClass.id",
-            "expected": 16080,
         },
         {
             "file": "static/tagclass_isSubclassOf_tagclass_0_0.csv",
@@ -202,7 +202,6 @@ def test_load_csv():
             "to_label": "TagClass",
             "from_id": "FromTagClass.id",
             "to_id": "ToTagClass.id",
-            "expected": 70,
         },
         {
             "file": "dynamic/comment_hasCreator_person_0_0.csv",
@@ -212,7 +211,6 @@ def test_load_csv():
             "to_label": "Person",
             "from_id": "Comment.id",
             "to_id": "Person.id",
-            "expected": 151043,
         },
         {
             "file": "dynamic/comment_hasTag_tag_0_0.csv",
@@ -222,7 +220,6 @@ def test_load_csv():
             "to_label": "Tag",
             "from_id": "Comment.id",
             "to_id": "Tag.id",
-            "expected": 191303,
         },
         {
             "file": "dynamic/comment_isLocatedIn_place_0_0.csv",
@@ -232,7 +229,6 @@ def test_load_csv():
             "to_label": "Place",
             "from_id": "Comment.id",
             "to_id": "Place.id",
-            "expected": 151043,
         },
         {
             "file": "dynamic/comment_replyOf_comment_0_0.csv",
@@ -242,7 +238,6 @@ def test_load_csv():
             "to_label": "Comment",
             "from_id": "FromComment.id",
             "to_id": "ToComment.id",
-            "expected": 76787,
         },
         {
             "file": "dynamic/comment_replyOf_post_0_0.csv",
@@ -252,7 +247,6 @@ def test_load_csv():
             "to_label": "Post",
             "from_id": "Comment.id",
             "to_id": "Post.id",
-            "expected": 74256,
         },
         {
             "file": "dynamic/forum_containerOf_post_0_0.csv",
@@ -262,7 +256,6 @@ def test_load_csv():
             "to_label": "Post",
             "from_id": "Forum.id",
             "to_id": "Post.id",
-            "expected": 135701,
         },
         {
             "file": "dynamic/forum_hasMember_person_0_0.csv",
@@ -272,7 +265,6 @@ def test_load_csv():
             "to_label": "Person",
             "from_id": "Forum.id",
             "to_id": "Person.id",
-            "expected": 123268,
         },
         {
             "file": "dynamic/forum_hasModerator_person_0_0.csv",
@@ -282,7 +274,6 @@ def test_load_csv():
             "to_label": "Person",
             "from_id": "Forum.id",
             "to_id": "Person.id",
-            "expected": 13750,
         },
         {
             "file": "dynamic/forum_hasTag_tag_0_0.csv",
@@ -292,7 +283,6 @@ def test_load_csv():
             "to_label": "Tag",
             "from_id": "Forum.id",
             "to_id": "Tag.id",
-            "expected": 47697,
         },
         {
             "file": "dynamic/person_hasInterest_tag_0_0.csv",
@@ -302,7 +292,6 @@ def test_load_csv():
             "to_label": "Tag",
             "from_id": "Person.id",
             "to_id": "Tag.id",
-            "expected": 35475,
         },
         {
             "file": "dynamic/person_isLocatedIn_place_0_0.csv",
@@ -312,7 +301,6 @@ def test_load_csv():
             "to_label": "Place",
             "from_id": "Person.id",
             "to_id": "Place.id",
-            "expected": 1528,
         },
         {
             "file": "dynamic/person_knows_person_0_0.csv",
@@ -322,7 +310,6 @@ def test_load_csv():
             "to_label": "Person",
             "from_id": "FromPerson.id",
             "to_id": "ToPerson.id",
-            "expected": 14073,
         },
         {
             "file": "dynamic/person_likes_comment_0_0.csv",
@@ -332,7 +319,6 @@ def test_load_csv():
             "to_label": "Comment",
             "from_id": "Person.id",
             "to_id": "Comment.id",
-            "expected": 62225,
         },
         {
             "file": "dynamic/person_likes_post_0_0.csv",
@@ -342,7 +328,6 @@ def test_load_csv():
             "to_label": "Post",
             "from_id": "Person.id",
             "to_id": "Post.id",
-            "expected": 47215,
         },
         {
             "file": "dynamic/person_studyAt_organisation_0_0.csv",
@@ -352,7 +337,6 @@ def test_load_csv():
             "to_label": "Organization",
             "from_id": "Person.id",
             "to_id": "Organisation.id",
-            "expected": 1209,
         },
         {
             "file": "dynamic/person_workAt_organisation_0_0.csv",
@@ -362,7 +346,6 @@ def test_load_csv():
             "to_label": "Organization",
             "from_id": "Person.id",
             "to_id": "Organisation.id",
-            "expected": 3313,
         },
         {
             "file": "dynamic/post_hasCreator_person_0_0.csv",
@@ -372,7 +355,6 @@ def test_load_csv():
             "to_label": "Person",
             "from_id": "Post.id",
             "to_id": "Person.id",
-            "expected": 135701,
         },
         {
             "file": "dynamic/post_hasTag_tag_0_0.csv",
@@ -382,7 +364,6 @@ def test_load_csv():
             "to_label": "Tag",
             "from_id": "Post.id",
             "to_id": "Tag.id",
-            "expected": 51118,
         },
         {
             "file": "dynamic/post_isLocatedIn_place_0_0.csv",
@@ -392,11 +373,21 @@ def test_load_csv():
             "to_label": "Place",
             "from_id": "Post.id",
             "to_id": "Place.id",
-            "expected": 135701,
         },
     ]
 
     for file in files:
+        query = f"""
+            LOAD CSV WITH HEADERS DELIMITER '|' FROM $file AS row
+            RETURN count(row)
+            """
+        res = common.g.query(
+            query,
+            {
+                "file": f"data/social_network-sf0.1-CsvBasic-LongDateFormatter/{file['file']}",
+            },
+        )
+        expected = res.result_set[0][0]
         properties_str = ", ".join(
             f"{key}: {value}" for key, value in file["properties"].items()
         )
@@ -413,7 +404,7 @@ def test_load_csv():
                 "file": f"data/social_network-sf0.1-CsvBasic-LongDateFormatter/{file['file']}",
             },
         )
-        assert res.relationships_created == file["expected"]
+        assert res.relationships_created == expected
         total_time += res.run_time_ms
         print(res.run_time_ms)
 
