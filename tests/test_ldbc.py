@@ -104,31 +104,55 @@ def test_load_csv():
             },
         )
         assert res.nodes_created == file["expected"]
+        print(res.run_time_ms)
 
     files = [
         {
             "file": "static/organisation_isLocatedIn_place_0_0.csv",
             "type": "IS_LOCATED_IN",
-            "properties": {
-            },
+            "properties": {},
             "from_label": "Organization",
             "to_label": "Place",
             "from_id": "Organisation.id",
             "to_id": "Place.id",
             "expected": 7955,
         },
+        {
+            "file": "static/place_isPartOf_place_0_0.csv",
+            "type": "IS_PART_OF",
+            "properties": {},
+            "from_label": "Place",
+            "to_label": "Place",
+            "from_id": "FromPlace.id",
+            "to_id": "ToPlace.id",
+            "expected": 1454,
+        },
+        {
+            "file": "static/tag_hasType_tagclass_0_0.csv",
+            "type": "HAS_TYPE",
+            "properties": {},
+            "from_label": "Tag",
+            "to_label": "TagClass",
+            "from_id": "Tag.id",
+            "to_id": "TagClass.id",
+            "expected": 16080,
+        },
+        {
+            "file": "static/tagclass_isSubclassOf_tagclass_0_0.csv",
+            "type": "IS_SUBCLASS_OF",
+            "properties": {},
+            "from_label": "TagClass",
+            "to_label": "TagClass",
+            "from_id": "FromTagClass.id",
+            "to_id": "ToTagClass.id",
+            "expected": 70,
+        },
     ]
+
     for file in files:
         properties_str = ", ".join(
             f"{key}: {value}" for key, value in file["properties"].items()
         )
-        # query = f"""
-        #     LOAD CSV WITH HEADERS DELIMITER '|' FROM $file AS row
-        #     MATCH (f:{file['from_label']} {{id: toInteger(row.`{file['from_id']}`)}})
-        #     WITH f, row
-        #     MATCH (t:{file['to_label']} {{id: toInteger(row.`{file['to_id']}`)}})
-        #     CREATE (f)-[r:{file['type']} {{{properties_str}}}]->(t)
-        #     """
         query = f"""
             LOAD CSV WITH HEADERS DELIMITER '|' FROM $file AS row
             MATCH (f:{file['from_label']} {{id: toInteger(row.`{file['from_id']}`)}})
