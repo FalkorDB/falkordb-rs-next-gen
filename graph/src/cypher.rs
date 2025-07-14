@@ -708,6 +708,7 @@ impl<'a> Parser<'a> {
             let label = self.parse_ident()?;
             match_token!(self.lexer, RParen);
             match_token!(self.lexer => On);
+            match_token!(self.lexer, LParen);
             let key = self.parse_ident()?;
             if nkey.as_str() != key.as_str() {
                 return Err(self.lexer.format_error(&format!(
@@ -715,8 +716,20 @@ impl<'a> Parser<'a> {
                 )));
             }
             match_token!(self.lexer, Dot);
-            let prop = self.parse_ident()?;
-            return Ok(QueryIR::CreateIndex { label, prop });
+            let mut attrs = vec![self.parse_ident()?];
+            while optional_match_token!(self.lexer, Comma) {
+                let key = self.parse_ident()?;
+                if nkey.as_str() != key.as_str() {
+                    return Err(self.lexer.format_error(&format!(
+                        "Invalid index name '{nkey}' for label '{label}' on property '{key}'"
+                    )));
+                }
+                match_token!(self.lexer, Dot);
+                attrs.push(self.parse_ident()?);
+            }
+            match_token!(self.lexer, RParen);
+            match_token!(self.lexer, EndOfFile);
+            return Ok(QueryIR::CreateIndex { label, attrs });
         }
         self.lexer.set_pos(pos);
         let mut ir = self.parse_query()?;
@@ -1518,7 +1531,7 @@ impl<'a> Parser<'a> {
                                 res = self.parse_property_lookup(res)?;
                             }
                             _ => break,
-                        };
+                        }
                     }
                     if self.lexer.current() == Token::Colon {
                         let labels = tree!(ExprIR::List; self.parse_labels()?.into_iter().map(|l| tree!(ExprIR::String(l))));

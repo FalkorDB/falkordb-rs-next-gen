@@ -353,7 +353,7 @@ edge_files = [
 def test_load_csv():
     total_time = 0
     for file in node_files:
-        common.g.query(f"CREATE INDEX FOR (n:{file['label']}) ON n.id")
+        common.g.query(f"CREATE INDEX FOR (n:{file['label']}) ON (n.id)")
         query = f"""
             LOAD CSV WITH HEADERS DELIMITER '|' FROM $file AS row
             RETURN count(row)
@@ -383,7 +383,6 @@ def test_load_csv():
         print(res.run_time_ms)
 
     for file in edge_files:
-        print(f"Loading edges from {file['file']}")
         if file["from_label"] == file["to_label"]:
             with open(f"{base_path}/{file['file']}") as f:
                 line = f.readline().split("|")

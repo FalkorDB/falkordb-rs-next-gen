@@ -600,7 +600,7 @@ pub enum QueryIR {
     },
     CreateIndex {
         label: Rc<String>,
-        prop: Rc<String>,
+        attrs: Vec<Rc<String>>,
     },
     Query(Vec<QueryIR>, bool),
 }
@@ -664,8 +664,8 @@ impl Display for QueryIR {
                 }
                 Ok(())
             }
-            Self::CreateIndex { label, prop } => {
-                writeln!(f, "CREATE NODE INDEX ON :{label}({prop})")
+            Self::CreateIndex { label, attrs } => {
+                writeln!(f, "CREATE NODE INDEX ON :{label}({attrs:?})")
             }
             Self::Query(qs, _) => {
                 for q in qs {

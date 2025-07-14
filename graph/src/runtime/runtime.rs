@@ -1343,15 +1343,13 @@ impl<'a> Runtime<'a> {
                     self.record.borrow_mut().push((idx.clone(), res.clone()));
                 }))
             }
-            IR::CreateIndex { label, prop } => {
+            IR::CreateIndex { label, attrs } => {
                 if !self.write {
                     return Err(String::from(
                         "graph.RO_QUERY is to be executed only on read-only queries",
                     ));
                 }
-                self.g
-                    .borrow_mut()
-                    .create_node_index(label.clone(), prop.clone());
+                self.g.borrow_mut().create_node_index(label, attrs);
                 Ok(Box::new(empty()))
             }
         }

@@ -35,7 +35,7 @@ fn main() {
             else {
                 return;
             };
-            let mut runtime = Runtime::new(&g, parameters, true, plan, false);
+            let mut runtime = Runtime::new(&g, parameters, true, plan, false, String::new());
             let _ = runtime.query();
         }
     });

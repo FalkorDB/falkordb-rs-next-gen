@@ -797,14 +797,16 @@ impl Graph {
 
     pub fn create_node_index(
         &mut self,
-        label: Rc<String>,
-        prop: Rc<String>,
+        label: &Rc<String>,
+        attrs: &Vec<Rc<String>>,
     ) {
-        self.get_label_matrix_mut(&label);
-        let label_id = self.get_label_id(&label).unwrap();
-        let prop_id = self.get_or_add_node_attribute_id(&prop);
-        self.node_indexer
-            .create_index(label_id.0 as u64, prop_id.0 as u64);
+        self.get_label_matrix_mut(label);
+        let label_id = self.get_label_id(label).unwrap();
+        for attr in attrs {
+            let prop_id = self.get_or_add_node_attribute_id(attr);
+            self.node_indexer
+                .create_index(label_id.0 as u64, prop_id.0 as u64);
+        }
     }
 
     pub fn is_indexed(

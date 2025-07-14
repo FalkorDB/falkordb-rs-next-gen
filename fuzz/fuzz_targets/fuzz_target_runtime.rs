@@ -35,7 +35,7 @@ fuzz_target!(init: {
         else {
             return Corpus::Reject;
         };
-        let mut runtime = Runtime::new(&g, parameters, true, plan, false);
+        let mut runtime = Runtime::new(&g, parameters, true, plan, false, String::new());
         match runtime.query() {
             Ok(_) => Corpus::Keep,
             _ => Corpus::Reject,
