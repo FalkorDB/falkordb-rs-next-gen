@@ -678,14 +678,14 @@ impl<'a> Parser<'a> {
                 if id.as_str() == "CYPHER" {
                     self.lexer.next();
                     let mut params = HashMap::new();
-                    while let Token::Ident(id) | Token::Keyword(_, id) = self.lexer.current() {
-                        let pos = self.lexer.pos;
-                        self.lexer.next();
+                    let mut pos = self.lexer.pos;
+                    while let Ok(id) = self.parse_ident() {
                         if !optional_match_token!(self.lexer, Equal) {
                             self.lexer.set_pos(pos);
                             break;
                         }
                         params.insert(String::from(id.as_str()), self.parse_expr()?);
+                        pos = self.lexer.pos;
                     }
                     Ok((params, &self.lexer.str[self.lexer.pos..]))
                 } else {
@@ -1076,8 +1076,7 @@ impl<'a> Parser<'a> {
         let mut query_graph = QueryGraph::default();
         let mut nodes_alias = HashSet::new();
         loop {
-            if let Token::Ident(ident) = self.lexer.current() {
-                self.lexer.next();
+            if let Ok(ident) = self.parse_ident() {
                 match_token!(self.lexer, Equal);
                 let mut vars = vec![];
                 let mut left = self.parse_node_pattern(clause)?;
@@ -1631,14 +1630,13 @@ impl<'a> Parser<'a> {
 
     fn parse_list_literal_or_comprehension(&mut self) -> Result<(DynTree<ExprIR>, bool), String> {
         // Check if the second token is 'IN' for list comprehension
-        if let Token::Ident(var) = self.lexer.current() {
-            let pos = self.lexer.pos;
-            self.lexer.next();
-            if optional_match_token!(self.lexer => In) {
-                return Ok((self.parse_list_comprehension(var)?, false));
-            }
-            self.lexer.set_pos(pos); // Reset lexer position
+        let pos = self.lexer.pos;
+        if let Ok(var) = self.parse_ident()
+            && optional_match_token!(self.lexer => In)
+        {
+            return Ok((self.parse_list_comprehension(var)?, false));
         }
+        self.lexer.set_pos(pos); // Reset lexer position
 
         Ok((
             tree!(ExprIR::List),
@@ -1685,8 +1683,7 @@ impl<'a> Parser<'a> {
         clause: &Keyword,
     ) -> Result<Rc<QueryNode>, String> {
         match_token!(self.lexer, LParen);
-        let alias = if let Token::Ident(id) = self.lexer.current() {
-            self.lexer.next();
+        let alias = if let Ok(id) = self.parse_ident() {
             self.create_var(Some(id), Type::Node)?
         } else {
             self.create_var(None, Type::Node)?
@@ -1716,8 +1713,7 @@ impl<'a> Parser<'a> {
         match_token!(self.lexer, Dash);
         let has_details = optional_match_token!(self.lexer, LBrace);
         let (alias, types, attrs) = if has_details {
-            let alias = if let Token::Ident(id) = self.lexer.current() {
-                self.lexer.next();
+            let alias = if let Ok(id) = self.parse_ident() {
                 self.create_var(Some(id), Type::Relationship)?
             } else {
                 self.create_var(None, Type::Relationship)?
@@ -1815,31 +1811,25 @@ impl<'a> Parser<'a> {
         }
 
         loop {
-            match self.lexer.current() {
-                Token::Ident(key) | Token::Keyword(_, key) => {
-                    self.lexer.next();
-                    match_token!(self.lexer, Colon);
-                    let value = self.parse_expr()?;
-                    attrs.push(tree!(ExprIR::String(key), value));
+            if let Ok(key) = self.parse_ident() {
+                match_token!(self.lexer, Colon);
+                let value = self.parse_expr()?;
+                attrs.push(tree!(ExprIR::String(key), value));
 
-                    match self.lexer.current() {
-                        Token::Comma => self.lexer.next(),
-                        Token::RBracket => {
-                            self.lexer.next();
-                            return Ok(tree!(ExprIR::Map ; attrs));
-                        }
-                        Token::Error(s) => return Err(s),
-                        token => {
-                            return Err(self
-                                .lexer
-                                .format_error(&format!("Invalid input {token:?}")));
-                        }
+                match self.lexer.current() {
+                    Token::Comma => self.lexer.next(),
+                    Token::RBracket => {
+                        self.lexer.next();
+                        return Ok(tree!(ExprIR::Map ; attrs));
+                    }
+                    Token::Error(s) => return Err(s),
+                    token => {
+                        return Err(self.lexer.format_error(&format!("Invalid input {token:?}")));
                     }
                 }
-                _ => {
-                    match_token!(self.lexer, RBracket);
-                    return Ok(tree!(ExprIR::Map ; attrs));
-                }
+            } else {
+                match_token!(self.lexer, RBracket);
+                return Ok(tree!(ExprIR::Map ; attrs));
             }
         }
     }
