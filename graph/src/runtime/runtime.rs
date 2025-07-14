@@ -1733,7 +1733,7 @@ impl<'a> Runtime<'a> {
                         return Ok(Box::new(
                             self.g
                                 .borrow()
-                                .get_indexed_nodes(label, key, *value as u64)
+                                .get_indexed_nodes(label, key, Value::Int(*value))
                                 .into_iter()
                                 .map(move |id| {
                                     let mut vars = vars.clone();

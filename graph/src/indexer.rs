@@ -1,17 +1,12 @@
 use std::collections::HashMap;
 
-use crate::graph::{
-    matrix::{Matrix, New, Remove, Set, Size},
-    tensor::GrB_INDEX_MAX,
+use crate::{
+    graph::{
+        matrix::{Matrix, New, Remove, Set, Size},
+        tensor::GrB_INDEX_MAX,
+    },
+    runtime::value::Value,
 };
-
-#[derive(Clone)]
-pub enum Value {
-    Bool(bool),
-    Int(u64),
-    Float(f64),
-    String(String),
-}
 
 #[derive(Clone)]
 pub struct Document {
@@ -35,6 +30,13 @@ impl Document {
     ) {
         self.columns.insert(key, value);
     }
+}
+
+pub enum IndexQuery {
+    Equal(u64, Value),
+    Range(u64, Value, Value),
+    And(Vec<IndexQuery>),
+    Or(Vec<IndexQuery>),
 }
 
 pub struct Indexer {
@@ -78,7 +80,7 @@ impl Indexer {
             if let Value::Int(int_value) = value
                 && let Some(index) = self.int_indexer.get_mut(&(label, key))
             {
-                index.set(int_value, doc.id, true);
+                index.set(int_value as u64, doc.id, true);
             }
         }
     }
@@ -92,23 +94,29 @@ impl Indexer {
             if let Value::Int(int_value) = value
                 && let Some(index) = self.int_indexer.get_mut(&(label, key))
             {
-                index.remove(int_value, doc.id);
+                index.remove(int_value as u64, doc.id);
             }
         }
     }
 
     #[must_use]
-    pub fn get(
+    pub fn query(
         &self,
         label: u64,
-        key: u64,
-        value: u64,
+        query: IndexQuery,
     ) -> Vec<u64> {
-        self.int_indexer
-            .get(&(label, key))
-            .map_or_else(Vec::new, |index| {
-                index.iter(value, value).map(|(_, doc_id)| doc_id).collect()
-            })
+        match query {
+            IndexQuery::Equal(key, Value::Int(value)) => self
+                .int_indexer
+                .get(&(label, key))
+                .map_or_else(Vec::new, |index| {
+                    index
+                        .iter(value as u64, value as u64)
+                        .map(|(_, doc_id)| doc_id)
+                        .collect()
+                }),
+            _ => todo!(),
+        }
     }
 
     pub fn resize(
