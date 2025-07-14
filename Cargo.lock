@@ -264,6 +264,7 @@ name = "falkordb-rs"
 version = "0.1.0"
 dependencies = [
  "graph",
+ "lazy_static",
  "opentelemetry",
  "opentelemetry-zipkin",
  "opentelemetry_sdk",

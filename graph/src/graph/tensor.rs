@@ -28,6 +28,7 @@ impl ElementWiseAdd<u64> for Tensor {
         other: &Self,
     ) {
         self.m.element_wise_add(&other.m);
+        self.mt.element_wise_add(&other.mt);
         self.me.element_wise_add(&other.me);
     }
 }
@@ -39,6 +40,7 @@ impl Tensor {
         src: u64,
         dest: u64,
     ) -> Vec<u64> {
+        debug_assert!(u32::try_from(src).is_ok() && u32::try_from(dest).is_ok());
         if self.m.get(src, dest).is_some() {
             let row = src << 32 | dest;
             self.me.iter(row, row).map(|(_, j)| j).collect()

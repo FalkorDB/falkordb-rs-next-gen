@@ -92,7 +92,7 @@ impl Indexer {
             if let Value::Int(int_value) = value
                 && let Some(index) = self.int_indexer.get_mut(&(label, key))
             {
-                index.remove(doc.id, int_value);
+                index.remove(int_value, doc.id);
             }
         }
     }

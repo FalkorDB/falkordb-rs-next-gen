@@ -59,6 +59,7 @@ pub struct Runtime<'a> {
     pub return_names: Vec<Variable>,
     inspect: bool,
     pub record: RefCell<Vec<(NodeIdx<Dyn<IR>>, Result<Env, String>)>>,
+    import_folder: String,
 }
 
 pub trait GetVariables {
@@ -168,6 +169,7 @@ impl<'a> Runtime<'a> {
         write: bool,
         plan: Rc<DynTree<IR>>,
         inspect: bool,
+        import_folder: String,
     ) -> Self {
         let return_names = plan.root().get_return_names();
         Self {
@@ -182,6 +184,7 @@ impl<'a> Runtime<'a> {
             value_dedupers: RefCell::new(HashMap::new()),
             inspect,
             record: RefCell::new(vec![]),
+            import_folder,
         }
     }
 
@@ -1116,6 +1119,15 @@ impl<'a> Runtime<'a> {
                         if delimiter.len() != 1 {
                             return Err(String::from("Delimiter must be a single character"));
                         }
+                        let Value::String(path) = path else {
+                            return Err(String::from("File path must be a string"));
+                        };
+                        if !path.starts_with(self.import_folder.as_str()) {
+                            return Err(format!(
+                                "File path must start with import folder: {}",
+                                self.import_folder
+                            ));
+                        }
                         self.load_csv(path, *headers, delimiter, var, &vars)
                     })
                     .cond_inspect(self.inspect, move |res| {
@@ -1347,16 +1359,12 @@ impl<'a> Runtime<'a> {
 
     fn load_csv(
         &'a self,
-        file_path: Value,
+        path: Rc<String>,
         headers: bool,
         delimiter: Rc<String>,
         var: &'a Variable,
         vars: &Env,
     ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + 'a>, String> {
-        let Value::String(path) = file_path else {
-            return Err(String::from("File path must be a string"));
-        };
-
         let mut reader = csv::ReaderBuilder::new()
             .has_headers(headers)
             .delimiter(delimiter.as_bytes()[0])

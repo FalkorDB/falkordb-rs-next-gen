@@ -36,6 +36,7 @@ def setup_module(module):
     for file in files:
         download_ldbc_data(file)
     common.start_redis()
+    common.g.execute_command("CONFIG", "SET", "falkordb.IMPORT_FOLDER", "data")
 
 
 def teardown_module(module):
@@ -231,7 +232,7 @@ edge_files = [
     },
     {
         "file": "dynamic/forum_hasMember_person_0_0.csv",
-        "type": "CONTAINER_OF",
+        "type": "HAS_MEMBER",
         "properties": {"joinDate": "toInteger(row.joinDate)"},
         "from_label": "Forum",
         "to_label": "Person",

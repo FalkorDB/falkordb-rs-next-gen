@@ -14,6 +14,7 @@ use graph::{
         value::Value,
     },
 };
+use lazy_static::lazy_static;
 #[cfg(feature = "zipkin")]
 use opentelemetry::global;
 #[cfg(feature = "zipkin")]
@@ -26,9 +27,11 @@ use opentelemetry_sdk::{Resource, trace::SdkTracerProvider};
 use opentelemetry_zipkin::ZipkinExporter;
 use orx_tree::{Bfs, NodeRef};
 use redis_module::{
-    Context, NextArg, REDISMODULE_TYPE_METHOD_VERSION, RedisError, RedisModule_Alloc,
-    RedisModule_Calloc, RedisModule_Free, RedisModule_Realloc, RedisModuleIO,
-    RedisModuleTypeMethods, RedisResult, RedisString, RedisValue, Status, native_types::RedisType,
+    ConfigurationValue, Context, NextArg, REDISMODULE_TYPE_METHOD_VERSION, RedisError,
+    RedisGILGuard, RedisModule_Alloc, RedisModule_Calloc, RedisModule_Free, RedisModule_Realloc,
+    RedisModuleIO, RedisModuleTypeMethods, RedisResult, RedisString, RedisValue, Status,
+    configuration::{ConfigurationContext, ConfigurationFlags},
+    native_types::RedisType,
     raw, redis_module,
 };
 use std::{
@@ -401,7 +404,8 @@ fn query_mut(
             .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
             .collect::<Result<HashMap<_, _>, String>>()
             .map_err(RedisError::String)?;
-        let mut runtime = Runtime::new(graph, parameters, write, plan, false);
+        let scope = CONFIGURATION_IMPORT_FOLDER.lock(ctx);
+        let mut runtime = Runtime::new(graph, parameters, write, plan, false, (*scope).clone());
         let result = runtime.query().map_err(RedisError::String)?;
         if compact {
             reply_compact(ctx, graph, &runtime.return_names, result);
@@ -527,7 +531,15 @@ fn record_mut(
         .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
         .collect::<Result<HashMap<_, _>, String>>()
         .map_err(RedisError::String)?;
-    let mut runtime = Runtime::new(graph, parameters, true, plan.clone(), true);
+    let scope = CONFIGURATION_IMPORT_FOLDER.lock(ctx);
+    let mut runtime = Runtime::new(
+        graph,
+        parameters,
+        true,
+        plan.clone(),
+        true,
+        (*scope).clone(),
+    );
     let _ = runtime.query().map_err(RedisError::String)?;
     raw::reply_with_array(ctx.ctx, 2);
     raw::reply_with_array(ctx.ctx, runtime.record.borrow().len() as _);
@@ -830,6 +842,18 @@ fn graph_init(
     }
 }
 
+lazy_static! {
+    static ref CONFIGURATION_IMPORT_FOLDER: RedisGILGuard<String> =
+        RedisGILGuard::new("/var/lib/FalkorDB/import/".into());
+}
+
+fn on_configuration_changed<T: ConfigurationValue<String>>(
+    _config_ctx: &ConfigurationContext,
+    _name: &str,
+    _val: &'static T,
+) {
+}
+
 //////////////////////////////////////////////////////
 
 redis_module! {
@@ -847,4 +871,13 @@ redis_module! {
         ["graph.PLAN", graph_plan, "readonly", 0, 0, 0, ""],
         ["graph.RECORD", graph_record, "write deny-oom", 1, 1, 1, ""],
     ],
+    configurations: [
+        i64: [],
+        string: [
+            ["IMPORT_FOLDER", &*CONFIGURATION_IMPORT_FOLDER, "/var/lib/FalkorDB/import/", ConfigurationFlags::DEFAULT, Some(Box::new(on_configuration_changed))],
+        ],
+        bool: [],
+        enum: [],
+        module_args_as_configuration: true,
+    ]
 }
