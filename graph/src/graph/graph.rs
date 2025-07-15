@@ -386,9 +386,8 @@ impl Graph {
     }
 
     pub fn reserve_node(&mut self) -> NodeId {
-        let mut iter = self.deleted_nodes.iter();
-        iter.advance_to(self.reserved_node_count);
-        if let Some(id) = iter.next() {
+        if self.reserved_node_count < self.deleted_nodes.len() {
+            let id = self.deleted_nodes.select(self.reserved_node_count).unwrap();
             self.reserved_node_count += 1;
             return NodeId(id);
         }
@@ -400,8 +399,8 @@ impl Graph {
         &mut self,
         nodes: &RoaringTreemap,
     ) {
-        self.node_count += nodes.len() as u64;
-        self.reserved_node_count -= nodes.len() as u64;
+        self.node_count += nodes.len();
+        self.reserved_node_count -= nodes.len();
 
         for id in nodes {
             if self.deleted_nodes.is_empty() {
@@ -436,6 +435,11 @@ impl Graph {
                 doc.set(usize::from(attr_id) as u64, value.clone());
                 for (_, label) in self.node_labels_matrix.iter(id.into(), id.into()) {
                     if self.node_indexer.is_indexed(label, attr_id.0 as u64) {
+                        if let Some(v) = attrs.get(&attr_id) {
+                            let mut doc = Document::new(u64::from(id));
+                            doc.set(label, v.clone());
+                            self.node_indexer.remove(label, doc);
+                        }
                         self.node_indexer.add(label, doc.clone());
                     }
                 }
@@ -571,9 +575,11 @@ impl Graph {
     }
 
     pub fn reserve_relationship(&mut self) -> RelationshipId {
-        let mut iter = self.deleted_relationships.iter();
-        iter.advance_to(self.reserved_relationship_count);
-        if let Some(id) = iter.next() {
+        if self.reserved_relationship_count < self.deleted_relationships.len() {
+            let id = self
+                .deleted_relationships
+                .select(self.reserved_relationship_count)
+                .unwrap();
             self.reserved_relationship_count += 1;
             return RelationshipId(id);
         }

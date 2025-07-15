@@ -1724,7 +1724,7 @@ def test_nested_list():
 
 def test_index():
     res = query("UNWIND range(1, 100000) AS x CREATE (n:Node {v: x + 1})", write=True)
-    res.nodes_created == 10
+    assert res.nodes_created == 100000
 
     res = query("MATCH (n:Node {v: 5}) RETURN n.v")
     assert res.result_set == [[5]]
@@ -1739,6 +1739,9 @@ def test_index():
     res = query("MATCH (n:Node {v: 5}) SET n.v = 0", write=True)
     assert res.properties_set == 1
 
+    res = query("MATCH (n:Node {v: 5}) RETURN n")
+    assert res.result_set == []
+
     res = query("MATCH (n:Node {v: 0}) RETURN n")
     assert res.result_set == [[Node(3, labels=["Node"], properties={"v": 0})]]
 
@@ -1747,3 +1750,9 @@ def test_index():
 
     res = query("MATCH (n:Node {v: 0}) RETURN n")
     assert res.result_set == []
+
+    res = query("UNWIND range(1, 100000) AS x CREATE (n:Node {v: x + 1})", write=True)
+    assert res.nodes_created == 100000
+
+    res = query("MATCH (n:Node {v: 5}) RETURN n.v")
+    assert res.result_set == [[5]]

@@ -51,7 +51,9 @@ impl Pending {
         &mut self,
         id: NodeId,
     ) {
+        let len = self.created_nodes.len();
         self.created_nodes.insert(id.into());
+        debug_assert_eq!(self.created_nodes.len(), len + 1);
     }
 
     pub fn set_node_attributes(
