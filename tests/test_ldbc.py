@@ -384,13 +384,13 @@ def test_load_csv():
 
     for file in edge_files:
         if file["from_label"] == file["to_label"]:
-            with open(f"{base_path}/{file['file']}") as f:
+            with open(f"data/{base_path}/{file['file']}") as f:
                 line = f.readline().split("|")
                 line[0] = file["from_id"]
                 line[1] = file["to_id"]
                 line = "|".join(line)
                 line = line.replace("\n", "")
-                subprocess.run(["sed", "-i", "", f"1s/.*/{line}/", f"{base_path}/{file['file']}"], check=True)
+                subprocess.run(["sed", "-i", "", f"1s/.*/{line}/", f"data/{base_path}/{file['file']}"], check=True)
         query = f"""
             LOAD CSV WITH HEADERS DELIMITER '|' FROM $file AS row
             RETURN count(row)
