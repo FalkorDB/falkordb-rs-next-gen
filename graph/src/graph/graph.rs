@@ -401,13 +401,7 @@ impl Graph {
     ) {
         self.node_count += nodes.len();
         self.reserved_node_count -= nodes.len();
-
-        for id in nodes {
-            if self.deleted_nodes.is_empty() {
-                break;
-            }
-            self.deleted_nodes.remove(id);
-        }
+        self.deleted_nodes -= nodes;
 
         self.resize();
 
