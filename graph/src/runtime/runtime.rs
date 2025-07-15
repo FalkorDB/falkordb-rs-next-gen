@@ -39,9 +39,9 @@ pub struct ResultSummary {
 pub struct QueryStatistics {
     pub labels_added: usize,
     pub labels_removed: usize,
-    pub nodes_created: usize,
+    pub nodes_created: u64,
     pub relationships_created: usize,
-    pub nodes_deleted: usize,
+    pub nodes_deleted: u64,
     pub relationships_deleted: usize,
     pub properties_set: usize,
     pub properties_removed: usize,
@@ -1403,14 +1403,18 @@ impl<'a> Runtime<'a> {
                                 record
                                     .iter()
                                     .enumerate()
-                                    .map(|(i, field)| {
-                                        (
-                                            headers
-                                                .get(i)
-                                                .cloned()
-                                                .unwrap_or_else(|| Rc::new(format!("col_{i}"))),
-                                            Value::String(Rc::new(String::from(field))),
-                                        )
+                                    .filter_map(|(i, field)| {
+                                        if field.is_empty() {
+                                            None
+                                        } else {
+                                            Some((
+                                                headers
+                                                    .get(i)
+                                                    .cloned()
+                                                    .unwrap_or_else(|| Rc::new(format!("col_{i}"))),
+                                                Value::String(Rc::new(String::from(field))),
+                                            ))
+                                        }
                                     })
                                     .collect::<OrderMap<_, _>>(),
                             )),
@@ -1430,7 +1434,13 @@ impl<'a> Runtime<'a> {
                             Value::List(
                                 record
                                     .iter()
-                                    .map(|field| Value::String(Rc::new(String::from(field))))
+                                    .map(|field| {
+                                        if field.is_empty() {
+                                            Value::Null
+                                        } else {
+                                            Value::String(Rc::new(String::from(field)))
+                                        }
+                                    })
                                     .collect(),
                             ),
                         );

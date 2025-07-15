@@ -363,7 +363,7 @@ impl<'a> Lexer<'a> {
                 '0'..='9' => Self::lex_numeric(str, chars, pos, 1),
                 '$' => {
                     let mut len = 1;
-                    while let Some('a'..='z' | 'A'..='Z' | '0'..='9') = chars.next() {
+                    while let Some('a'..='z' | 'A'..='Z' | '0'..='9' | '_') = chars.next() {
                         len += 1;
                     }
                     let token = Token::Parameter(String::from(&str[pos + 1..pos + len]));

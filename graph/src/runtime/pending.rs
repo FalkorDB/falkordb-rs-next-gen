@@ -224,7 +224,7 @@ impl Pending {
         stats: &RefCell<QueryStatistics>,
     ) {
         if !self.created_nodes.is_empty() {
-            stats.borrow_mut().nodes_created += self.created_nodes.len() as usize;
+            stats.borrow_mut().nodes_created += self.created_nodes.len();
             g.borrow_mut().create_nodes(&self.created_nodes);
             self.created_nodes.clear();
         }
@@ -242,7 +242,7 @@ impl Pending {
             self.deleted_relationships.clear();
         }
         if !self.deleted_nodes.is_empty() {
-            stats.borrow_mut().nodes_deleted += self.deleted_nodes.len() as usize;
+            stats.borrow_mut().nodes_deleted += self.deleted_nodes.len();
             for id in self.deleted_nodes.clone() {
                 g.borrow_mut().delete_node(NodeId::from(id));
             }
