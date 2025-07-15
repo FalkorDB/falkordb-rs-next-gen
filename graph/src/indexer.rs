@@ -62,6 +62,14 @@ impl Indexer {
             .insert((label, key), Matrix::<bool>::new(GrB_INDEX_MAX, self.ndocs));
     }
 
+    pub fn drop_index(
+        &mut self,
+        label: u64,
+        key: u64,
+    ) {
+        self.int_indexer.remove(&(label, key));
+    }
+
     #[must_use]
     pub fn is_indexed(
         &self,

@@ -48,6 +48,10 @@ pub enum IR {
         label: Rc<String>,
         attrs: Vec<Rc<String>>,
     },
+    DropIndex {
+        label: Rc<String>,
+        attrs: Vec<Rc<String>>,
+    },
 }
 
 #[cfg_attr(tarpaulin, skip)]
@@ -84,6 +88,9 @@ impl Display for IR {
             Self::Distinct => write!(f, "Distinct"),
             Self::CreateIndex { label, attrs } => {
                 write!(f, "CreateIndex on :{label}({attrs:?})")
+            }
+            Self::DropIndex { label, attrs } => {
+                write!(f, "DropIndex on :{label}({attrs:?})")
             }
         }
     }
@@ -321,6 +328,9 @@ impl Planner {
                 ..
             } => self.plan_project(exprs, orderby, skip, limit, None, distinct, write),
             QueryIR::CreateIndex { label, attrs } => tree!(IR::CreateIndex { label, attrs }),
+            QueryIR::DropIndex { label, attrs } => {
+                tree!(IR::DropIndex { label, attrs })
+            }
             QueryIR::Query(q, write) => self.plan_query(q, write),
         }
     }

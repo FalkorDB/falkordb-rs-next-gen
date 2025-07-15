@@ -847,6 +847,20 @@ impl Graph {
         }
     }
 
+    pub fn drop_node_index(
+        &mut self,
+        label: &Rc<String>,
+        attrs: &Vec<Rc<String>>,
+    ) {
+        if let Some(label_id) = self.get_label_id(label) {
+            for attr in attrs {
+                let prop_id = self.get_or_add_node_attribute_id(attr);
+                self.node_indexer
+                    .drop_index(label_id.0 as u64, prop_id.0 as u64);
+            }
+        }
+    }
+
     pub fn is_indexed(
         &self,
         label: &Rc<String>,

@@ -71,6 +71,7 @@ enum Keyword {
     Headers,
     From,
     Delimiter,
+    Drop,
     Index,
     For,
     On,
@@ -163,6 +164,7 @@ const KEYWORDS: &[(&str, Keyword)] = &[
     ("HEADERS", Keyword::Headers),
     ("FROM", Keyword::From),
     ("DELIMITER", Keyword::Delimiter),
+    ("DROP", Keyword::Drop),
     ("INDEX", Keyword::Index),
     ("FOR", Keyword::For),
     ("ON", Keyword::On),
@@ -730,6 +732,39 @@ impl<'a> Parser<'a> {
             match_token!(self.lexer, RParen);
             match_token!(self.lexer, EndOfFile);
             return Ok(QueryIR::CreateIndex { label, attrs });
+        }
+        if optional_match_token!(self.lexer => Drop)
+            && optional_match_token!(self.lexer => Index)
+            && optional_match_token!(self.lexer => For)
+        {
+            match_token!(self.lexer, LParen);
+            let nkey = self.parse_ident()?;
+            match_token!(self.lexer, Colon);
+            let label = self.parse_ident()?;
+            match_token!(self.lexer, RParen);
+            match_token!(self.lexer => On);
+            match_token!(self.lexer, LParen);
+            let key = self.parse_ident()?;
+            if nkey.as_str() != key.as_str() {
+                return Err(self.lexer.format_error(&format!(
+                    "Invalid index name '{nkey}' for label '{label}' on property '{key}'"
+                )));
+            }
+            match_token!(self.lexer, Dot);
+            let mut attrs = vec![self.parse_ident()?];
+            while optional_match_token!(self.lexer, Comma) {
+                let key = self.parse_ident()?;
+                if nkey.as_str() != key.as_str() {
+                    return Err(self.lexer.format_error(&format!(
+                        "Invalid index name '{nkey}' for label '{label}' on property '{key}'"
+                    )));
+                }
+                match_token!(self.lexer, Dot);
+                attrs.push(self.parse_ident()?);
+            }
+            match_token!(self.lexer, RParen);
+            match_token!(self.lexer, EndOfFile);
+            return Ok(QueryIR::DropIndex { label, attrs });
         }
         self.lexer.set_pos(pos);
         let mut ir = self.parse_query()?;

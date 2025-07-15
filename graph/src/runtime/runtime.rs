@@ -101,7 +101,8 @@ impl GetVariables for DynNode<'_, IR> {
                 | IR::Limit(_)
                 | IR::Distinct
                 | IR::Commit
-                | IR::CreateIndex { .. } => {}
+                | IR::CreateIndex { .. }
+                | IR::DropIndex { .. } => {}
                 IR::NodeScan(query_node) => vars.push(query_node.alias.clone()),
                 IR::RelationshipScan(query_relationship) => {
                     vars.push(query_relationship.alias.clone());
@@ -1368,6 +1369,15 @@ impl<'a> Runtime<'a> {
                 self.g.borrow_mut().create_node_index(label, attrs);
                 Ok(Box::new(empty()))
             }
+            IR::DropIndex { label, attrs } => {
+                if !self.write {
+                    return Err(String::from(
+                        "graph.RO_QUERY is to be executed only on read-only queries",
+                    ));
+                }
+                self.g.borrow_mut().drop_node_index(label, attrs);
+                Ok(Box::new(empty()))
+            }
         }
     }
 
@@ -1568,6 +1578,12 @@ impl<'a> Runtime<'a> {
             match entity {
                 Value::Node(node) => {
                     if let Some(property) = property {
+                        if let Some(attr_id) = self.g.borrow().get_node_attribute_id(property)
+                            && let Some(v) = self.g.borrow().get_node_attribute(node, attr_id)
+                            && v == value
+                        {
+                            continue;
+                        }
                         self.pending
                             .borrow_mut()
                             .set_node_attribute(node, property.clone(), value);

@@ -602,6 +602,10 @@ pub enum QueryIR {
         label: Rc<String>,
         attrs: Vec<Rc<String>>,
     },
+    DropIndex {
+        label: Rc<String>,
+        attrs: Vec<Rc<String>>,
+    },
     Query(Vec<QueryIR>, bool),
 }
 
@@ -666,6 +670,9 @@ impl Display for QueryIR {
             }
             Self::CreateIndex { label, attrs } => {
                 writeln!(f, "CREATE NODE INDEX ON :{label}({attrs:?})")
+            }
+            Self::DropIndex { label, attrs } => {
+                writeln!(f, "DROP NODE INDEX ON :{label}({attrs:?})")
             }
             Self::Query(qs, _) => {
                 for q in qs {
@@ -857,6 +864,9 @@ impl QueryIR {
                     .map_or(Ok(()), |first| first.inner_validate(iter, env))
             }
             Self::CreateIndex { .. } => iter
+                .next()
+                .map_or(Ok(()), |first| first.inner_validate(iter, env)),
+            Self::DropIndex { .. } => iter
                 .next()
                 .map_or(Ok(()), |first| first.inner_validate(iter, env)),
             Self::Query(q, _) => {
