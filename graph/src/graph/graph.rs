@@ -424,6 +424,15 @@ impl Graph {
     ) -> bool {
         let attrs = self.node_attrs.entry(id).or_default();
         if value == Value::Null {
+            for (_, label) in self.node_labels_matrix.iter(id.into(), id.into()) {
+                if self.node_indexer.is_indexed(label, attr_id.0 as u64) {
+                    if let Some(v) = attrs.get(&attr_id) {
+                        let mut doc = Document::new(u64::from(id));
+                        doc.set(attr_id.0 as u64, v.clone());
+                        self.node_indexer.remove(label, doc);
+                    }
+                }
+            }
             let removed = attrs.remove(&attr_id).is_some();
             if attrs.is_empty() {
                 self.node_attrs.remove(&id);
@@ -437,7 +446,7 @@ impl Graph {
                     if self.node_indexer.is_indexed(label, attr_id.0 as u64) {
                         if let Some(v) = attrs.get(&attr_id) {
                             let mut doc = Document::new(u64::from(id));
-                            doc.set(label, v.clone());
+                            doc.set(attr_id.0 as u64, v.clone());
                             self.node_indexer.remove(label, doc);
                         }
                         self.node_indexer.add(label, doc.clone());
