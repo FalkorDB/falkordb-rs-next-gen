@@ -1768,13 +1768,14 @@ def test_index():
     assert res.result_set == [[5]]
 
 
+@pytest.mark.extra
 def test_load_csv():
     common.g.execute_command("CONFIG", "SET", "falkordb.IMPORT_FOLDER", "data/")
 
     with open("data/test.csv", "w") as f:
         f.write("name,age\nAlice,30\nBob,25\nCharlie,35\n")
 
-    res = query("LOAD CSV WITH HEADERS FROM 'file:///test.csv' AS row RETURN row")
+    res = query("LOAD CSV WITH HEADERS FROM 'file://test.csv' AS row RETURN row")
     expected = [
         [{"name": "Alice", "age": "30"}],
         [{"name": "Bob", "age": "25"}],
@@ -1782,7 +1783,7 @@ def test_load_csv():
     ]
     assert res.result_set == expected
 
-    res = query("LOAD CSV FROM 'file:///test.csv' AS row RETURN row")
+    res = query("LOAD CSV FROM 'file://test.csv' AS row RETURN row")
     expected = [
         [["name", "age"]],
         [["Alice", "30"]],
@@ -1790,4 +1791,3 @@ def test_load_csv():
         [["Charlie", "35"]],
     ]
     assert res.result_set == expected
-
