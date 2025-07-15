@@ -1768,6 +1768,8 @@ def test_index():
     res = query("MATCH (n:Node {v: 5}) RETURN n.v")
     assert res.result_set == [[5]]
 
+    query("DROP INDEX FOR (n:Node) ON (n.v)", write=True)
+
 
 @pytest.mark.extra
 def test_load_csv():
