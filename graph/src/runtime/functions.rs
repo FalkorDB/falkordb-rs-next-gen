@@ -328,6 +328,17 @@ pub fn init_functions() -> Result<(), Functions> {
         FnType::Function,
     );
     funcs.add(
+        "id",
+        id,
+        false,
+        vec![Type::Union(vec![
+            Type::Node,
+            Type::Relationship,
+            Type::Null,
+        ])],
+        FnType::Function,
+    );
+    funcs.add(
         "startnode",
         start_node,
         false,
@@ -866,6 +877,20 @@ fn labels(
             let labels = runtime.get_node_labels(id);
             Ok(Value::List(labels.into_iter().map(Value::String).collect()))
         }
+        Some(Value::Null) => Ok(Value::Null),
+
+        _ => unreachable!(),
+    }
+}
+
+fn id(
+    _runtime: &Runtime,
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    let mut iter = args.into_iter();
+    match iter.next() {
+        Some(Value::Node(id)) => Ok(Value::Int(u64::from(id) as i64)),
+        Some(Value::Relationship(id, _, _)) => Ok(Value::Int(u64::from(id) as i64)),
         Some(Value::Null) => Ok(Value::Null),
 
         _ => unreachable!(),
