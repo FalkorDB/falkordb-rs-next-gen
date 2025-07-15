@@ -1746,7 +1746,7 @@ def test_index():
     assert res.result_set == [[Node(3, labels=["Node"], properties={"v": 0})]]
 
     res = query("MATCH (n:Node {v: 0}) REMOVE n:Node", write=True)
-    
+
     res = query("MATCH (n:Node {v: 0}) RETURN n")
     assert res.result_set == []
 
@@ -1754,7 +1754,6 @@ def test_index():
 
     res = query("MATCH (n:Node {v: 0}) RETURN n")
     assert res.result_set == [[Node(3, labels=["Node"], properties={"v": 0})]]
-
 
     res = query("MATCH (n:Node {v: 0}) DELETE n", write=True)
     assert res.nodes_deleted == 1
