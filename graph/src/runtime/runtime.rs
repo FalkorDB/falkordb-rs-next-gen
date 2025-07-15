@@ -24,6 +24,7 @@ use std::{
     fmt::Debug,
     hash::{DefaultHasher, Hash, Hasher},
     iter::{empty, once},
+    path::Path,
     rc::Rc,
     time::Instant,
 };
@@ -1122,13 +1123,28 @@ impl<'a> Runtime<'a> {
                         let Value::String(path) = path else {
                             return Err(String::from("File path must be a string"));
                         };
-                        if !path.starts_with(self.import_folder.as_str()) {
+                        let Some(path) = path.strip_prefix("file://") else {
+                            return Err(String::from("File path must start with 'file://' prefix"));
+                        };
+                        let path = self.import_folder.clone() + path;
+                        let import_folder =
+                            Path::new(&self.import_folder).canonicalize().map_err(|e| {
+                                format!(
+                                    "Failed to canonicalize import folder path '{}': {e}",
+                                    self.import_folder
+                                )
+                            })?;
+                        let cpath = Path::new(&path).canonicalize().map_err(|e| {
+                            format!("Failed to canonicalize file path '{path}': {e}")
+                        })?;
+                        if !cpath.starts_with(&import_folder) {
                             return Err(format!(
-                                "File path must start with import folder: {}",
+                                "File path '{path}' is not within the import folder '{}'",
                                 self.import_folder
                             ));
                         }
-                        self.load_csv(path, *headers, delimiter, var, &vars)
+
+                        self.load_csv(&path, *headers, delimiter, var, &vars)
                     })
                     .cond_inspect(self.inspect, move |res| {
                         self.record.borrow_mut().push((idx.clone(), res.clone()));
@@ -1357,7 +1373,7 @@ impl<'a> Runtime<'a> {
 
     fn load_csv(
         &'a self,
-        path: Rc<String>,
+        path: &str,
         headers: bool,
         delimiter: Rc<String>,
         var: &'a Variable,
@@ -1366,7 +1382,7 @@ impl<'a> Runtime<'a> {
         let mut reader = csv::ReaderBuilder::new()
             .has_headers(headers)
             .delimiter(delimiter.as_bytes()[0])
-            .from_path(path.as_str())
+            .from_path(path)
             .map_err(|e| format!("Failed to read CSV file: {e}"))?;
 
         let vars = vars.clone();

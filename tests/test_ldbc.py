@@ -36,7 +36,7 @@ def setup_module(module):
     for file in files:
         download_ldbc_data(file)
     common.start_redis()
-    common.g.execute_command("CONFIG", "SET", "falkordb.IMPORT_FOLDER", "data")
+    common.g.execute_command("CONFIG", "SET", "falkordb.IMPORT_FOLDER", "data/")
 
 
 def teardown_module(module):
@@ -48,7 +48,7 @@ def setup_function(function):
         common.g.delete()
 
 
-base_path = "data/social_network-sf1-CsvBasic-LongDateFormatter"
+base_path = "social_network-sf1-CsvBasic-LongDateFormatter"
 node_files = [
     {
         "file": "static/organisation_0_0.csv",
@@ -361,7 +361,7 @@ def test_load_csv():
         res = common.g.query(
             query,
             {
-                "file": f"{base_path}/{file['file']}",
+                "file": f"file://{base_path}/{file['file']}",
             },
         )
         expected = res.result_set[0][0]
@@ -375,7 +375,7 @@ def test_load_csv():
         res = common.g.query(
             query,
             {
-                "file": f"{base_path}/{file['file']}",
+                "file": f"file://{base_path}/{file['file']}",
             },
         )
         assert res.nodes_created == expected
@@ -398,7 +398,7 @@ def test_load_csv():
         res = common.g.query(
             query,
             {
-                "file": f"{base_path}/{file['file']}",
+                "file": f"file://{base_path}/{file['file']}",
             },
         )
         expected = res.result_set[0][0]
@@ -415,7 +415,7 @@ def test_load_csv():
         res = common.g.query(
             query,
             {
-                "file": f"{base_path}/{file['file']}",
+                "file": f"file://{base_path}/{file['file']}",
             },
         )
         assert res.relationships_created == expected
