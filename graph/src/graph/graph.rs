@@ -468,6 +468,17 @@ impl Graph {
             let label_id = self.get_label_id(label).unwrap();
             self.resize();
             self.node_labels_matrix.set(id.0, label_id.0 as u64, true);
+            let label_id = self.get_label_id(label).unwrap();
+            let mut doc = Document::new(u64::from(id));
+            for (attr_id, value) in self.node_attrs.get(&id).unwrap_or(&self.empty_map) {
+                if self
+                    .node_indexer
+                    .is_indexed(label_id.0 as u64, attr_id.0 as u64)
+                {
+                    doc.set(attr_id.0 as u64, value.clone());
+                }
+            }
+            self.node_indexer.add(label_id.0 as u64, doc);
         }
     }
 
@@ -484,6 +495,17 @@ impl Graph {
             label_matrix.remove(id.0, id.0);
             let label_id = self.get_label_id(label).unwrap();
             self.node_labels_matrix.remove(id.0, label_id.0 as u64);
+            let label_id = self.get_label_id(label).unwrap();
+            let mut doc = Document::new(u64::from(id));
+            for (attr_id, value) in self.node_attrs.get(&id).unwrap_or(&self.empty_map) {
+                if self
+                    .node_indexer
+                    .is_indexed(label_id.0 as u64, attr_id.0 as u64)
+                {
+                    doc.set(attr_id.0 as u64, value.clone());
+                }
+            }
+            self.node_indexer.remove(label_id.0 as u64, doc);
         }
     }
 
