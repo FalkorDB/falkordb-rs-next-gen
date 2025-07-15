@@ -1,4 +1,5 @@
 from decimal import Decimal
+import subprocess
 import sys
 from typing import Counter
 import common
@@ -1772,6 +1773,7 @@ def test_index():
 def test_load_csv():
     common.g.execute_command("CONFIG", "SET", "falkordb.IMPORT_FOLDER", "data/")
 
+    subprocess.run(["mkdir", "-p", "data"], check=True)
     with open("data/test.csv", "w") as f:
         f.write("name,age\nAlice,30\nBob,25\nCharlie,35\n")
 
