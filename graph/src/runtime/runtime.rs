@@ -1534,6 +1534,7 @@ impl<'a> Runtime<'a> {
         Ok(())
     }
 
+    #[allow(clippy::too_many_lines)]
     fn set(
         &self,
         items: &Vec<(DynTree<ExprIR>, DynTree<ExprIR>, bool)>,
@@ -1576,22 +1577,22 @@ impl<'a> Runtime<'a> {
                 }
             };
             match entity {
-                Value::Node(node) => {
+                Value::Node(id) => {
                     if let Some(property) = property {
                         if let Some(attr_id) = self.g.borrow().get_node_attribute_id(property)
-                            && let Some(v) = self.g.borrow().get_node_attribute(node, attr_id)
+                            && let Some(v) = self.g.borrow().get_node_attribute(id, attr_id)
                             && v == value
                         {
                             continue;
                         }
                         self.pending
                             .borrow_mut()
-                            .set_node_attribute(node, property.clone(), value);
+                            .set_node_attribute(id, property.clone(), value);
                     } else if let Value::Map(map) = value {
                         if *replace {
-                            for key in self.g.borrow().get_node_attrs(node).keys() {
+                            for key in self.g.borrow().get_node_attrs(id).keys() {
                                 self.pending.borrow_mut().set_node_attribute(
-                                    node,
+                                    id,
                                     self.g.borrow().get_node_attribute_string(*key).unwrap(),
                                     Value::Null,
                                 );
@@ -1599,22 +1600,58 @@ impl<'a> Runtime<'a> {
                         }
                         for (key, value) in map.iter() {
                             self.pending.borrow_mut().set_node_attribute(
-                                node,
+                                id,
                                 key.clone(),
                                 value.clone(),
                             );
                         }
                     }
                     if let Some(labels) = labels {
-                        self.pending.borrow_mut().set_node_labels(node, labels);
+                        self.pending.borrow_mut().set_node_labels(id, labels);
                     }
                 }
-                Value::Relationship(relationship, _, _) => {
-                    self.pending.borrow_mut().set_relationship_attribute(
-                        relationship,
-                        property.unwrap().clone(),
-                        value,
-                    );
+                Value::Relationship(id, src, dest) => {
+                    if let Some(property) = property {
+                        if let Some(attr_id) =
+                            self.g.borrow().get_relationship_attribute_id(property)
+                            && let Some(v) = self.g.borrow().get_relationship_attribute(id, attr_id)
+                            && v == value
+                        {
+                            continue;
+                        }
+                        if self.g.borrow().is_relationship_deleted(id)
+                            || self.pending.borrow().is_relationship_deleted(id, src, dest)
+                        {
+                            continue;
+                        }
+                        self.pending.borrow_mut().set_relationship_attribute(
+                            id,
+                            property.clone(),
+                            value,
+                        );
+                    } else if let Value::Relationship(sid, _, _) = value {
+                        let g = self.g.borrow();
+                        let attrs = g.get_relationship_attrs(sid);
+                        if *replace {
+                            for key in g.get_relationship_attrs(id).keys() {
+                                self.pending.borrow_mut().set_relationship_attribute(
+                                    id,
+                                    g.get_node_attribute_string(*key).unwrap(),
+                                    Value::Null,
+                                );
+                            }
+                        }
+                        for (key, value) in attrs {
+                            let Some(key) = g.get_relationship_attribute_string(*key) else {
+                                continue;
+                            };
+                            self.pending.borrow_mut().set_relationship_attribute(
+                                id,
+                                key,
+                                value.clone(),
+                            );
+                        }
+                    }
                 }
                 Value::Null => {}
                 _ => {
@@ -1838,9 +1875,11 @@ impl<'a> Runtime<'a> {
                 self.pending.borrow_mut().deleted_node(id);
             }
             Value::Relationship(id, src, dest) => {
-                self.pending
-                    .borrow_mut()
-                    .deleted_relationship(id, src, dest);
+                if !self.g.borrow().is_relationship_deleted(id) {
+                    self.pending
+                        .borrow_mut()
+                        .deleted_relationship(id, src, dest);
+                }
             }
             Value::Path(values) => {
                 for value in values {

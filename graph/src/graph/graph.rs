@@ -677,6 +677,13 @@ impl Graph {
         }
     }
 
+    pub fn is_relationship_deleted(
+        &self,
+        id: RelationshipId,
+    ) -> bool {
+        self.deleted_relationships.contains(id.0)
+    }
+
     pub fn delete_relationships(
         &mut self,
         rels: HashSet<(RelationshipId, NodeId, NodeId)>,

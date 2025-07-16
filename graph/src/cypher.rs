@@ -1931,15 +1931,15 @@ impl<'a> Parser<'a> {
                 set_items.push((expr, tree!(ExprIR::Null), false));
             } else {
                 if let ExprIR::Variable(id) = expr.root().data() {
-                    if id.ty != Type::Node {
-                        return Err(self
-                            .lexer
-                            .format_error("Cannot set labels on non-node variables"));
+                    if id.ty != Type::Node && id.ty != Type::Relationship {
+                        return Err(self.lexer.format_error(
+                            "Cannot set properties on non-node or non-relationship variables",
+                        ));
                     }
                 } else {
-                    return Err(self
-                        .lexer
-                        .format_error("Cannot set labels on non-node expressions"));
+                    return Err(self.lexer.format_error(
+                        "Cannot set properties on non-node or non-relationship expressions",
+                    ));
                 }
                 let equals = optional_match_token!(self.lexer, Equal);
                 let plus_equals = if equals {

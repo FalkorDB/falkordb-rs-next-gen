@@ -217,6 +217,16 @@ impl Pending {
             .map(|r| r.type_name.clone())
     }
 
+    #[must_use]
+    pub fn is_relationship_deleted(
+        &self,
+        id: RelationshipId,
+        from: NodeId,
+        to: NodeId,
+    ) -> bool {
+        self.deleted_relationships.contains(&(id, from, to))
+    }
+
     pub fn commit(
         &mut self,
         g: &RefCell<Graph>,
