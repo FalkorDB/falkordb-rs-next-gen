@@ -68,6 +68,7 @@ pub enum Type {
     Node,
     Relationship,
     Path,
+    VecF32,
     Any,
     Union(Vec<Type>),
     Optional(Box<Type>),
@@ -90,6 +91,7 @@ impl Display for Type {
             Self::Node => write!(f, "Node"),
             Self::Relationship => write!(f, "Relationship"),
             Self::Path => write!(f, "Path"),
+            Self::VecF32 => write!(f, "VecF32"),
             Self::Any => write!(f, "Any"),
             Self::Union(types) => {
                 let mut iter = types.iter();
@@ -389,9 +391,10 @@ pub fn init_functions() -> Result<(), Functions> {
         value_to_string,
         false,
         vec![Type::Union(vec![
-            Type::String,
-            Type::Int,
             Type::Bool,
+            Type::Int,
+            Type::Float,
+            Type::String,
             Type::Null,
         ])],
         FnType::Function,
@@ -680,6 +683,18 @@ pub fn init_functions() -> Result<(), Functions> {
         vec![Type::Union(vec![Type::Path, Type::Null])],
         FnType::Function,
     );
+    funcs.add(
+        "vecf32",
+        vecf32,
+        false,
+        vec![Type::Union(vec![
+            Type::List(Box::new(Type::Float)),
+            Type::Null,
+        ])],
+        FnType::Function,
+    );
+    funcs.add("exists", exists, false, vec![Type::Any], FnType::Function);
+
     // aggregation functions
     funcs.add(
         "collect",
@@ -1341,9 +1356,10 @@ fn value_to_float(
 
 fn value_string(value: &Value) -> Result<Rc<String>, String> {
     match value {
-        Value::String(s) => Ok(s.clone()),
-        Value::Int(i) => Ok(Rc::new(i.to_string())),
         Value::Bool(b) => Ok(Rc::new(String::from(if *b { "true" } else { "false" }))),
+        Value::Int(i) => Ok(Rc::new(i.to_string())),
+        Value::Float(f) => Ok(Rc::new(f.to_string())),
+        Value::String(s) => Ok(s.clone()),
 
         _ => unreachable!(),
     }
@@ -1483,8 +1499,9 @@ fn substring(
 
             let length = length as usize;
 
-            let end = start.saturating_add(length).min(s.len());
-            Ok(Value::String(Rc::new(String::from(&s[start..end]))))
+            Ok(Value::String(Rc::new(
+                s.chars().skip(start).take(length).collect(),
+            )))
         }
 
         _ => unreachable!(),
@@ -2055,6 +2072,32 @@ fn relationships(
         )),
         Some(Value::Null) => Ok(Value::Null),
         _ => unreachable!(),
+    }
+}
+
+fn vecf32(
+    _: &Runtime,
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    let mut iter = args.into_iter();
+    match iter.next() {
+        Some(Value::List(vec)) => Ok(Value::VecF32(
+            vec.into_iter().map(|v| v.get_numeric() as f32).collect(),
+        )),
+        Some(Value::Null) => Ok(Value::Null),
+
+        _ => unreachable!(),
+    }
+}
+
+fn exists(
+    _: &Runtime,
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    let mut iter = args.into_iter();
+    match iter.next() {
+        Some(Value::Null) => Ok(Value::Bool(false)),
+        _ => Ok(Value::Bool(true)),
     }
 }
 

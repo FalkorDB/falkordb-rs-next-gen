@@ -235,6 +235,13 @@ fn reply_compact_value(
                 }
             }
         }
+        Value::VecF32(vec) => {
+            raw::reply_with_long_long(ctx.ctx, 12);
+            raw::reply_with_array(ctx.ctx, vec.len() as _);
+            for f in vec {
+                raw::reply_with_double(ctx.ctx, f as f64);
+            }
+        }
         Value::Rc(inner) => {
             reply_compact_value(ctx, g, (*inner).clone());
         }
@@ -348,6 +355,12 @@ fn reply_verbose_value(
                     }
                     _ => unreachable!("Path should only contain nodes and relationships"),
                 }
+            }
+        }
+        Value::VecF32(vec) => {
+            raw::reply_with_array(ctx.ctx, vec.len() as _);
+            for f in vec {
+                raw::reply_with_double(ctx.ctx, f as f64);
             }
         }
         Value::Rc(inner) => {
