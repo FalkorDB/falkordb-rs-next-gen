@@ -521,7 +521,7 @@ impl Graph {
                         .node_indexer
                         .is_indexed(*label_id as u64, attr.0 as u64)
                     {
-                        doc.set(*label_id as u64, Value::Int(*int_value));
+                        doc.set(attr.0 as u64, Value::Int(*int_value));
                     }
                 }
             }
@@ -867,9 +867,9 @@ impl Graph {
         for (n, _) in lm.iter(0, u64::MAX) {
             let mut doc = Document::new(n);
             for attr in attrs {
-                let prop_id = self.get_node_attribute_id(attr).unwrap();
-                if let Some(value) = self.get_node_attribute(NodeId(n), prop_id) {
-                    doc.set(prop_id.0 as u64, value);
+                let attr_id = self.get_node_attribute_id(attr).unwrap();
+                if let Some(value) = self.get_node_attribute(NodeId(n), attr_id) {
+                    doc.set(attr_id.0 as u64, value);
                 }
             }
             self.node_indexer.add(label_id.0 as u64, doc);
