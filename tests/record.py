@@ -38,8 +38,11 @@ class QueryVisualizerApp(App):
             self.tree_map[row[0]] = (self.tree_map[row[1]][0].add_leaf(row[2]), row)
         if len(self.record[0]) > 1:
             row = self.record[0][0]
-            env = {a[0]: a[1] for a in zip(self.tree_map[row[0]][1][3], row[2])}
-            self.tree_map[row[0]][0].label += f" | Env: {env}"
+            if row[1] == 0:
+                self.tree_map[row[0]][0].label += f" | Error: {row[2]}"
+            elif row[1] == 1:
+                env = {a[0]: a[1] for a in zip(self.tree_map[row[0]][1][3], row[2])}
+                self.tree_map[row[0]][0].label += f" | Env: {env}"
         tree.root.expand_all()
         yield tree
         label = ReactiveLabel(id="step_label")
@@ -85,8 +88,11 @@ class QueryVisualizerApp(App):
         for node in self.tree_map.values():
             node[0].label = node[1][2]
         row = self.record[0][self.current_index]
-        env = {a[0]: a[1] for a in zip(self.tree_map[row[0]][1][3], row[2])}
-        self.tree_map[row[0]][0].label += f" | Env: {env}"
+        if row[1] == 0:
+            self.tree_map[row[0]][0].label += f" | Error: {row[2]}"
+        elif row[1] == 1:
+            env = {a[0]: a[1] for a in zip(self.tree_map[row[0]][1][3], row[2])}
+            self.tree_map[row[0]][0].label += f" | Env: {env}"
         self.query_one(Tree).select_node(self.tree_map[row[0]][0])
     
     def on_key(self, event) -> None:

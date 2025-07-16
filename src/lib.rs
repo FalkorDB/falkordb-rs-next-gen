@@ -540,7 +540,7 @@ fn record_mut(
         true,
         (*scope).clone(),
     );
-    let _ = runtime.query().map_err(RedisError::String)?;
+    let _ = runtime.query();
     raw::reply_with_array(ctx.ctx, 2);
     raw::reply_with_array(ctx.ctx, runtime.record.borrow().len() as _);
     for (idx, res) in runtime.record.borrow().iter() {
