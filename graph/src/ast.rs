@@ -773,7 +773,6 @@ impl QueryIR {
                             path.var.as_str()
                         ));
                     }
-                    env.insert(path.var.id);
                 }
                 for node in p.nodes.values() {
                     if env.contains(&node.alias.id) && p.relationships.is_empty() {
@@ -783,9 +782,6 @@ impl QueryIR {
                         ));
                     }
                     node.attrs.validate(false, env)?;
-                }
-                for node in p.nodes.values() {
-                    env.insert(node.alias.id);
                 }
                 for relationship in p.relationships.values() {
                     if env.contains(&relationship.alias.id) {
@@ -800,6 +796,14 @@ impl QueryIR {
                         ));
                     }
                     relationship.attrs.validate(false, env)?;
+                }
+                for path in p.paths.values() {
+                    env.insert(path.var.id);
+                }
+                for node in p.nodes.values() {
+                    env.insert(node.alias.id);
+                }
+                for relationship in p.relationships.values() {
                     env.insert(relationship.alias.id);
                 }
                 iter.next()

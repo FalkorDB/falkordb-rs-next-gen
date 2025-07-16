@@ -1160,13 +1160,19 @@ impl<'a> Parser<'a> {
                 while let Token::Dash | Token::LessThan = self.lexer.current() {
                     let (relationship, right) = self.parse_relationship_pattern(left, clause)?;
                     left = right.clone();
-                    if !query_graph.add_relationship(relationship.clone())
-                        && clause == &Keyword::Match
-                    {
-                        return Err(format!(
-                            "Cannot use the same relationship variable '{}' for multiple patterns.",
-                            relationship.alias.as_str()
-                        ));
+                    if !query_graph.add_relationship(relationship.clone()) {
+                        if clause == &Keyword::Match {
+                            return Err(format!(
+                                "Cannot use the same relationship variable '{}' for multiple patterns.",
+                                relationship.alias.as_str()
+                            ));
+                        }
+                        if clause == &Keyword::Create {
+                            return Err(format!(
+                                "Variable `{}` already declared",
+                                relationship.alias.as_str()
+                            ));
+                        }
                     }
                     if nodes_alias.insert(right.alias.clone()) {
                         query_graph.add_node(right);
