@@ -46,6 +46,7 @@ pub struct QueryStatistics {
     pub properties_set: usize,
     pub properties_removed: usize,
     pub execution_time: f64,
+    pub cached: bool,
 }
 
 pub struct Runtime<'a> {

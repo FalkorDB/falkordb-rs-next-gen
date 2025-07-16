@@ -1,11 +1,13 @@
 use std::{
     collections::{HashMap, HashSet},
+    num::NonZeroUsize,
     rc::Rc,
     sync::Mutex,
     time::{Duration, Instant},
 };
 
 use itertools::Itertools;
+use lru::LruCache;
 use ordermap::{OrderMap, OrderSet};
 use orx_tree::DynTree;
 use roaring::RoaringTreemap;
@@ -24,6 +26,7 @@ use crate::{
 
 pub struct Plan {
     pub plan: Rc<DynTree<IR>>,
+    pub cached: bool,
     pub parameters: HashMap<String, DynTree<ExprIR>>,
     pub parse_duration: Duration,
     pub plan_duration: Duration,
@@ -80,12 +83,14 @@ impl Plan {
     #[must_use]
     pub const fn new(
         plan: Rc<DynTree<IR>>,
+        cached: bool,
         parameters: HashMap<String, DynTree<ExprIR>>,
         parse_duration: Duration,
         plan_duration: Duration,
     ) -> Self {
         Self {
             plan,
+            cached,
             parameters,
             parse_duration,
             plan_duration,
@@ -117,7 +122,7 @@ pub struct Graph {
     relationship_types: Vec<Rc<String>>,
     node_attrs_name: Vec<Rc<String>>,
     relationship_attrs_name: Vec<Rc<String>>,
-    cache: Mutex<HashMap<String, Rc<DynTree<IR>>>>,
+    cache: Mutex<LruCache<String, Rc<DynTree<IR>>>>,
 }
 
 impl Graph {
@@ -125,6 +130,7 @@ impl Graph {
     pub fn new(
         n: u64,
         e: u64,
+        cache_size: usize,
     ) -> Self {
         Self {
             node_cap: n,
@@ -150,7 +156,7 @@ impl Graph {
             relationship_types: Vec::new(),
             node_attrs_name: Vec::new(),
             relationship_attrs_name: Vec::new(),
-            cache: Mutex::new(HashMap::new()),
+            cache: Mutex::new(LruCache::new(NonZeroUsize::new(cache_size).unwrap())),
         }
     }
 
@@ -223,6 +229,7 @@ impl Graph {
                 if let Some(f) = cache.get(query) {
                     Ok(Plan::new(
                         f.clone(),
+                        true,
                         parameters,
                         parse_duration,
                         plan_duration,
@@ -237,8 +244,14 @@ impl Graph {
                     let value = Rc::new(planner.plan(ir));
                     plan_duration = start.elapsed();
 
-                    cache.insert(query.to_string(), value.clone());
-                    Ok(Plan::new(value, parameters, parse_duration, plan_duration))
+                    cache.push(query.to_string(), value.clone());
+                    Ok(Plan::new(
+                        value,
+                        false,
+                        parameters,
+                        parse_duration,
+                        plan_duration,
+                    ))
                 }
             }
             Err(_) => Err("Failed to acquire read lock on cache".to_string()),

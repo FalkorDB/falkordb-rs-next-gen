@@ -27,12 +27,10 @@ use opentelemetry_sdk::{Resource, trace::SdkTracerProvider};
 use opentelemetry_zipkin::ZipkinExporter;
 use orx_tree::{Bfs, NodeRef};
 use redis_module::{
-    ConfigurationValue, Context, NextArg, REDISMODULE_TYPE_METHOD_VERSION, RedisError,
-    RedisGILGuard, RedisModule_Alloc, RedisModule_Calloc, RedisModule_Free, RedisModule_Realloc,
-    RedisModuleIO, RedisModuleTypeMethods, RedisResult, RedisString, RedisValue, Status,
-    configuration::{ConfigurationContext, ConfigurationFlags},
-    native_types::RedisType,
-    raw, redis_module,
+    Context, NextArg, REDISMODULE_TYPE_METHOD_VERSION, RedisError, RedisGILGuard,
+    RedisModule_Alloc, RedisModule_Calloc, RedisModule_Free, RedisModule_Realloc, RedisModuleIO,
+    RedisModuleTypeMethods, RedisResult, RedisString, RedisValue, Status,
+    configuration::ConfigurationFlags, native_types::RedisType, raw, redis_module,
 };
 use std::{
     cell::RefCell,
@@ -397,7 +395,10 @@ fn query_mut(
     // Create a child span for parsing and execution
     tracing::debug_span!("query_execution", query = %query).in_scope(|| {
         let Plan {
-            plan, parameters, ..
+            plan,
+            cached,
+            parameters,
+            ..
         } = graph.borrow().get_plan(query).map_err(RedisError::String)?;
         let parameters = parameters
             .into_iter()
@@ -406,7 +407,8 @@ fn query_mut(
             .map_err(RedisError::String)?;
         let scope = CONFIGURATION_IMPORT_FOLDER.lock(ctx);
         let mut runtime = Runtime::new(graph, parameters, write, plan, false, (*scope).clone());
-        let result = runtime.query().map_err(RedisError::String)?;
+        let mut result = runtime.query().map_err(RedisError::String)?;
+        result.stats.cached = cached;
         if compact {
             reply_compact(ctx, graph, &runtime.return_names, result);
         } else {
@@ -420,7 +422,7 @@ fn reply_stats(
     ctx: &Context,
     stats: &QueryStatistics,
 ) {
-    let mut stats_len = 1;
+    let mut stats_len = 2;
     if stats.labels_added > 0 {
         stats_len += 1;
     }
@@ -472,6 +474,8 @@ fn reply_stats(
         let str = format!("Relationships deleted: {}", stats.relationships_deleted);
         raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
     }
+    let str = format!("Cached execution: {}", i32::from(stats.cached));
+    raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
     let str = format!(
         "Query internal execution time: {} milliseconds",
         stats.execution_time
@@ -508,7 +512,8 @@ fn graph_query(
     if let Some(graph) = key.get_value::<RefCell<Graph>>(&GRAPH_TYPE)? {
         query_mut(ctx, graph, query, compact, true)?;
     } else {
-        let graph = RefCell::new(Graph::new(16384, 16384));
+        let scope = CONFIGURATION_CACHE_SIZE.lock(ctx);
+        let graph = RefCell::new(Graph::new(16384, 16384, *scope as usize));
         query_mut(ctx, &graph, query, compact, true)?;
         key.set_value(&GRAPH_TYPE, graph)?;
     }
@@ -617,7 +622,8 @@ fn graph_record(
     if let Some(graph) = key.get_value::<RefCell<Graph>>(&GRAPH_TYPE)? {
         record_mut(ctx, graph, query)?;
     } else {
-        let graph = RefCell::new(Graph::new(16384, 16384));
+        let scope = CONFIGURATION_CACHE_SIZE.lock(ctx);
+        let graph = RefCell::new(Graph::new(16384, 16384, *scope as usize));
         record_mut(ctx, &graph, query)?;
         key.set_value(&GRAPH_TYPE, graph)?;
     }
@@ -845,13 +851,7 @@ fn graph_init(
 lazy_static! {
     static ref CONFIGURATION_IMPORT_FOLDER: RedisGILGuard<String> =
         RedisGILGuard::new("/var/lib/FalkorDB/import/".into());
-}
-
-fn on_configuration_changed<T: ConfigurationValue<String>>(
-    _config_ctx: &ConfigurationContext,
-    _name: &str,
-    _val: &'static T,
-) {
+    static ref CONFIGURATION_CACHE_SIZE: RedisGILGuard<i64> = RedisGILGuard::new(25.into());
 }
 
 //////////////////////////////////////////////////////
@@ -872,9 +872,11 @@ redis_module! {
         ["graph.RECORD", graph_record, "write deny-oom", 1, 1, 1, ""],
     ],
     configurations: [
-        i64: [],
+        i64: [
+            ["CACHE_SIZE", &*CONFIGURATION_CACHE_SIZE, 25, 0, 1000, ConfigurationFlags::DEFAULT, None],
+        ],
         string: [
-            ["IMPORT_FOLDER", &*CONFIGURATION_IMPORT_FOLDER, "/var/lib/FalkorDB/import/", ConfigurationFlags::DEFAULT, Some(Box::new(on_configuration_changed))],
+            ["IMPORT_FOLDER", &*CONFIGURATION_IMPORT_FOLDER, "/var/lib/FalkorDB/import/", ConfigurationFlags::DEFAULT, None],
         ],
         bool: [],
         enum: [],
