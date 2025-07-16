@@ -462,7 +462,6 @@ impl Graph {
             let label_id = self.get_label_id(label).unwrap();
             self.resize();
             self.node_labels_matrix.set(id.0, label_id.0 as u64, true);
-            let label_id = self.get_label_id(label).unwrap();
             let mut doc = Document::new(u64::from(id));
             for (attr_id, value) in self.node_attrs.get(&id).unwrap_or(&self.empty_map) {
                 if self
