@@ -875,7 +875,7 @@ impl QueryIR {
                 .map_or(Ok(()), |first| first.inner_validate(iter, env)),
             Self::Query(q, _) => {
                 let mut iter = q.iter();
-                let first = iter.next().ok_or("Empty query")?;
+                let first = iter.next().ok_or("Error: empty query.y")?;
                 first.inner_validate(iter, env)
             }
         }

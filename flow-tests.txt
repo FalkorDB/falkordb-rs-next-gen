@@ -5,7 +5,7 @@ test_cache
 test_comprehension_functions
 test_create_clause
 test_distinct
-test_empty_query
+test_empty_query - work
 test_entity_update
 test_expand_into
 test_filters - work
