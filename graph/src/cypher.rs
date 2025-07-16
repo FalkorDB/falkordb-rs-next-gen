@@ -1,17 +1,23 @@
 use crate::ast::{
     ExprIR, QuantifierType, QueryGraph, QueryIR, QueryNode, QueryPath, QueryRelationship, Variable,
 };
-use crate::cypher::Token::RParen;
-use crate::functions::{FnType, Type, get_functions};
-use crate::tree;
-use crate::value::Value;
+use crate::{
+    cypher::Token::RParen,
+    runtime::{
+        functions::{FnType, Type, get_functions},
+        value::Value,
+    },
+    tree,
+};
 use itertools::Itertools;
 use ordermap::OrderSet;
 use orx_tree::{DynTree, NodeRef};
-use std::collections::{HashMap, HashSet};
-use std::num::IntErrorKind;
-use std::rc::Rc;
-use std::str::Chars;
+use std::{
+    collections::{HashMap, HashSet},
+    num::IntErrorKind,
+    rc::Rc,
+    str::Chars,
+};
 use unescaper::unescape;
 
 #[derive(Debug, PartialEq, Clone)]
@@ -60,6 +66,15 @@ enum Keyword {
     Descending,
     Skip,
     Limit,
+    Load,
+    Csv,
+    Headers,
+    From,
+    Delimiter,
+    Drop,
+    Index,
+    For,
+    On,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -144,6 +159,15 @@ const KEYWORDS: &[(&str, Keyword)] = &[
     ("DESCENDING", Keyword::Descending),
     ("SKIP", Keyword::Skip),
     ("LIMIT", Keyword::Limit),
+    ("LOAD", Keyword::Load),
+    ("CSV", Keyword::Csv),
+    ("HEADERS", Keyword::Headers),
+    ("FROM", Keyword::From),
+    ("DELIMITER", Keyword::Delimiter),
+    ("DROP", Keyword::Drop),
+    ("INDEX", Keyword::Index),
+    ("FOR", Keyword::For),
+    ("ON", Keyword::On),
 ];
 
 const MIN_I64: [&str; 5] = [
@@ -341,7 +365,7 @@ impl<'a> Lexer<'a> {
                 '0'..='9' => Self::lex_numeric(str, chars, pos, 1),
                 '$' => {
                     let mut len = 1;
-                    while let Some('a'..='z' | 'A'..='Z' | '0'..='9') = chars.next() {
+                    while let Some('a'..='z' | 'A'..='Z' | '0'..='9' | '_') = chars.next() {
                         len += 1;
                     }
                     let token = Token::Parameter(String::from(&str[pos + 1..pos + len]));
@@ -656,10 +680,14 @@ impl<'a> Parser<'a> {
                 if id.as_str() == "CYPHER" {
                     self.lexer.next();
                     let mut params = HashMap::new();
-                    while let Token::Ident(id) = self.lexer.current() {
-                        self.lexer.next();
-                        match_token!(self.lexer, Equal);
+                    let mut pos = self.lexer.pos;
+                    while let Ok(id) = self.parse_ident() {
+                        if !optional_match_token!(self.lexer, Equal) {
+                            self.lexer.set_pos(pos);
+                            break;
+                        }
                         params.insert(String::from(id.as_str()), self.parse_expr()?);
+                        pos = self.lexer.pos;
                     }
                     Ok((params, &self.lexer.str[self.lexer.pos..]))
                 } else {
@@ -671,6 +699,74 @@ impl<'a> Parser<'a> {
     }
 
     pub fn parse(&mut self) -> Result<QueryIR, String> {
+        let pos = self.lexer.pos;
+        if optional_match_token!(self.lexer => Create)
+            && optional_match_token!(self.lexer => Index)
+            && optional_match_token!(self.lexer => For)
+        {
+            match_token!(self.lexer, LParen);
+            let nkey = self.parse_ident()?;
+            match_token!(self.lexer, Colon);
+            let label = self.parse_ident()?;
+            match_token!(self.lexer, RParen);
+            match_token!(self.lexer => On);
+            match_token!(self.lexer, LParen);
+            let key = self.parse_ident()?;
+            if nkey.as_str() != key.as_str() {
+                return Err(self.lexer.format_error(&format!(
+                    "Invalid index name '{nkey}' for label '{label}' on property '{key}'"
+                )));
+            }
+            match_token!(self.lexer, Dot);
+            let mut attrs = vec![self.parse_ident()?];
+            while optional_match_token!(self.lexer, Comma) {
+                let key = self.parse_ident()?;
+                if nkey.as_str() != key.as_str() {
+                    return Err(self.lexer.format_error(&format!(
+                        "Invalid index name '{nkey}' for label '{label}' on property '{key}'"
+                    )));
+                }
+                match_token!(self.lexer, Dot);
+                attrs.push(self.parse_ident()?);
+            }
+            match_token!(self.lexer, RParen);
+            match_token!(self.lexer, EndOfFile);
+            return Ok(QueryIR::CreateIndex { label, attrs });
+        }
+        if optional_match_token!(self.lexer => Drop)
+            && optional_match_token!(self.lexer => Index)
+            && optional_match_token!(self.lexer => For)
+        {
+            match_token!(self.lexer, LParen);
+            let nkey = self.parse_ident()?;
+            match_token!(self.lexer, Colon);
+            let label = self.parse_ident()?;
+            match_token!(self.lexer, RParen);
+            match_token!(self.lexer => On);
+            match_token!(self.lexer, LParen);
+            let key = self.parse_ident()?;
+            if nkey.as_str() != key.as_str() {
+                return Err(self.lexer.format_error(&format!(
+                    "Invalid index name '{nkey}' for label '{label}' on property '{key}'"
+                )));
+            }
+            match_token!(self.lexer, Dot);
+            let mut attrs = vec![self.parse_ident()?];
+            while optional_match_token!(self.lexer, Comma) {
+                let key = self.parse_ident()?;
+                if nkey.as_str() != key.as_str() {
+                    return Err(self.lexer.format_error(&format!(
+                        "Invalid index name '{nkey}' for label '{label}' on property '{key}'"
+                    )));
+                }
+                match_token!(self.lexer, Dot);
+                attrs.push(self.parse_ident()?);
+            }
+            match_token!(self.lexer, RParen);
+            match_token!(self.lexer, EndOfFile);
+            return Ok(QueryIR::DropIndex { label, attrs });
+        }
+        self.lexer.set_pos(pos);
         let mut ir = self.parse_query()?;
         ir.validate()?;
         Ok(ir)
@@ -681,7 +777,11 @@ impl<'a> Parser<'a> {
         let mut write = false;
         loop {
             while let Token::Keyword(
-                Keyword::Optional | Keyword::Match | Keyword::Unwind | Keyword::Call,
+                Keyword::Optional
+                | Keyword::Match
+                | Keyword::Unwind
+                | Keyword::Call
+                | Keyword::Load,
                 _,
             ) = self.lexer.current()
             {
@@ -737,6 +837,27 @@ impl<'a> Parser<'a> {
             Token::Keyword(Keyword::Call, _) => {
                 self.lexer.next();
                 self.parse_call_clause()
+            }
+            Token::Keyword(Keyword::Load, _) => {
+                self.lexer.next();
+                match_token!(self.lexer => Csv);
+                let headers = optional_match_token!(self.lexer => With)
+                    && optional_match_token!(self.lexer => Headers);
+                let delimiter = if optional_match_token!(self.lexer => Delimiter) {
+                    self.parse_expr()?
+                } else {
+                    tree!(ExprIR::String(Rc::new(String::from(','))))
+                };
+                match_token!(self.lexer => From);
+                let file_path = self.parse_expr()?;
+                match_token!(self.lexer => As);
+                let ident: Rc<String> = self.parse_ident()?;
+                Ok(QueryIR::LoadCsv {
+                    file_path,
+                    headers,
+                    delimiter,
+                    var: self.create_var(Some(ident), Type::Any)?,
+                })
             }
             _ => unreachable!(),
         }
@@ -990,8 +1111,7 @@ impl<'a> Parser<'a> {
         let mut query_graph = QueryGraph::default();
         let mut nodes_alias = HashSet::new();
         loop {
-            if let Token::Ident(ident) = self.lexer.current() {
-                self.lexer.next();
+            if let Ok(ident) = self.parse_ident() {
                 match_token!(self.lexer, Equal);
                 let mut vars = vec![];
                 let mut left = self.parse_node_pattern(clause)?;
@@ -1445,7 +1565,7 @@ impl<'a> Parser<'a> {
                                 res = self.parse_property_lookup(res)?;
                             }
                             _ => break,
-                        };
+                        }
                     }
                     if self.lexer.current() == Token::Colon {
                         let labels = tree!(ExprIR::List; self.parse_labels()?.into_iter().map(|l| tree!(ExprIR::String(l))));
@@ -1545,14 +1665,13 @@ impl<'a> Parser<'a> {
 
     fn parse_list_literal_or_comprehension(&mut self) -> Result<(DynTree<ExprIR>, bool), String> {
         // Check if the second token is 'IN' for list comprehension
-        if let Token::Ident(var) = self.lexer.current() {
-            let pos = self.lexer.pos;
-            self.lexer.next();
-            if optional_match_token!(self.lexer => In) {
-                return Ok((self.parse_list_comprehension(var)?, false));
-            }
-            self.lexer.set_pos(pos); // Reset lexer position
+        let pos = self.lexer.pos;
+        if let Ok(var) = self.parse_ident()
+            && optional_match_token!(self.lexer => In)
+        {
+            return Ok((self.parse_list_comprehension(var)?, false));
         }
+        self.lexer.set_pos(pos); // Reset lexer position
 
         Ok((
             tree!(ExprIR::List),
@@ -1599,8 +1718,7 @@ impl<'a> Parser<'a> {
         clause: &Keyword,
     ) -> Result<Rc<QueryNode>, String> {
         match_token!(self.lexer, LParen);
-        let alias = if let Token::Ident(id) = self.lexer.current() {
-            self.lexer.next();
+        let alias = if let Ok(id) = self.parse_ident() {
             self.create_var(Some(id), Type::Node)?
         } else {
             self.create_var(None, Type::Node)?
@@ -1630,8 +1748,7 @@ impl<'a> Parser<'a> {
         match_token!(self.lexer, Dash);
         let has_details = optional_match_token!(self.lexer, LBrace);
         let (alias, types, attrs) = if has_details {
-            let alias = if let Token::Ident(id) = self.lexer.current() {
-                self.lexer.next();
+            let alias = if let Ok(id) = self.parse_ident() {
                 self.create_var(Some(id), Type::Relationship)?
             } else {
                 self.create_var(None, Type::Relationship)?
@@ -1729,31 +1846,25 @@ impl<'a> Parser<'a> {
         }
 
         loop {
-            match self.lexer.current() {
-                Token::Ident(key) | Token::Keyword(_, key) => {
-                    self.lexer.next();
-                    match_token!(self.lexer, Colon);
-                    let value = self.parse_expr()?;
-                    attrs.push(tree!(ExprIR::String(key), value));
+            if let Ok(key) = self.parse_ident() {
+                match_token!(self.lexer, Colon);
+                let value = self.parse_expr()?;
+                attrs.push(tree!(ExprIR::String(key), value));
 
-                    match self.lexer.current() {
-                        Token::Comma => self.lexer.next(),
-                        Token::RBracket => {
-                            self.lexer.next();
-                            return Ok(tree!(ExprIR::Map ; attrs));
-                        }
-                        Token::Error(s) => return Err(s),
-                        token => {
-                            return Err(self
-                                .lexer
-                                .format_error(&format!("Invalid input {token:?}")));
-                        }
+                match self.lexer.current() {
+                    Token::Comma => self.lexer.next(),
+                    Token::RBracket => {
+                        self.lexer.next();
+                        return Ok(tree!(ExprIR::Map ; attrs));
+                    }
+                    Token::Error(s) => return Err(s),
+                    token => {
+                        return Err(self.lexer.format_error(&format!("Invalid input {token:?}")));
                     }
                 }
-                _ => {
-                    match_token!(self.lexer, RBracket);
-                    return Ok(tree!(ExprIR::Map ; attrs));
-                }
+            } else {
+                match_token!(self.lexer, RBracket);
+                return Ok(tree!(ExprIR::Map ; attrs));
             }
         }
     }

@@ -5,11 +5,11 @@ use std::{
 };
 
 use ordermap::{OrderMap, OrderSet};
+use roaring::RoaringTreemap;
 
 use crate::{
-    graph::{Graph, NodeId, RelationshipId},
-    runtime::QueryStatistics,
-    value::Value,
+    graph::graph::{Graph, NodeId, RelationshipId},
+    runtime::{runtime::QueryStatistics, value::Value},
 };
 
 pub struct PendingRelationship {
@@ -35,9 +35,9 @@ impl PendingRelationship {
 
 #[derive(Default)]
 pub struct Pending {
-    created_nodes: Vec<NodeId>,
+    created_nodes: RoaringTreemap,
     created_relationships: HashMap<RelationshipId, PendingRelationship>,
-    deleted_nodes: HashSet<NodeId>,
+    deleted_nodes: RoaringTreemap,
     deleted_relationships: HashSet<(RelationshipId, NodeId, NodeId)>,
     set_nodes_attrs: HashMap<NodeId, OrderMap<Rc<String>, Value>>,
     set_relationships_attrs: HashMap<RelationshipId, OrderMap<Rc<String>, Value>>,
@@ -50,7 +50,9 @@ impl Pending {
         &mut self,
         id: NodeId,
     ) {
-        self.created_nodes.push(id);
+        let len = self.created_nodes.len();
+        self.created_nodes.insert(id.into());
+        debug_assert_eq!(self.created_nodes.len(), len + 1);
     }
 
     pub fn set_node_attributes(
@@ -135,7 +137,7 @@ impl Pending {
         &mut self,
         id: NodeId,
     ) {
-        self.deleted_nodes.insert(id);
+        self.deleted_nodes.insert(id.into());
     }
 
     pub fn created_relationship(
@@ -233,17 +235,28 @@ impl Pending {
         }
         if !self.deleted_relationships.is_empty() {
             stats.borrow_mut().relationships_deleted += self.deleted_relationships.len();
-            for (id, src, dest) in self.deleted_relationships.clone() {
-                g.borrow_mut().delete_relationship(id, src, dest);
-            }
+            g.borrow_mut()
+                .delete_relationships(self.deleted_relationships.clone());
             self.deleted_relationships.clear();
         }
         if !self.deleted_nodes.is_empty() {
             stats.borrow_mut().nodes_deleted += self.deleted_nodes.len();
-            for id in self.deleted_nodes.clone() {
-                g.borrow_mut().delete_node(id);
+            for id in &self.deleted_nodes {
+                g.borrow_mut().delete_node(NodeId::from(id));
             }
             self.deleted_nodes.clear();
+        }
+        if !self.set_node_labels.is_empty() {
+            for (id, labels) in &self.set_node_labels {
+                g.borrow_mut().set_node_labels(*id, labels);
+            }
+            self.set_node_labels.clear();
+        }
+        if !self.remove_node_labels.is_empty() {
+            for (id, labels) in &self.remove_node_labels {
+                g.borrow_mut().remove_node_labels(*id, labels);
+            }
+            self.remove_node_labels.clear();
         }
         if !self.set_nodes_attrs.is_empty() {
             stats.borrow_mut().properties_set += self
@@ -266,18 +279,6 @@ impl Pending {
                 }
             }
             self.set_nodes_attrs.clear();
-        }
-        if !self.set_node_labels.is_empty() {
-            for (id, labels) in &self.set_node_labels {
-                g.borrow_mut().set_node_labels(*id, labels);
-            }
-            self.set_node_labels.clear();
-        }
-        if !self.remove_node_labels.is_empty() {
-            for (id, labels) in &self.remove_node_labels {
-                g.borrow_mut().remove_node_labels(*id, labels);
-            }
-            self.remove_node_labels.clear();
         }
         if !self.set_relationships_attrs.is_empty() {
             stats.borrow_mut().properties_set += self

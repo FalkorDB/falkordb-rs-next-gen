@@ -4,7 +4,7 @@ use itertools::Itertools;
 use ordermap::{OrderMap, OrderSet};
 use orx_tree::{Bfs, Collection, Dfs, DynTree, NodeRef};
 
-use crate::functions::{GraphFn, Type};
+use crate::runtime::functions::{GraphFn, Type};
 
 #[derive(Clone, Debug)]
 pub struct Variable {
@@ -575,6 +575,12 @@ pub enum QueryIR {
     Delete(Vec<DynTree<ExprIR>>, bool),
     Set(Vec<(DynTree<ExprIR>, DynTree<ExprIR>, bool)>),
     Remove(Vec<DynTree<ExprIR>>),
+    LoadCsv {
+        file_path: DynTree<ExprIR>,
+        headers: bool,
+        delimiter: DynTree<ExprIR>,
+        var: Variable,
+    },
     With {
         distinct: bool,
         exprs: Vec<(Variable, DynTree<ExprIR>)>,
@@ -591,6 +597,14 @@ pub enum QueryIR {
         skip: Option<DynTree<ExprIR>>,
         limit: Option<DynTree<ExprIR>>,
         write: bool,
+    },
+    CreateIndex {
+        label: Rc<String>,
+        attrs: Vec<Rc<String>>,
+    },
+    DropIndex {
+        label: Rc<String>,
+        attrs: Vec<Rc<String>>,
     },
     Query(Vec<QueryIR>, bool),
 }
@@ -637,6 +651,9 @@ impl Display for QueryIR {
                 }
                 Ok(())
             }
+            Self::LoadCsv { file_path, var, .. } => {
+                writeln!(f, "LOAD CSV FROM {file_path} AS {var:?}:")
+            }
             Self::With { exprs, .. } => {
                 writeln!(f, "WITH:")?;
                 for (name, _) in exprs {
@@ -650,6 +667,12 @@ impl Display for QueryIR {
                     write!(f, "{}", name.as_str())?;
                 }
                 Ok(())
+            }
+            Self::CreateIndex { label, attrs } => {
+                writeln!(f, "CREATE NODE INDEX ON :{label}({attrs:?})")
+            }
+            Self::DropIndex { label, attrs } => {
+                writeln!(f, "DROP NODE INDEX ON :{label}({attrs:?})")
             }
             Self::Query(qs, _) => {
                 for q in qs {
@@ -804,6 +827,18 @@ impl QueryIR {
                 iter.next()
                     .map_or(Ok(()), |first| first.inner_validate(iter, env))
             }
+            Self::LoadCsv {
+                file_path,
+                delimiter,
+                var,
+                ..
+            } => {
+                file_path.validate(false, env)?;
+                delimiter.validate(false, env)?;
+                env.insert(var.id);
+                iter.next()
+                    .map_or(Ok(()), |first| first.inner_validate(iter, env))
+            }
             Self::With { exprs, orderby, .. } | Self::Return { exprs, orderby, .. } => {
                 for (_, expr) in exprs {
                     expr.validate(true, env)?;
@@ -828,6 +863,12 @@ impl QueryIR {
                 iter.next()
                     .map_or(Ok(()), |first| first.inner_validate(iter, env))
             }
+            Self::CreateIndex { .. } => iter
+                .next()
+                .map_or(Ok(()), |first| first.inner_validate(iter, env)),
+            Self::DropIndex { .. } => iter
+                .next()
+                .map_or(Ok(()), |first| first.inner_validate(iter, env)),
             Self::Query(q, _) => {
                 let mut iter = q.iter();
                 let first = iter.next().ok_or("Empty query")?;

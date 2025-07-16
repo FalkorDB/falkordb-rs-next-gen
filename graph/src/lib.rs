@@ -1,14 +1,7 @@
-pub mod GraphBLAS;
 pub mod ast;
 pub mod cypher;
-pub mod functions;
 pub mod graph;
-pub mod iter;
-pub mod matrix;
-pub mod pending;
+pub mod indexer;
 pub mod planner;
 pub mod runtime;
-pub mod tensor;
 pub mod tree;
-pub mod value;
-pub mod vector;

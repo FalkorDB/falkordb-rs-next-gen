@@ -2,7 +2,7 @@
 
 use std::{marker::PhantomData, mem::MaybeUninit, os::raw::c_void, ptr::null_mut, rc::Rc};
 
-use crate::GraphBLAS::{
+use crate::graph::GraphBLAS::{
     GrB_BOOL, GrB_DESC_ST0, GrB_Info, GrB_Matrix, GrB_Matrix_apply, GrB_Matrix_dup,
     GrB_Matrix_eWiseAdd_Semiring, GrB_Matrix_eWiseMult_Semiring, GrB_Matrix_extractElement_BOOL,
     GrB_Matrix_extractElement_UINT64, GrB_Matrix_free, GrB_Matrix_ncols, GrB_Matrix_new,
@@ -331,7 +331,8 @@ impl New for Matrix<bool> {
     ) -> Self {
         unsafe {
             let mut m: MaybeUninit<GrB_Matrix> = MaybeUninit::uninit();
-            GrB_Matrix_new(m.as_mut_ptr(), GrB_BOOL, nrows, ncols);
+            let info = GrB_Matrix_new(m.as_mut_ptr(), GrB_BOOL, nrows, ncols);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             Self {
                 m: Rc::new(m.assume_init()),
                 phantom: PhantomData,
@@ -347,7 +348,8 @@ impl New for Matrix<u64> {
     ) -> Self {
         unsafe {
             let mut m: MaybeUninit<GrB_Matrix> = MaybeUninit::uninit();
-            GrB_Matrix_new(m.as_mut_ptr(), GrB_UINT64, nrows, ncols);
+            let info = GrB_Matrix_new(m.as_mut_ptr(), GrB_UINT64, nrows, ncols);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             Self {
                 m: Rc::new(m.assume_init()),
                 phantom: PhantomData,

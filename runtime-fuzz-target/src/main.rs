@@ -1,10 +1,14 @@
 use std::{cell::RefCell, collections::HashMap};
 
 use graph::{
-    GraphBLAS::{GrB_Mode, GrB_init},
-    functions::init_functions,
-    graph::{Graph, Plan},
-    runtime::{Runtime, evaluate_param},
+    graph::{
+        GraphBLAS::{GrB_Mode, GrB_init},
+        graph::{Graph, Plan},
+    },
+    runtime::{
+        functions::init_functions,
+        runtime::{Runtime, evaluate_param},
+    },
 };
 
 #[macro_use]
@@ -31,7 +35,7 @@ fn main() {
             else {
                 return;
             };
-            let mut runtime = Runtime::new(&g, parameters, true, plan, false);
+            let mut runtime = Runtime::new(&g, parameters, true, plan, false, String::new());
             let _ = runtime.query();
         }
     });

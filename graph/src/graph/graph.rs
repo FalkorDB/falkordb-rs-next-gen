@@ -1,10 +1,11 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     rc::Rc,
     sync::Mutex,
     time::{Duration, Instant},
 };
 
+use itertools::Itertools;
 use ordermap::{OrderMap, OrderSet};
 use orx_tree::DynTree;
 use roaring::RoaringTreemap;
@@ -12,11 +13,13 @@ use roaring::RoaringTreemap;
 use crate::{
     ast::ExprIR,
     cypher::Parser,
-    matrix::{Dup, ElementWiseAdd, ElementWiseMultiply, Matrix, MxM, New, Remove, Set, Size},
-    pending::PendingRelationship,
+    graph::{
+        matrix::{Dup, ElementWiseAdd, ElementWiseMultiply, Matrix, MxM, New, Remove, Set, Size},
+        tensor::Tensor,
+    },
+    indexer::{Document, IndexQuery, Indexer},
     planner::{IR, Planner},
-    tensor::Tensor,
-    value::Value,
+    runtime::{pending::PendingRelationship, value::Value},
 };
 
 pub struct Plan {
@@ -52,6 +55,12 @@ impl From<TypeId> for usize {
 impl From<AttrId> for usize {
     fn from(val: AttrId) -> Self {
         val.0
+    }
+}
+
+impl From<u64> for NodeId {
+    fn from(value: u64) -> Self {
+        Self(value)
     }
 }
 
@@ -103,6 +112,7 @@ pub struct Graph {
     empty_map: OrderMap<AttrId, Value>,
     node_attrs: HashMap<NodeId, OrderMap<AttrId, Value>>,
     relationship_attrs: HashMap<RelationshipId, OrderMap<AttrId, Value>>,
+    node_indexer: Indexer,
     node_labels: Vec<Rc<String>>,
     relationship_types: Vec<Rc<String>>,
     node_attrs_name: Vec<Rc<String>>,
@@ -135,6 +145,7 @@ impl Graph {
             empty_map: OrderMap::new(),
             node_attrs: HashMap::new(),
             relationship_attrs: HashMap::new(),
+            node_indexer: Indexer::new(n),
             node_labels: Vec::new(),
             relationship_types: Vec::new(),
             node_attrs_name: Vec::new(),
@@ -376,9 +387,8 @@ impl Graph {
     }
 
     pub fn reserve_node(&mut self) -> NodeId {
-        let mut iter = self.deleted_nodes.iter();
-        iter.advance_to(self.reserved_node_count);
-        if let Some(id) = iter.next() {
+        if self.reserved_node_count < self.deleted_nodes.len() {
+            let id = self.deleted_nodes.select(self.reserved_node_count).unwrap();
             self.reserved_node_count += 1;
             return NodeId(id);
         }
@@ -388,22 +398,16 @@ impl Graph {
 
     pub fn create_nodes(
         &mut self,
-        nodes: &Vec<NodeId>,
+        nodes: &RoaringTreemap,
     ) {
-        self.node_count += nodes.len() as u64;
-        self.reserved_node_count -= nodes.len() as u64;
-
-        for id in nodes {
-            if self.deleted_nodes.is_empty() {
-                break;
-            }
-            self.deleted_nodes.remove(id.0);
-        }
+        self.node_count += nodes.len();
+        self.reserved_node_count -= nodes.len();
+        self.deleted_nodes -= nodes;
 
         self.resize();
 
         for id in nodes {
-            self.all_nodes_matrix.set(id.0, id.0, true);
+            self.all_nodes_matrix.set(id, id, true);
         }
     }
 
@@ -415,12 +419,35 @@ impl Graph {
     ) -> bool {
         let attrs = self.node_attrs.entry(id).or_default();
         if value == Value::Null {
+            for (_, label) in self.node_labels_matrix.iter(id.into(), id.into()) {
+                let mut doc = Document::new(u64::from(id));
+                if self.node_indexer.is_indexed(label, attr_id.0 as u64) {
+                    if let Some(v) = attrs.get(&attr_id) {
+                        doc.set(attr_id.0 as u64, v.clone());
+                    }
+                }
+                self.node_indexer.remove(label, doc);
+            }
             let removed = attrs.remove(&attr_id).is_some();
             if attrs.is_empty() {
                 self.node_attrs.remove(&id);
             }
             removed
         } else {
+            if let Value::Int(_) = &value {
+                let mut doc = Document::new(u64::from(id));
+                doc.set(usize::from(attr_id) as u64, value.clone());
+                for (_, label) in self.node_labels_matrix.iter(id.into(), id.into()) {
+                    if self.node_indexer.is_indexed(label, attr_id.0 as u64) {
+                        if let Some(v) = attrs.get(&attr_id) {
+                            let mut doc = Document::new(u64::from(id));
+                            doc.set(attr_id.0 as u64, v.clone());
+                            self.node_indexer.remove(label, doc);
+                        }
+                        self.node_indexer.add(label, doc.clone());
+                    }
+                }
+            }
             attrs.insert(attr_id, value).is_some()
         }
     }
@@ -436,6 +463,16 @@ impl Graph {
             let label_id = self.get_label_id(label).unwrap();
             self.resize();
             self.node_labels_matrix.set(id.0, label_id.0 as u64, true);
+            let mut doc = Document::new(u64::from(id));
+            for (attr_id, value) in self.node_attrs.get(&id).unwrap_or(&self.empty_map) {
+                if self
+                    .node_indexer
+                    .is_indexed(label_id.0 as u64, attr_id.0 as u64)
+                {
+                    doc.set(attr_id.0 as u64, value.clone());
+                }
+            }
+            self.node_indexer.add(label_id.0 as u64, doc);
         }
     }
 
@@ -452,6 +489,17 @@ impl Graph {
             label_matrix.remove(id.0, id.0);
             let label_id = self.get_label_id(label).unwrap();
             self.node_labels_matrix.remove(id.0, label_id.0 as u64);
+            let label_id = self.get_label_id(label).unwrap();
+            let mut doc = Document::new(u64::from(id));
+            for (attr_id, value) in self.node_attrs.get(&id).unwrap_or(&self.empty_map) {
+                if self
+                    .node_indexer
+                    .is_indexed(label_id.0 as u64, attr_id.0 as u64)
+                {
+                    doc.set(attr_id.0 as u64, value.clone());
+                }
+            }
+            self.node_indexer.remove(label_id.0 as u64, doc);
         }
     }
 
@@ -466,6 +514,18 @@ impl Graph {
         for (label_id, label_matrix) in &mut self.labels_matices {
             label_matrix.remove(id.0, id.0);
             self.node_labels_matrix.remove(id.0, *label_id as _);
+            let mut doc = Document::new(u64::from(id));
+            for (attr, value) in self.node_attrs.get_mut(&id).unwrap_or(&mut self.empty_map) {
+                if let Value::Int(int_value) = value {
+                    if self
+                        .node_indexer
+                        .is_indexed(*label_id as u64, attr.0 as u64)
+                    {
+                        doc.set(attr.0 as u64, Value::Int(*int_value));
+                    }
+                }
+            }
+            self.node_indexer.remove(*label_id as u64, doc);
         }
 
         self.node_attrs.remove(&id);
@@ -477,7 +537,7 @@ impl Graph {
     ) -> impl Iterator<Item = (NodeId, NodeId, RelationshipId)> + '_ {
         self.relationship_matrices
             .values()
-            .flat_map(move |m| m.iter(id.0, id.0).chain(m.transpose().iter(id.0, id.0)))
+            .flat_map(move |m| m.iter(id.0, id.0, false).chain(m.iter(id.0, id.0, true)))
             .map(|(src, dest, id)| {
                 let src_node = NodeId(src);
                 let dest_node = NodeId(dest);
@@ -540,9 +600,11 @@ impl Graph {
     }
 
     pub fn reserve_relationship(&mut self) -> RelationshipId {
-        let mut iter = self.deleted_relationships.iter();
-        iter.advance_to(self.reserved_relationship_count);
-        if let Some(id) = iter.next() {
+        if self.reserved_relationship_count < self.deleted_relationships.len() {
+            let id = self
+                .deleted_relationships
+                .select(self.reserved_relationship_count)
+                .unwrap();
             self.reserved_relationship_count += 1;
             return RelationshipId(id);
         }
@@ -615,17 +677,30 @@ impl Graph {
         }
     }
 
-    pub fn delete_relationship(
+    pub fn delete_relationships(
         &mut self,
-        id: RelationshipId,
-        src: NodeId,
-        dest: NodeId,
+        rels: HashSet<(RelationshipId, NodeId, NodeId)>,
     ) {
-        self.deleted_relationships.insert(id.0);
-        self.relationship_count -= 1;
-        self.relationship_matrices
-            .values_mut()
-            .for_each(|m| m.remove(src.0, dest.0, id.0));
+        self.deleted_relationships
+            .extend(rels.iter().map(|(id, _, _)| id.0));
+        self.relationship_count -= rels.len() as u64;
+        let mut r = vec![];
+        for (type_id, rels) in &rels
+            .into_iter()
+            .chunk_by(|(id, _, _)| self.get_relationship_type_id(*id))
+        {
+            r.push((
+                type_id,
+                rels.map(|(id, src, dest)| (id.0, src.0, dest.0))
+                    .collect::<Vec<_>>(),
+            ));
+        }
+
+        for (type_id, rels) in r {
+            let label = self.relationship_types.get(type_id.0).cloned().unwrap();
+            let t = self.get_relationship_matrix_mut(&label);
+            t.remove_all(rels);
+        }
     }
 
     pub fn get_src_dest_relationships(
@@ -640,10 +715,10 @@ impl Graph {
         } else {
             types
         } {
-            if let Some(relationship_matrix) = self.get_relationship_matrix(relationship_type)
-                && let Some(id) = relationship_matrix.get(src.0, dest.0)
-            {
-                vec.push(RelationshipId(id));
+            if let Some(relationship_matrix) = self.get_relationship_matrix(relationship_type) {
+                for id in relationship_matrix.get(src.0, dest.0) {
+                    vec.push(RelationshipId(id));
+                }
             }
         }
         vec
@@ -730,6 +805,7 @@ impl Graph {
             while self.node_count > self.node_cap {
                 self.node_cap *= 2;
             }
+            self.node_indexer.resize(self.node_cap);
             self.adjacancy_matrix.resize(self.node_cap, self.node_cap);
             self.node_labels_matrix
                 .resize(self.node_cap, self.labels_matices.len() as u64);
@@ -773,5 +849,81 @@ impl Graph {
         id: RelationshipId,
     ) -> &OrderMap<AttrId, Value> {
         self.relationship_attrs.get(&id).unwrap_or(&self.empty_map)
+    }
+
+    pub fn create_node_index(
+        &mut self,
+        label: &Rc<String>,
+        attrs: &Vec<Rc<String>>,
+    ) {
+        self.get_label_matrix_mut(label);
+        let label_id = self.get_label_id(label).unwrap();
+        for attr in attrs {
+            let prop_id = self.get_or_add_node_attribute_id(attr);
+            self.node_indexer
+                .create_index(label_id.0 as u64, prop_id.0 as u64);
+        }
+        let lm = self.get_label_matrix(label).unwrap();
+        for (n, _) in lm.iter(0, u64::MAX) {
+            let mut doc = Document::new(n);
+            for attr in attrs {
+                let attr_id = self.get_node_attribute_id(attr).unwrap();
+                if let Some(value) = self.get_node_attribute(NodeId(n), attr_id) {
+                    doc.set(attr_id.0 as u64, value);
+                }
+            }
+            self.node_indexer.add(label_id.0 as u64, doc);
+        }
+    }
+
+    pub fn drop_node_index(
+        &mut self,
+        label: &Rc<String>,
+        attrs: &Vec<Rc<String>>,
+    ) {
+        if let Some(label_id) = self.get_label_id(label) {
+            for attr in attrs {
+                let prop_id = self.get_or_add_node_attribute_id(attr);
+                self.node_indexer
+                    .drop_index(label_id.0 as u64, prop_id.0 as u64);
+            }
+        }
+    }
+
+    pub fn is_indexed(
+        &self,
+        label: &Rc<String>,
+        key: &Rc<String>,
+    ) -> bool {
+        if let Some(label_id) = self.get_label_id(label)
+            && let Some(prop_id) = self.get_node_attribute_id(key)
+        {
+            return self
+                .node_indexer
+                .is_indexed(label_id.0 as u64, prop_id.0 as u64);
+        }
+        false
+    }
+
+    pub fn get_indexed_nodes(
+        &self,
+        label: &Rc<String>,
+        key: &Rc<String>,
+        value: Value,
+    ) -> Vec<NodeId> {
+        if let Some(label_id) = self.get_label_id(label)
+            && let Some(prop_id) = self.get_node_attribute_id(key)
+        {
+            self.node_indexer
+                .query(
+                    label_id.0 as u64,
+                    IndexQuery::Equal(prop_id.0 as u64, value),
+                )
+                .into_iter()
+                .map(NodeId)
+                .collect()
+        } else {
+            Vec::new()
+        }
     }
 }

@@ -1,10 +1,20 @@
 #![allow(clippy::cast_possible_wrap)]
 
-use graph::ast::Variable;
-use graph::functions::init_functions;
-use graph::graph::Plan;
-use graph::runtime::{GetVariables, QueryStatistics, ResultSummary, Runtime, evaluate_param};
-use graph::{cypher::Parser, graph::Graph, matrix::init, planner::Planner, value::Value};
+use graph::{
+    ast::Variable,
+    cypher::Parser,
+    graph::{
+        graph::{Graph, Plan},
+        matrix::init,
+    },
+    planner::Planner,
+    runtime::{
+        functions::init_functions,
+        runtime::{GetVariables, QueryStatistics, ResultSummary, Runtime, evaluate_param},
+        value::Value,
+    },
+};
+use lazy_static::lazy_static;
 #[cfg(feature = "zipkin")]
 use opentelemetry::global;
 #[cfg(feature = "zipkin")]
@@ -17,19 +27,21 @@ use opentelemetry_sdk::{Resource, trace::SdkTracerProvider};
 use opentelemetry_zipkin::ZipkinExporter;
 use orx_tree::{Bfs, NodeRef};
 use redis_module::{
-    Context, NextArg, REDISMODULE_TYPE_METHOD_VERSION, RedisError, RedisModule_Alloc,
-    RedisModule_Calloc, RedisModule_Free, RedisModule_Realloc, RedisModuleTypeMethods, RedisResult,
-    RedisString, RedisValue, Status, native_types::RedisType, redis_module,
+    ConfigurationValue, Context, NextArg, REDISMODULE_TYPE_METHOD_VERSION, RedisError,
+    RedisGILGuard, RedisModule_Alloc, RedisModule_Calloc, RedisModule_Free, RedisModule_Realloc,
+    RedisModuleIO, RedisModuleTypeMethods, RedisResult, RedisString, RedisValue, Status,
+    configuration::{ConfigurationContext, ConfigurationFlags},
+    native_types::RedisType,
+    raw, redis_module,
 };
-use redis_module::{RedisModuleIO, raw};
-use std::cell::RefCell;
-use std::collections::HashMap;
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    os::raw::{c_char, c_void},
+    ptr::null_mut,
+};
 #[cfg(feature = "fuzz")]
-use std::fs::File;
-#[cfg(feature = "fuzz")]
-use std::io::Write;
-use std::os::raw::{c_char, c_void};
-use std::ptr::null_mut;
+use std::{fs::File, io::Write};
 #[cfg(feature = "zipkin")]
 use tracing_opentelemetry::OpenTelemetryLayer;
 #[cfg(feature = "zipkin")]
@@ -392,7 +404,8 @@ fn query_mut(
             .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
             .collect::<Result<HashMap<_, _>, String>>()
             .map_err(RedisError::String)?;
-        let mut runtime = Runtime::new(graph, parameters, write, plan, false);
+        let scope = CONFIGURATION_IMPORT_FOLDER.lock(ctx);
+        let mut runtime = Runtime::new(graph, parameters, write, plan, false, (*scope).clone());
         let result = runtime.query().map_err(RedisError::String)?;
         if compact {
             reply_compact(ctx, graph, &runtime.return_names, result);
@@ -407,7 +420,7 @@ fn reply_stats(
     ctx: &Context,
     stats: &QueryStatistics,
 ) {
-    let mut stats_len = 0;
+    let mut stats_len = 1;
     if stats.labels_added > 0 {
         stats_len += 1;
     }
@@ -459,6 +472,11 @@ fn reply_stats(
         let str = format!("Relationships deleted: {}", stats.relationships_deleted);
         raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
     }
+    let str = format!(
+        "Query internal execution time: {} milliseconds",
+        stats.execution_time
+    );
+    raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
 }
 
 #[cfg(feature = "fuzz")]
@@ -513,7 +531,15 @@ fn record_mut(
         .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
         .collect::<Result<HashMap<_, _>, String>>()
         .map_err(RedisError::String)?;
-    let mut runtime = Runtime::new(graph, parameters, true, plan.clone(), true);
+    let scope = CONFIGURATION_IMPORT_FOLDER.lock(ctx);
+    let mut runtime = Runtime::new(
+        graph,
+        parameters,
+        true,
+        plan.clone(),
+        true,
+        (*scope).clone(),
+    );
     let _ = runtime.query().map_err(RedisError::String)?;
     raw::reply_with_array(ctx.ctx, 2);
     raw::reply_with_array(ctx.ctx, runtime.record.borrow().len() as _);
@@ -816,6 +842,18 @@ fn graph_init(
     }
 }
 
+lazy_static! {
+    static ref CONFIGURATION_IMPORT_FOLDER: RedisGILGuard<String> =
+        RedisGILGuard::new("/var/lib/FalkorDB/import/".into());
+}
+
+fn on_configuration_changed<T: ConfigurationValue<String>>(
+    _config_ctx: &ConfigurationContext,
+    _name: &str,
+    _val: &'static T,
+) {
+}
+
 //////////////////////////////////////////////////////
 
 redis_module! {
@@ -833,4 +871,13 @@ redis_module! {
         ["graph.PLAN", graph_plan, "readonly", 0, 0, 0, ""],
         ["graph.RECORD", graph_record, "write deny-oom", 1, 1, 1, ""],
     ],
+    configurations: [
+        i64: [],
+        string: [
+            ["IMPORT_FOLDER", &*CONFIGURATION_IMPORT_FOLDER, "/var/lib/FalkorDB/import/", ConfigurationFlags::DEFAULT, Some(Box::new(on_configuration_changed))],
+        ],
+        bool: [],
+        enum: [],
+        module_args_as_configuration: true,
+    ]
 }

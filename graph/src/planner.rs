@@ -27,6 +27,12 @@ pub enum IR {
     PathBuilder(Vec<Rc<QueryPath>>),
     Filter(DynTree<ExprIR>),
     CartesianProduct,
+    LoadCsv {
+        file_path: DynTree<ExprIR>,
+        headers: bool,
+        delimiter: DynTree<ExprIR>,
+        var: Variable,
+    },
     Sort(Vec<(DynTree<ExprIR>, bool)>),
     Skip(DynTree<ExprIR>),
     Limit(DynTree<ExprIR>),
@@ -38,6 +44,14 @@ pub enum IR {
     Project(Vec<(Variable, DynTree<ExprIR>)>),
     Distinct,
     Commit,
+    CreateIndex {
+        label: Rc<String>,
+        attrs: Vec<Rc<String>>,
+    },
+    DropIndex {
+        label: Rc<String>,
+        attrs: Vec<Rc<String>>,
+    },
 }
 
 #[cfg_attr(tarpaulin, skip)]
@@ -64,6 +78,7 @@ impl Display for IR {
             Self::PathBuilder(_) => write!(f, "PathBuilder"),
             Self::Filter(_) => write!(f, "Filter"),
             Self::CartesianProduct => write!(f, "CartesianProduct"),
+            Self::LoadCsv { .. } => write!(f, "LoadCsv"),
             Self::Sort(_) => write!(f, "Sort"),
             Self::Skip(_) => write!(f, "Skip"),
             Self::Limit(_) => write!(f, "Limit"),
@@ -71,6 +86,12 @@ impl Display for IR {
             Self::Project(_) => write!(f, "Project"),
             Self::Commit => write!(f, "Commit"),
             Self::Distinct => write!(f, "Distinct"),
+            Self::CreateIndex { label, attrs } => {
+                write!(f, "CreateIndex on :{label}({attrs:?})")
+            }
+            Self::DropIndex { label, attrs } => {
+                write!(f, "DropIndex on :{label}({attrs:?})")
+            }
         }
     }
 }
@@ -274,6 +295,19 @@ impl Planner {
             QueryIR::Delete(exprs, is_detach) => tree!(IR::Delete(exprs, is_detach)),
             QueryIR::Set(items) => tree!(IR::Set(items)),
             QueryIR::Remove(items) => tree!(IR::Remove(items)),
+            QueryIR::LoadCsv {
+                file_path,
+                headers,
+                delimiter,
+                var,
+            } => {
+                tree!(IR::LoadCsv {
+                    file_path,
+                    headers,
+                    delimiter,
+                    var,
+                })
+            }
             QueryIR::With {
                 distinct,
                 exprs,
@@ -293,6 +327,10 @@ impl Planner {
                 write,
                 ..
             } => self.plan_project(exprs, orderby, skip, limit, None, distinct, write),
+            QueryIR::CreateIndex { label, attrs } => tree!(IR::CreateIndex { label, attrs }),
+            QueryIR::DropIndex { label, attrs } => {
+                tree!(IR::DropIndex { label, attrs })
+            }
             QueryIR::Query(q, write) => self.plan_query(q, write),
         }
     }

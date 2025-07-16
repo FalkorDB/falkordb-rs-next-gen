@@ -3,28 +3,34 @@
 #![allow(clippy::cast_possible_truncation)]
 #![allow(clippy::cast_precision_loss)]
 
-use crate::ast::{QuantifierType, QueryGraph, QueryNode, QueryRelationship, Variable};
-use crate::functions::{FnType, Functions, Type, get_functions};
-use crate::graph::{NodeId, RelationshipId};
-use crate::iter::{Aggregate, CondInspectIter, LazyReplace, TryFlatMap, TryMap};
-use crate::pending::Pending;
-use crate::value::{CompareValue, DisjointOrNull, Env, ValuesDeduper};
-use crate::{ast::ExprIR, graph::Graph, planner::IR, value::Contains, value::Value};
+use crate::{
+    ast::{ExprIR, QuantifierType, QueryGraph, QueryNode, QueryRelationship, Variable},
+    graph::graph::{Graph, NodeId, RelationshipId},
+    planner::IR,
+    runtime::{
+        functions::{FnType, Functions, Type, get_functions},
+        iter::{Aggregate, CondInspectIter, LazyReplace, TryFlatMap, TryMap},
+        pending::Pending,
+        value::{CompareValue, Contains, DisjointOrNull, Env, Value, ValuesDeduper},
+    },
+};
 use once_cell::unsync::Lazy;
 use ordermap::{OrderMap, OrderSet};
 use orx_tree::{Bfs, Dyn, DynNode, DynTree, NodeIdx, NodeRef};
-use std::cell::RefCell;
-use std::cmp::Ordering;
-use std::collections::HashMap;
-use std::fmt::Debug;
-use std::hash::{DefaultHasher, Hash, Hasher};
-use std::iter::{empty, once};
-use std::rc::Rc;
-use std::time::{Duration, Instant};
+use std::{
+    cell::RefCell,
+    cmp::Ordering,
+    collections::HashMap,
+    fmt::Debug,
+    hash::{DefaultHasher, Hash, Hasher},
+    iter::{empty, once},
+    path::Path,
+    rc::Rc,
+    time::Instant,
+};
 use tracing::instrument;
 
 pub struct ResultSummary {
-    pub run_duration: Duration,
     pub stats: QueryStatistics,
     pub result: Vec<Env>,
 }
@@ -33,12 +39,13 @@ pub struct ResultSummary {
 pub struct QueryStatistics {
     pub labels_added: usize,
     pub labels_removed: usize,
-    pub nodes_created: usize,
+    pub nodes_created: u64,
     pub relationships_created: usize,
-    pub nodes_deleted: usize,
+    pub nodes_deleted: u64,
     pub relationships_deleted: usize,
     pub properties_set: usize,
     pub properties_removed: usize,
+    pub execution_time: f64,
 }
 
 pub struct Runtime<'a> {
@@ -53,6 +60,7 @@ pub struct Runtime<'a> {
     pub return_names: Vec<Variable>,
     inspect: bool,
     pub record: RefCell<Vec<(NodeIdx<Dyn<IR>>, Result<Env, String>)>>,
+    import_folder: String,
 }
 
 pub trait GetVariables {
@@ -92,7 +100,9 @@ impl GetVariables for DynNode<'_, IR> {
                 | IR::Skip(_)
                 | IR::Limit(_)
                 | IR::Distinct
-                | IR::Commit => {}
+                | IR::Commit
+                | IR::CreateIndex { .. }
+                | IR::DropIndex { .. } => {}
                 IR::NodeScan(query_node) => vars.push(query_node.alias.clone()),
                 IR::RelationshipScan(query_relationship) => {
                     vars.push(query_relationship.alias.clone());
@@ -102,6 +112,9 @@ impl GetVariables for DynNode<'_, IR> {
                     for path in query_paths {
                         vars.push(path.var.clone());
                     }
+                }
+                IR::LoadCsv { var, .. } => {
+                    vars.push(var.clone());
                 }
                 IR::Aggregate(variables, _, _) => {
                     vars.extend(variables.iter().cloned());
@@ -158,6 +171,7 @@ impl<'a> Runtime<'a> {
         write: bool,
         plan: Rc<DynTree<IR>>,
         inspect: bool,
+        import_folder: String,
     ) -> Self {
         let return_names = plan.root().get_return_names();
         Self {
@@ -172,6 +186,7 @@ impl<'a> Runtime<'a> {
             value_dedupers: RefCell::new(HashMap::new()),
             inspect,
             record: RefCell::new(vec![]),
+            import_folder,
         }
     }
 
@@ -187,8 +202,8 @@ impl<'a> Runtime<'a> {
         let run_duration = start.elapsed();
 
         self.stats.borrow_mut().labels_added = self.g.borrow().get_labels_count() - labels_count;
+        self.stats.borrow_mut().execution_time = run_duration.as_secs_f64() * 1000.0;
         Ok(ResultSummary {
-            run_duration,
             stats: self.stats.take(),
             result,
         })
@@ -1082,6 +1097,60 @@ impl<'a> Runtime<'a> {
                 }
                 unreachable!();
             }
+            IR::LoadCsv {
+                file_path,
+                headers,
+                delimiter,
+                var,
+            } => {
+                let iter = if let Some(child_idx) = child0_idx {
+                    self.run(&child_idx)?
+                } else {
+                    Box::new(once(Ok(Env::default())))
+                };
+
+                let idx = idx.clone();
+                Ok(iter
+                    .try_flat_map(move |vars| {
+                        let path = self.run_expr(file_path, file_path.root().idx(), &vars, None)?;
+                        let Value::String(delimiter) =
+                            self.run_expr(delimiter, delimiter.root().idx(), &vars, None)?
+                        else {
+                            return Err(String::from("Delimiter must be a string"));
+                        };
+                        if delimiter.len() != 1 {
+                            return Err(String::from("Delimiter must be a single character"));
+                        }
+                        let Value::String(path) = path else {
+                            return Err(String::from("File path must be a string"));
+                        };
+                        let Some(path) = path.strip_prefix("file://") else {
+                            return Err(String::from("File path must start with 'file://' prefix"));
+                        };
+                        let path = self.import_folder.clone() + path;
+                        let import_folder =
+                            Path::new(&self.import_folder).canonicalize().map_err(|e| {
+                                format!(
+                                    "Failed to canonicalize import folder path '{}': {e}",
+                                    self.import_folder
+                                )
+                            })?;
+                        let cpath = Path::new(&path).canonicalize().map_err(|e| {
+                            format!("Failed to canonicalize file path '{path}': {e}")
+                        })?;
+                        if !cpath.starts_with(&import_folder) {
+                            return Err(format!(
+                                "File path '{path}' is not within the import folder '{}'",
+                                self.import_folder
+                            ));
+                        }
+
+                        self.load_csv(&path, *headers, delimiter, var, &vars)
+                    })
+                    .cond_inspect(self.inspect, move |res| {
+                        self.record.borrow_mut().push((idx.clone(), res.clone()));
+                    }))
+            }
             IR::Sort(trees) => {
                 if let Some(child_idx) = child0_idx {
                     let mut items = self
@@ -1291,6 +1360,105 @@ impl<'a> Runtime<'a> {
                     self.record.borrow_mut().push((idx.clone(), res.clone()));
                 }))
             }
+            IR::CreateIndex { label, attrs } => {
+                if !self.write {
+                    return Err(String::from(
+                        "graph.RO_QUERY is to be executed only on read-only queries",
+                    ));
+                }
+                self.g.borrow_mut().create_node_index(label, attrs);
+                Ok(Box::new(empty()))
+            }
+            IR::DropIndex { label, attrs } => {
+                if !self.write {
+                    return Err(String::from(
+                        "graph.RO_QUERY is to be executed only on read-only queries",
+                    ));
+                }
+                self.g.borrow_mut().drop_node_index(label, attrs);
+                Ok(Box::new(empty()))
+            }
+        }
+    }
+
+    fn load_csv(
+        &'a self,
+        path: &str,
+        headers: bool,
+        delimiter: Rc<String>,
+        var: &'a Variable,
+        vars: &Env,
+    ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + 'a>, String> {
+        let mut reader = csv::ReaderBuilder::new()
+            .has_headers(headers)
+            .delimiter(delimiter.as_bytes()[0])
+            .from_path(path)
+            .map_err(|e| format!("Failed to read CSV file: {e}"))?;
+
+        let vars = vars.clone();
+        if headers {
+            let headers = reader
+                .headers()
+                .map_err(|e| format!("Failed to read CSV headers: {e}"))?
+                .iter()
+                .map(|s| Rc::new(String::from(s)))
+                .collect::<Vec<_>>();
+            Ok(Box::new(reader.into_records().map(
+                move |record| match record {
+                    Ok(record) => {
+                        let mut env = vars.clone();
+                        env.insert(
+                            var,
+                            Value::Map(Rc::new(
+                                record
+                                    .iter()
+                                    .enumerate()
+                                    .filter_map(|(i, field)| {
+                                        if field.is_empty() {
+                                            None
+                                        } else {
+                                            Some((
+                                                headers
+                                                    .get(i)
+                                                    .cloned()
+                                                    .unwrap_or_else(|| Rc::new(format!("col_{i}"))),
+                                                Value::String(Rc::new(String::from(field))),
+                                            ))
+                                        }
+                                    })
+                                    .collect::<OrderMap<_, _>>(),
+                            )),
+                        );
+                        Ok(env)
+                    }
+                    Err(e) => Err(format!("Failed to read CSV record: {e}")),
+                },
+            )))
+        } else {
+            Ok(Box::new(reader.into_records().map(
+                move |record| match record {
+                    Ok(record) => {
+                        let mut env = vars.clone();
+                        env.insert(
+                            var,
+                            Value::List(
+                                record
+                                    .iter()
+                                    .map(|field| {
+                                        if field.is_empty() {
+                                            Value::Null
+                                        } else {
+                                            Value::String(Rc::new(String::from(field)))
+                                        }
+                                    })
+                                    .collect(),
+                            ),
+                        );
+                        Ok(env)
+                    }
+                    Err(e) => Err(format!("Failed to read CSV record: {e}")),
+                },
+            )))
         }
     }
 
@@ -1410,6 +1578,12 @@ impl<'a> Runtime<'a> {
             match entity {
                 Value::Node(node) => {
                     if let Some(property) = property {
+                        if let Some(attr_id) = self.g.borrow().get_node_attribute_id(property)
+                            && let Some(v) = self.g.borrow().get_node_attribute(node, attr_id)
+                            && v == value
+                        {
+                            continue;
+                        }
                         self.pending
                             .borrow_mut()
                             .set_node_attribute(node, property.clone(), value);
@@ -1516,7 +1690,7 @@ impl<'a> Runtime<'a> {
                         }
                         true
                     })
-                    .map(move |id| {
+                    .flat_map(move |id| {
                         let mut vars = vars.clone();
                         vars.insert(
                             &relationship_pattern.alias,
@@ -1524,7 +1698,17 @@ impl<'a> Runtime<'a> {
                         );
                         vars.insert(&relationship_pattern.from.alias, Value::Node(src));
                         vars.insert(&relationship_pattern.to.alias, Value::Node(dst));
-                        Ok(vars)
+                        if relationship_pattern.bidirectional && src != dst {
+                            let mut vars2 = vars.clone();
+                            vars2.insert(
+                                &relationship_pattern.alias,
+                                Value::Relationship(id, src, dst),
+                            );
+                            vars2.insert(&relationship_pattern.from.alias, Value::Node(dst));
+                            vars2.insert(&relationship_pattern.to.alias, Value::Node(src));
+                            return vec![Ok(vars), Ok(vars2)];
+                        }
+                        vec![Ok(vars)]
                     }),
             ) as Box<dyn Iterator<Item = Result<Env, String>>>
         })))
@@ -1582,6 +1766,27 @@ impl<'a> Runtime<'a> {
             &vars,
             None,
         )?;
+        if let Value::Map(attrs) = &attrs {
+            for label in &node_pattern.labels {
+                for (key, value) in attrs.iter() {
+                    if let Value::Int(value) = value
+                        && self.g.borrow().is_indexed(label, key)
+                    {
+                        return Ok(Box::new(
+                            self.g
+                                .borrow()
+                                .get_indexed_nodes(label, key, Value::Int(*value))
+                                .into_iter()
+                                .map(move |id| {
+                                    let mut vars = vars.clone();
+                                    vars.insert(&node_pattern.alias, Value::Node(id));
+                                    Ok(vars)
+                                }),
+                        ));
+                    }
+                }
+            }
+        }
         let iter = self.g.borrow().get_nodes(&node_pattern.labels);
         Ok(Box::new(iter.filter_map(move |v| {
             let mut vars = vars.clone();
