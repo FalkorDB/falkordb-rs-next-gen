@@ -1,10 +1,11 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     rc::Rc,
     sync::Mutex,
     time::{Duration, Instant},
 };
 
+use itertools::Itertools;
 use ordermap::{OrderMap, OrderSet};
 use orx_tree::DynTree;
 use roaring::RoaringTreemap;
@@ -676,17 +677,30 @@ impl Graph {
         }
     }
 
-    pub fn delete_relationship(
+    pub fn delete_relationships(
         &mut self,
-        id: RelationshipId,
-        src: NodeId,
-        dest: NodeId,
+        rels: HashSet<(RelationshipId, NodeId, NodeId)>,
     ) {
-        self.deleted_relationships.insert(id.0);
-        self.relationship_count -= 1;
-        self.relationship_matrices
-            .values_mut()
-            .for_each(|m| m.remove(src.0, dest.0, id.0));
+        self.deleted_relationships
+            .extend(rels.iter().map(|(id, _, _)| id.0));
+        self.relationship_count -= rels.len() as u64;
+        let mut r = vec![];
+        for (type_id, rels) in &rels
+            .into_iter()
+            .chunk_by(|(id, _, _)| self.get_relationship_type_id(*id))
+        {
+            r.push((
+                type_id,
+                rels.map(|(id, src, dest)| (id.0, src.0, dest.0))
+                    .collect::<Vec<_>>(),
+            ));
+        }
+
+        for (type_id, rels) in r {
+            let label = self.relationship_types.get(type_id.0).cloned().unwrap();
+            let t = self.get_relationship_matrix_mut(&label);
+            t.remove_all(rels);
+        }
     }
 
     pub fn get_src_dest_relationships(

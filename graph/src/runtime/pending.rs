@@ -9,8 +9,7 @@ use roaring::RoaringTreemap;
 
 use crate::{
     graph::graph::{Graph, NodeId, RelationshipId},
-    runtime::runtime::QueryStatistics,
-    runtime::value::Value,
+    runtime::{runtime::QueryStatistics, value::Value},
 };
 
 pub struct PendingRelationship {
@@ -236,14 +235,13 @@ impl Pending {
         }
         if !self.deleted_relationships.is_empty() {
             stats.borrow_mut().relationships_deleted += self.deleted_relationships.len();
-            for (id, src, dest) in self.deleted_relationships.clone() {
-                g.borrow_mut().delete_relationship(id, src, dest);
-            }
+            g.borrow_mut()
+                .delete_relationships(self.deleted_relationships.clone());
             self.deleted_relationships.clear();
         }
         if !self.deleted_nodes.is_empty() {
             stats.borrow_mut().nodes_deleted += self.deleted_nodes.len();
-            for id in self.deleted_nodes.clone() {
+            for id in &self.deleted_nodes {
                 g.borrow_mut().delete_node(NodeId::from(id));
             }
             self.deleted_nodes.clear();

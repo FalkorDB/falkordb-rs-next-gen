@@ -60,21 +60,23 @@ impl Tensor {
         self.me.set(src << 32 | dest, id, true);
     }
 
-    pub fn remove(
+    pub fn remove_all(
         &mut self,
-        src: u64,
-        dest: u64,
-        id: u64,
+        rels: Vec<(u64, u64, u64)>,
     ) {
-        self.me.remove(src << 32 | dest, id);
-        if self
-            .me
-            .iter(src << 32 | dest, src << 32 | dest)
-            .next()
-            .is_none()
-        {
-            self.m.remove(src, dest);
-            self.mt.remove(dest, src);
+        for (id, src, dest) in &rels {
+            self.me.remove(src << 32 | dest, *id);
+        }
+        for (_, src, dest) in rels {
+            if self
+                .me
+                .iter(src << 32 | dest, src << 32 | dest)
+                .next()
+                .is_none()
+            {
+                self.m.remove(src, dest);
+                self.mt.remove(dest, src);
+            }
         }
     }
 
