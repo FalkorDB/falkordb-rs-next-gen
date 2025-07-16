@@ -745,6 +745,26 @@ pub fn init_functions() -> Result<(), Functions> {
             Some(Box::new(finalize_percentile_cont)),
         ),
     );
+    funcs.add(
+        "stDev",
+        stdev,
+        false,
+        vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
+        FnType::Aggregation(
+            Value::List(vec![Value::Float(0.0), Value::List(vec![])]),
+            Some(Box::new(finalize_stdev)),
+        ),
+    );
+    funcs.add(
+        "stDevP",
+        stdev,
+        false,
+        vec![Type::Union(vec![Type::Int, Type::Float, Type::Null])],
+        FnType::Aggregation(
+            Value::List(vec![Value::Float(0.0), Value::List(vec![])]),
+            Some(Box::new(finalize_stdevp)),
+        ),
+    );
 
     // Internal functions
     funcs.add(
@@ -1195,6 +1215,75 @@ fn modf(x: f64) -> (f64, f64) {
     let int_part = x.trunc();
     let frac_part = x.fract();
     (frac_part, int_part)
+}
+
+fn stdev(
+    _: &Runtime,
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    let mut iter = args.into_iter();
+    let val = iter.next().unwrap();
+    let ctx = iter.next().unwrap();
+    match (val, ctx) {
+        (Value::Null, ctx) => Ok(ctx),
+        (val, Value::List(vec)) => {
+            let val = val.get_numeric();
+            let (Value::Float(sum), Value::List(vec)) = (&vec[0], &vec[1]) else {
+                unreachable!("avg accumulator should be [sum, count, overflow]");
+            };
+
+            let mut vec = vec.clone();
+            vec.push(Value::Float(val));
+
+            Ok(Value::List(vec![Value::Float(sum + val), Value::List(vec)]))
+        }
+
+        _ => unreachable!(),
+    }
+}
+
+fn finalize_stdev(ctx: Value) -> Value {
+    let Value::List(vec) = ctx else {
+        unreachable!("finalize_stdev expects a list");
+    };
+    let (Value::Float(sum), Value::List(values)) = (&vec[0], &vec[1]) else {
+        unreachable!("stdev function should have [sum, values] format");
+    };
+    if values.is_empty() || values.len() == 1 {
+        return Value::Float(0.0);
+    }
+    let mean = sum / values.len() as f64;
+    let variance: f64 = values
+        .iter()
+        .map(|v| {
+            let diff = v.get_numeric() - mean;
+            diff * diff
+        })
+        .sum::<f64>()
+        / (values.len() - 1) as f64;
+    Value::Float(variance.sqrt())
+}
+
+fn finalize_stdevp(ctx: Value) -> Value {
+    let Value::List(vec) = ctx else {
+        unreachable!("finalize_stdev expects a list");
+    };
+    let (Value::Float(sum), Value::List(values)) = (&vec[0], &vec[1]) else {
+        unreachable!("stdev function should have [sum, values] format");
+    };
+    if values.is_empty() {
+        return Value::Float(0.0);
+    }
+    let mean = sum / values.len() as f64;
+    let variance: f64 = values
+        .iter()
+        .map(|v| {
+            let diff = v.get_numeric() - mean;
+            diff * diff
+        })
+        .sum::<f64>()
+        / (values.len() - 1) as f64;
+    Value::Float(variance.sqrt())
 }
 
 fn value_to_integer(

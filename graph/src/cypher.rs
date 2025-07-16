@@ -1019,6 +1019,12 @@ impl<'a> Parser<'a> {
             None
         };
         let filter = self.parse_where()?;
+        self.vars.clear();
+        for (var, _) in &exprs {
+            if let Some(name) = &var.name {
+                self.vars.insert(name.clone(), var.clone());
+            }
+        }
         Ok(QueryIR::With {
             distinct,
             exprs,
