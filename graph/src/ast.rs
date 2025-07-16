@@ -210,7 +210,7 @@ impl Validate for DynTree<ExprIR> {
                         | ExprIR::List
                         | ExprIR::Map) = expr.data()
                         {
-                            return Err("Type mismatch: expected bool".to_string());
+                            return Err(String::from("Type mismatch: expected bool"));
                         }
                     }
                 }

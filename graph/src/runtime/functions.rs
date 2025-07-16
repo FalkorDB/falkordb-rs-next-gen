@@ -353,6 +353,13 @@ pub fn init_functions() -> Result<(), Functions> {
         FnType::Function,
     );
     funcs.add(
+        "length",
+        length,
+        false,
+        vec![Type::Union(vec![Type::Path, Type::Null])],
+        FnType::Function,
+    );
+    funcs.add(
         "tointeger",
         value_to_integer,
         false,
@@ -936,6 +943,19 @@ fn end_node(
     let mut iter = args.into_iter();
     match iter.next() {
         Some(Value::Relationship(_, _, dest)) => Ok(Value::Node(dest)),
+
+        _ => unreachable!(),
+    }
+}
+
+fn length(
+    _runtime: &Runtime,
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    let mut iter = args.into_iter();
+    match iter.next() {
+        Some(Value::Path(path)) => Ok(Value::Int(path.len() as i64)),
+        Some(Value::Null) => Ok(Value::Null),
 
         _ => unreachable!(),
     }

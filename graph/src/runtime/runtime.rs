@@ -646,6 +646,7 @@ impl<'a> Runtime<'a> {
 
                             res.push(Self::eval_quantifier(quantifier, t, f, n));
                         }
+                        Value::Null => res.push(Value::Null),
                         value => {
                             return Err(format!(
                                 "Type mismatch: expected List but was {}",
