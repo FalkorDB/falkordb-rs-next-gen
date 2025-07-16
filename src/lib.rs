@@ -810,6 +810,33 @@ fn graph_plan(
     }
 }
 
+fn graph_explain(
+    ctx: &Context,
+    args: Vec<RedisString>,
+) -> RedisResult {
+    let mut args = args.into_iter().skip(1);
+    let key = args.next_arg()?;
+    let query = args.next_str()?;
+
+    let key = ctx.open_key(&key);
+
+    (key.get_value::<RefCell<Graph>>(&GRAPH_TYPE)?).map_or(
+        // If the key does not exist, we return an error
+        EMPTY_KEY_ERR,
+        |graph| {
+            let Plan { plan, .. } = graph.borrow().get_plan(query).map_err(RedisError::String)?;
+            raw::reply_with_array(ctx.ctx, plan.root().indices::<Bfs>().count() as _);
+            for idx in plan.root().indices::<Bfs>() {
+                let node = plan.node(&idx);
+                let depth = node.depth();
+                let str = format!("{}{}", " ".repeat(depth * 4), plan.node(&idx).data());
+                raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
+            }
+            RedisResult::Ok(RedisValue::NoReply)
+        },
+    )
+}
+
 #[cfg(feature = "zipkin")]
 fn init_zipkin() {
     global::set_text_map_propagator(opentelemetry_zipkin::Propagator::new());
@@ -879,6 +906,7 @@ redis_module! {
         ["graph.DELETE", graph_delete, "write", 1, 1, 1, ""],
         ["graph.QUERY", graph_query, "write deny-oom", 1, 1, 1, ""],
         ["graph.RO_QUERY", graph_ro_query, "readonly", 1, 1, 1, ""],
+        ["graph.EXPLAIN", graph_explain, "readonly", 1, 1, 1, ""],
         ["graph.LIST", graph_list, "readonly", 0, 0, 0, ""],
         ["graph.PARSE", graph_parse, "readonly", 0, 0, 0, ""],
         ["graph.PLAN", graph_plan, "readonly", 0, 0, 0, ""],
