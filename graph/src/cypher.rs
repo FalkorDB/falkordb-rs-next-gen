@@ -206,15 +206,27 @@ impl<'a> Lexer<'a> {
     fn new(str: &'a str) -> Self {
         Self {
             str,
-            pos: Self::read_spaces(str, 0),
+            pos: 0,
             cached_current: Self::get_token(str, Self::read_spaces(str, 0)),
         }
     }
 
     fn next(&mut self) {
-        self.pos += self.cached_current.1;
         self.pos += Self::read_spaces(self.str, self.pos);
-        self.cached_current = Self::get_token(self.str, self.pos);
+        self.pos += self.cached_current.1;
+        let pos = self.pos + Self::read_spaces(self.str, self.pos);
+        self.cached_current = Self::get_token(self.str, pos);
+    }
+
+    fn pos(
+        &self,
+        before_whitespaces: bool,
+    ) -> usize {
+        if before_whitespaces {
+            self.pos
+        } else {
+            self.pos + Self::read_spaces(self.str, self.pos)
+        }
     }
 
     fn read_spaces(
@@ -223,8 +235,57 @@ impl<'a> Lexer<'a> {
     ) -> usize {
         let mut len = 0;
         let mut chars = str[pos..].chars();
-        while let Some(' ' | '\t' | '\n') = chars.next() {
+        let mut next = chars.next();
+
+        while let Some(' ' | '\t' | '\n' | '/') = next {
+            if next == Some('/') {
+                len += 1;
+                next = chars.next();
+                if next.is_none() {
+                    break;
+                }
+                len += 1;
+                if next == Some('/') {
+                    next = chars.next();
+                    loop {
+                        if next.is_none() {
+                            break;
+                        }
+                        len += 1;
+                        if next == Some('\n') {
+                            next = chars.next();
+                            break;
+                        }
+                        next = chars.next();
+                    }
+                } else if next == Some('*') {
+                    next = chars.next();
+                    loop {
+                        if next.is_none() {
+                            break;
+                        }
+                        while next == Some('*') {
+                            len += 1;
+                            next = chars.next();
+                        }
+                        if next.is_none() {
+                            break;
+                        }
+                        len += 1;
+                        if next == Some('/') {
+                            next = chars.next();
+                            break;
+                        }
+                        next = chars.next();
+                    }
+                } else {
+                    len -= 2;
+                    break;
+                }
+                continue;
+            }
             len += 1;
+            next = chars.next();
         }
         len
     }
@@ -507,6 +568,7 @@ impl<'a> Lexer<'a> {
         pos: usize,
     ) {
         self.pos = pos;
+        let pos = pos + Self::read_spaces(self.str, pos);
         self.cached_current = Self::get_token(self.str, pos);
     }
 }
@@ -1628,7 +1690,7 @@ impl<'a> Parser<'a> {
     fn parse_named_exprs(&mut self) -> Result<Vec<(Variable, DynTree<ExprIR>)>, String> {
         let mut named_exprs = Vec::new();
         loop {
-            let pos = self.lexer.pos;
+            let pos = self.lexer.pos(false);
             let expr = self.parse_expr()?;
             if let Token::Keyword(Keyword::As, _) = self.lexer.current() {
                 self.lexer.next();
@@ -1639,7 +1701,9 @@ impl<'a> Parser<'a> {
             } else {
                 named_exprs.push((
                     self.create_var(
-                        Some(Rc::new(String::from(&self.lexer.str[pos..self.lexer.pos]))),
+                        Some(Rc::new(String::from(
+                            &self.lexer.str[pos..self.lexer.pos(true)],
+                        ))),
                         Type::Any,
                     )?,
                     expr,

@@ -949,7 +949,9 @@ impl<'a> Runtime<'a> {
                             self.record.borrow_mut().push((idx.clone(), res.clone()));
                         }));
                 }
-                unreachable!();
+                Err(String::from(
+                    "DELETE can only be called on nodes, paths and relationships",
+                ))
             }
             IR::Set(items) => {
                 if let Some(child_idx) = child0_idx {
@@ -1060,15 +1062,12 @@ impl<'a> Runtime<'a> {
                     return Ok(self
                         .run(&child_idx)?
                         .filter_map(move |vars| match vars {
-                            Ok(vars) => {
-                                if self.run_expr(tree, tree.root().idx(), &vars, None)
-                                    == Ok(Value::Bool(true))
-                                {
-                                    Some(Ok(vars))
-                                } else {
-                                    None
-                                }
-                            }
+                            Ok(vars) => match self.run_expr(tree, tree.root().idx(), &vars, None) {
+                                Ok(Value::Bool(true)) => Some(Ok(vars)),
+                                Ok(Value::Bool(false)) => None,
+                                Err(e) => Some(Err(e)),
+                                _ => Some(Err(String::from("Expected boolean predicate."))),
+                            },
                             Err(e) => Some(Err(e)),
                         })
                         .cond_inspect(self.inspect, move |res| {

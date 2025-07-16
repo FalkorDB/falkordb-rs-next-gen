@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     num::NonZeroUsize,
     rc::Rc,
     sync::Mutex,
@@ -627,7 +627,7 @@ impl Graph {
 
     pub fn create_relationships(
         &mut self,
-        relationships: &HashMap<RelationshipId, PendingRelationship>,
+        relationships: &OrderMap<RelationshipId, PendingRelationship>,
     ) {
         self.relationship_count += relationships.len() as u64;
         self.reserved_relationship_count -= relationships.len() as u64;
@@ -699,7 +699,7 @@ impl Graph {
 
     pub fn delete_relationships(
         &mut self,
-        rels: HashSet<(RelationshipId, NodeId, NodeId)>,
+        rels: OrderSet<(RelationshipId, NodeId, NodeId)>,
     ) {
         self.deleted_relationships
             .extend(rels.iter().map(|(id, _, _)| id.0));

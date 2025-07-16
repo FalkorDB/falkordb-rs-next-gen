@@ -200,6 +200,13 @@ impl Add for Value {
                 new_list.extend(l);
                 Ok(Self::List(new_list))
             }
+            (Self::Map(a), Self::Map(b)) => {
+                let mut new_map = (*a).clone();
+                for (k, v) in b.iter() {
+                    new_map.insert(k.clone(), v.clone());
+                }
+                Ok(Self::Map(Rc::new(new_map)))
+            }
             (Self::String(a), Self::String(b)) => Ok(Self::String(Rc::new(format!("{a}{b}")))),
             (Self::String(s), Self::Int(i)) => Ok(Self::String(Rc::new(format!("{s}{i}")))),
             (Self::String(s), Self::Float(f)) => Ok(Self::String(Rc::new(format!("{s}{f}")))),

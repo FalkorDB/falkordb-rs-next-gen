@@ -666,7 +666,7 @@ pub fn init_functions() -> Result<(), Functions> {
         "type",
         relationship_type,
         false,
-        vec![Type::Relationship],
+        vec![Type::Union(vec![Type::Relationship, Type::Null])],
         FnType::Function,
     );
     funcs.add(
@@ -2024,7 +2024,7 @@ fn relationship_type(
         Some(Value::Relationship(id, _from, _to)) => runtime
             .get_relationship_type(id)
             .map_or_else(|| Ok(Value::Null), |type_name| Ok(Value::String(type_name))),
-
+        Some(Value::Null) => Ok(Value::Null),
         _ => unreachable!(),
     }
 }
