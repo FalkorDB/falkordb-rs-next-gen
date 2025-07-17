@@ -1064,7 +1064,7 @@ impl<'a> Runtime<'a> {
                         .filter_map(move |vars| match vars {
                             Ok(vars) => match self.run_expr(tree, tree.root().idx(), &vars, None) {
                                 Ok(Value::Bool(true)) => Some(Ok(vars)),
-                                Ok(Value::Bool(false)) => None,
+                                Ok(Value::Bool(false) | Value::Null) => None,
                                 Err(e) => Some(Err(e)),
                                 _ => Some(Err(String::from("Expected boolean predicate."))),
                             },
