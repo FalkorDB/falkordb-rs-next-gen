@@ -559,12 +559,12 @@ fn record_mut(
         (*scope).clone(),
     );
     let _ = runtime.query();
+    let ids = plan.root().indices::<Bfs>().collect::<Vec<_>>();
     raw::reply_with_array(ctx.ctx, 2);
     raw::reply_with_array(ctx.ctx, runtime.record.borrow().len() as _);
     for (idx, res) in runtime.record.borrow().iter() {
-        let idx_str = format!("{idx:?}");
         raw::reply_with_array(ctx.ctx, 3);
-        raw::reply_with_string_buffer(ctx.ctx, idx_str[17..].as_ptr().cast::<c_char>(), 9);
+        raw::reply_with_long_long(ctx.ctx, ids.iter().position(|id| *id == *idx).unwrap() as _);
         match res {
             Err(err) => {
                 raw::reply_with_long_long(ctx.ctx, 0);
@@ -588,19 +588,15 @@ fn record_mut(
         }
     }
 
-    let len = plan.root().indices::<Bfs>().count();
-    raw::reply_with_array(ctx.ctx, len as _);
+    raw::reply_with_array(ctx.ctx, ids.len() as _);
     for idx in plan.root().indices::<Bfs>() {
         raw::reply_with_array(ctx.ctx, 4);
-        let idx_str = format!("{idx:?}");
-        raw::reply_with_string_buffer(ctx.ctx, idx_str[17..].as_ptr().cast::<c_char>(), 9);
+        raw::reply_with_long_long(ctx.ctx, ids.iter().position(|id| *id == idx).unwrap() as _);
         match plan.node(&idx).parent() {
             Some(parent_idx) => {
-                let parent_idx_str = format!("{:?}", parent_idx.idx());
-                raw::reply_with_string_buffer(
+                raw::reply_with_long_long(
                     ctx.ctx,
-                    parent_idx_str[17..].as_ptr().cast::<c_char>(),
-                    9,
+                    ids.iter().position(|id| *id == parent_idx.idx()).unwrap() as _,
                 );
             }
             None => {
