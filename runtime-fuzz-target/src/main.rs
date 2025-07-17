@@ -21,7 +21,7 @@ fn main() {
     init_functions().expect("Failed to init functions");
     fuzz!(|data: &[u8]| {
         if let Ok(query) = std::str::from_utf8(data) {
-            let g = RefCell::new(Graph::new(1024, 1024));
+            let g = RefCell::new(Graph::new(1024, 1024, 25));
             let Ok(Plan {
                 plan, parameters, ..
             }) = g.borrow().get_plan(query)

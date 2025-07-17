@@ -31,6 +31,7 @@ pub enum Value {
     Node(NodeId),
     Relationship(RelationshipId, NodeId, NodeId),
     Path(Vec<Value>),
+    VecF32(Vec<f32>),
     Rc(Rc<Value>),
 }
 
@@ -96,6 +97,12 @@ impl Hash for Value {
             Self::Path(x) => {
                 8.hash(state);
                 x.hash(state);
+            }
+            Self::VecF32(x) => {
+                9.hash(state);
+                for f in x {
+                    f.to_bits().hash(state);
+                }
             }
             Self::Rc(x) => {
                 x.hash(state);
@@ -192,6 +199,13 @@ impl Add for Value {
                 let mut new_list = vec![lhs];
                 new_list.extend(l);
                 Ok(Self::List(new_list))
+            }
+            (Self::Map(a), Self::Map(b)) => {
+                let mut new_map = (*a).clone();
+                for (k, v) in b.iter() {
+                    new_map.insert(k.clone(), v.clone());
+                }
+                Ok(Self::Map(Rc::new(new_map)))
             }
             (Self::String(a), Self::String(b)) => Ok(Self::String(Rc::new(format!("{a}{b}")))),
             (Self::String(s), Self::Int(i)) => Ok(Self::String(Rc::new(format!("{s}{i}")))),
@@ -294,27 +308,9 @@ impl Rem for Value {
                     Ok(Self::Int(a.wrapping_rem(b)))
                 }
             }
-            (Self::Float(a), Self::Float(b)) => {
-                if b == 0.0 {
-                    Err(String::from("Division by zero"))
-                } else {
-                    Ok(Self::Float(a % b))
-                }
-            }
-            (Self::Float(a), Self::Int(b)) => {
-                if b == 0 {
-                    Err(String::from("Division by zero"))
-                } else {
-                    Ok(Self::Float(a % b as f64))
-                }
-            }
-            (Self::Int(a), Self::Float(b)) => {
-                if b == 0.0 {
-                    Err(String::from("Division by zero"))
-                } else {
-                    Ok(Self::Float(a as f64 % b))
-                }
-            }
+            (Self::Float(a), Self::Float(b)) => Ok(Self::Float(a % b)),
+            (Self::Float(a), Self::Int(b)) => Ok(Self::Float(a % b as f64)),
+            (Self::Int(a), Self::Float(b)) => Ok(Self::Float(a as f64 % b)),
             (a, b) => Err(format!(
                 "Type mismatch: expected Integer, Float, or Null but was ({}, {})",
                 a.name(),
@@ -341,6 +337,7 @@ impl OrderedEnum for Value {
             Self::Node(_) => 1 << 1,
             Self::Relationship(_, _, _) => 1 << 2,
             Self::Path(_) => 1 << 4,
+            Self::VecF32(_) => 1 << 18,
             Self::Rc(inner) => inner.order(),
         }
     }
@@ -455,6 +452,7 @@ impl ValueGetType for Value {
             Self::Node(_) => Type::Node,
             Self::Relationship(_, _, _) => Type::Relationship,
             Self::Path(_) => Type::Path,
+            Self::VecF32(_) => Type::VecF32,
             Self::Rc(inner) => inner.get_type(),
         }
     }
@@ -473,6 +471,7 @@ impl Value {
             Self::Node(_) => String::from("Node"),
             Self::Relationship(_, _, _) => String::from("Relationship"),
             Self::Path(_) => String::from("Path"),
+            Self::VecF32(_) => String::from("VecF32"),
             Self::Rc(inner) => inner.name(),
         }
     }

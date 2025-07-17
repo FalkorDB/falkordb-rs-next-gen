@@ -27,12 +27,10 @@ use opentelemetry_sdk::{Resource, trace::SdkTracerProvider};
 use opentelemetry_zipkin::ZipkinExporter;
 use orx_tree::{Bfs, NodeRef};
 use redis_module::{
-    ConfigurationValue, Context, NextArg, REDISMODULE_TYPE_METHOD_VERSION, RedisError,
-    RedisGILGuard, RedisModule_Alloc, RedisModule_Calloc, RedisModule_Free, RedisModule_Realloc,
-    RedisModuleIO, RedisModuleTypeMethods, RedisResult, RedisString, RedisValue, Status,
-    configuration::{ConfigurationContext, ConfigurationFlags},
-    native_types::RedisType,
-    raw, redis_module,
+    Context, NextArg, REDISMODULE_TYPE_METHOD_VERSION, RedisError, RedisGILGuard,
+    RedisModule_Alloc, RedisModule_Calloc, RedisModule_Free, RedisModule_Realloc, RedisModuleIO,
+    RedisModuleTypeMethods, RedisResult, RedisString, RedisValue, Status,
+    configuration::ConfigurationFlags, native_types::RedisType, raw, redis_module,
 };
 use std::{
     cell::RefCell,
@@ -237,6 +235,13 @@ fn reply_compact_value(
                 }
             }
         }
+        Value::VecF32(vec) => {
+            raw::reply_with_long_long(ctx.ctx, 12);
+            raw::reply_with_array(ctx.ctx, vec.len() as _);
+            for f in vec {
+                raw::reply_with_double(ctx.ctx, f as f64);
+            }
+        }
         Value::Rc(inner) => {
             reply_compact_value(ctx, g, (*inner).clone());
         }
@@ -352,6 +357,12 @@ fn reply_verbose_value(
                 }
             }
         }
+        Value::VecF32(vec) => {
+            raw::reply_with_array(ctx.ctx, vec.len() as _);
+            for f in vec {
+                raw::reply_with_double(ctx.ctx, f as f64);
+            }
+        }
         Value::Rc(inner) => {
             reply_verbose_value(ctx, g, (*inner).clone());
         }
@@ -397,7 +408,10 @@ fn query_mut(
     // Create a child span for parsing and execution
     tracing::debug_span!("query_execution", query = %query).in_scope(|| {
         let Plan {
-            plan, parameters, ..
+            plan,
+            cached,
+            parameters,
+            ..
         } = graph.borrow().get_plan(query).map_err(RedisError::String)?;
         let parameters = parameters
             .into_iter()
@@ -406,7 +420,8 @@ fn query_mut(
             .map_err(RedisError::String)?;
         let scope = CONFIGURATION_IMPORT_FOLDER.lock(ctx);
         let mut runtime = Runtime::new(graph, parameters, write, plan, false, (*scope).clone());
-        let result = runtime.query().map_err(RedisError::String)?;
+        let mut result = runtime.query().map_err(RedisError::String)?;
+        result.stats.cached = cached;
         if compact {
             reply_compact(ctx, graph, &runtime.return_names, result);
         } else {
@@ -420,7 +435,7 @@ fn reply_stats(
     ctx: &Context,
     stats: &QueryStatistics,
 ) {
-    let mut stats_len = 1;
+    let mut stats_len = 2;
     if stats.labels_added > 0 {
         stats_len += 1;
     }
@@ -472,6 +487,8 @@ fn reply_stats(
         let str = format!("Relationships deleted: {}", stats.relationships_deleted);
         raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
     }
+    let str = format!("Cached execution: {}", i32::from(stats.cached));
+    raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
     let str = format!(
         "Query internal execution time: {} milliseconds",
         stats.execution_time
@@ -508,7 +525,8 @@ fn graph_query(
     if let Some(graph) = key.get_value::<RefCell<Graph>>(&GRAPH_TYPE)? {
         query_mut(ctx, graph, query, compact, true)?;
     } else {
-        let graph = RefCell::new(Graph::new(16384, 16384));
+        let scope = CONFIGURATION_CACHE_SIZE.lock(ctx);
+        let graph = RefCell::new(Graph::new(16384, 16384, *scope as usize));
         query_mut(ctx, &graph, query, compact, true)?;
         key.set_value(&GRAPH_TYPE, graph)?;
     }
@@ -540,13 +558,13 @@ fn record_mut(
         true,
         (*scope).clone(),
     );
-    let _ = runtime.query().map_err(RedisError::String)?;
+    let _ = runtime.query();
+    let ids = plan.root().indices::<Bfs>().collect::<Vec<_>>();
     raw::reply_with_array(ctx.ctx, 2);
     raw::reply_with_array(ctx.ctx, runtime.record.borrow().len() as _);
     for (idx, res) in runtime.record.borrow().iter() {
-        let idx_str = format!("{idx:?}");
         raw::reply_with_array(ctx.ctx, 3);
-        raw::reply_with_string_buffer(ctx.ctx, idx_str[17..].as_ptr().cast::<c_char>(), 9);
+        raw::reply_with_long_long(ctx.ctx, ids.iter().position(|id| *id == *idx).unwrap() as _);
         match res {
             Err(err) => {
                 raw::reply_with_long_long(ctx.ctx, 0);
@@ -570,19 +588,15 @@ fn record_mut(
         }
     }
 
-    let len = plan.root().indices::<Bfs>().count();
-    raw::reply_with_array(ctx.ctx, len as _);
+    raw::reply_with_array(ctx.ctx, ids.len() as _);
     for idx in plan.root().indices::<Bfs>() {
         raw::reply_with_array(ctx.ctx, 4);
-        let idx_str = format!("{idx:?}");
-        raw::reply_with_string_buffer(ctx.ctx, idx_str[17..].as_ptr().cast::<c_char>(), 9);
+        raw::reply_with_long_long(ctx.ctx, ids.iter().position(|id| *id == idx).unwrap() as _);
         match plan.node(&idx).parent() {
             Some(parent_idx) => {
-                let parent_idx_str = format!("{:?}", parent_idx.idx());
-                raw::reply_with_string_buffer(
+                raw::reply_with_long_long(
                     ctx.ctx,
-                    parent_idx_str[17..].as_ptr().cast::<c_char>(),
-                    9,
+                    ids.iter().position(|id| *id == parent_idx.idx()).unwrap() as _,
                 );
             }
             None => {
@@ -617,7 +631,8 @@ fn graph_record(
     if let Some(graph) = key.get_value::<RefCell<Graph>>(&GRAPH_TYPE)? {
         record_mut(ctx, graph, query)?;
     } else {
-        let graph = RefCell::new(Graph::new(16384, 16384));
+        let scope = CONFIGURATION_CACHE_SIZE.lock(ctx);
+        let graph = RefCell::new(Graph::new(16384, 16384, *scope as usize));
         record_mut(ctx, &graph, query)?;
         key.set_value(&GRAPH_TYPE, graph)?;
     }
@@ -791,6 +806,33 @@ fn graph_plan(
     }
 }
 
+fn graph_explain(
+    ctx: &Context,
+    args: Vec<RedisString>,
+) -> RedisResult {
+    let mut args = args.into_iter().skip(1);
+    let key = args.next_arg()?;
+    let query = args.next_str()?;
+
+    let key = ctx.open_key(&key);
+
+    (key.get_value::<RefCell<Graph>>(&GRAPH_TYPE)?).map_or(
+        // If the key does not exist, we return an error
+        EMPTY_KEY_ERR,
+        |graph| {
+            let Plan { plan, .. } = graph.borrow().get_plan(query).map_err(RedisError::String)?;
+            raw::reply_with_array(ctx.ctx, plan.root().indices::<Bfs>().count() as _);
+            for idx in plan.root().indices::<Bfs>() {
+                let node = plan.node(&idx);
+                let depth = node.depth();
+                let str = format!("{}{}", " ".repeat(depth * 4), plan.node(&idx).data());
+                raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
+            }
+            RedisResult::Ok(RedisValue::NoReply)
+        },
+    )
+}
+
 #[cfg(feature = "zipkin")]
 fn init_zipkin() {
     global::set_text_map_propagator(opentelemetry_zipkin::Propagator::new());
@@ -845,13 +887,7 @@ fn graph_init(
 lazy_static! {
     static ref CONFIGURATION_IMPORT_FOLDER: RedisGILGuard<String> =
         RedisGILGuard::new("/var/lib/FalkorDB/import/".into());
-}
-
-fn on_configuration_changed<T: ConfigurationValue<String>>(
-    _config_ctx: &ConfigurationContext,
-    _name: &str,
-    _val: &'static T,
-) {
+    static ref CONFIGURATION_CACHE_SIZE: RedisGILGuard<i64> = RedisGILGuard::new(25.into());
 }
 
 //////////////////////////////////////////////////////
@@ -866,15 +902,18 @@ redis_module! {
         ["graph.DELETE", graph_delete, "write", 1, 1, 1, ""],
         ["graph.QUERY", graph_query, "write deny-oom", 1, 1, 1, ""],
         ["graph.RO_QUERY", graph_ro_query, "readonly", 1, 1, 1, ""],
+        ["graph.EXPLAIN", graph_explain, "readonly", 1, 1, 1, ""],
         ["graph.LIST", graph_list, "readonly", 0, 0, 0, ""],
         ["graph.PARSE", graph_parse, "readonly", 0, 0, 0, ""],
         ["graph.PLAN", graph_plan, "readonly", 0, 0, 0, ""],
         ["graph.RECORD", graph_record, "write deny-oom", 1, 1, 1, ""],
     ],
     configurations: [
-        i64: [],
+        i64: [
+            ["CACHE_SIZE", &*CONFIGURATION_CACHE_SIZE, 25, 0, 1000, ConfigurationFlags::DEFAULT, None],
+        ],
         string: [
-            ["IMPORT_FOLDER", &*CONFIGURATION_IMPORT_FOLDER, "/var/lib/FalkorDB/import/", ConfigurationFlags::DEFAULT, Some(Box::new(on_configuration_changed))],
+            ["IMPORT_FOLDER", &*CONFIGURATION_IMPORT_FOLDER, "/var/lib/FalkorDB/import/", ConfigurationFlags::DEFAULT, None],
         ],
         bool: [],
         enum: [],

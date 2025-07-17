@@ -1,8 +1,4 @@
-use std::{
-    cell::RefCell,
-    collections::{HashMap, HashSet},
-    rc::Rc,
-};
+use std::{cell::RefCell, rc::Rc};
 
 use ordermap::{OrderMap, OrderSet};
 use roaring::RoaringTreemap;
@@ -36,13 +32,13 @@ impl PendingRelationship {
 #[derive(Default)]
 pub struct Pending {
     created_nodes: RoaringTreemap,
-    created_relationships: HashMap<RelationshipId, PendingRelationship>,
+    created_relationships: OrderMap<RelationshipId, PendingRelationship>,
     deleted_nodes: RoaringTreemap,
-    deleted_relationships: HashSet<(RelationshipId, NodeId, NodeId)>,
-    set_nodes_attrs: HashMap<NodeId, OrderMap<Rc<String>, Value>>,
-    set_relationships_attrs: HashMap<RelationshipId, OrderMap<Rc<String>, Value>>,
-    set_node_labels: HashMap<NodeId, OrderSet<Rc<String>>>,
-    remove_node_labels: HashMap<NodeId, OrderSet<Rc<String>>>,
+    deleted_relationships: OrderSet<(RelationshipId, NodeId, NodeId)>,
+    set_nodes_attrs: OrderMap<NodeId, OrderMap<Rc<String>, Value>>,
+    set_relationships_attrs: OrderMap<RelationshipId, OrderMap<Rc<String>, Value>>,
+    set_node_labels: OrderMap<NodeId, OrderSet<Rc<String>>>,
+    remove_node_labels: OrderMap<NodeId, OrderSet<Rc<String>>>,
 }
 
 impl Pending {
@@ -215,6 +211,16 @@ impl Pending {
         self.created_relationships
             .get(&id)
             .map(|r| r.type_name.clone())
+    }
+
+    #[must_use]
+    pub fn is_relationship_deleted(
+        &self,
+        id: RelationshipId,
+        from: NodeId,
+        to: NodeId,
+    ) -> bool {
+        self.deleted_relationships.contains(&(id, from, to))
     }
 
     pub fn commit(

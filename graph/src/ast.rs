@@ -210,7 +210,7 @@ impl Validate for DynTree<ExprIR> {
                         | ExprIR::List
                         | ExprIR::Map) = expr.data()
                         {
-                            return Err("Type mismatch: expected bool".to_string());
+                            return Err(String::from("Type mismatch: expected bool"));
                         }
                     }
                 }
@@ -773,7 +773,6 @@ impl QueryIR {
                             path.var.as_str()
                         ));
                     }
-                    env.insert(path.var.id);
                 }
                 for node in p.nodes.values() {
                     if env.contains(&node.alias.id) && p.relationships.is_empty() {
@@ -783,9 +782,6 @@ impl QueryIR {
                         ));
                     }
                     node.attrs.validate(false, env)?;
-                }
-                for node in p.nodes.values() {
-                    env.insert(node.alias.id);
                 }
                 for relationship in p.relationships.values() {
                     if env.contains(&relationship.alias.id) {
@@ -800,6 +796,14 @@ impl QueryIR {
                         ));
                     }
                     relationship.attrs.validate(false, env)?;
+                }
+                for path in p.paths.values() {
+                    env.insert(path.var.id);
+                }
+                for node in p.nodes.values() {
+                    env.insert(node.alias.id);
+                }
+                for relationship in p.relationships.values() {
                     env.insert(relationship.alias.id);
                 }
                 iter.next()
@@ -871,7 +875,7 @@ impl QueryIR {
                 .map_or(Ok(()), |first| first.inner_validate(iter, env)),
             Self::Query(q, _) => {
                 let mut iter = q.iter();
-                let first = iter.next().ok_or("Empty query")?;
+                let first = iter.next().ok_or("Error: empty query.y")?;
                 first.inner_validate(iter, env)
             }
         }

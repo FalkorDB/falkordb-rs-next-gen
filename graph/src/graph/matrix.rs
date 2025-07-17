@@ -629,10 +629,17 @@ impl<T> Iter<T> {
     ) -> Self {
         unsafe {
             let mut iter = MaybeUninit::uninit();
-            GxB_Iterator_new(iter.as_mut_ptr());
+            let info = GxB_Iterator_new(iter.as_mut_ptr());
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             let iter = iter.assume_init();
-            GxB_Matrix_Iterator_attach(iter, *m.m, null_mut());
+            let info = GxB_Matrix_Iterator_attach(iter, *m.m, null_mut());
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             let info = GxB_rowIterator_seekRow(iter, min_row);
+            debug_assert!(
+                info == GrB_Info::GrB_SUCCESS
+                    || info == GrB_Info::GrB_NO_VALUE
+                    || info == GrB_Info::GxB_EXHAUSTED
+            );
             Self {
                 m: m.m.clone(),
                 inner: iter,

@@ -20,7 +20,7 @@ fuzz_target!(init: {
         }
         init_functions().expect("Failed to init functions");
     },|data: &[u8]| -> Corpus {
-        let g = RefCell::new(Graph::new(1024, 1024));
+        let g = RefCell::new(Graph::new(1024, 1024, 25));
     std::str::from_utf8(data).map_or(Corpus::Reject, |query| {
         let Ok(Plan {
             plan, parameters, ..

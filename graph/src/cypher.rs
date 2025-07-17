@@ -206,15 +206,27 @@ impl<'a> Lexer<'a> {
     fn new(str: &'a str) -> Self {
         Self {
             str,
-            pos: Self::read_spaces(str, 0),
+            pos: 0,
             cached_current: Self::get_token(str, Self::read_spaces(str, 0)),
         }
     }
 
     fn next(&mut self) {
-        self.pos += self.cached_current.1;
         self.pos += Self::read_spaces(self.str, self.pos);
-        self.cached_current = Self::get_token(self.str, self.pos);
+        self.pos += self.cached_current.1;
+        let pos = self.pos + Self::read_spaces(self.str, self.pos);
+        self.cached_current = Self::get_token(self.str, pos);
+    }
+
+    fn pos(
+        &self,
+        before_whitespaces: bool,
+    ) -> usize {
+        if before_whitespaces {
+            self.pos
+        } else {
+            self.pos + Self::read_spaces(self.str, self.pos)
+        }
     }
 
     fn read_spaces(
@@ -223,8 +235,57 @@ impl<'a> Lexer<'a> {
     ) -> usize {
         let mut len = 0;
         let mut chars = str[pos..].chars();
-        while let Some(' ' | '\t' | '\n') = chars.next() {
+        let mut next = chars.next();
+
+        while let Some(' ' | '\t' | '\n' | '/') = next {
+            if next == Some('/') {
+                len += 1;
+                next = chars.next();
+                if next.is_none() {
+                    break;
+                }
+                len += 1;
+                if next == Some('/') {
+                    next = chars.next();
+                    loop {
+                        if next.is_none() {
+                            break;
+                        }
+                        len += 1;
+                        if next == Some('\n') {
+                            next = chars.next();
+                            break;
+                        }
+                        next = chars.next();
+                    }
+                } else if next == Some('*') {
+                    next = chars.next();
+                    loop {
+                        if next.is_none() {
+                            break;
+                        }
+                        while next == Some('*') {
+                            len += 1;
+                            next = chars.next();
+                        }
+                        if next.is_none() {
+                            break;
+                        }
+                        len += 1;
+                        if next == Some('/') {
+                            next = chars.next();
+                            break;
+                        }
+                        next = chars.next();
+                    }
+                } else {
+                    len -= 2;
+                    break;
+                }
+                continue;
+            }
             len += 1;
+            next = chars.next();
         }
         len
     }
@@ -507,6 +568,7 @@ impl<'a> Lexer<'a> {
         pos: usize,
     ) {
         self.pos = pos;
+        let pos = pos + Self::read_spaces(self.str, pos);
         self.cached_current = Self::get_token(self.str, pos);
     }
 }
@@ -1019,6 +1081,12 @@ impl<'a> Parser<'a> {
             None
         };
         let filter = self.parse_where()?;
+        self.vars.clear();
+        for (var, _) in &exprs {
+            if let Some(name) = &var.name {
+                self.vars.insert(name.clone(), var.clone());
+            }
+        }
         Ok(QueryIR::With {
             distinct,
             exprs,
@@ -1154,13 +1222,19 @@ impl<'a> Parser<'a> {
                 while let Token::Dash | Token::LessThan = self.lexer.current() {
                     let (relationship, right) = self.parse_relationship_pattern(left, clause)?;
                     left = right.clone();
-                    if !query_graph.add_relationship(relationship.clone())
-                        && clause == &Keyword::Match
-                    {
-                        return Err(format!(
-                            "Cannot use the same relationship variable '{}' for multiple patterns.",
-                            relationship.alias.as_str()
-                        ));
+                    if !query_graph.add_relationship(relationship.clone()) {
+                        if clause == &Keyword::Match {
+                            return Err(format!(
+                                "Cannot use the same relationship variable '{}' for multiple patterns.",
+                                relationship.alias.as_str()
+                            ));
+                        }
+                        if clause == &Keyword::Create {
+                            return Err(format!(
+                                "Variable `{}` already declared",
+                                relationship.alias.as_str()
+                            ));
+                        }
                     }
                     if nodes_alias.insert(right.alias.clone()) {
                         query_graph.add_node(right);
@@ -1616,7 +1690,7 @@ impl<'a> Parser<'a> {
     fn parse_named_exprs(&mut self) -> Result<Vec<(Variable, DynTree<ExprIR>)>, String> {
         let mut named_exprs = Vec::new();
         loop {
-            let pos = self.lexer.pos;
+            let pos = self.lexer.pos(false);
             let expr = self.parse_expr()?;
             if let Token::Keyword(Keyword::As, _) = self.lexer.current() {
                 self.lexer.next();
@@ -1627,7 +1701,9 @@ impl<'a> Parser<'a> {
             } else {
                 named_exprs.push((
                     self.create_var(
-                        Some(Rc::new(String::from(&self.lexer.str[pos..self.lexer.pos]))),
+                        Some(Rc::new(String::from(
+                            &self.lexer.str[pos..self.lexer.pos(true)],
+                        ))),
                         Type::Any,
                     )?,
                     expr,
@@ -1925,15 +2001,15 @@ impl<'a> Parser<'a> {
                 set_items.push((expr, tree!(ExprIR::Null), false));
             } else {
                 if let ExprIR::Variable(id) = expr.root().data() {
-                    if id.ty != Type::Node {
-                        return Err(self
-                            .lexer
-                            .format_error("Cannot set labels on non-node variables"));
+                    if id.ty != Type::Node && id.ty != Type::Relationship {
+                        return Err(self.lexer.format_error(
+                            "Cannot set properties on non-node or non-relationship variables",
+                        ));
                     }
                 } else {
-                    return Err(self
-                        .lexer
-                        .format_error("Cannot set labels on non-node expressions"));
+                    return Err(self.lexer.format_error(
+                        "Cannot set properties on non-node or non-relationship expressions",
+                    ));
                 }
                 let equals = optional_match_token!(self.lexer, Equal);
                 let plus_equals = if equals {
