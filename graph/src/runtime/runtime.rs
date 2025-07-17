@@ -1637,7 +1637,7 @@ impl<'a> Runtime<'a> {
                             for key in g.get_relationship_attrs(id).keys() {
                                 self.pending.borrow_mut().set_relationship_attribute(
                                     id,
-                                    g.get_node_attribute_string(*key).unwrap(),
+                                    g.get_relationship_attribute_string(*key).unwrap(),
                                     Value::Null,
                                 );
                             }
