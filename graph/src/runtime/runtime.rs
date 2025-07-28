@@ -4,8 +4,9 @@
 #![allow(clippy::cast_precision_loss)]
 
 use crate::{
-    ast::{ExprIR, QuantifierType, QueryGraph, QueryNode, QueryRelationship, Variable},
+    ast::{ExprIR, QuantifierType, QueryExpr, QueryGraph, QueryNode, QueryRelationship, Variable},
     graph::graph::{Graph, NodeId, RelationshipId},
+    indexer::IndexQuery,
     planner::IR,
     runtime::{
         functions::{FnType, Functions, Type, get_functions},
@@ -112,7 +113,9 @@ impl GetVariables for DynNode<'_, IR> {
                 | IR::Commit
                 | IR::CreateIndex { .. }
                 | IR::DropIndex { .. } => {}
-                IR::NodeScan(query_node) => vars.push(query_node.alias.clone()),
+                IR::NodeByLabelScan(node) | IR::NodeByIndexScan { node, .. } => {
+                    vars.push(node.alias.clone());
+                }
                 IR::RelationshipScan(query_relationship) => {
                     vars.push(query_relationship.alias.clone());
                 }
@@ -923,13 +926,14 @@ impl<'a> Runtime<'a> {
                     }))
             }
             IR::Create(pattern) => {
-                let mut parent_commit = false;
-                if let Some(parent) = self.plan.node(idx).parent()
+                let parent_commit = if let Some(parent) = self.plan.node(idx).parent()
                     && matches!(parent.data(), IR::Commit)
                     && parent.parent().is_none()
                 {
-                    parent_commit = true;
-                }
+                    true
+                } else {
+                    false
+                };
 
                 let idx = idx.clone();
                 Ok(iter
@@ -1017,10 +1021,18 @@ impl<'a> Runtime<'a> {
                         self.record.borrow_mut().push((idx.clone(), res.clone()));
                     }))
             }
-            IR::NodeScan(node_pattern) => {
+            IR::NodeByLabelScan(node) => {
                 let idx = idx.clone();
                 Ok(iter
-                    .try_flat_map(move |vars| self.node_scan(node_pattern, vars))
+                    .try_flat_map(move |vars| self.node_by_label_scan(node, vars))
+                    .cond_inspect(self.inspect, move |res| {
+                        self.record.borrow_mut().push((idx.clone(), res.clone()));
+                    }))
+            }
+            IR::NodeByIndexScan { node, index, query } => {
+                let idx = idx.clone();
+                Ok(iter
+                    .try_flat_map(move |vars| self.node_by_index_scan(node, index, query, vars))
                     .cond_inspect(self.inspect, move |res| {
                         self.record.borrow_mut().push((idx.clone(), res.clone()));
                     }))
@@ -1520,7 +1532,7 @@ impl<'a> Runtime<'a> {
 
     fn remove(
         &self,
-        items: &Vec<DynTree<ExprIR>>,
+        items: &Vec<QueryExpr>,
         vars: &Env,
     ) -> Result<(), String> {
         for item in items {
@@ -1593,7 +1605,7 @@ impl<'a> Runtime<'a> {
     #[allow(clippy::too_many_lines)]
     fn set(
         &self,
-        items: &Vec<(DynTree<ExprIR>, DynTree<ExprIR>, bool)>,
+        items: &Vec<(QueryExpr, QueryExpr, bool)>,
         vars: &Env,
     ) -> Result<(), String> {
         for (entity, value, replace) in items {
@@ -1874,7 +1886,7 @@ impl<'a> Runtime<'a> {
         ))
     }
 
-    fn node_scan(
+    fn node_by_label_scan(
         &self,
         node_pattern: &'a QueryNode,
         vars: Env,
@@ -1885,27 +1897,6 @@ impl<'a> Runtime<'a> {
             &vars,
             None,
         )?;
-        if let Value::Map(attrs) = &attrs {
-            for label in &node_pattern.labels {
-                for (key, value) in attrs.iter() {
-                    if let Value::Int(value) = value
-                        && self.g.borrow().is_indexed(label, key)
-                    {
-                        return Ok(Box::new(
-                            self.g
-                                .borrow()
-                                .get_indexed_nodes(label, key, Value::Int(*value))
-                                .into_iter()
-                                .map(move |id| {
-                                    let mut vars = vars.clone();
-                                    vars.insert(&node_pattern.alias, Value::Node(id));
-                                    Ok(vars)
-                                }),
-                        ));
-                    }
-                }
-            }
-        }
         let iter = self.g.borrow().get_nodes(&node_pattern.labels);
         Ok(Box::new(iter.filter_map(move |v| {
             let mut vars = vars.clone();
@@ -1931,9 +1922,72 @@ impl<'a> Runtime<'a> {
         })))
     }
 
+    fn evaluate_index_query(
+        &self,
+        query: &IndexQuery<QueryExpr>,
+        vars: &Env,
+    ) -> Result<IndexQuery<Value>, String> {
+        match query {
+            IndexQuery::Equal(key, value) => {
+                let value = self.run_expr(value, value.root().idx(), vars, None)?;
+                Ok(IndexQuery::Equal(key.clone(), value))
+            }
+            IndexQuery::Range(key, min, max) => {
+                todo!()
+            }
+            _ => todo!(),
+        }
+    }
+
+    fn node_by_index_scan(
+        &self,
+        node_pattern: &'a QueryNode,
+        index: &Rc<String>,
+        query: &IndexQuery<QueryExpr>,
+        vars: Env,
+    ) -> Result<Box<dyn Iterator<Item = Result<Env, String>> + '_>, String> {
+        let attrs = self.run_expr(
+            &node_pattern.attrs,
+            node_pattern.attrs.root().idx(),
+            &vars,
+            None,
+        )?;
+
+        let q = self.evaluate_index_query(query, &vars)?;
+
+        Ok(Box::new(
+            self.g
+                .borrow()
+                .get_indexed_nodes(index, q)
+                .into_iter()
+                .filter_map(move |v| {
+                    let mut vars = vars.clone();
+                    if let Value::Map(attrs) = &attrs
+                        && !attrs.is_empty()
+                    {
+                        let g = self.g.borrow();
+                        let properties = g.get_node_attrs(v);
+                        for (key, avalue) in attrs.iter() {
+                            if let Some(key) = g.get_node_attribute_id(key)
+                                && let Some(pvalue) = properties.get(&key)
+                            {
+                                if *avalue == *pvalue {
+                                    continue;
+                                }
+                                return None;
+                            }
+                            return None;
+                        }
+                    }
+                    vars.insert(&node_pattern.alias, Value::Node(v));
+                    Some(Ok(vars))
+                }),
+        ))
+    }
+
     fn delete(
         &self,
-        trees: &Vec<orx_tree::Tree<Dyn<ExprIR>>>,
+        trees: &Vec<QueryExpr>,
         vars: &Env,
     ) -> Result<(), String> {
         for tree in trees {

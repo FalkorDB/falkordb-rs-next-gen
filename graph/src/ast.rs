@@ -40,7 +40,7 @@ impl Variable {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum ExprIR {
     Null,
     Bool(bool),
@@ -297,7 +297,7 @@ impl SupportAggregation for DynTree<ExprIR> {
 pub struct QueryNode {
     pub alias: Variable,
     pub labels: OrderSet<Rc<String>>,
-    pub attrs: Rc<DynTree<ExprIR>>,
+    pub attrs: QueryExpr,
 }
 
 #[cfg_attr(tarpaulin, skip)]
@@ -323,7 +323,7 @@ impl QueryNode {
     pub const fn new(
         alias: Variable,
         labels: OrderSet<Rc<String>>,
-        attrs: Rc<DynTree<ExprIR>>,
+        attrs: QueryExpr,
     ) -> Self {
         Self {
             alias,
@@ -337,7 +337,7 @@ impl QueryNode {
 pub struct QueryRelationship {
     pub alias: Variable,
     pub types: Vec<Rc<String>>,
-    pub attrs: Rc<DynTree<ExprIR>>,
+    pub attrs: QueryExpr,
     pub from: Rc<QueryNode>,
     pub to: Rc<QueryNode>,
     pub bidirectional: bool,
@@ -377,7 +377,7 @@ impl QueryRelationship {
     pub const fn new(
         alias: Variable,
         types: Vec<Rc<String>>,
-        attrs: Rc<DynTree<ExprIR>>,
+        attrs: QueryExpr,
         from: Rc<QueryNode>,
         to: Rc<QueryNode>,
         bidirectional: bool,
@@ -561,45 +561,47 @@ impl QueryGraph {
     }
 }
 
+pub type QueryExpr = Rc<DynTree<ExprIR>>;
+
 #[derive(Debug)]
 pub enum QueryIR {
-    Call(Rc<String>, Vec<DynTree<ExprIR>>),
+    Call(Rc<String>, Vec<QueryExpr>),
     Match {
         pattern: QueryGraph,
-        filter: Option<DynTree<ExprIR>>,
+        filter: Option<QueryExpr>,
         optional: bool,
     },
-    Unwind(DynTree<ExprIR>, Variable),
+    Unwind(QueryExpr, Variable),
     Merge(
         QueryGraph,
-        Vec<(DynTree<ExprIR>, DynTree<ExprIR>, bool)>,
-        Vec<(DynTree<ExprIR>, DynTree<ExprIR>, bool)>,
+        Vec<(QueryExpr, QueryExpr, bool)>,
+        Vec<(QueryExpr, QueryExpr, bool)>,
     ),
     Create(QueryGraph),
-    Delete(Vec<DynTree<ExprIR>>, bool),
-    Set(Vec<(DynTree<ExprIR>, DynTree<ExprIR>, bool)>),
-    Remove(Vec<DynTree<ExprIR>>),
+    Delete(Vec<QueryExpr>, bool),
+    Set(Vec<(QueryExpr, QueryExpr, bool)>),
+    Remove(Vec<QueryExpr>),
     LoadCsv {
-        file_path: DynTree<ExprIR>,
+        file_path: QueryExpr,
         headers: bool,
-        delimiter: DynTree<ExprIR>,
+        delimiter: QueryExpr,
         var: Variable,
     },
     With {
         distinct: bool,
-        exprs: Vec<(Variable, DynTree<ExprIR>)>,
-        orderby: Vec<(DynTree<ExprIR>, bool)>,
-        skip: Option<DynTree<ExprIR>>,
-        limit: Option<DynTree<ExprIR>>,
-        filter: Option<DynTree<ExprIR>>,
+        exprs: Vec<(Variable, QueryExpr)>,
+        orderby: Vec<(QueryExpr, bool)>,
+        skip: Option<QueryExpr>,
+        limit: Option<QueryExpr>,
+        filter: Option<QueryExpr>,
         write: bool,
     },
     Return {
         distinct: bool,
-        exprs: Vec<(Variable, DynTree<ExprIR>)>,
-        orderby: Vec<(DynTree<ExprIR>, bool)>,
-        skip: Option<DynTree<ExprIR>>,
-        limit: Option<DynTree<ExprIR>>,
+        exprs: Vec<(Variable, QueryExpr)>,
+        orderby: Vec<(QueryExpr, bool)>,
+        skip: Option<QueryExpr>,
+        limit: Option<QueryExpr>,
         write: bool,
     },
     CreateIndex {

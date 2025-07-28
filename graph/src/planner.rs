@@ -4,48 +4,54 @@ use orx_tree::{DynTree, NodeRef, Side};
 
 use crate::{
     ast::{
-        ExprIR, QueryGraph, QueryIR, QueryNode, QueryPath, QueryRelationship, SupportAggregation,
-        Variable,
+        QueryExpr, QueryGraph, QueryIR, QueryNode, QueryPath, QueryRelationship,
+        SupportAggregation, Variable,
     },
+    indexer::IndexQuery,
     tree,
 };
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum IR {
     Empty,
     Optional(Vec<Variable>),
-    Call(Rc<String>, Vec<DynTree<ExprIR>>),
-    Unwind(DynTree<ExprIR>, Variable),
+    Call(Rc<String>, Vec<QueryExpr>),
+    Unwind(QueryExpr, Variable),
     Create(QueryGraph),
     Merge(
         QueryGraph,
-        Vec<(DynTree<ExprIR>, DynTree<ExprIR>, bool)>,
-        Vec<(DynTree<ExprIR>, DynTree<ExprIR>, bool)>,
+        Vec<(QueryExpr, QueryExpr, bool)>,
+        Vec<(QueryExpr, QueryExpr, bool)>,
     ),
-    Delete(Vec<DynTree<ExprIR>>, bool),
-    Set(Vec<(DynTree<ExprIR>, DynTree<ExprIR>, bool)>),
-    Remove(Vec<DynTree<ExprIR>>),
-    NodeScan(Rc<QueryNode>),
+    Delete(Vec<QueryExpr>, bool),
+    Set(Vec<(QueryExpr, QueryExpr, bool)>),
+    Remove(Vec<QueryExpr>),
+    NodeByLabelScan(Rc<QueryNode>),
+    NodeByIndexScan {
+        node: Rc<QueryNode>,
+        index: Rc<String>,
+        query: Rc<IndexQuery<QueryExpr>>,
+    },
     RelationshipScan(Rc<QueryRelationship>),
     ExpandInto(Rc<QueryRelationship>),
     PathBuilder(Vec<Rc<QueryPath>>),
-    Filter(DynTree<ExprIR>),
+    Filter(QueryExpr),
     CartesianProduct,
     LoadCsv {
-        file_path: DynTree<ExprIR>,
+        file_path: QueryExpr,
         headers: bool,
-        delimiter: DynTree<ExprIR>,
+        delimiter: QueryExpr,
         var: Variable,
     },
-    Sort(Vec<(DynTree<ExprIR>, bool)>),
-    Skip(DynTree<ExprIR>),
-    Limit(DynTree<ExprIR>),
+    Sort(Vec<(QueryExpr, bool)>),
+    Skip(QueryExpr),
+    Limit(QueryExpr),
     Aggregate(
         Vec<Variable>,
-        Vec<(Variable, DynTree<ExprIR>)>,
-        Vec<(Variable, DynTree<ExprIR>)>,
+        Vec<(Variable, QueryExpr)>,
+        Vec<(Variable, QueryExpr)>,
     ),
-    Project(Vec<(Variable, DynTree<ExprIR>)>),
+    Project(Vec<(Variable, QueryExpr)>),
     Distinct,
     Commit,
     CreateIndex {
@@ -76,7 +82,10 @@ impl Display for IR {
             Self::Delete(_, _) => write!(f, "Delete"),
             Self::Set(_) => write!(f, "Set"),
             Self::Remove(_) => write!(f, "Remove"),
-            Self::NodeScan(node) => write!(f, "NodeScan {node}"),
+            Self::NodeByLabelScan(node) => write!(f, "Node By Label Scan {node}"),
+            Self::NodeByIndexScan { node, .. } => {
+                write!(f, "Node By Index Scan {node}")
+            }
             Self::RelationshipScan(rel) => write!(f, "RelationshipScan {rel}"),
             Self::ExpandInto(rel) => write!(f, "ExpandInto {rel}"),
             Self::PathBuilder(_) => write!(f, "PathBuilder"),
@@ -109,7 +118,7 @@ impl Planner {
     fn plan_match(
         &mut self,
         pattern: &QueryGraph,
-        filter: Option<DynTree<ExprIR>>,
+        filter: Option<QueryExpr>,
     ) -> DynTree<IR> {
         let mut vec = vec![];
         for component in pattern.connected_components() {
@@ -118,7 +127,7 @@ impl Planner {
                 let nodes = component.nodes();
                 debug_assert_eq!(nodes.len(), 1);
                 let node = nodes[0].clone();
-                let mut res = tree!(IR::NodeScan(node.clone()));
+                let mut res = tree!(IR::NodeByLabelScan(node.clone()));
                 self.visited.insert(node.alias.id);
                 let paths = component.paths();
                 if !paths.is_empty() {
@@ -132,7 +141,7 @@ impl Planner {
             let mut res = if relationship.from.alias.id == relationship.to.alias.id {
                 tree!(
                     IR::ExpandInto(relationship.clone()),
-                    tree!(IR::NodeScan(relationship.from.clone()))
+                    tree!(IR::NodeByLabelScan(relationship.from.clone()))
                 )
             } else {
                 tree!(IR::RelationshipScan(relationship.clone()))
@@ -144,7 +153,7 @@ impl Planner {
                 res = if relationship.from.alias.id == relationship.to.alias.id {
                     tree!(
                         IR::ExpandInto(relationship.clone()),
-                        tree!(IR::NodeScan(relationship.from.clone()), res)
+                        tree!(IR::NodeByLabelScan(relationship.from.clone()), res)
                     )
                 } else {
                     tree!(IR::RelationshipScan(relationship.clone()), res)
@@ -173,11 +182,11 @@ impl Planner {
     #[allow(clippy::too_many_arguments)]
     fn plan_project(
         &mut self,
-        exprs: Vec<(Variable, DynTree<ExprIR>)>,
-        orderby: Vec<(DynTree<ExprIR>, bool)>,
-        skip: Option<DynTree<ExprIR>>,
-        limit: Option<DynTree<ExprIR>>,
-        filter: Option<DynTree<ExprIR>>,
+        exprs: Vec<(Variable, QueryExpr)>,
+        orderby: Vec<(QueryExpr, bool)>,
+        skip: Option<QueryExpr>,
+        limit: Option<QueryExpr>,
+        filter: Option<QueryExpr>,
         distinct: bool,
         write: bool,
     ) -> DynTree<IR> {

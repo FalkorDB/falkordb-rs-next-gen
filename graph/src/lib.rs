@@ -2,6 +2,8 @@ pub mod ast;
 pub mod cypher;
 pub mod graph;
 pub mod indexer;
+pub mod optimizer;
 pub mod planner;
+pub mod redisearch;
 pub mod runtime;
 pub mod tree;

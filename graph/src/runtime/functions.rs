@@ -1279,7 +1279,7 @@ fn finalize_percentile_cont(ctx: Value) -> Value {
     Value::Float(lhs + rhs)
 }
 
-fn modf(x: f64) -> (f64, f64) {
+const fn modf(x: f64) -> (f64, f64) {
     let int_part = x.trunc();
     let frac_part = x.fract();
     (frac_part, int_part)

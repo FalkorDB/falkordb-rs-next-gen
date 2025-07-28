@@ -444,6 +444,7 @@ name = "graph-fuzz"
 version = "0.0.0"
 dependencies = [
  "graph",
+ "libc",
  "libfuzzer-sys",
 ]
 

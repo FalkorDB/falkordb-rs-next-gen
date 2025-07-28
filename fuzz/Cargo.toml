@@ -9,6 +9,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
+libc = "0.2.174"
 
 [dependencies.graph]
 path = "../graph"

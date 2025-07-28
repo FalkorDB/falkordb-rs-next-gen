@@ -408,5 +408,6 @@ impl Pending {
             }
             self.set_relationships_attrs.clear();
         }
+        g.borrow_mut().commit_index();
     }
 }

@@ -294,7 +294,7 @@ impl Mul for Value {
                 "Type mismatch: expected Integer, Float, or Null but was {}",
                 b.name(),
             )),
-            (a, b) => Err(format!(
+            (a, _) => Err(format!(
                 "Type mismatch: expected Integer, Float, or Null but was {}",
                 a.name(),
             )),

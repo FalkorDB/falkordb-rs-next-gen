@@ -20,6 +20,7 @@ use crate::{
         tensor::Tensor,
     },
     indexer::{Document, IndexQuery, Indexer},
+    optimizer::optimize,
     planner::{IR, Planner},
     runtime::{pending::PendingRelationship, value::Value},
 };
@@ -122,7 +123,7 @@ pub struct Graph {
     relationship_types: Vec<Rc<String>>,
     node_attrs_name: Vec<Rc<String>>,
     relationship_attrs_name: Vec<Rc<String>>,
-    cache: Mutex<LruCache<String, Rc<DynTree<IR>>>>,
+    cache: Mutex<LruCache<String, DynTree<IR>>>,
 }
 
 impl Graph {
@@ -151,7 +152,7 @@ impl Graph {
             empty_map: OrderMap::new(),
             node_attrs: HashMap::new(),
             relationship_attrs: HashMap::new(),
-            node_indexer: Indexer::new(n),
+            node_indexer: Indexer::default(),
             node_labels: Vec::new(),
             relationship_types: Vec::new(),
             node_attrs_name: Vec::new(),
@@ -226,9 +227,10 @@ impl Graph {
 
         match self.cache.lock() {
             Ok(mut cache) => {
-                if let Some(f) = cache.get(query) {
+                if let Some(plan) = cache.get(query) {
+                    let optimize_plan = optimize(plan, self);
                     Ok(Plan::new(
-                        f.clone(),
+                        Rc::new(optimize_plan),
                         true,
                         parameters,
                         parse_duration,
@@ -241,12 +243,13 @@ impl Graph {
 
                     let mut planner = Planner::default();
                     let start = Instant::now();
-                    let value = Rc::new(planner.plan(ir));
+                    let plan = planner.plan(ir);
+                    let optimize_plan = optimize(&plan, self);
                     plan_duration = start.elapsed();
 
-                    cache.push(query.to_string(), value.clone());
+                    cache.push(query.to_string(), plan);
                     Ok(Plan::new(
-                        value,
+                        Rc::new(optimize_plan),
                         false,
                         parameters,
                         parse_duration,
@@ -430,38 +433,53 @@ impl Graph {
         attr_id: AttrId,
         value: Value,
     ) -> bool {
+        let attr_name = self.get_node_attribute_string(attr_id).unwrap();
         let attrs = self.node_attrs.entry(id).or_default();
         if value == Value::Null {
-            for (_, label) in self.node_labels_matrix.iter(id.into(), id.into()) {
-                let mut doc = Document::new(u64::from(id));
-                if self.node_indexer.is_indexed(label, attr_id.0 as u64) {
-                    if let Some(v) = attrs.get(&attr_id) {
-                        doc.set(attr_id.0 as u64, v.clone());
-                    }
-                }
-                self.node_indexer.remove(label, doc);
-            }
             let removed = attrs.remove(&attr_id).is_some();
             if attrs.is_empty() {
                 self.node_attrs.remove(&id);
             }
+            if removed {
+                if let Some(attrs) = self.node_attrs.get(&id) {
+                    for (_, label) in self.node_labels_matrix.iter(id.into(), id.into()) {
+                        if self.node_indexer.is_attr_indexed(label, attr_name.clone()) {
+                            let mut doc = Document::new(u64::from(id));
+                            let fields = self.node_indexer.get_fields(label);
+                            for f in fields {
+                                let attr_id = self.get_node_attribute_id(f.as_str()).unwrap();
+                                doc.set(f.clone(), attrs.get(&attr_id).cloned().unwrap());
+                            }
+                            self.node_indexer.add(label, doc);
+                        }
+                    }
+                } else {
+                    for (_, label) in self.node_labels_matrix.iter(id.into(), id.into()) {
+                        if self.node_indexer.is_attr_indexed(label, attr_name.clone()) {
+                            self.node_indexer.remove(label, u64::from(id));
+                        }
+                    }
+                }
+            }
             removed
         } else {
-            if let Value::Int(_) = &value {
-                let mut doc = Document::new(u64::from(id));
-                doc.set(usize::from(attr_id) as u64, value.clone());
+            let res = attrs.insert(attr_id, value).is_some();
+            if let Some(attrs) = self.node_attrs.get(&id) {
                 for (_, label) in self.node_labels_matrix.iter(id.into(), id.into()) {
-                    if self.node_indexer.is_indexed(label, attr_id.0 as u64) {
-                        if let Some(v) = attrs.get(&attr_id) {
-                            let mut doc = Document::new(u64::from(id));
-                            doc.set(attr_id.0 as u64, v.clone());
-                            self.node_indexer.remove(label, doc);
+                    if self.node_indexer.is_attr_indexed(label, attr_name.clone()) {
+                        let mut doc = Document::new(u64::from(id));
+                        let fields = self.node_indexer.get_fields(label);
+                        for f in fields {
+                            let attr_id = self.get_node_attribute_id(f.as_str()).unwrap();
+                            if let Some(value) = attrs.get(&attr_id) {
+                                doc.set(f.clone(), value.clone());
+                            }
                         }
                         self.node_indexer.add(label, doc.clone());
                     }
                 }
             }
-            attrs.insert(attr_id, value).is_some()
+            res
         }
     }
 
@@ -476,16 +494,17 @@ impl Graph {
             let label_id = self.get_label_id(label).unwrap();
             self.resize();
             self.node_labels_matrix.set(id.0, label_id.0 as u64, true);
-            let mut doc = Document::new(u64::from(id));
-            for (attr_id, value) in self.node_attrs.get(&id).unwrap_or(&self.empty_map) {
-                if self
-                    .node_indexer
-                    .is_indexed(label_id.0 as u64, attr_id.0 as u64)
-                {
-                    doc.set(attr_id.0 as u64, value.clone());
+            if self.node_indexer.is_label_indexed(label_id.0 as u64)
+                && let Some(attrs) = self.node_attrs.get(&id)
+            {
+                let mut doc = Document::new(u64::from(id));
+                let fields = self.node_indexer.get_fields(label_id.0 as u64);
+                for f in fields {
+                    let attr_id = self.get_node_attribute_id(f.as_str()).unwrap();
+                    doc.set(f.clone(), attrs.get(&attr_id).cloned().unwrap());
                 }
+                self.node_indexer.add(label_id.0 as u64, doc);
             }
-            self.node_indexer.add(label_id.0 as u64, doc);
         }
     }
 
@@ -503,16 +522,9 @@ impl Graph {
             let label_id = self.get_label_id(label).unwrap();
             self.node_labels_matrix.remove(id.0, label_id.0 as u64);
             let label_id = self.get_label_id(label).unwrap();
-            let mut doc = Document::new(u64::from(id));
-            for (attr_id, value) in self.node_attrs.get(&id).unwrap_or(&self.empty_map) {
-                if self
-                    .node_indexer
-                    .is_indexed(label_id.0 as u64, attr_id.0 as u64)
-                {
-                    doc.set(attr_id.0 as u64, value.clone());
-                }
+            if self.node_indexer.is_label_indexed(label_id.0 as u64) {
+                self.node_indexer.remove(label_id.0 as u64, u64::from(id));
             }
-            self.node_indexer.remove(label_id.0 as u64, doc);
         }
     }
 
@@ -524,21 +536,25 @@ impl Graph {
         self.node_count -= 1;
         self.all_nodes_matrix.remove(id.0, id.0);
 
-        for (label_id, label_matrix) in &mut self.labels_matices {
+        for label_matrix in self.labels_matices.values_mut() {
             label_matrix.remove(id.0, id.0);
+        }
+        for label_id in self.labels_matices.keys() {
             self.node_labels_matrix.remove(id.0, *label_id as _);
-            let mut doc = Document::new(u64::from(id));
-            for (attr, value) in self.node_attrs.get_mut(&id).unwrap_or(&mut self.empty_map) {
-                if let Value::Int(int_value) = value {
-                    if self
-                        .node_indexer
-                        .is_indexed(*label_id as u64, attr.0 as u64)
-                    {
-                        doc.set(attr.0 as u64, Value::Int(*int_value));
-                    }
+            let mut indexed = false;
+            for (attr_id, _) in self.node_attrs.get(&id).unwrap_or(&self.empty_map) {
+                let attr_name = self.get_node_attribute_string(*attr_id).unwrap();
+                if self
+                    .node_indexer
+                    .is_attr_indexed(*label_id as u64, attr_name)
+                {
+                    indexed = true;
+                    break;
                 }
             }
-            self.node_indexer.remove(*label_id as u64, doc);
+            if indexed {
+                self.node_indexer.remove(*label_id as u64, u64::from(id));
+            }
         }
 
         self.node_attrs.remove(&id);
@@ -836,7 +852,6 @@ impl Graph {
             while self.node_count > self.node_cap {
                 self.node_cap *= 2;
             }
-            self.node_indexer.resize(self.node_cap);
             self.adjacancy_matrix.resize(self.node_cap, self.node_cap);
             self.node_labels_matrix
                 .resize(self.node_cap, self.labels_matices.len() as u64);
@@ -889,22 +904,36 @@ impl Graph {
     ) {
         self.get_label_matrix_mut(label);
         let label_id = self.get_label_id(label).unwrap();
-        for attr in attrs {
-            let prop_id = self.get_or_add_node_attribute_id(attr);
-            self.node_indexer
-                .create_index(label_id.0 as u64, prop_id.0 as u64);
-        }
+        self.node_indexer.create_index(label_id.0 as u64, attrs);
+        let attr_ids = attrs
+            .iter()
+            .filter_map(|attr| self.get_node_attribute_id(attr))
+            .collect::<Vec<_>>();
+        self.populate_index(label, label_id, attr_ids);
+    }
+
+    fn populate_index(
+        &mut self,
+        label: &Rc<String>,
+        label_id: LabelId,
+        attr_ids: Vec<AttrId>,
+    ) {
         let lm = self.get_label_matrix(label).unwrap();
         for (n, _) in lm.iter(0, u64::MAX) {
             let mut doc = Document::new(n);
-            for attr in attrs {
-                let attr_id = self.get_node_attribute_id(attr).unwrap();
-                if let Some(value) = self.get_node_attribute(NodeId(n), attr_id) {
-                    doc.set(attr_id.0 as u64, value);
+            for attr_id in &attr_ids {
+                if let Some(value) = self.get_node_attribute(NodeId(n), *attr_id) {
+                    let attr_name = self.node_attrs_name[attr_id.0].clone();
+                    doc.set(attr_name, value);
                 }
             }
             self.node_indexer.add(label_id.0 as u64, doc);
         }
+        self.commit_index();
+    }
+
+    pub fn commit_index(&mut self) {
+        self.node_indexer.commit();
     }
 
     pub fn drop_node_index(
@@ -912,12 +941,14 @@ impl Graph {
         label: &Rc<String>,
         attrs: &Vec<Rc<String>>,
     ) {
-        if let Some(label_id) = self.get_label_id(label) {
-            for attr in attrs {
-                let prop_id = self.get_or_add_node_attribute_id(attr);
-                self.node_indexer
-                    .drop_index(label_id.0 as u64, prop_id.0 as u64);
-            }
+        if let Some(label_id) = self.get_label_id(label)
+            && let Some(attrs) = self.node_indexer.drop_index(label_id.0 as u64, attrs)
+        {
+            let attr_ids = attrs
+                .iter()
+                .filter_map(|attr| self.get_node_attribute_id(attr))
+                .collect::<Vec<_>>();
+            self.populate_index(label, label_id, attr_ids);
         }
     }
 
@@ -927,11 +958,11 @@ impl Graph {
         key: &Rc<String>,
     ) -> bool {
         if let Some(label_id) = self.get_label_id(label)
-            && let Some(prop_id) = self.get_node_attribute_id(key)
+            && let Some(_) = self.get_node_attribute_id(key)
         {
             return self
                 .node_indexer
-                .is_indexed(label_id.0 as u64, prop_id.0 as u64);
+                .is_attr_indexed(label_id.0 as u64, key.clone());
         }
         false
     }
@@ -939,22 +970,14 @@ impl Graph {
     pub fn get_indexed_nodes(
         &self,
         label: &Rc<String>,
-        key: &Rc<String>,
-        value: Value,
+        query: IndexQuery<Value>,
     ) -> Vec<NodeId> {
-        if let Some(label_id) = self.get_label_id(label)
-            && let Some(prop_id) = self.get_node_attribute_id(key)
-        {
+        self.get_label_id(label).map_or_else(Vec::new, |label_id| {
             self.node_indexer
-                .query(
-                    label_id.0 as u64,
-                    IndexQuery::Equal(prop_id.0 as u64, value),
-                )
+                .query(label_id.0 as u64, query)
                 .into_iter()
                 .map(NodeId)
                 .collect()
-        } else {
-            Vec::new()
-        }
+        })
     }
 }
