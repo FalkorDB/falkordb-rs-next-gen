@@ -25,7 +25,8 @@ RUN cd GraphBLAS && \
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 
-RUN make -p redisearch && \
+RUN . /data/venv/bin/activate && \
+    mkdir -p redisearch && \
     cd redisearch && \
     git clone --recurse-submodules --branch vector-low-level-api --single-branch https://github.com/FalkorDB/RediSearch.git && \
     cd RediSearch && \

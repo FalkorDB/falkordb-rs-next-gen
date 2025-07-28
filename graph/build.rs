@@ -1,3 +1,5 @@
+use std::fs;
+
 fn main() {
     println!("cargo:rustc-link-search=/opt/homebrew/opt/llvm/lib");
     println!("cargo:rustc-link-search=/opt/homebrew/opt/llvm/lib/c++");
@@ -29,8 +31,19 @@ fn main() {
     );
     println!("cargo:rustc-link-lib=static=c++");
     println!("cargo:rustc-link-lib=static=c++abi");
+    let paths = fs::read_dir("../redisearch/RediSearch/bin/linux-x64-release/search-static/deps/VectorSimilarity/src/VecSim/spaces")
+    .unwrap_or_else(|_| fs::read_dir("../redisearch/RediSearch/bin/macos-arm64v8-release/search-static/deps/VectorSimilarity/src/VecSim/spaces").unwrap()
+    );
+
+    for path in paths.flatten() {
+        let path = path.path();
+        let name = &path.file_name().unwrap().to_str().unwrap();
+        let name = &name[3..&name.len() - 2];
+        let extention = path.extension().and_then(|s| s.to_str()).unwrap_or("");
+        if extention.eq_ignore_ascii_case("a") {
+            println!("cargo:rustc-link-lib=static={name}");
+        }
+    }
     println!("cargo:rustc-link-lib=static=VectorSimilarity");
-    println!("cargo:rustc-link-lib=static=VectorSimilaritySpaces");
-    println!("cargo:rustc-link-lib=static=VectorSimilaritySpaces_no_optimization");
     println!("cargo:rustc-link-lib=static=redisearch-static");
 }
