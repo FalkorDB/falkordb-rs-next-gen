@@ -25,7 +25,8 @@ use opentelemetry_zipkin::ZipkinExporter;
 use orx_tree::{Bfs, Dfs, NodeRef};
 use redis_module::{
     Context, NextArg, REDISMODULE_OK, REDISMODULE_TYPE_METHOD_VERSION, RedisError, RedisGILGuard,
-    RedisModule_Alloc, RedisModule_Calloc, RedisModule_Free, RedisModule_Realloc, RedisModuleIO,
+    RedisModule_Alloc, RedisModule_Calloc, RedisModule_Free, RedisModule_Realloc,
+    RedisModule_SubscribeToServerEvent, RedisModuleCtx, RedisModuleEvent, RedisModuleIO,
     RedisModuleTypeMethods, RedisResult, RedisString, RedisValue, Status,
     configuration::ConfigurationFlags, native_types::RedisType, raw, redis_module,
 };
@@ -931,6 +932,12 @@ fn graph_init(
             RedisModule_Realloc,
             RedisModule_Free,
         );
+        let res = RedisModule_SubscribeToServerEvent.unwrap()(
+            ctx.ctx,
+            RedisModuleEvent_FlushDB,
+            Some(on_flush),
+        );
+        debug_assert_eq!(res, REDISMODULE_OK as c_int);
     }
     match init_functions() {
         Ok(()) => Status::Ok,
@@ -938,10 +945,20 @@ fn graph_init(
     }
 }
 
+static RedisModuleEvent_FlushDB: RedisModuleEvent = RedisModuleEvent { id: 2, dataver: 1 };
+
 lazy_static! {
     static ref CONFIGURATION_IMPORT_FOLDER: RedisGILGuard<String> =
         RedisGILGuard::new("/var/lib/FalkorDB/import/".into());
     static ref CONFIGURATION_CACHE_SIZE: RedisGILGuard<i64> = RedisGILGuard::new(25.into());
+}
+
+const unsafe extern "C" fn on_flush(
+    _ctx: *mut RedisModuleCtx,
+    _eid: RedisModuleEvent,
+    _subevent: u64,
+    _data: *mut c_void,
+) {
 }
 
 //////////////////////////////////////////////////////
