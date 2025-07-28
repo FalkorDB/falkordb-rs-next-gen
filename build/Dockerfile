@@ -27,9 +27,8 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 
 RUN make -p redisearch && \
     cd redisearch && \
-    git clone --branch vector-low-level-api --single-branch https://github.com/FalkorDB/RediSearch.git && \
+    git clone --recurse-submodules --branch vector-low-level-api --single-branch https://github.com/FalkorDB/RediSearch.git && \
     cd RediSearch && \
-    git submodule update --init --recursive && \
     sed -i 's/-Werror//g' deps/VectorSimilarity/src/VecSim/CMakeLists.txt && \
     make build STATIC=1 CLANG=1 CC=clang-20 CXX=clang-20
 

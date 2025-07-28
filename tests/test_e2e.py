@@ -14,7 +14,6 @@ text_st = st.text().filter(lambda s: all(0x00 < ord(c) < 0x80 for c in s))
 at_least_1_text_st = st.text("abcdefghijklmnopqrstuvwxyz", min_size=1)
 is_extra = False
 
-
 def setup_module(module):
     global is_extra
     from conftest import pytest_config
@@ -1774,6 +1773,11 @@ def test_index():
     runtime_ms = res.run_time_ms
 
     query("CREATE INDEX FOR (n:Node) ON (n.vi, n.vs)", write=True)
+
+    global is_extra
+    if is_extra:
+        common.wait_for_indices_to_sync(common.g)
+
 
     res = query("MATCH (n:Node {vi: 5}) RETURN n", steps=2)
     assert res.result_set == [[Node(4, labels=["Node"], properties={"vi": 5, "vs": "5"})]]

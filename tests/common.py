@@ -1,6 +1,7 @@
 import os
 import platform
 import subprocess
+import time
 
 from falkordb import FalkorDB
 from redis import Redis
@@ -47,3 +48,11 @@ def shutdown_redis():
     if shutdown:
         client.connection.shutdown(nosave=True)
         redis_server.wait()
+
+def wait_for_indices_to_sync(graph):
+    q = "CALL db.indexes() YIELD status WHERE status <> 'OPERATIONAL' RETURN count(1)"
+    while True:
+        result = graph.ro_query(q)
+        if result.result_set[0][0] == 0:
+            break
+        time.sleep(0.5) # sleep 500ms

@@ -1,9 +1,8 @@
 #!/bin/bash
 make -p redisearch
 cd redisearch
-git clone --branch vector-low-level-api --single-branch https://github.com/FalkorDB/RediSearch.git
+git clone --recurse-submodules --branch vector-low-level-api --single-branch https://github.com/FalkorDB/RediSearch.git
 cd RediSearch
-git submodule update --init --recursive
 if [[ "$(uname -s)" == "Darwin" ]]; then
   sed -i '' 's/-Werror//g' deps/VectorSimilarity/src/VecSim/CMakeLists.txt
 else
