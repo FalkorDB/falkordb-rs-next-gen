@@ -335,7 +335,7 @@ impl<'a> Lexer<'a> {
                 ':' => (Token::Colon, 1),
                 '.' => match chars.next() {
                     Some('.') => (Token::DotDot, 2),
-                    Some('0'..='9') => Self::lex_numeric(str, chars, pos, 2),
+                    Some('0'..='9') => Self::lex_numeric(str, chars, pos, '.', 2),
                     _ => (Token::Dot, 1),
                 },
                 '|' => (Token::Pipe, 1),
@@ -423,7 +423,7 @@ impl<'a> Lexer<'a> {
                         |unescaped| (Token::String(Rc::new(unescaped)), len + 1),
                     )
                 }
-                '0'..='9' => Self::lex_numeric(str, chars, pos, 1),
+                d @ '0'..='9' => Self::lex_numeric(str, chars, pos, d, 1),
                 '$' => {
                     let mut len = 1;
                     while let Some('a'..='z' | 'A'..='Z' | '0'..='9' | '_') = chars.next() {
@@ -482,63 +482,81 @@ impl<'a> Lexer<'a> {
         (Token::EndOfFile, 0)
     }
 
+    #[allow(clippy::too_many_lines)]
     fn lex_numeric(
         str: &'a str,
         mut chars: Chars,
         pos: usize,
+        current: char,
         mut len: usize,
     ) -> (Token, usize) {
         let mut radix = 10;
         let mut is_float = false;
         let mut is_e = false;
-        if &str[pos..=pos] == "0" && pos + 1 < str.len() {
-            if &str[pos + 1..pos + 2] == "x" {
-                radix = 16;
-                len += 1;
-                chars.next();
-            } else if &str[pos + 1..pos + 2] == "o" {
-                radix = 8;
-                len += 1;
-                chars.next();
-            } else if &str[pos + 1..pos + 2] == "b" {
-                radix = 2;
-                len += 1;
-                chars.next();
+        if current == '0' {
+            let next_char = chars.next();
+            match next_char {
+                Some('x') => {
+                    radix = 16;
+                    len += 1;
+                }
+                Some('o' | '0'..='9') => {
+                    radix = 8;
+                    len += 1;
+                }
+                Some('b') => {
+                    radix = 2;
+                    len += 1;
+                }
+                Some('.') => match chars.next() {
+                    Some(c) if c.is_digit(radix) => {
+                        is_float = true;
+                        len += 2;
+                    }
+                    _ => {
+                        return (Token::Integer(0), len);
+                    }
+                },
+                Some(_) | None => {
+                    return (Token::Integer(0), len);
+                }
             }
-        } else if &str[pos..=pos] == "." {
+        } else if current == '.' {
             is_float = true;
         }
-        while let Some(c) = chars.next() {
-            if c.is_alphanumeric() {
-                if (c == 'e' || c == 'E') && radix == 10 {
-                    is_float = true;
-                    is_e = true;
-                    len += 1;
-                    if pos + len < str.len()
-                        && (&str[pos + len..=pos + len] == "-"
-                            || &str[pos + len..=pos + len] == "+")
-                    {
-                        chars.next();
+        if !is_float {
+            while let Some(c) = chars.next() {
+                if c.is_alphanumeric() {
+                    if (c == 'e' || c == 'E') && radix == 10 {
+                        is_float = true;
+                        is_e = true;
                         len += 1;
+                        if pos + len < str.len()
+                            && (&str[pos + len..=pos + len] == "-"
+                                || &str[pos + len..=pos + len] == "+")
+                        {
+                            chars.next();
+                            len += 1;
+                        }
+                        break;
                     }
+                    len += 1;
+                } else if c == '.' && radix == 10 {
+                    if is_float {
+                        return (
+                            Token::Error(format!("Invalid numeric value at pos: {pos} in {str}")),
+                            len,
+                        );
+                    }
+                    if pos + len + 1 < str.len() && &str[pos + len + 1..=pos + len + 1] == "." {
+                        break;
+                    }
+                    is_float = true;
+                    len += 1;
+                    break;
+                } else {
                     break;
                 }
-                len += 1;
-            } else if c == '.' && radix == 10 {
-                if is_float {
-                    return (
-                        Token::Error(format!("Invalid numeric value at pos: {pos} in {str}")),
-                        len,
-                    );
-                }
-                if pos + len + 1 < str.len() && &str[pos + len + 1..=pos + len + 1] == "." {
-                    break;
-                }
-                is_float = true;
-                len += 1;
-                break;
-            } else {
-                break;
             }
         }
         if is_float {
@@ -574,21 +592,17 @@ impl<'a> Lexer<'a> {
                 }
             }
         }
-        let str = String::from(&str[pos..pos + len]);
-        let token = Lexer::str2number_token(&str);
+        let str = str[pos..].chars().take(len).collect::<String>();
+        let token = Lexer::str2number_token(&str, radix, is_float);
         (token, len)
     }
 
-    fn is_str_float(str: &str) -> bool {
-        str.contains('.')
-            || str.to_lowercase().contains('e')
-                && !(str.starts_with("0x") || str.starts_with("0X"))
-                && !(str.starts_with("0b") || str.starts_with("0B"))
-                && !(str.starts_with("0o") || str.starts_with("0O"))
-    }
-
-    fn str2number_token(str: &str) -> Token {
-        if Lexer::is_str_float(str) {
+    fn str2number_token(
+        str: &str,
+        radix: u32,
+        is_float: bool,
+    ) -> Token {
+        if is_float {
             return match str.parse::<f64>() {
                 Ok(f) if f.is_finite() && !f.is_subnormal() => Token::Float(f),
                 Ok(_) => Token::Error(format!("Float overflow '{str}'")),
@@ -605,19 +619,15 @@ impl<'a> Lexer<'a> {
             return Token::Integer(i64::MIN);
         }
 
-        let (mut offset, mut radix) = (0, 10);
-        if str.starts_with("0x") || str.starts_with("0X") {
+        let mut offset = 0;
+        if radix == 8 {
+            if str.starts_with("0o") || str.starts_with("0O") {
+                offset = 2;
+            } else if 1 < str.len() && str.starts_with('0') {
+                offset = 1;
+            }
+        } else if radix != 10 {
             offset = 2;
-            radix = 16;
-        } else if str.starts_with("0b") || str.starts_with("0B") {
-            offset = 2;
-            radix = 2;
-        } else if str.starts_with("0o") || str.starts_with("0O") {
-            offset = 2;
-            radix = 8;
-        } else if 1 < str.len() && str.starts_with('0') {
-            offset = 1;
-            radix = 8;
         }
         let number_str = &str[offset..];
         i64::from_str_radix(number_str, radix).map_or_else(
