@@ -25,6 +25,8 @@ RUN cd GraphBLAS && \
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 
+COPY redisearch.sh ./redisearch.sh
+
 RUN ./redisearch.sh
 
 CMD "/bin/bash"
