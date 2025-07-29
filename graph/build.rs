@@ -15,17 +15,17 @@ fn main() {
     println!("cargo:rustc-link-lib=static=c++abi");
 
     #[cfg(target_os = "macos")]
-    println!(
-        "cargo:rustc-link-search=native=redisearch/RediSearch/bin/macos-arm64v8-release/search-static"
-    );
-    #[cfg(target_os = "macos")]
-    println!(
-        "cargo:rustc-link-search=native=redisearch/RediSearch/bin/macos-arm64v8-release/search-static/deps/VectorSimilarity/src/VecSim"
-    );
-    #[cfg(target_os = "macos")]
-    println!(
-        "cargo:rustc-link-search=native=redisearch/RediSearch/bin/macos-arm64v8-release/search-static/deps/VectorSimilarity/src/VecSim/spaces"
-    );
+    {
+        println!(
+            "cargo:rustc-link-search=native=redisearch/RediSearch/bin/macos-arm64v8-release/search-static"
+        );
+        println!(
+            "cargo:rustc-link-search=native=redisearch/RediSearch/bin/macos-arm64v8-release/search-static/deps/VectorSimilarity/src/VecSim"
+        );
+        println!(
+            "cargo:rustc-link-search=native=redisearch/RediSearch/bin/macos-arm64v8-release/search-static/deps/VectorSimilarity/src/VecSim/spaces"
+        );
+    }
 
     #[cfg(target_os = "linux")]
     {
@@ -50,9 +50,28 @@ fn main() {
     }
 
     #[cfg(target_os = "linux")]
-    let paths = fs::read_dir("redisearch/RediSearch/bin/linux-x64-release/search-static/deps/VectorSimilarity/src/VecSim/spaces").unwrap_or_else(|_| {
+    let paths = fs::read_dir("../redisearch/RediSearch/bin/linux-x64-release/search-static/deps/VectorSimilarity/src/VecSim/spaces").unwrap_or_else(|_| {
         fs::read_dir("/data/redisearch/RediSearch/bin/linux-x64-release/search-static/deps/VectorSimilarity/src/VecSim/spaces").unwrap()
     });
+
+    #[cfg(target_os = "linux")]
+    {
+        fs::read_dir("/data").unwrap();
+        fs::read_dir("/data/redisearch").unwrap();
+        fs::read_dir("/data/redisearch/RediSearch").unwrap();
+        fs::read_dir("/data/redisearch/RediSearch/bin").unwrap();
+        fs::read_dir("/data/redisearch/RediSearch/bin/linux-x64-release").unwrap();
+        fs::read_dir("/data/redisearch/RediSearch/bin/linux-x64-release/search-static").unwrap();
+        fs::read_dir("/data/redisearch/RediSearch/bin/linux-x64-release/search-static/deps")
+            .unwrap();
+        fs::read_dir(
+            "/data/redisearch/RediSearch/bin/linux-x64-release/search-static/deps/VectorSimilarity",
+        )
+        .unwrap();
+        fs::read_dir("/data/redisearch/RediSearch/bin/linux-x64-release/search-static/deps/VectorSimilarity/src").unwrap();
+        fs::read_dir("/data/redisearch/RediSearch/bin/linux-x64-release/search-static/deps/VectorSimilarity/src/VecSim").unwrap();
+        fs::read_dir("/data/redisearch/RediSearch/bin/linux-x64-release/search-static/deps/VectorSimilarity/src/VecSim/spaces").unwrap();
+    }
 
     #[cfg(target_os = "macos")]
     let paths = fs::read_dir("../redisearch/RediSearch/bin/macos-arm64v8-release/search-static/deps/VectorSimilarity/src/VecSim/spaces").unwrap();
