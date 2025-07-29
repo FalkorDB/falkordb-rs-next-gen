@@ -40,7 +40,7 @@ fn main() {
         "cargo:rustc-link-search=native=redisearch/RediSearch/bin/linux-x64-release/search-static/deps/VectorSimilarity/src/VecSim/spaces"
     );
 
-    let paths = fs::read_dir("..").unwrap();
+    let paths = fs::read_dir("../redisearch").unwrap();
     println!("----------------");
     for p in paths.flatten() {
         println!("{}", p.path().display());
