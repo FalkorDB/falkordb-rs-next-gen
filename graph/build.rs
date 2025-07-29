@@ -1,4 +1,4 @@
-use std::{fs, os};
+use std::fs;
 
 fn main() {
     println!("cargo:rustc-link-search=/opt/homebrew/opt/llvm/lib");
@@ -42,6 +42,14 @@ fn main() {
 
     #[cfg(target_os = "linux")]
     let paths = fs::read_dir("../redisearch/RediSearch/bin/linux-x64-release/search-static/deps/VectorSimilarity/src/VecSim/spaces").unwrap();
+
+    let paths = fs::read_dir("..").unwrap();
+    println!("----------------");
+    for p in paths.flatten() {
+        println!("{}", p.path().display());
+    }
+    println!("----------------");
+    panic!("error");
 
     #[cfg(target_os = "macos")]
     let paths = fs::read_dir("../redisearch/RediSearch/bin/macos-arm64v8-release/search-static/deps/VectorSimilarity/src/VecSim/spaces").unwrap();
