@@ -28,28 +28,31 @@ fn main() {
     );
 
     #[cfg(target_os = "linux")]
-    println!(
-        "cargo:rustc-link-search=native=redisearch/RediSearch/bin/linux-x64-release/search-static"
-    );
-    #[cfg(target_os = "linux")]
-    println!(
-        "cargo:rustc-link-search=native=redisearch/RediSearch/bin/linux-x64-release/search-static/deps/VectorSimilarity/src/VecSim"
-    );
-    #[cfg(target_os = "linux")]
-    println!(
-        "cargo:rustc-link-search=native=redisearch/RediSearch/bin/linux-x64-release/search-static/deps/VectorSimilarity/src/VecSim/spaces"
-    );
-
-    let paths = fs::read_dir("redisearch/RediSearch").unwrap();
-    println!("----------------");
-    for p in paths.flatten() {
-        println!("{}", p.path().display());
+    {
+        println!(
+            "cargo:rustc-link-search=native=redisearch/RediSearch/bin/linux-x64-release/search-static"
+        );
+        println!(
+            "cargo:rustc-link-search=native=redisearch/RediSearch/bin/linux-x64-release/search-static/deps/VectorSimilarity/src/VecSim"
+        );
+        println!(
+            "cargo:rustc-link-search=native=redisearch/RediSearch/bin/linux-x64-release/search-static/deps/VectorSimilarity/src/VecSim/spaces"
+        );
+        println!(
+            "cargo:rustc-link-search=native=/data/redisearch/RediSearch/bin/linux-x64-release/search-static"
+        );
+        println!(
+            "cargo:rustc-link-search=native=/data/redisearch/RediSearch/bin/linux-x64-release/search-static/deps/VectorSimilarity/src/VecSim"
+        );
+        println!(
+            "cargo:rustc-link-search=native=/data/redisearch/RediSearch/bin/linux-x64-release/search-static/deps/VectorSimilarity/src/VecSim/spaces"
+        );
     }
-    println!("----------------");
-    // panic!("error");
 
     #[cfg(target_os = "linux")]
-    let paths = fs::read_dir("redisearch/RediSearch/bin/linux-x64-release/search-static/deps/VectorSimilarity/src/VecSim/spaces").unwrap();
+    let paths = fs::read_dir("redisearch/RediSearch/bin/linux-x64-release/search-static/deps/VectorSimilarity/src/VecSim/spaces").unwrap_or_else(|_| {
+        fs::read_dir("/data/redisearch/RediSearch/bin/linux-x64-release/search-static/deps/VectorSimilarity/src/VecSim/spaces").unwrap()
+    });
 
     #[cfg(target_os = "macos")]
     let paths = fs::read_dir("../redisearch/RediSearch/bin/macos-arm64v8-release/search-static/deps/VectorSimilarity/src/VecSim/spaces").unwrap();

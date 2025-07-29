@@ -73,10 +73,6 @@ jobs:
           key: cargo-fuzz-bin-${{ env.CARGO_FUZZ_VERSION }}
       - run: echo "${{ runner.tool_cache }}/cargo-fuzz/bin" >> $GITHUB_PATH
       - run: cargo install --root "${{ runner.tool_cache }}/cargo-fuzz" --version ${{ env.CARGO_FUZZ_VERSION }} cargo-fuzz --locked
-      - run: |
-          pwd
-          mkdir -p redisearch/RediSearch/bin
-          cp -r /data/redisearch/bin ./redisearch/RediSearch/bin
       - name: Format
         run: cargo fmt --all --check
       - name: Lint
