@@ -50,29 +50,8 @@ fn main() {
     }
 
     #[cfg(target_os = "linux")]
-    {
-        fs::read_dir("/data").unwrap();
-        for p in fs::read_dir("/data/redisearch").unwrap().flatten() {
-            println!("{}", p.path().display());
-        }
-        fs::read_dir("/data/redisearch/RediSearch").unwrap();
-        fs::read_dir("/data/redisearch/RediSearch/bin").unwrap();
-        fs::read_dir("/data/redisearch/RediSearch/bin/linux-x64-release").unwrap();
-        fs::read_dir("/data/redisearch/RediSearch/bin/linux-x64-release/search-static").unwrap();
-        fs::read_dir("/data/redisearch/RediSearch/bin/linux-x64-release/search-static/deps")
-            .unwrap();
-        fs::read_dir(
-            "/data/redisearch/RediSearch/bin/linux-x64-release/search-static/deps/VectorSimilarity",
-        )
-        .unwrap();
-        fs::read_dir("/data/redisearch/RediSearch/bin/linux-x64-release/search-static/deps/VectorSimilarity/src").unwrap();
-        fs::read_dir("/data/redisearch/RediSearch/bin/linux-x64-release/search-static/deps/VectorSimilarity/src/VecSim").unwrap();
-        fs::read_dir("/data/redisearch/RediSearch/bin/linux-x64-release/search-static/deps/VectorSimilarity/src/VecSim/spaces").unwrap();
-    }
-
-    #[cfg(target_os = "linux")]
     let paths = fs::read_dir("../redisearch/RediSearch/bin/linux-x64-release/search-static/deps/VectorSimilarity/src/VecSim/spaces").unwrap_or_else(|_| {
-        fs::read_dir("/data/redisearch/RediSearch/bin/linux-x64-release/search-static/deps/VectorSimilarity/src/VecSim/spaces").unwrap()
+        fs::read_dir("/data/redisearch/bin/linux-x64-release/search-static/deps/VectorSimilarity/src/VecSim/spaces").unwrap()
     });
 
     #[cfg(target_os = "macos")]
