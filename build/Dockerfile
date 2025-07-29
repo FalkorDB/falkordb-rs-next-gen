@@ -31,6 +31,9 @@ RUN . /data/venv/bin/activate && \
     git clone --recurse-submodules --branch vector-low-level-api --single-branch https://github.com/FalkorDB/RediSearch.git && \
     cd RediSearch && \
     sed -i 's/-Werror//g' deps/VectorSimilarity/src/VecSim/CMakeLists.txt && \
-    make build STATIC=1 CLANG=1 CC=clang-20 CXX=clang-20
+    make build STATIC=1 CLANG=1 CC=clang-20 CXX=clang-20 && \
+    cd ..  && \
+    cp -r RediSearch/bin/* bin/. && \
+    rm -rf RediSearch
 
 CMD "/bin/bash"

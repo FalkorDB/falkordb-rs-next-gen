@@ -1,5 +1,5 @@
 #!/bin/bash
-make -p redisearch
+mkdir -p redisearch
 cd redisearch
 git clone --recurse-submodules --branch vector-low-level-api --single-branch https://github.com/FalkorDB/RediSearch.git
 cd RediSearch
