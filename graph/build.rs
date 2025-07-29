@@ -52,7 +52,9 @@ fn main() {
     #[cfg(target_os = "linux")]
     {
         fs::read_dir("/data").unwrap();
-        fs::read_dir("/data/redisearch").unwrap();
+        for p in fs::read_dir("/data/redisearch").unwrap().flatten() {
+            println!("{}", p.path().display());
+        }
         fs::read_dir("/data/redisearch/RediSearch").unwrap();
         fs::read_dir("/data/redisearch/RediSearch/bin").unwrap();
         fs::read_dir("/data/redisearch/RediSearch/bin/linux-x64-release").unwrap();
