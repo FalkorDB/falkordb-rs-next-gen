@@ -39,13 +39,13 @@ fn main() {
             "cargo:rustc-link-search=native=redisearch/RediSearch/bin/linux-x64-release/search-static/deps/VectorSimilarity/src/VecSim/spaces"
         );
         println!(
-            "cargo:rustc-link-search=native=/data/redisearch/RediSearch/bin/linux-x64-release/search-static"
+            "cargo:rustc-link-search=native=/data/redisearch/bin/linux-x64-release/search-static"
         );
         println!(
-            "cargo:rustc-link-search=native=/data/redisearch/RediSearch/bin/linux-x64-release/search-static/deps/VectorSimilarity/src/VecSim"
+            "cargo:rustc-link-search=native=/data/redisearch/bin/linux-x64-release/search-static/deps/VectorSimilarity/src/VecSim"
         );
         println!(
-            "cargo:rustc-link-search=native=/data/redisearch/RediSearch/bin/linux-x64-release/search-static/deps/VectorSimilarity/src/VecSim/spaces"
+            "cargo:rustc-link-search=native=/data/redisearch/bin/linux-x64-release/search-static/deps/VectorSimilarity/src/VecSim/spaces"
         );
     }
 
