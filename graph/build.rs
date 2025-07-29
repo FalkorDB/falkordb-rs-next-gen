@@ -40,9 +40,6 @@ fn main() {
         "cargo:rustc-link-search=native=redisearch/RediSearch/bin/linux-x64-release/search-static/deps/VectorSimilarity/src/VecSim/spaces"
     );
 
-    #[cfg(target_os = "linux")]
-    let paths = fs::read_dir("../redisearch/RediSearch/bin/linux-x64-release/search-static/deps/VectorSimilarity/src/VecSim/spaces").unwrap();
-
     let paths = fs::read_dir("..").unwrap();
     println!("----------------");
     for p in paths.flatten() {
@@ -50,6 +47,9 @@ fn main() {
     }
     println!("----------------");
     panic!("error");
+
+    #[cfg(target_os = "linux")]
+    let paths = fs::read_dir("../redisearch/RediSearch/bin/linux-x64-release/search-static/deps/VectorSimilarity/src/VecSim/spaces").unwrap();
 
     #[cfg(target_os = "macos")]
     let paths = fs::read_dir("../redisearch/RediSearch/bin/macos-arm64v8-release/search-static/deps/VectorSimilarity/src/VecSim/spaces").unwrap();
