@@ -1,6 +1,7 @@
 from decimal import Decimal
 import subprocess
 import sys
+from time import sleep
 from typing import Counter
 import common
 from falkordb import Node, Edge, Path
@@ -1819,8 +1820,11 @@ def test_index():
 
     query("DROP INDEX FOR (n:Node) ON (n.vi, n.vs)", write=True)
 
+    # wait for index drop to complete
+    sleep(5)
+
     memory_usage_after = memory_usage()
-    # assert memory_usage_after == memory_usage_before
+    assert abs(memory_usage_after - memory_usage_before) < 1024 * 1024 / 2
 
 
 @pytest.mark.extra

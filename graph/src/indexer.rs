@@ -189,10 +189,11 @@ impl Indexer {
                     return res;
                 },
                 IndexQuery::Equal(key, Value::String(value)) => unsafe {
-                    let msg: &Rc<CString> = index.fields.get(&key).unwrap();
+                    let msg = index.fields.get(&key).unwrap();
                     let query = RediSearch_CreateTagNode(index.index, msg.as_ptr());
+                    let msg = CString::new(value.as_str()).unwrap();
                     let child =
-                        RediSearch_CreateTagTokenNode(index.index, value.as_ptr().cast::<c_char>());
+                        RediSearch_CreateTagTokenNode(index.index, msg.as_ptr().cast::<c_char>());
                     RediSearch_QueryNodeAddChild(query, child);
                     let iter = RediSearch_GetResultsIterator(query, index.index);
 
