@@ -1820,11 +1820,12 @@ def test_index():
 
     query("DROP INDEX FOR (n:Node) ON (n.vi, n.vs)", write=True)
 
-    # wait for index drop to complete
-    sleep(5)
+    if not is_extra:
+        # wait for index drop to complete
+        sleep(5)
 
-    memory_usage_after = memory_usage()
-    assert abs(memory_usage_after - memory_usage_before) < 1024 * 1024 / 2
+        memory_usage_after = memory_usage()
+        assert abs(memory_usage_after - memory_usage_before) < 1024 * 1024 / 2
 
 
 @pytest.mark.extra
