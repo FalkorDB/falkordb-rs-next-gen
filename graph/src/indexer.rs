@@ -11,10 +11,9 @@ use crate::{
         GC_POLICY_FORK, REDISEARCH_ADD_REPLACE, RSFLDOPT_NONE, RSFLDTYPE_GEO, RSFLDTYPE_NUMERIC,
         RSFLDTYPE_TAG, RSIndex, RediSearch_CreateDocument2, RediSearch_CreateField,
         RediSearch_CreateIndex, RediSearch_CreateIndexOptions, RediSearch_CreateNumericNode,
-        RediSearch_CreateTagNode, RediSearch_CreateTagTokenNode, RediSearch_CreateTokenNode,
-        RediSearch_DeleteDocument, RediSearch_DocumentAddFieldNumber,
-        RediSearch_DocumentAddFieldString, RediSearch_DropIndex, RediSearch_FreeIndexOptions,
-        RediSearch_GetResultsIterator, RediSearch_IndexAddDocument,
+        RediSearch_CreateTagNode, RediSearch_CreateTagTokenNode, RediSearch_DeleteDocument,
+        RediSearch_DocumentAddFieldNumber, RediSearch_DocumentAddFieldString, RediSearch_DropIndex,
+        RediSearch_FreeIndexOptions, RediSearch_GetResultsIterator, RediSearch_IndexAddDocument,
         RediSearch_IndexOptionsSetGCPolicy, RediSearch_IndexOptionsSetStopwords,
         RediSearch_QueryNodeAddChild, RediSearch_ResultsIteratorFree,
         RediSearch_ResultsIteratorNext, RediSearch_TagFieldSetCaseSensitive,
@@ -60,6 +59,14 @@ struct Index {
     fields: HashMap<Rc<String>, Rc<CString>>,
     add_docs: Vec<Document>,
     remove_docs: Vec<u64>,
+}
+
+impl Drop for Index {
+    fn drop(&mut self) {
+        unsafe {
+            RediSearch_DropIndex(self.index);
+        }
+    }
 }
 
 #[derive(Default)]
@@ -119,8 +126,7 @@ impl Indexer {
                 }
             }
             if index.fields.is_empty() {
-                let idx = self.index.remove(&label).unwrap();
-                unsafe { RediSearch_DropIndex(idx.index) };
+                self.index.remove(&label).unwrap();
                 return None;
             }
             if removed {
