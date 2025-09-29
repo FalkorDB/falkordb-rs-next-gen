@@ -297,7 +297,7 @@ version = "0.1.0"
 dependencies = [
  "graph",
  "lazy_static",
- "opentelemetry",
+ "opentelemetry 0.31.0",
  "opentelemetry-zipkin",
  "opentelemetry_sdk",
  "orx-tree",
@@ -979,6 +979,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "opentelemetry"
+version = "0.31.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b84bcd6ae87133e903af7ef497404dda70c60d0ea14895fc8a5e6722754fc2a0"
+dependencies = [
+ "futures-core",
+ "futures-sink",
+ "js-sys",
+ "pin-project-lite",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
 name = "opentelemetry-http"
 version = "0.30.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -987,7 +1001,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "http",
- "opentelemetry",
+ "opentelemetry 0.30.0",
  "reqwest",
 ]
 
@@ -999,7 +1013,7 @@ checksum = "8823568a9abd4003d1acc564bcfec8e3406a8c73203f8f50bdfc88b44d7ecfb6"
 dependencies = [
  "http",
  "once_cell",
- "opentelemetry",
+ "opentelemetry 0.30.0",
  "opentelemetry-http",
  "opentelemetry_sdk",
  "reqwest",
@@ -1018,7 +1032,7 @@ dependencies = [
  "futures-channel",
  "futures-executor",
  "futures-util",
- "opentelemetry",
+ "opentelemetry 0.30.0",
  "percent-encoding",
  "rand",
  "serde_json",
@@ -2011,7 +2025,7 @@ source = "git+https://github.com/BSteffaniak/tracing-opentelemetry.git?branch=up
 dependencies = [
  "js-sys",
  "once_cell",
- "opentelemetry",
+ "opentelemetry 0.30.0",
  "opentelemetry_sdk",
  "smallvec",
  "tracing",
