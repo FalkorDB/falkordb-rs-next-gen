@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1766917871348,
+  "lastUpdate": 1766922294079,
   "repoUrl": "https://github.com/FalkorDB/falkordb-rs-next-gen",
   "entries": {
     "FalkorDB Benchmark": [
@@ -26122,6 +26122,380 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.005214151391767229",
             "extra": "mean: 2.6777867999498994 msec\nrounds: 5"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "avi.avni@gmail.com",
+            "name": "Avi Avni",
+            "username": "AviAvni"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1ab2dc46fa02a7127ca3f1b30bdd5f4b82eda847",
+          "message": "Merge pull request #176 from FalkorDB/test-graph-create\n\ntest graph create",
+          "timestamp": "2025-12-28T13:27:27+02:00",
+          "tree_id": "c302e3d63ff1090d31a82f9df2c2d6d3ef015c17",
+          "url": "https://github.com/FalkorDB/falkordb-rs-next-gen/commit/1ab2dc46fa02a7127ca3f1b30bdd5f4b82eda847"
+        },
+        "date": 1766922293573,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/test_bench.py::test_return",
+            "value": 6841.9891577957405,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000011889184995426112",
+            "extra": "mean: 146.15632631639048 usec\nrounds: 570"
+          },
+          {
+            "name": "tests/test_bench.py::test_unwind[1]",
+            "value": 6774.448377904077,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000015690032017259667",
+            "extra": "mean: 147.61349474027384 usec\nrounds: 3612"
+          },
+          {
+            "name": "tests/test_bench.py::test_unwind[10]",
+            "value": 5310.258297985977,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000016098764297159196",
+            "extra": "mean: 188.3147568131046 usec\nrounds: 2899"
+          },
+          {
+            "name": "tests/test_bench.py::test_unwind[100]",
+            "value": 1919.7016384310512,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00002271011839260029",
+            "extra": "mean: 520.9142816678991 usec\nrounds: 1200"
+          },
+          {
+            "name": "tests/test_bench.py::test_unwind[1000]",
+            "value": 235.36423014725253,
+            "unit": "iter/sec",
+            "range": "stddev: 0.002028718642156324",
+            "extra": "mean: 4.248733970214434 msec\nrounds: 235"
+          },
+          {
+            "name": "tests/test_bench.py::test_unwind[10000]",
+            "value": 24.0296371224162,
+            "unit": "iter/sec",
+            "range": "stddev: 0.006036033890475215",
+            "extra": "mean: 41.61527678947526 msec\nrounds: 19"
+          },
+          {
+            "name": "tests/test_bench.py::test_unwind[100000]",
+            "value": 2.1779976650339443,
+            "unit": "iter/sec",
+            "range": "stddev: 0.011307643109857183",
+            "extra": "mean: 459.13731500002086 msec\nrounds: 5"
+          },
+          {
+            "name": "tests/test_bench.py::test_unwind[1000000]",
+            "value": 0.21464550330833784,
+            "unit": "iter/sec",
+            "range": "stddev: 0.08666267913394471",
+            "extra": "mean: 4.658844394999983 sec\nrounds: 5"
+          },
+          {
+            "name": "tests/test_bench.py::test_create_node[1]",
+            "value": 5583.16529056173,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000013339387960474692",
+            "extra": "mean: 179.10986831976606 usec\nrounds: 1815"
+          },
+          {
+            "name": "tests/test_bench.py::test_create_node[10]",
+            "value": 4555.96414847137,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00005314112416801498",
+            "extra": "mean: 219.49250859129847 usec\nrounds: 3492"
+          },
+          {
+            "name": "tests/test_bench.py::test_create_node[100]",
+            "value": 1343.5243827674278,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0004699211770329896",
+            "extra": "mean: 744.3110172218632 usec\nrounds: 2555"
+          },
+          {
+            "name": "tests/test_bench.py::test_create_node[1000]",
+            "value": 348.2399065701523,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0014334686462184065",
+            "extra": "mean: 2.8715835868700244 msec\nrounds: 259"
+          },
+          {
+            "name": "tests/test_bench.py::test_create_node[10000]",
+            "value": 38.70577579867232,
+            "unit": "iter/sec",
+            "range": "stddev: 0.012495370348683053",
+            "extra": "mean: 25.835937385714452 msec\nrounds: 70"
+          },
+          {
+            "name": "tests/test_bench.py::test_create_node[100000]",
+            "value": 6.109171120063205,
+            "unit": "iter/sec",
+            "range": "stddev: 0.03726384524718726",
+            "extra": "mean: 163.68832700002258 msec\nrounds: 5"
+          },
+          {
+            "name": "tests/test_bench.py::test_create_node[1000000]",
+            "value": 0.6381642485948511,
+            "unit": "iter/sec",
+            "range": "stddev: 0.1557625823045396",
+            "extra": "mean: 1.5669947073999537 sec\nrounds: 5"
+          },
+          {
+            "name": "tests/test_bench.py::test_create_relationship[1]",
+            "value": 4538.6893086227365,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0009693730597548066",
+            "extra": "mean: 220.3279255313137 usec\nrounds: 2162"
+          },
+          {
+            "name": "tests/test_bench.py::test_create_relationship[10]",
+            "value": 3449.333132164957,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00012302942724847301",
+            "extra": "mean: 289.91111083908413 usec\nrounds: 2860"
+          },
+          {
+            "name": "tests/test_bench.py::test_create_relationship[100]",
+            "value": 930.0812673036613,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000931673717684564",
+            "extra": "mean: 1.0751748639116618 msec\nrounds: 1161"
+          },
+          {
+            "name": "tests/test_bench.py::test_create_relationship[1000]",
+            "value": 88.37196137945486,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00981112428749755",
+            "extra": "mean: 11.315806330315135 msec\nrounds: 221"
+          },
+          {
+            "name": "tests/test_bench.py::test_create_relationship[10000]",
+            "value": 23.008684848598726,
+            "unit": "iter/sec",
+            "range": "stddev: 0.011009056854411491",
+            "extra": "mean: 43.46184958332818 msec\nrounds: 12"
+          },
+          {
+            "name": "tests/test_bench.py::test_create_relationship[100000]",
+            "value": 2.248024299790311,
+            "unit": "iter/sec",
+            "range": "stddev: 0.07719147212303144",
+            "extra": "mean: 444.8350491999918 msec\nrounds: 5"
+          },
+          {
+            "name": "tests/test_bench.py::test_create_relationship[1000000]",
+            "value": 0.21610316053714493,
+            "unit": "iter/sec",
+            "range": "stddev: 0.5229313756083012",
+            "extra": "mean: 4.627419596799996 sec\nrounds: 5"
+          },
+          {
+            "name": "tests/test_bench.py::test_match_node[1]",
+            "value": 5986.099108782997,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000029553699853630865",
+            "extra": "mean: 167.05369921670155 usec\nrounds: 1280"
+          },
+          {
+            "name": "tests/test_bench.py::test_match_node[10]",
+            "value": 3625.0889579251543,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0001249872129876824",
+            "extra": "mean: 275.8552994441155 usec\nrounds: 1082"
+          },
+          {
+            "name": "tests/test_bench.py::test_match_node[100]",
+            "value": 720.216124407359,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004171717111678393",
+            "extra": "mean: 1.388472107345369 msec\nrounds: 531"
+          },
+          {
+            "name": "tests/test_bench.py::test_match_node[1000]",
+            "value": 77.20195853149328,
+            "unit": "iter/sec",
+            "range": "stddev: 0.002713197910209861",
+            "extra": "mean: 12.953039262495736 msec\nrounds: 80"
+          },
+          {
+            "name": "tests/test_bench.py::test_match_node[10000]",
+            "value": 7.581355918911989,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00173042116290362",
+            "extra": "mean: 131.90252649997092 msec\nrounds: 8"
+          },
+          {
+            "name": "tests/test_bench.py::test_match_node[100000]",
+            "value": 0.6365547171966136,
+            "unit": "iter/sec",
+            "range": "stddev: 0.03428486914149492",
+            "extra": "mean: 1.5709568603999968 sec\nrounds: 5"
+          },
+          {
+            "name": "tests/test_bench.py::test_match_node[1000000]",
+            "value": 0.06710394571742997,
+            "unit": "iter/sec",
+            "range": "stddev: 0.25882590658195676",
+            "extra": "mean: 14.902253352000049 sec\nrounds: 5"
+          },
+          {
+            "name": "tests/test_bench.py::test_match_relationship[1]",
+            "value": 4043.7501418017982,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00002200625289572749",
+            "extra": "mean: 247.29519998345495 usec\nrounds: 5"
+          },
+          {
+            "name": "tests/test_bench.py::test_match_relationship[10]",
+            "value": 2018.6919604156533,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00005583333014182456",
+            "extra": "mean: 495.37027917528223 usec\nrounds: 874"
+          },
+          {
+            "name": "tests/test_bench.py::test_match_relationship[100]",
+            "value": 307.50393018430134,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000060030044035484595",
+            "extra": "mean: 3.25199095634535 msec\nrounds: 252"
+          },
+          {
+            "name": "tests/test_bench.py::test_match_relationship[1000]",
+            "value": 32.795548512616676,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00026542904471215945",
+            "extra": "mean: 30.491943125003473 msec\nrounds: 32"
+          },
+          {
+            "name": "tests/test_bench.py::test_match_relationship[10000]",
+            "value": 2.8159881747599096,
+            "unit": "iter/sec",
+            "range": "stddev: 0.009882564103105758",
+            "extra": "mean: 355.1151276000155 msec\nrounds: 5"
+          },
+          {
+            "name": "tests/test_bench.py::test_match_relationship[100000]",
+            "value": 0.25634715580853007,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0777831529297452",
+            "extra": "mean: 3.9009599964000246 sec\nrounds: 5"
+          },
+          {
+            "name": "tests/test_bench.py::test_match_relationship[1000000]",
+            "value": 0.02657172624662018,
+            "unit": "iter/sec",
+            "range": "stddev: 0.9506165790007124",
+            "extra": "mean: 37.63398699499985 sec\nrounds: 5"
+          },
+          {
+            "name": "tests/test_bench.py::test_delete_node[1]",
+            "value": 6928.65329270672,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000014774764656937696",
+            "extra": "mean: 144.32819160580974 usec\nrounds: 3836"
+          },
+          {
+            "name": "tests/test_bench.py::test_delete_node[10]",
+            "value": 6949.413064622459,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000011750341279743619",
+            "extra": "mean: 143.89704435482813 usec\nrounds: 3878"
+          },
+          {
+            "name": "tests/test_bench.py::test_delete_node[100]",
+            "value": 7233.235614144665,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000010738013012260268",
+            "extra": "mean: 138.25071563333148 usec\nrounds: 2008"
+          },
+          {
+            "name": "tests/test_bench.py::test_delete_node[1000]",
+            "value": 7310.982905598231,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000007872914789013571",
+            "extra": "mean: 136.78051404473553 usec\nrounds: 356"
+          },
+          {
+            "name": "tests/test_bench.py::test_delete_node[10000]",
+            "value": 5445.14159121686,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00006860705657208124",
+            "extra": "mean: 183.64995349487756 usec\nrounds: 43"
+          },
+          {
+            "name": "tests/test_bench.py::test_delete_node[100000]",
+            "value": 1968.0491162973383,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000623556759445039",
+            "extra": "mean: 508.11739997698163 usec\nrounds: 5"
+          },
+          {
+            "name": "tests/test_bench.py::test_delete_node[1000000]",
+            "value": 463.92048626667247,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0037677410071008254",
+            "extra": "mean: 2.1555417999479687 msec\nrounds: 5"
+          },
+          {
+            "name": "tests/test_bench.py::test_delete_relationship[1]",
+            "value": 3621.8509393235786,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0052130819041163005",
+            "extra": "mean: 276.10192046908514 usec\nrounds: 2804"
+          },
+          {
+            "name": "tests/test_bench.py::test_delete_relationship[10]",
+            "value": 5914.979592434651,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000010624309877471378",
+            "extra": "mean: 169.06229081145358 usec\nrounds: 3363"
+          },
+          {
+            "name": "tests/test_bench.py::test_delete_relationship[100]",
+            "value": 5892.495686802536,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000011735937025578118",
+            "extra": "mean: 169.7073792077111 usec\nrounds: 1693"
+          },
+          {
+            "name": "tests/test_bench.py::test_delete_relationship[1000]",
+            "value": 5577.961439754937,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000020103920327655262",
+            "extra": "mean: 179.27696539328073 usec\nrounds: 260"
+          },
+          {
+            "name": "tests/test_bench.py::test_delete_relationship[10000]",
+            "value": 4314.166212222719,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00010805404274269107",
+            "extra": "mean: 231.79449998167456 usec\nrounds: 16"
+          },
+          {
+            "name": "tests/test_bench.py::test_delete_relationship[100000]",
+            "value": 1258.7980544527102,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0010072437875176731",
+            "extra": "mean: 794.4085999042727 usec\nrounds: 5"
+          },
+          {
+            "name": "tests/test_bench.py::test_delete_relationship[1000000]",
+            "value": 347.525558937148,
+            "unit": "iter/sec",
+            "range": "stddev: 0.005742006041338793",
+            "extra": "mean: 2.8774862000318535 msec\nrounds: 5"
           }
         ]
       }
