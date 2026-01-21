@@ -773,21 +773,20 @@ macro_rules! optional_match_token {
 #[macro_export]
 macro_rules! parse_expr_return {
     ($stack:ident, $res:ident) => {
-        match &mut $stack.last_mut() {
-            Some((_, Some(expr))) => {
+        if let Some(frame) = $stack.last_mut() {
+            if let Some(expr) = &mut frame.partial {
                 expr.root_mut().push_child_tree($res);
+            } else {
+                frame.partial = Some($res);
             }
-            Some((_, expr)) => {
-                *expr = Some($res);
-            }
-            _ => return Ok($res),
         }
+        // If stack is empty, do nothing - caller will return the result
     };
 }
 
 #[macro_export]
 macro_rules! parse_operators {
-    ($self:ident, $stack:ident, $res:ident, $current:ident, $token:pat => $expr:ident) => {
+    ($self:ident, $stack:ident, $res:ident, $state:ident, $token:pat => $expr:ident) => {
         if let $token = $self.lexer.current()? {
             $self.lexer.next();
             let res = if matches!($res.root().data(), ExprIR::$expr) {
@@ -795,43 +794,145 @@ macro_rules! parse_operators {
             } else {
                 tree!(ExprIR::$expr, $res)
             };
-            $stack.push(($current, Some(res)));
-            $stack.push(($current + 1, None));
+            $stack.push(ParseExprContinuation {
+                state: $state,
+                partial: Some(res),
+            });
+            $stack.push(ParseExprContinuation {
+                state: $state.next(),
+                partial: None,
+            });
         } else {
-            match &mut $stack.last_mut() {
-                Some((_, Some(expr))) => {
+            if let Some(frame) = $stack.last_mut() {
+                if let Some(expr) = &mut frame.partial {
                     expr.root_mut().push_child_tree($res);
+                } else {
+                    frame.partial = Some($res);
                 }
-                Some((_, expr)) => {
-                    *expr = Some($res);
-                }
-                _ => return Ok($res),
+            } else {
+                return Ok($res);
             }
         }
     };
-    ($self:ident, $stack:ident, $res:ident, $current:ident, $($token:pat => $expr:ident),*) => {
+    ($self:ident, $stack:ident, $res: ident, $state:ident, $($token:pat => $expr:ident),*) => {
         let mut res = $res;
         $(if let $token = $self.lexer.current()? {
             $self.lexer.next();
             if matches!(res.root().data(), ExprIR::$expr) {
+                // Same operator, keep the tree structure
             } else {
-                res = tree!(ExprIR::$expr, res);
+                res = tree!(ExprIR:: $expr, res);
             };
-            $stack.push(($current, Some(res)));
-            $stack.push(($current + 1, None));
+            $stack.push(ParseExprContinuation {
+                state: $state,
+                partial: Some(res),
+            });
+            $stack.push(ParseExprContinuation {
+                state: $state.next(),
+                partial: None,
+            });
             continue;
         })*
 
-        match &mut $stack.last_mut() {
-            Some((_, Some(expr))) => {
+        if let Some(frame) = $stack.last_mut() {
+            if let Some(expr) = &mut frame.partial {
                 expr.root_mut().push_child_tree(res);
+            } else {
+                frame.partial = Some(res);
             }
-            Some((_, expr)) => {
-                *expr = Some(res);
-            }
-            _ => return Ok(res),
+        } else {
+            return Ok(res);
         }
     };
+}
+
+// =============================================================================
+// Type-safe state machine for expression parsing
+// =============================================================================
+
+/// Represents the parsing state at each precedence level in expression parsing.
+///
+/// The order of variants matters:  they are listed from lowest to highest precedence.
+/// This enum replaces the magic numbers 0-11 in the original implementation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExprParseState {
+    /// Logical OR - lowest precedence (was level 0)
+    Or,
+    /// Logical XOR (was level 1)
+    Xor,
+    /// Logical AND (was level 2)
+    And,
+    /// Logical NOT - prefix operator (was level 3)
+    Not,
+    /// Comparison operators:  =, <>, <, <=, >, >= (was level 4)
+    Comparison,
+    /// String/List predicates: IN, STARTS WITH, ENDS WITH, CONTAINS, =~, IS NULL (was level 5)
+    Predicate,
+    /// Addition and Subtraction (was level 6)
+    AddSub,
+    /// Multiplication, Division, Modulo (was level 7)
+    MulDivMod,
+    /// Power (^) (was level 8)
+    Power,
+    /// Unary plus/minus - prefix operator (was level 9)
+    Unary,
+    /// Postfix operators: array access, property lookup, label check (was level 10)
+    Postfix,
+    /// Primary expressions: literals, variables, function calls, parentheses (was level 11)
+    Primary,
+}
+
+impl ExprParseState {
+    /// Get the next state in precedence order (higher precedence).
+    #[allow(clippy::match_same_arms)]
+    const fn next(self) -> Self {
+        match self {
+            Self::Or => Self::Xor,
+            Self::Xor => Self::And,
+            Self::And => Self::Not,
+            Self::Not => Self::Comparison,
+            Self::Comparison => Self::Predicate,
+            Self::Predicate => Self::AddSub,
+            Self::AddSub => Self::MulDivMod,
+            Self::MulDivMod => Self::Power,
+            Self::Power => Self::Unary,
+            Self::Unary => Self::Postfix,
+            Self::Postfix => Self::Primary,
+            Self::Primary => Self::Primary, // Terminal state
+        }
+    }
+
+    /// Check if this state should immediately descend to the next precedence level
+    /// before attempting to parse at the current level.
+    ///
+    /// This corresponds to the original condition:  `current < 3 || (current > 3 && current < 9) || current == 10`
+    const fn should_descend(self) -> bool {
+        matches!(
+            self,
+            Self::Or
+                | Self::Xor
+                | Self::And
+                | Self::Comparison
+                | Self::Predicate
+                | Self::AddSub
+                | Self::MulDivMod
+                | Self::Power
+                | Self::Postfix
+        )
+    }
+}
+
+/// Represents a continuation frame in the expression parsing stack.
+///
+/// This replaces the tuple `(usize, Option<DynTree<ExprIR<Arc<String>>>>)`
+/// with a more explicit and type-safe representation.
+#[derive(Debug)]
+struct ParseExprContinuation {
+    /// The precedence level we're parsing at
+    state: ExprParseState,
+    /// Partial result:  None means we need to parse a sub-expression,
+    /// Some(tree) means we have a result and need to check for operators
+    partial: Option<DynTree<ExprIR<Arc<String>>>>,
 }
 
 pub struct Parser<'a> {
@@ -1740,229 +1841,413 @@ impl<'a> Parser<'a> {
         ))
     }
 
+    /// Parse a Cypher expression using precedence climbing.
+    ///
+    /// This is an iterative implementation using an explicit stack to avoid
+    /// recursion and maintain high performance.  The algorithm handles:
+    /// - Binary operators with different precedence levels
+    /// - Prefix operators (NOT, unary +/-)
+    /// - Postfix operators (array access, property lookup)
+    /// - Special cases (parentheses, list literals, `i64::MIN`)
     #[allow(clippy::too_many_lines)]
     #[allow(clippy::cognitive_complexity)]
+    #[allow(clippy::equatable_if_let)] // Macro expansion generates this pattern
     fn parse_expr(&mut self) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
-        let mut stack = vec![(0, None::<DynTree<ExprIR<Arc<String>>>>)];
-        while let Some((current, res)) = stack.pop() {
-            let Some(res) = res else {
-                if current < 3 || (current > 3 && current < 9) || current == 10 {
-                    stack.push((current, None));
-                    stack.push((current + 1, None));
-                } else if current == 3 {
-                    // Not
-                    let mut not_count = 0;
-                    while let Token::Keyword(Keyword::Not, _) = self.lexer.current()? {
-                        self.lexer.next();
-                        not_count += 1;
-                    }
-                    let res = if not_count % 2 == 1 {
-                        Some(tree!(ExprIR::Not))
-                    } else {
-                        None
-                    };
-                    stack.push((current, res));
-                    stack.push((current + 1, None));
-                } else if current == 9 {
-                    // unary add or subtract
-                    optional_match_token!(self.lexer, Plus);
-                    let is_negate = optional_match_token!(self.lexer, Dash);
+        let mut stack = vec![ParseExprContinuation {
+            state: ExprParseState::Or,
+            partial: None,
+        }];
 
-                    // Handle integer overflow with negation
-                    if is_negate && let Err(err) = self.lexer.current() {
-                        return Err(err.replace("Integer overflow '", "Integer overflow '-"));
-                    }
+        while let Some(mut frame) = stack.pop() {
+            let current_state = frame.state;
+            if frame.partial.is_none() {
+                // Need to parse a new sub-expression at this level
+                if current_state.should_descend() {
+                    // For binary operators:   push current level back, then descend to next level
+                    stack.push(frame);
+                    stack.push(ParseExprContinuation {
+                        state: current_state.next(),
+                        partial: None,
+                    });
+                    continue;
+                }
 
-                    let res = if is_negate {
-                        Some(tree!(ExprIR::Negate))
+                // Handle prefix operators and primary expressions
+                let (result, needs_recursion) = self.parse_prefix_or_primary(current_state)?;
+                #[allow(clippy::same_functions_in_if_condition)]
+                #[allow(clippy::branches_sharing_code)]
+                if let Some(result) = result {
+                    if needs_recursion {
+                        // Paren/List marker node - parse inner expression recursively
+                        stack.push(ParseExprContinuation {
+                            state: current_state,
+                            partial: Some(result),
+                        });
+                        // Start parsing inner expression from lowest precedence
+                        stack.push(ParseExprContinuation {
+                            state: ExprParseState::Or,
+                            partial: None,
+                        });
+                    } else if current_state == ExprParseState::Primary {
+                        // Primary expression (literal, variable, etc.) - we're done at this level
+                        // Just push the result back onto the stack
+                        stack.push(ParseExprContinuation {
+                            state: current_state,
+                            partial: Some(result),
+                        });
                     } else {
-                        None
-                    };
-                    stack.push((current, res));
-                    stack.push((current + 1, None));
+                        // Prefix operator (NOT, unary +/-) - parse the operand
+                        stack.push(ParseExprContinuation {
+                            state: current_state,
+                            partial: Some(result),
+                        });
+                        // Push next level to parse the operand
+                        stack.push(ParseExprContinuation {
+                            state: current_state.next(),
+                            partial: None,
+                        });
+                    }
                 } else {
-                    // primary expression
-                    let (res, recurse) = self.parse_primary_expr()?;
-                    if recurse {
-                        stack.push((current, Some(res)));
-                        stack.push((0, None));
-                        continue;
-                    }
-                    parse_expr_return!(stack, res);
+                    // Special case: even number of NOTs cancelled out, or no unary operator
+                    // Still need to visit this level again with the result from next level
+                    stack.push(ParseExprContinuation {
+                        state: current_state,
+                        partial: None,
+                    });
+                    stack.push(ParseExprContinuation {
+                        state: current_state.next(),
+                        partial: None,
+                    });
                 }
                 continue;
-            };
-            match current {
-                0 => {
-                    // Or
-                    parse_operators!(self, stack, res, current, Token::Keyword(Keyword::Or, _) => Or);
+            }
+
+            // We have a partial result, try to consume an operator at this level
+            let mut res = frame.partial.take().expect("partial should be Some");
+
+            let current_state = frame.state;
+
+            match current_state {
+                ExprParseState::Or => {
+                    parse_operators!(self, stack, res, current_state, Token::Keyword(Keyword::Or, _) => Or);
                 }
-                1 => {
-                    // Xor
-                    parse_operators!(self, stack, res, current, Token::Keyword(Keyword::Xor, _) => Xor);
+                ExprParseState::Xor => {
+                    parse_operators!(self, stack, res, current_state, Token::Keyword(Keyword::Xor, _) => Xor);
                 }
-                2 => {
-                    // And
-                    parse_operators!(self, stack, res, current, Token::Keyword(Keyword::And, _) => And);
+                ExprParseState::And => {
+                    parse_operators!(self, stack, res, current_state, Token::Keyword(Keyword::And, _) => And);
                 }
-                3 => {
-                    // Not
+                ExprParseState::Not => {
+                    // NOT is prefix only, just return the result
+                    if stack.is_empty() {
+                        return Ok(res);
+                    }
                     parse_expr_return!(stack, res);
                 }
-                4 => {
-                    // Comparison
-                    parse_operators!(self, stack, res, current, Token::Equal => Eq, Token::NotEqual => Neq, Token::LessThan => Lt, Token::LessThanOrEqual => Le, Token::GreaterThan => Gt, Token::GreaterThanOrEqual => Ge);
+                ExprParseState::Comparison => {
+                    parse_operators!(self, stack, res, current_state,
+                        Token::Equal => Eq,
+                        Token::NotEqual => Neq,
+                        Token::LessThan => Lt,
+                        Token::LessThanOrEqual => Le,
+                        Token::GreaterThan => Gt,
+                        Token::GreaterThanOrEqual => Ge
+                    );
                 }
-                5 => {
-                    // String, List, Null predicates
-                    let mut res = res;
-                    match self.lexer.current()? {
-                        Token::Keyword(Keyword::In, _) => {
-                            self.lexer.next();
-                            res = tree!(ExprIR::In, res);
-                        }
-                        Token::Keyword(Keyword::Starts, _) => {
-                            self.lexer.next();
-                            match_token!(self.lexer => With);
-                            res = tree!(
-                                ExprIR::FuncInvocation(
-                                    get_functions().get("starts_with", &FnType::Internal)?,
-                                ),
-                                res
-                            );
-                        }
-                        Token::Keyword(Keyword::Ends, _) => {
-                            self.lexer.next();
-                            match_token!(self.lexer => With);
-                            res = tree!(
-                                ExprIR::FuncInvocation(
-                                    get_functions().get("ends_with", &FnType::Internal)?,
-                                ),
-                                res
-                            );
-                        }
-                        Token::Keyword(Keyword::Contains, _) => {
-                            self.lexer.next();
-                            res = tree!(
-                                ExprIR::FuncInvocation(
-                                    get_functions().get("contains", &FnType::Internal)?,
-                                ),
-                                res
-                            );
-                        }
-                        Token::RegexMatches => {
-                            self.lexer.next();
-                            res = tree!(
-                                ExprIR::FuncInvocation(
-                                    get_functions().get("regex_matches", &FnType::Internal)?,
-                                ),
-                                res
-                            );
-                        }
-                        Token::Keyword(Keyword::Is, _) => {
-                            while optional_match_token!(self.lexer => Is) {
-                                let is_not =
-                                    tree!(ExprIR::Bool(optional_match_token!(self.lexer => Not)));
-                                match_token!(self.lexer => Null);
-                                res = tree!(
-                                    ExprIR::FuncInvocation(
-                                        get_functions().get("is_null", &FnType::Internal)?
-                                    ),
-                                    is_not,
-                                    res
-                                );
-                            }
-                            parse_expr_return!(stack, res);
-                            continue;
-                        }
-                        _ => {
-                            parse_expr_return!(stack, res);
-                            continue;
-                        }
-                    }
-                    stack.push((current, Some(res)));
-                    stack.push((current + 1, None));
+                ExprParseState::Predicate => {
+                    self.handle_predicate_operators(&mut stack, res, current_state)?;
                 }
-                6 => {
-                    // Add, Sub
-                    parse_operators!(self, stack, res, current, Token::Plus => Add, Token::Dash => Sub);
+                ExprParseState::AddSub => {
+                    parse_operators!(self, stack, res, current_state,
+                        Token::Plus => Add,
+                        Token::Dash => Sub
+                    );
                 }
-                7 => {
-                    // Mul, Div, Modulo
-                    parse_operators!(self, stack, res, current, Token::Star => Mul, Token::Slash => Div, Token::Modulo => Modulo);
+                ExprParseState::MulDivMod => {
+                    parse_operators!(self, stack, res, current_state,
+                        Token::Star => Mul,
+                        Token::Slash => Div,
+                        Token::Modulo => Modulo
+                    );
                 }
-                8 => {
-                    // Power
-                    parse_operators!(self, stack, res, current, Token::Power => Pow);
+                ExprParseState::Power => {
+                    parse_operators!(self, stack, res, current_state, Token::Power => Pow);
                 }
-                9 => {
-                    // unary add or subtract
+                ExprParseState::Unary => {
+                    // Special handling for -i64::MIN
                     if matches!(res.root().data(), ExprIR::Negate)
+                        && res.root().num_children() > 0
                         && matches!(res.root().child(0).data(), ExprIR::Integer(i64::MIN))
                     {
-                        let res = tree!(ExprIR::Integer(i64::MIN));
-                        parse_expr_return!(stack, res);
-                        continue;
+                        res = tree!(ExprIR::Integer(i64::MIN));
                     } else if matches!(res.root().data(), ExprIR::Integer(i64::MIN)) {
-                        // This case should not happen with proper error handling
-                        // i64::MIN without negation means the literal was i64::MAX + 1
                         return Err(format!(
                             "Integer overflow '{}'",
                             9_223_372_036_854_775_808_u64
                         ));
                     }
-                    parse_expr_return!(stack, res);
-                }
-                10 => {
-                    // None arithmetic operators
-                    let mut res = res;
-                    loop {
-                        match self.lexer.current()? {
-                            Token::LBrace => {
-                                self.lexer.next();
-                                res = self.parse_list_operator_expression(res)?;
-                            }
-                            Token::Dot => {
-                                self.lexer.next();
-                                res = self.parse_property_lookup(res)?;
-                            }
-                            _ => break,
-                        }
-                    }
-                    if self.lexer.current()? == Token::Colon {
-                        let labels = tree!(ExprIR::List; self.parse_labels()?.into_iter().map(|l| tree!(ExprIR::String(l))));
-                        res = tree!(
-                            ExprIR::FuncInvocation(
-                                get_functions().get("hasLabels", &FnType::Function)?
-                            ),
-                            res,
-                            labels
-                        );
+                    if stack.is_empty() {
+                        return Ok(res);
                     }
                     parse_expr_return!(stack, res);
                 }
-                11 => {
-                    // primary expression
-                    let mut res = res;
-                    if matches!(res.root().data(), ExprIR::Paren) {
-                        match_token!(self.lexer, RParen);
-                        if matches!(res.root().child(0).data(), ExprIR::Paren) {
-                            res.root_mut().child_mut(0).take_out();
-                        }
-                    } else if matches!(res.root().data(), ExprIR::List) {
-                        if optional_match_token!(self.lexer, Comma) {
-                            stack.push((current, Some(res)));
-                            stack.push((0, None));
-                            continue;
-                        }
-                        match_token!(self.lexer, RBrace);
-                    }
-                    parse_expr_return!(stack, res);
+                ExprParseState::Postfix => {
+                    self.handle_postfix_operators(&mut stack, res, current_state)?;
                 }
-                _ => unreachable!(),
+                ExprParseState::Primary => {
+                    self.handle_primary_completion(&mut stack, res)?;
+                }
             }
         }
-        unreachable!()
+
+        Err("Internal error: parse_expr completed without a result".to_string())
+    }
+
+    /// Parse prefix operators (NOT, unary +/-) or primary expressions.
+    /// Returns `(result, needs_recursion)` where:
+    /// - `result`: The parsed node (`None` if even number of NOTs cancelled out)
+    /// - `needs_recursion`: `true` if result is a marker node (`Paren`/`List`) requiring inner parsing
+    fn parse_prefix_or_primary(
+        &mut self,
+        state: ExprParseState,
+    ) -> Result<(Option<DynTree<ExprIR<Arc<String>>>>, bool), String> {
+        match state {
+            ExprParseState::Not => {
+                // Count consecutive NOT operators
+                let mut not_count = 0;
+                while let Ok(Token::Keyword(Keyword::Not, _)) = self.lexer.current() {
+                    self.lexer.next();
+                    not_count += 1;
+                }
+                if not_count % 2 == 1 {
+                    Ok((Some(tree!(ExprIR::Not)), false))
+                } else {
+                    Ok((None, false)) // Even number of NOTs cancel out
+                }
+            }
+            ExprParseState::Unary => {
+                // Handle unary +/-
+                optional_match_token!(self.lexer, Plus);
+                let is_negate = optional_match_token!(self.lexer, Dash);
+
+                // Handle integer overflow with negation
+                if is_negate && let Err(err) = self.lexer.current() {
+                    return Err(err.replace("Integer overflow '", "Integer overflow '-"));
+                }
+                if is_negate {
+                    Ok((Some(tree!(ExprIR::Negate)), false))
+                } else {
+                    Ok((None, false)) // No unary operator
+                }
+            }
+            ExprParseState::Primary => {
+                // Parse primary expression (literals, variables, function calls, etc.)
+                let (res, recurse) = self.parse_primary_expr()?;
+                Ok((Some(res), recurse))
+            }
+            _ => unreachable!(
+                "parse_prefix_or_primary called for non-prefix state:  {:?}",
+                state
+            ),
+        }
+    }
+
+    /// Handle predicate operators:  IN, STARTS WITH, ENDS WITH, CONTAINS, =~, IS NULL
+    fn handle_predicate_operators(
+        &mut self,
+        stack: &mut Vec<ParseExprContinuation>,
+        mut res: DynTree<ExprIR<Arc<String>>>,
+        state: ExprParseState,
+    ) -> Result<(), String> {
+        match self.lexer.current()? {
+            Token::Keyword(Keyword::In, _) => {
+                self.lexer.next();
+                res = tree!(ExprIR::In, res);
+                stack.push(ParseExprContinuation {
+                    state,
+                    partial: Some(res),
+                });
+                stack.push(ParseExprContinuation {
+                    state: state.next(),
+                    partial: None,
+                });
+            }
+            Token::Keyword(Keyword::Starts, _) => {
+                self.lexer.next();
+                match_token!(self.lexer => With);
+                res = tree!(
+                    ExprIR::FuncInvocation(get_functions().get("starts_with", &FnType::Internal)?,),
+                    res
+                );
+                stack.push(ParseExprContinuation {
+                    state,
+                    partial: Some(res),
+                });
+                stack.push(ParseExprContinuation {
+                    state: state.next(),
+                    partial: None,
+                });
+            }
+            Token::Keyword(Keyword::Ends, _) => {
+                self.lexer.next();
+                match_token!(self.lexer => With);
+                res = tree!(
+                    ExprIR::FuncInvocation(get_functions().get("ends_with", &FnType::Internal)?,),
+                    res
+                );
+                stack.push(ParseExprContinuation {
+                    state,
+                    partial: Some(res),
+                });
+                stack.push(ParseExprContinuation {
+                    state: state.next(),
+                    partial: None,
+                });
+            }
+            Token::Keyword(Keyword::Contains, _) => {
+                self.lexer.next();
+                res = tree!(
+                    ExprIR::FuncInvocation(get_functions().get("contains", &FnType::Internal)?,),
+                    res
+                );
+                stack.push(ParseExprContinuation {
+                    state,
+                    partial: Some(res),
+                });
+                stack.push(ParseExprContinuation {
+                    state: state.next(),
+                    partial: None,
+                });
+            }
+            Token::RegexMatches => {
+                self.lexer.next();
+                res = tree!(
+                    ExprIR::FuncInvocation(
+                        get_functions().get("regex_matches", &FnType::Internal)?,
+                    ),
+                    res
+                );
+                stack.push(ParseExprContinuation {
+                    state,
+                    partial: Some(res),
+                });
+                stack.push(ParseExprContinuation {
+                    state: state.next(),
+                    partial: None,
+                });
+            }
+            Token::Keyword(Keyword::Is, _) => {
+                // IS NULL can chain:  x IS NULL IS NULL IS NULL
+                while optional_match_token!(self.lexer => Is) {
+                    let is_not = tree!(ExprIR::Bool(optional_match_token!(self.lexer => Not)));
+                    match_token!(self.lexer => Null);
+                    res = tree!(
+                        ExprIR::FuncInvocation(get_functions().get("is_null", &FnType::Internal)?),
+                        is_not,
+                        res
+                    );
+                }
+                parse_expr_return!(stack, res);
+                if stack.is_empty() {
+                    return Ok(());
+                }
+            }
+            _ => {
+                // No predicate operator found, return result
+                parse_expr_return!(stack, res);
+                if stack.is_empty() {
+                    return Ok(());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Handle postfix operators:  array access ([... ]), property lookup (. prop), label check (:Label)
+    #[allow(clippy::ptr_arg)]
+    fn handle_postfix_operators(
+        &mut self,
+        stack: &mut Vec<ParseExprContinuation>,
+        mut res: DynTree<ExprIR<Arc<String>>>,
+        _state: ExprParseState,
+    ) -> Result<(), String> {
+        // Loop to handle multiple postfix operators in sequence
+        loop {
+            match self.lexer.current()? {
+                Token::LBrace => {
+                    self.lexer.next();
+                    res = self.parse_list_operator_expression(res)?;
+                }
+                Token::Dot => {
+                    self.lexer.next();
+                    res = self.parse_property_lookup(res)?;
+                }
+                _ => break,
+            }
+        }
+
+        // Handle label checking (:Label)
+        if self.lexer.current()? == Token::Colon {
+            let labels = tree!(ExprIR::List; self.parse_labels()?. into_iter().map(|l| tree!(ExprIR::String(l))));
+            res = tree!(
+                ExprIR::FuncInvocation(get_functions().get("hasLabels", &FnType::Function)?),
+                res,
+                labels
+            );
+        }
+
+        parse_expr_return!(stack, res);
+        if stack.is_empty() {
+            return Ok(());
+        }
+        Ok(())
+    }
+
+    /// Handle completion of primary expressions (parentheses and list literals)
+    #[allow(clippy::ptr_arg)]
+    fn handle_primary_completion(
+        &mut self,
+        stack: &mut Vec<ParseExprContinuation>,
+        mut res: DynTree<ExprIR<Arc<String>>>,
+    ) -> Result<(), String> {
+        if matches!(res.root().data(), ExprIR::Paren) {
+            // Close parentheses
+            match_token!(self.lexer, RParen);
+            // Remove nested Paren markers
+            if matches!(res.root().child(0).data(), ExprIR::Paren) {
+                res.root_mut().child_mut(0).take_out();
+            }
+            parse_expr_return!(stack, res);
+            if stack.is_empty() {
+                return Ok(());
+            }
+        } else if matches!(res.root().data(), ExprIR::List) {
+            // List literal continuation
+            if optional_match_token!(self.lexer, Comma) {
+                // More elements in the list, parse another expression
+                stack.push(ParseExprContinuation {
+                    state: ExprParseState::Primary,
+                    partial: Some(res),
+                });
+                stack.push(ParseExprContinuation {
+                    state: ExprParseState::Or,
+                    partial: None,
+                });
+            } else {
+                // End of list
+                match_token!(self.lexer, RBrace);
+                parse_expr_return!(stack, res);
+                if stack.is_empty() {
+                    return Ok(());
+                }
+            }
+        } else {
+            parse_expr_return!(stack, res);
+            if stack.is_empty() {
+                return Ok(());
+            }
+        }
+        Ok(())
     }
 
     fn parse_ident(&mut self) -> Result<Arc<String>, String> {
@@ -2037,9 +2322,11 @@ impl<'a> Parser<'a> {
         }
         self.lexer.set_pos(pos); // Reset lexer position
 
+        // Check if list is empty (don't consume the ']')
+        let is_empty = self.lexer.current()? == Token::RBrace; // RBrace is ']' in this codebase
         Ok((
             tree!(ExprIR::List),
-            !optional_match_token!(self.lexer, RBrace),
+            !is_empty, // needs_recursion = true if not empty
         ))
     }
 
