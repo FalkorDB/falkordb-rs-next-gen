@@ -3,6 +3,7 @@ members = [
     "graph",
     "fuzz",
     "runtime-fuzz-target", ]
+default-members = [".", "graph"]  # Build root and graph by default, "." refers to root package
 
 [package]
 name = "falkordb-rs"
@@ -18,6 +19,7 @@ categories = ["database"]
 [lib]
 crate-type = ["cdylib", "rlib"]
 name = "falkordb"
+test = false  # Disable tests for the root library (requires Redis allocator)
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
