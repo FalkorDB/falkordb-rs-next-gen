@@ -2815,22 +2815,28 @@ fn vecf32(
     _: &Runtime,
     args: ThinVec<Value>,
 ) -> Result<Value, String> {
+    fn build_vecf32(vec: &[Value]) -> Result<Value, String> {
+        // Validate that all elements are numeric (Int or Float)
+        // Matching C implementation:  SIArray_AllOfType(arr, SI_NUMERIC)
+        for v in vec {
+            if !matches!(v, Value::Int(_) | Value::Float(_)) {
+                return Err("vectorf32 expects an array of numbers".to_string());
+            }
+        }
+
+        // All elements are numeric, convert to f32 vector
+        Ok(Value::VecF32(
+            vec.iter().map(|v| v.get_numeric() as f32).collect(),
+        ))
+    }
+
     let mut iter = args.into_iter();
     match iter.next() {
-        Some(Value::List(vec)) => {
-            // Validate that all elements are numeric (Int or Float)
-            // Matching C implementation:  SIArray_AllOfType(arr, SI_NUMERIC)
-            for v in &vec {
-                if !matches!(v, Value::Int(_) | Value::Float(_)) {
-                    return Err("vectorf32 expects an array of numbers".to_string());
-                }
-            }
-
-            // All elements are numeric, convert to f32 vector
-            Ok(Value::VecF32(
-                vec.into_iter().map(|v| v.get_numeric() as f32).collect(),
-            ))
-        }
+        Some(Value::List(vec)) => build_vecf32(&vec),
+        Some(Value::Arc(arc)) => match &*arc {
+            Value::List(vec) => build_vecf32(vec),
+            _ => unreachable!(),
+        },
         Some(Value::Null) => Ok(Value::Null),
         _ => unreachable!(),
     }

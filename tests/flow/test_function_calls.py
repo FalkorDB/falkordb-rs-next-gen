@@ -2516,7 +2516,7 @@ class testFunctionCallsFlow(FlowTestsBase):
                RETURN string.join(list, 'loooooooooooooooooooooooooooooooooooooooooonggggggggggggggggggggggggggggggggggggggggggggggggggggg delimiterrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr')
                """
         try:
-            result = self.graph.query(q)
+            self.graph.query(q)
             self.env.assertFalse(True)
         except ResponseError as e:
             self.env.assertContains("String overflow", str(e))
@@ -2555,7 +2555,7 @@ class testFunctionCallsFlow(FlowTestsBase):
         # test invalid regex
         try:
             query = """RETURN string.matchRegEx('aa', '?')"""
-            actual_result = self.graph.query(query)
+            self.graph.query(query)
         except ResponseError as e:
             self.env.assertContains("Invalid regex", str(e))
 
@@ -2663,7 +2663,7 @@ class testFunctionCallsFlow(FlowTestsBase):
         # test invalid regex
         try:
             query = """RETURN string.replaceRegEx('aa', '?')"""
-            actual_result = self.graph.query(query)
+            self.graph.query(query)
         except ResponseError as e:
             self.env.assertContains("Invalid regex", str(e))
 
@@ -2800,14 +2800,3 @@ class testFunctionCallsFlow(FlowTestsBase):
 
         for q in queries_with_errors:
             self.expect_error(q, err_msg)
-
-    # REMOVED: test95_prev - prev() function has been removed
-    # def test95_prev(self):
-    #     res = self.graph.query("UNWIND range(1, 5) AS x RETURN prev(x)")
-    #     self.env.assertEquals(res.result_set, [[None], [1], [2], [3], [4]])
-    #
-    #     res = self.graph.query("UNWIND range(1, 5) AS x RETURN prev(prev(x))")
-    #     self.env.assertEquals(res.result_set, [[None], [None], [1], [2], [3]])
-    #
-    #     res = self.graph.query("UNWIND range(1, 5) AS x RETURN prev(tostring(x) + tostring(x))")
-    #     self.env.assertEquals(res.result_set, [[None], ['11'], ['22'], ['33'], ['44']])
