@@ -220,6 +220,7 @@ fn test_null_checks() {
 
 #[test]
 fn test_string_predicates() {
+    setup();
     let expressions = vec![
         "'hello' STARTS WITH 'he'",
         "'hello' ENDS WITH 'lo'",
