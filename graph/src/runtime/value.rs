@@ -486,6 +486,27 @@ impl Div for Value {
     }
 }
 
+/// Helper function to convert modulo result from float to int if it's a whole number
+/// Returns Int if the result has no fractional part and is safely within i64 range,
+/// otherwise returns Float.
+fn modulo_result_to_value(result: f64) -> Value {
+    // Check if the result is a whole number and within i64 range
+    // Note: We use a slightly conservative range check to avoid precision issues
+    // at the boundaries of i64 range
+    const MAX_SAFE_INT: f64 = 9007199254740992.0; // 2^53, the largest integer exactly representable in f64
+    
+    if result.fract() == 0.0 
+        && result.is_finite() 
+        && result >= i64::MIN as f64 
+        && result <= MAX_SAFE_INT
+        && result >= -MAX_SAFE_INT {
+        #[allow(clippy::cast_possible_truncation)]
+        Value::Int(result as i64)
+    } else {
+        Value::Float(result)
+    }
+}
+
 impl Rem for Value {
     type Output = Result<Self, String>;
 
@@ -504,40 +525,15 @@ impl Rem for Value {
             }
             (Self::Float(a), Self::Float(b)) => {
                 let result = a % b;
-                // If result is a whole number (no fractional part) and within i64 range, return Int
-                if result.fract() == 0.0 
-                    && result.is_finite() 
-                    && result >= i64::MIN as f64 
-                    && result <= i64::MAX as f64 {
-                    #[allow(clippy::cast_possible_truncation)]
-                    Ok(Self::Int(result as i64))
-                } else {
-                    Ok(Self::Float(result))
-                }
+                Ok(modulo_result_to_value(result))
             }
             (Self::Float(a), Self::Int(b)) => {
                 let result = a % (b as f64);
-                if result.fract() == 0.0 
-                    && result.is_finite() 
-                    && result >= i64::MIN as f64 
-                    && result <= i64::MAX as f64 {
-                    #[allow(clippy::cast_possible_truncation)]
-                    Ok(Self::Int(result as i64))
-                } else {
-                    Ok(Self::Float(result))
-                }
+                Ok(modulo_result_to_value(result))
             }
             (Self::Int(a), Self::Float(b)) => {
                 let result = (a as f64) % b;
-                if result.fract() == 0.0 
-                    && result.is_finite() 
-                    && result >= i64::MIN as f64 
-                    && result <= i64::MAX as f64 {
-                    #[allow(clippy::cast_possible_truncation)]
-                    Ok(Self::Int(result as i64))
-                } else {
-                    Ok(Self::Float(result))
-                }
+                Ok(modulo_result_to_value(result))
             }
             (a, b) => Err(format!(
                 "Type mismatch: expected Integer, Float, or Null but was ({}, {})",
