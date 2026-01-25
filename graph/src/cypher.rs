@@ -1727,12 +1727,16 @@ impl<'a> Parser<'a> {
                                     "COUNT is the only function which can accept * as an argument",
                                 ));
                             }
+
+                            // VALIDATE: DISTINCT is not allowed with COUNT(*)
+                            if distinct {
+                                return Err(self.lexer.format_error(
+                                    "Cannot specify both DISTINCT and * in COUNT(DISTINCT *)",
+                                ));
+                            }
+
                             // Create args array like count(x) does
                             let mut args = vec![tree!(ExprIR::Integer(1))]; // Dummy value for count(*)
-
-                            if distinct {
-                                args = vec![tree!(ExprIR:: Distinct; args)];
-                            }
 
                             args.push(tree!(ExprIR::Variable(Arc::new(String::from(
                                 "__agg_order_by_placeholder__"
