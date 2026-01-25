@@ -1685,46 +1685,41 @@ fn value_to_integer(
     _runtime: &Runtime,
     args: ThinVec<Value>,
 ) -> Result<Value, String> {
-    // Check if value is within i64 range
-    // Due to f64 precision:
-    // - i64::MIN (-2^63) as f64 = -9223372036854776000
-    // - i64::MAX (2^63-1) as f64 = 9223372036854776000 (rounded up)
-    // Note: i64::MAX and i64::MAX+1 have same f64 representation due to precision loss
-    // We accept values at the boundary (use < and >) for graceful handling
-    const MAX_BOUND: f64 = 9_223_372_036_854_776_000.0;
-    const MIN_BOUND: f64 = -9_223_372_036_854_776_000.0;
-
     match args.into_iter().next() {
         Some(Value::String(s)) => {
             if s.is_empty() {
                 return Ok(Value::Null);
             }
 
-            // First try parsing as i64 (fast path for simple integers like "123")
-            // This will fail for:
-            // - Decimal numbers: "1.5", "0.001"
-            // - Scientific notation: "1e10", "1e-13"
-            // - Invalid formats: "abc", "12abc"
-            // - Overflow values
+            // Try parsing as i64 first (handles exact i64::MAX/MIN)
             if let Ok(i) = s.parse::<i64>() {
                 return Ok(Value::Int(i));
             }
 
-            // i64 parse failed - try parsing as f64
-            // This handles decimal points and scientific notation
-            // then truncates the result to get an integer
+            // Try as f64 then floor
             match s.parse::<f64>() {
                 Ok(f) if f.is_finite() => {
-                    let truncated = f.trunc();
+                    let floored = f.floor();
 
-                    if !(MIN_BOUND..=MAX_BOUND).contains(&truncated) {
+                    // Use casted values for exact comparison
+                    #[allow(clippy::cast_precision_loss)]
+                    let i64_max_as_f64 = i64::MAX as f64;
+                    #[allow(clippy::cast_precision_loss)]
+                    let i64_min_as_f64 = i64::MIN as f64;
+
+                    // For string path:
+                    // - Upper bound: Use >= because i64::MAX+1 rounds to same f64 as i64::MAX
+                    // - Lower bound: Use <= because i64::MIN-1 rounds to same f64 as i64::MIN
+                    // Since exact i64::MAX/MIN were caught by parse::<i64>() above,
+                    // any value equal to the boundary must have rounded from out-of-range
+                    if floored >= i64_max_as_f64 || floored <= i64_min_as_f64 {
                         return Ok(Value::Null);
                     }
 
                     #[allow(clippy::cast_possible_truncation)]
-                    Ok(Value::Int(truncated as i64))
+                    Ok(Value::Int(floored as i64))
                 }
-                _ => Ok(Value::Null), // Parse failed or non-finite (NaN, Infinity)
+                _ => Ok(Value::Null),
             }
         }
         Some(Value::Int(i)) => Ok(Value::Int(i)),
@@ -1732,14 +1727,23 @@ fn value_to_integer(
             if !f.is_finite() {
                 return Ok(Value::Null);
             }
-            let truncated = f.trunc();
 
-            if (MIN_BOUND..=MAX_BOUND).contains(&truncated) {
-                #[allow(clippy::cast_possible_truncation)]
-                Ok(Value::Int(truncated as i64))
-            } else {
-                Ok(Value::Null)
+            let floored = f.floor();
+
+            #[allow(clippy::cast_precision_loss)]
+            let i64_max_as_f64 = i64::MAX as f64;
+            #[allow(clippy::cast_precision_loss)]
+            let i64_min_as_f64 = i64::MIN as f64;
+
+            // For float input path:
+            // Use >= and < because we want to allow exact i64::MIN as f64
+            // but reject i64::MAX as f64 (which represents i64::MAX+1 due to rounding)
+            if floored >= i64_max_as_f64 || floored < i64_min_as_f64 {
+                return Ok(Value::Null);
             }
+
+            #[allow(clippy::cast_possible_truncation)]
+            Ok(Value::Int(floored as i64))
         }
         Some(Value::Bool(b)) => Ok(Value::Int(i64::from(b))),
         _ => Ok(Value::Null),
@@ -3224,27 +3228,27 @@ mod tests {
     fn test_value_to_integer_boundary_values() {
         let runtime = get_test_runtime();
 
-        // Test i64::MAX
+        // Test i64::MAX - should parse successfully as string
         let args = thin_vec![Value::String(Arc::new("9223372036854775807".to_string()))];
         let result = value_to_integer(runtime, args).unwrap();
         assert_eq!(result, Value::Int(i64::MAX));
 
-        // Test i64::MIN
+        // Test i64::MIN - should parse successfully as string
         let args = thin_vec![Value::String(Arc::new("-9223372036854775808".to_string()))];
         let result = value_to_integer(runtime, args).unwrap();
         assert_eq!(result, Value::Int(i64::MIN));
 
-        // Test i64::MAX + 1 (saturates to i64::MAX due to f64 precision loss)
+        // Test i64::MAX + 1 - should return NULL (out of range)
         let args = thin_vec![Value::String(Arc::new("9223372036854775808".to_string()))];
         let result = value_to_integer(runtime, args).unwrap();
-        assert_eq!(result, Value::Int(i64::MAX));
+        assert_eq!(result, Value::Null);
 
-        // Test i64::MIN - 1 (saturates to i64::MIN due to f64 precision loss)
+        // Test i64::MIN - 1 - should return NULL (out of range)
         let args = thin_vec![Value::String(Arc::new("-9223372036854775809".to_string()))];
         let result = value_to_integer(runtime, args).unwrap();
-        assert_eq!(result, Value::Int(i64::MIN));
+        assert_eq!(result, Value::Null);
 
-        // Test way out of range (u64::MAX) - should return NULL
+        // Test way out of range (u64::MAX+1) - should return NULL
         let args = thin_vec![Value::String(Arc::new("18446744073709551616".to_string()))];
         let result = value_to_integer(runtime, args).unwrap();
         assert_eq!(result, Value::Null);
@@ -3347,17 +3351,16 @@ mod tests {
         let result = value_to_integer(runtime, args).unwrap();
         assert_eq!(result, Value::Int(-1));
 
-        // Negative float string
+        // Negative float string - floor(-1.9) = -2 (matches C behavior)
         let args = thin_vec![Value::String(Arc::new("-1.9".to_string()))];
         let result = value_to_integer(runtime, args).unwrap();
-        assert_eq!(result, Value::Int(-1));
+        assert_eq!(result, Value::Int(-2)); // Changed from -1 to -2
 
-        // Negative float value
+        // Negative float value - floor(-1.9) = -2
         let args = thin_vec![Value::Float(-1.9)];
         let result = value_to_integer(runtime, args).unwrap();
-        assert_eq!(result, Value::Int(-1));
+        assert_eq!(result, Value::Int(-2)); // Changed from -1 to -2
     }
-
     #[test]
     fn test_value_to_integer_edge_cases() {
         let runtime = get_test_runtime();
