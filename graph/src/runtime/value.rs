@@ -1181,4 +1181,15 @@ mod tests {
         // Should return Int since it's at MAX_SAFE_INT (the modulo result is max_safe)
         assert_eq!(result, Value::Int(9007199254740992));
     }
+
+    #[test]
+    fn test_modulo_float_by_zero_returns_nan() {
+        // Test that modulo by zero with floats returns NaN (IEEE 754 behavior)
+        let result = (Value::Float(5.0) % Value::Float(0.0)).unwrap();
+        // Should return Float(NaN) since division by zero with floats gives NaN
+        match result {
+            Value::Float(f) => assert!(f.is_nan()),
+            _ => panic!("Expected Float(NaN), got {:?}", result),
+        }
+    }
 }
