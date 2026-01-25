@@ -101,7 +101,7 @@ pub fn cypher_unescape(input: &str) -> Result<String, String> {
 /// assert_eq!(cypher_escape("double \" char"), r#"double \" char"#);
 /// assert_eq!(cypher_escape("backslash \\"), r"backslash \\");
 /// ```
-#[must_use] 
+#[must_use]
 pub fn cypher_escape(input: &str) -> String {
     let mut result = String::with_capacity(input.len() * 2);
 
@@ -157,7 +157,10 @@ mod tests {
     #[test]
     fn test_unescape_double_quote() {
         // Test case from the failing test
-        assert_eq!(cypher_unescape(r#"double \" char"#).unwrap(), "double \" char");
+        assert_eq!(
+            cypher_unescape(r#"double \" char"#).unwrap(),
+            "double \" char"
+        );
     }
 
     #[test]
@@ -255,9 +258,12 @@ mod tests {
     #[test]
     fn test_unescape_backslash_variations() {
         // Test unrecognized escape sequences that should be preserved as backslash + char
-        assert_eq!(cypher_unescape(r"one\xwo").unwrap(), "one\\xwo");  // \x is unrecognized
-        assert_eq!(cypher_unescape(r"path\zo\desk").unwrap(), "path\\zo\\desk");  // \z and \d are unrecognized
-        assert_eq!(cypher_unescape(r"C:\\Windows\\System32").unwrap(), "C:\\Windows\\System32");  // \\ is backslash
+        assert_eq!(cypher_unescape(r"one\xwo").unwrap(), "one\\xwo"); // \x is unrecognized
+        assert_eq!(cypher_unescape(r"path\zo\desk").unwrap(), "path\\zo\\desk"); // \z and \d are unrecognized
+        assert_eq!(
+            cypher_unescape(r"C:\\Windows\\System32").unwrap(),
+            "C:\\Windows\\System32"
+        ); // \\ is backslash
     }
 
     #[test]
@@ -269,13 +275,13 @@ mod tests {
         expected.push('\u{0007}'); // bell
         expected.push('\u{0008}'); // backspace
         expected.push('\u{000C}'); // formfeed
-        expected.push('\n');       // newline
-        expected.push('\r');       // carriage return
-        expected.push('\t');       // tab
+        expected.push('\n'); // newline
+        expected.push('\r'); // carriage return
+        expected.push('\t'); // tab
         expected.push('\u{000B}'); // vertical tab
-        expected.push('\\');       // backslash
-        expected.push('\'');       // single quote
-        expected.push('"');        // double quote
+        expected.push('\\'); // backslash
+        expected.push('\''); // single quote
+        expected.push('"'); // double quote
         assert_eq!(cypher_unescape(input).unwrap(), expected);
     }
 
@@ -319,14 +325,20 @@ mod tests {
     fn test_escape_newlines_and_tabs() {
         assert_eq!(cypher_escape("hello\nworld"), r"hello\nworld");
         assert_eq!(cypher_escape("tab\there"), r"tab\there");
-        assert_eq!(cypher_escape("Line1\nLine2\tTabbed\rReturn"), r"Line1\nLine2\tTabbed\rReturn");
+        assert_eq!(
+            cypher_escape("Line1\nLine2\tTabbed\rReturn"),
+            r"Line1\nLine2\tTabbed\rReturn"
+        );
     }
 
     #[test]
     fn test_escape_backslashes() {
         assert_eq!(cypher_escape("backslash \\"), r"backslash \\");
         assert_eq!(cypher_escape("\\\\"), r"\\\\");
-        assert_eq!(cypher_escape("C:\\Windows\\System32"), r"C:\\Windows\\System32");
+        assert_eq!(
+            cypher_escape("C:\\Windows\\System32"),
+            r"C:\\Windows\\System32"
+        );
     }
 
     #[test]
@@ -355,13 +367,13 @@ mod tests {
         input.push('\u{0007}'); // bell
         input.push('\u{0008}'); // backspace
         input.push('\u{000C}'); // formfeed
-        input.push('\n');       // newline
-        input.push('\r');       // carriage return
-        input.push('\t');       // tab
+        input.push('\n'); // newline
+        input.push('\r'); // carriage return
+        input.push('\t'); // tab
         input.push('\u{000B}'); // vertical tab
-        input.push('\\');       // backslash
-        input.push('\'');       // single quote
-        input.push('"');        // double quote
+        input.push('\\'); // backslash
+        input.push('\''); // single quote
+        input.push('"'); // double quote
         let expected = "\\a\\b\\f\\n\\r\\t\\v\\\\\\'\\\"";
         assert_eq!(cypher_escape(&input), expected);
     }
@@ -397,12 +409,8 @@ mod tests {
     #[test]
     fn test_roundtrip_all_special_chars() {
         let original = format!(
-            "{}{}{}\n\r\t{}\\'{}", 
-            '\u{0007}', 
-            '\u{0008}', 
-            '\u{000C}', 
-            '\u{000B}',
-            '"'
+            "{}{}{}\n\r\t{}\\'{}",
+            '\u{0007}', '\u{0008}', '\u{000C}', '\u{000B}', '"'
         );
         let escaped = cypher_escape(&original);
         let unescaped = cypher_unescape(&escaped).unwrap();
