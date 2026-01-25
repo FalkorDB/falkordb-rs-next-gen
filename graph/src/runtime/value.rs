@@ -504,8 +504,11 @@ impl Rem for Value {
             }
             (Self::Float(a), Self::Float(b)) => {
                 let result = a % b;
-                // If result is a whole number (no fractional part), return Int
-                if result.fract() == 0.0 && result.is_finite() {
+                // If result is a whole number (no fractional part) and within i64 range, return Int
+                if result.fract() == 0.0 
+                    && result.is_finite() 
+                    && result >= i64::MIN as f64 
+                    && result <= i64::MAX as f64 {
                     #[allow(clippy::cast_possible_truncation)]
                     Ok(Self::Int(result as i64))
                 } else {
@@ -514,7 +517,10 @@ impl Rem for Value {
             }
             (Self::Float(a), Self::Int(b)) => {
                 let result = a % (b as f64);
-                if result.fract() == 0.0 && result.is_finite() {
+                if result.fract() == 0.0 
+                    && result.is_finite() 
+                    && result >= i64::MIN as f64 
+                    && result <= i64::MAX as f64 {
                     #[allow(clippy::cast_possible_truncation)]
                     Ok(Self::Int(result as i64))
                 } else {
@@ -523,7 +529,10 @@ impl Rem for Value {
             }
             (Self::Int(a), Self::Float(b)) => {
                 let result = (a as f64) % b;
-                if result.fract() == 0.0 && result.is_finite() {
+                if result.fract() == 0.0 
+                    && result.is_finite() 
+                    && result >= i64::MIN as f64 
+                    && result <= i64::MAX as f64 {
                     #[allow(clippy::cast_possible_truncation)]
                     Ok(Self::Int(result as i64))
                 } else {
@@ -1155,5 +1164,14 @@ mod tests {
         // 10.0 % 2.5 = 0.0 → should return Int(0)
         let result = (Value::Float(10.0) % Value::Float(2.5)).unwrap();
         assert_eq!(result, Value::Int(0));
+    }
+
+    #[test]
+    fn test_modulo_large_float_stays_float() {
+        // Very large whole number result should stay as Float if it exceeds i64 range
+        let large_value = (i64::MAX as f64) * 2.0;
+        let result = (Value::Float(large_value) % Value::Float(1.0)).unwrap();
+        // Should remain a Float since it exceeds i64::MAX
+        assert!(matches!(result, Value::Float(_)));
     }
 }
