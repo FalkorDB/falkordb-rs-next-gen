@@ -19,6 +19,10 @@ use crate::{
     runtime::{functions::Type, ordermap::OrderMap},
 };
 
+/// The largest integer that can be exactly represented as an f64.
+/// This is 2^53, beyond which f64 loses precision for integer values.
+const MAX_SAFE_INT: f64 = 9007199254740992.0;
+
 /// A trait for formatting values as JSON, similar to Display but for JSON output
 pub trait DisplayJson {
     fn fmt_json(
@@ -490,16 +494,12 @@ impl Div for Value {
 /// Returns Int if the result has no fractional part and is safely within i64 range,
 /// otherwise returns Float.
 fn modulo_result_to_value(result: f64) -> Value {
-    // Check if the result is a whole number and within i64 range
-    // Note: We use a slightly conservative range check to avoid precision issues
-    // at the boundaries of i64 range
-    const MAX_SAFE_INT: f64 = 9007199254740992.0; // 2^53, the largest integer exactly representable in f64
-    
+    // Check if the result is a whole number and within safe integer range
+    // We use MAX_SAFE_INT (2^53) for both bounds to ensure precise representation
     if result.fract() == 0.0 
         && result.is_finite() 
-        && result >= i64::MIN as f64 
-        && result <= MAX_SAFE_INT
-        && result >= -MAX_SAFE_INT {
+        && result >= -MAX_SAFE_INT
+        && result <= MAX_SAFE_INT {
         #[allow(clippy::cast_possible_truncation)]
         Value::Int(result as i64)
     } else {
@@ -1164,10 +1164,21 @@ mod tests {
 
     #[test]
     fn test_modulo_large_float_stays_float() {
-        // Very large whole number result should stay as Float if it exceeds i64 range
-        let large_value = (i64::MAX as f64) * 2.0;
-        let result = (Value::Float(large_value) % Value::Float(1.0)).unwrap();
-        // Should remain a Float since it exceeds i64::MAX
+        // Test that a whole number result just above MAX_SAFE_INT stays as Float
+        // 9007199254740993.0 is 2^53 + 1, just beyond the safe integer range for f64
+        let value_above_safe = 9007199254740993.0;
+        let result = (Value::Float(value_above_safe) % Value::Float(1.0)).unwrap();
+        // Should remain a Float since it exceeds MAX_SAFE_INT
         assert!(matches!(result, Value::Float(_)));
+    }
+
+    #[test]
+    fn test_modulo_at_max_safe_int_boundary() {
+        // Test that a whole number result exactly at MAX_SAFE_INT is converted to Int
+        // 9007199254740992.0 is 2^53, the largest safe integer for f64
+        let max_safe = 9007199254740992.0;
+        let result = (Value::Float(max_safe) % Value::Float(max_safe + 1.0)).unwrap();
+        // Should return Int since it's at MAX_SAFE_INT (the modulo result is max_safe)
+        assert_eq!(result, Value::Int(9007199254740992));
     }
 }
