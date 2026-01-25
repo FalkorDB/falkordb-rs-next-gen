@@ -13,7 +13,7 @@ use crate::{
     tree,
 };
 use itertools::Itertools;
-use json_escape::unescape;
+use crate::string_escape::cypher_unescape;
 use orx_tree::{DynTree, NodeRef};
 use std::sync::Arc;
 use std::{
@@ -384,8 +384,7 @@ impl<'a> Lexer<'a> {
                     if !end {
                         return Err((format!("Unterminated string starting at pos: {}", pos), len));
                     }
-                    Ok(unescape(&str[pos + 1..pos + len])
-                        .decode_utf8()
+                    Ok(cypher_unescape(&str[pos + 1..pos + len])
                         .map_or_else(
                             |_| {
                                 (
@@ -393,7 +392,7 @@ impl<'a> Lexer<'a> {
                                     len + 1,
                                 )
                             },
-                            |unescaped| (Token::String(Arc::new(unescaped.into_owned())), len + 1),
+                            |unescaped| (Token::String(Arc::new(unescaped)), len + 1),
                         ))
                 }
                 '\"' => {
@@ -424,8 +423,7 @@ impl<'a> Lexer<'a> {
                     if !end {
                         return Err((format!("Unterminated string starting at pos: {}", pos), len));
                     }
-                    Ok(unescape(&str[pos + 1..pos + len])
-                        .decode_utf8()
+                    Ok(cypher_unescape(&str[pos + 1..pos + len])
                         .map_or_else(
                             |_| {
                                 (
@@ -433,7 +431,7 @@ impl<'a> Lexer<'a> {
                                     len + 1,
                                 )
                             },
-                            |unescaped| (Token::String(Arc::new(unescaped.into_owned())), len + 1),
+                            |unescaped| (Token::String(Arc::new(unescaped)), len + 1),
                         ))
                 }
                 d @ '0'..='9' => Self::lex_numeric(str, chars, pos, d, 1),
