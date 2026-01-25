@@ -1686,17 +1686,23 @@ fn value_to_integer(
                 return Ok(Value::Null);
             }
 
-            // Try to parse as i64 first (no decimal point)
-            if !s.contains('.') {
-                return Ok(s.parse::<i64>().map(Value::Int).unwrap_or(Value::Null));
+            // First try parsing as i64 (fast path for simple integers like "123")
+            // This will fail for:
+            // - Decimal numbers: "1.5", "0.001"
+            // - Scientific notation: "1e10", "1e-13"
+            // - Invalid formats: "abc", "12abc"
+            // - Overflow values
+            if let Ok(i) = s.parse::<i64>() {
+                return Ok(Value::Int(i));
             }
 
-            // Has decimal - parse as f64 then floor
-            s.parse::<f64>()
-                .ok()
-                .filter(|f| f.is_finite())
-                .map(|f| Value::Int(f.floor() as i64))
-                .ok_or_else(|| "Invalid number".to_string())
+            // i64 parse failed - try parsing as f64
+            // This handles decimal points and scientific notation
+            // then floors the result to get an integer
+            match s.parse::<f64>() {
+                Ok(f) if f.is_finite() => Ok(Value::Int(f.floor() as i64)),
+                _ => Ok(Value::Null), // Parse failed or non-finite (NaN, Infinity)
+            }
         }
         Some(Value::Int(i)) => Ok(Value::Int(i)),
         Some(Value::Float(f)) => Ok(Value::Int(f.floor() as i64)),
