@@ -502,9 +502,34 @@ impl Rem for Value {
                     Ok(Self::Int(a.wrapping_rem(b)))
                 }
             }
-            (Self::Float(a), Self::Float(b)) => Ok(Self::Float(a % b)),
-            (Self::Float(a), Self::Int(b)) => Ok(Self::Float(a % b as f64)),
-            (Self::Int(a), Self::Float(b)) => Ok(Self::Float(a as f64 % b)),
+            (Self::Float(a), Self::Float(b)) => {
+                let result = a % b;
+                // If result is a whole number (no fractional part), return Int
+                if result.fract() == 0.0 && result.is_finite() {
+                    #[allow(clippy::cast_possible_truncation)]
+                    Ok(Self::Int(result as i64))
+                } else {
+                    Ok(Self::Float(result))
+                }
+            }
+            (Self::Float(a), Self::Int(b)) => {
+                let result = a % (b as f64);
+                if result.fract() == 0.0 && result.is_finite() {
+                    #[allow(clippy::cast_possible_truncation)]
+                    Ok(Self::Int(result as i64))
+                } else {
+                    Ok(Self::Float(result))
+                }
+            }
+            (Self::Int(a), Self::Float(b)) => {
+                let result = (a as f64) % b;
+                if result.fract() == 0.0 && result.is_finite() {
+                    #[allow(clippy::cast_possible_truncation)]
+                    Ok(Self::Int(result as i64))
+                } else {
+                    Ok(Self::Float(result))
+                }
+            }
             (a, b) => Err(format!(
                 "Type mismatch: expected Integer, Float, or Null but was ({}, {})",
                 a.name(),
@@ -1090,5 +1115,45 @@ impl ValuesDeduper {
             seen.insert(hash);
             false
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_modulo_int_float_whole_result() {
+        // 5 % 2.5 = 0.0 → should return Int(0)
+        let result = (Value::Int(5) % Value::Float(2.5)).unwrap();
+        assert_eq!(result, Value::Int(0));
+    }
+
+    #[test]
+    fn test_modulo_float_int_whole_result() {
+        // 10.0 % 5 = 0.0 → should return Int(0)
+        let result = (Value::Float(10.0) % Value::Int(5)).unwrap();
+        assert_eq!(result, Value::Int(0));
+    }
+
+    #[test]
+    fn test_modulo_float_float_fractional_result() {
+        // 5.5 % 2.5 = 0.5 → should return Float(0.5)
+        let result = (Value::Float(5.5) % Value::Float(2.5)).unwrap();
+        assert_eq!(result, Value::Float(0.5));
+    }
+
+    #[test]
+    fn test_modulo_int_float_fractional_result() {
+        // 5 % 2.0 = 1.0 → should return Int(1)
+        let result = (Value::Int(5) % Value::Float(2.0)).unwrap();
+        assert_eq!(result, Value::Int(1));
+    }
+
+    #[test]
+    fn test_modulo_float_float_whole_result() {
+        // 10.0 % 2.5 = 0.0 → should return Int(0)
+        let result = (Value::Float(10.0) % Value::Float(2.5)).unwrap();
+        assert_eq!(result, Value::Int(0));
     }
 }
