@@ -355,12 +355,17 @@ pub fn init_functions() -> Result<(), Functions> {
         property,
         false,
         vec![
-            Type::Union(vec![Type::Node, Type::Relationship, Type::Map, Type::Null]),
+            Type::Union(vec![
+                Type::Map,
+                Type::Node,
+                Type::Relationship,
+                Type::Null,
+                Type::Point,
+            ]),
             Type::String,
         ],
         FnType::Internal,
     );
-
     funcs.add(
         "labels",
         labels,
