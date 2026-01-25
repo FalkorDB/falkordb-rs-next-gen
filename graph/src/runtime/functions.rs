@@ -1685,6 +1685,15 @@ fn value_to_integer(
     _runtime: &Runtime,
     args: ThinVec<Value>,
 ) -> Result<Value, String> {
+    // Check if value is within i64 range
+    // Due to f64 precision:
+    // - i64::MIN (-2^63) as f64 = -9223372036854776000
+    // - i64::MAX (2^63-1) as f64 = 9223372036854776000 (rounded up)
+    // Note: i64::MAX and i64::MAX+1 have same f64 representation due to precision loss
+    // We accept values at the boundary (use < and >) for graceful handling
+    const MAX_BOUND: f64 = 9_223_372_036_854_776_000.0;
+    const MIN_BOUND: f64 = -9_223_372_036_854_776_000.0;
+
     match args.into_iter().next() {
         Some(Value::String(s)) => {
             if s.is_empty() {
@@ -1703,14 +1712,35 @@ fn value_to_integer(
 
             // i64 parse failed - try parsing as f64
             // This handles decimal points and scientific notation
-            // then floors the result to get an integer
+            // then truncates the result to get an integer
             match s.parse::<f64>() {
-                Ok(f) if f.is_finite() => Ok(Value::Int(f.floor() as i64)),
+                Ok(f) if f.is_finite() => {
+                    let truncated = f.trunc();
+
+                    if !(MIN_BOUND..=MAX_BOUND).contains(&truncated) {
+                        return Ok(Value::Null);
+                    }
+
+                    #[allow(clippy::cast_possible_truncation)]
+                    Ok(Value::Int(truncated as i64))
+                }
                 _ => Ok(Value::Null), // Parse failed or non-finite (NaN, Infinity)
             }
         }
         Some(Value::Int(i)) => Ok(Value::Int(i)),
-        Some(Value::Float(f)) => Ok(Value::Int(f.floor() as i64)),
+        Some(Value::Float(f)) => {
+            if !f.is_finite() {
+                return Ok(Value::Null);
+            }
+            let truncated = f.trunc();
+
+            if (MIN_BOUND..=MAX_BOUND).contains(&truncated) {
+                #[allow(clippy::cast_possible_truncation)]
+                Ok(Value::Int(truncated as i64))
+            } else {
+                Ok(Value::Null)
+            }
+        }
         Some(Value::Bool(b)) => Ok(Value::Int(i64::from(b))),
         _ => Ok(Value::Null),
     }
@@ -3169,4 +3199,207 @@ fn db_fulltext_query_nodes(
     _args: ThinVec<Value>,
 ) -> Result<Value, String> {
     Ok(Value::List(thin_vec![]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::runtime::Runtime;
+    use std::sync::Arc;
+    use thin_vec::thin_vec;
+
+    /// Get a Runtime reference for testing.
+    ///
+    /// SAFETY: All functions being tested have `_runtime` parameters (never dereferenced).
+    /// We use a dangling pointer that's properly aligned but never accessed.
+    fn get_test_runtime() -> &'static Runtime {
+        unsafe {
+            // Create a dangling but aligned pointer
+            // SAFETY: This is safe because _runtime is never dereferenced in any function
+            &*(std::ptr::NonNull::dangling().as_ptr())
+        }
+    }
+
+    #[test]
+    fn test_value_to_integer_boundary_values() {
+        let runtime = get_test_runtime();
+
+        // Test i64::MAX
+        let args = thin_vec![Value::String(Arc::new("9223372036854775807".to_string()))];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(i64::MAX));
+
+        // Test i64::MIN
+        let args = thin_vec![Value::String(Arc::new("-9223372036854775808".to_string()))];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(i64::MIN));
+
+        // Test i64::MAX + 1 (saturates to i64::MAX due to f64 precision loss)
+        let args = thin_vec![Value::String(Arc::new("9223372036854775808".to_string()))];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(i64::MAX));
+
+        // Test i64::MIN - 1 (saturates to i64::MIN due to f64 precision loss)
+        let args = thin_vec![Value::String(Arc::new("-9223372036854775809".to_string()))];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(i64::MIN));
+
+        // Test way out of range (u64::MAX) - should return NULL
+        let args = thin_vec![Value::String(Arc::new("18446744073709551616".to_string()))];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Null);
+
+        // Test way out of range negative - should return NULL
+        let args = thin_vec![Value::String(Arc::new("-18446744073709551616".to_string()))];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Null);
+    }
+
+    #[test]
+    fn test_value_to_integer_large_valid_numbers() {
+        let runtime = get_test_runtime();
+
+        // Large positive number within range
+        let args = thin_vec![Value::String(Arc::new("1790460441484152222".to_string()))];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(1790460441484152222));
+
+        // Large negative number within range
+        let args = thin_vec![Value::String(Arc::new("-1790460441484152222".to_string()))];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(-1790460441484152222));
+    }
+
+    #[test]
+    fn test_value_to_integer_basic_types() {
+        let runtime = get_test_runtime();
+
+        // Integer passthrough
+        let args = thin_vec![Value::Int(42)];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(42));
+
+        // Float floor
+        let args = thin_vec![Value::Float(1.9)];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(1));
+
+        let args = thin_vec![Value::Float(1.1)];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(1));
+
+        // Boolean true
+        let args = thin_vec![Value::Bool(true)];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(1));
+
+        // Boolean false
+        let args = thin_vec![Value::Bool(false)];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(0));
+
+        // Null
+        let args = thin_vec![Value::Null];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Null);
+    }
+
+    #[test]
+    fn test_value_to_integer_string_conversions() {
+        let runtime = get_test_runtime();
+
+        // Simple integer string
+        let args = thin_vec![Value::String(Arc::new("1".to_string()))];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(1));
+
+        // String with decimal (floor)
+        let args = thin_vec![Value::String(Arc::new("1.1".to_string()))];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(1));
+
+        let args = thin_vec![Value::String(Arc::new("1.9".to_string()))];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(1));
+
+        // Empty string (NULL)
+        let args = thin_vec![Value::String(Arc::new("".to_string()))];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Null);
+
+        // Invalid string (NULL)
+        let args = thin_vec![Value::String(Arc::new("z".to_string()))];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Null);
+
+        // Invalid string (NULL)
+        let args = thin_vec![Value::String(Arc::new("abc".to_string()))];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Null);
+    }
+
+    #[test]
+    fn test_value_to_integer_negative_numbers() {
+        let runtime = get_test_runtime();
+
+        // Negative integer string
+        let args = thin_vec![Value::String(Arc::new("-1".to_string()))];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(-1));
+
+        // Negative float string
+        let args = thin_vec![Value::String(Arc::new("-1.9".to_string()))];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(-1));
+
+        // Negative float value
+        let args = thin_vec![Value::Float(-1.9)];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(-1));
+    }
+
+    #[test]
+    fn test_value_to_integer_edge_cases() {
+        let runtime = get_test_runtime();
+
+        // Zero
+        let args = thin_vec![Value::Int(0)];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(0));
+
+        // Zero float
+        let args = thin_vec![Value::Float(0.0)];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(0));
+
+        // Zero string
+        let args = thin_vec![Value::String(Arc::new("0".to_string()))];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(0));
+
+        // Negative zero float
+        let args = thin_vec![Value::Float(-0.0)];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(0));
+    }
+
+    #[test]
+    fn test_value_to_integer_special_floats() {
+        let runtime = get_test_runtime();
+
+        // Infinity should return NULL (non-finite)
+        let args = thin_vec![Value::Float(f64::INFINITY)];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Null);
+
+        // Negative infinity should return NULL (non-finite)
+        let args = thin_vec![Value::Float(f64::NEG_INFINITY)];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Null);
+
+        // NaN should return NULL (non-finite)
+        let args = thin_vec![Value::Float(f64::NAN)];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Null);
+    }
 }

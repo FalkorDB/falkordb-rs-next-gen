@@ -26,7 +26,6 @@ test_path_filter
 test_point
 test_profile
 test_query_mem_limit
-test_query_validation
 test_reduce
 test_relation_patterns
 test_results
