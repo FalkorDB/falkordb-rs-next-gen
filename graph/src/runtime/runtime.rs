@@ -1009,7 +1009,7 @@ impl<'a> Runtime {
                         .map(move |v| {
                             let mut env = Env::default();
                             if let Value::Map(map) = v {
-                                for (field, alias) in &field_alias_pairs {
+                                for (field, alias) in field_alias_pairs {
                                     // Extract using field name, store using alias
                                     if let Some(value) = map.get(field.as_str()) {
                                         env.insert(alias, value.clone());
