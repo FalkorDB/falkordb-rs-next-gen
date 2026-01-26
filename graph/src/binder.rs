@@ -317,6 +317,25 @@ impl Binder {
     ) -> Result<QueryGraph<Arc<String>, Arc<String>, Variable>, String> {
         let mut bound: QueryGraph<Arc<String>, Arc<String>, Variable> = QueryGraph::default();
 
+        // Pre-register path variables so they're available during inline filter binding
+        // This is needed because inline filters like ({prop: path_var.attr}) need to
+        // reference path variables that haven't been fully bound yet
+        let mut path_var_placeholders = HashMap::new();
+        for path in graph.paths() {
+            // Create a placeholder variable for this path with Type::Path
+            let scope_id = u32::try_from(self.env_stack.len())
+                .map_err(|_| "Scope depth exceeds maximum supported value".to_string())?
+                .saturating_sub(1);
+            let path_var = self.fresh_var(Some(path.var.clone()), Type::Path, scope_id);
+
+            // Add to current environment temporarily
+            self.current_env_mut()
+                .insert(path.var.clone(), path_var.clone());
+
+            // Track this so we can remove it later and re-add the properly bound version
+            path_var_placeholders.insert(path.var.clone(), path_var);
+        }
+
         for node in graph.nodes() {
             self.bind_expr(&node.attrs)?;
         }
@@ -400,6 +419,10 @@ impl Binder {
                 relationship.bidirectional,
             ));
             bound.add_relationship(rel);
+        }
+
+        for path_var_name in path_var_placeholders.keys() {
+            self.current_env_mut().remove(path_var_name);
         }
 
         // Bind paths - path vars reference entities by name
@@ -620,6 +643,31 @@ impl Binder {
                         }
                     }
                 }
+
+                // Validate property access on supported types only
+                // This catches cases like: path_var.prop where path_var is a Path
+                if let ExprIR::FuncInvocation(func) = node_ref.data()
+                    && func.name == "property"
+                    && node_ref.num_children() >= 1
+                {
+                    // Get the first child (the entity we're accessing property on)
+                    let target_child = node_ref.child(0);
+
+                    // If it's a variable reference, check its type
+                    if let ExprIR::Variable(var_name) = target_child.data() {
+                        // Try to resolve the variable
+                        if let Ok(var) = self.resolve_name(var_name, locals) {
+                            // Check if the variable type is Path
+                            if var.ty == Type::Path {
+                                return Err(
+                                    "Type mismatch: expected Map, Node, Edge, Datetime, Date, Time, Duration, Null, or Point but was Path"
+                                    .to_string()
+                                );
+                            }
+                        }
+                    }
+                }
+
                 let children = node_ref
                     .children()
                     .map(|child| self.bind_expr_node(expr, child, locals))
@@ -806,5 +854,212 @@ impl Binder {
             ));
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cypher::Parser;
+    use crate::runtime::functions;
+
+    // Helper function to ensure functions are initialized before each test
+    fn ensure_functions_initialized() {
+        // Try to initialize functions, ignore error if already initialized
+        let _ = functions::init_functions();
+    }
+
+    #[test]
+    fn test_path_variable_in_inline_filter_type_error() {
+        ensure_functions_initialized();
+
+        // Test for the exact scenario from test25_cartesian_product_invalid_filter
+        // Query: MATCH p1=(), (n), ({prop: p1.path_val}) RETURN *
+        // Expected: Type mismatch error, not "not defined" error
+
+        let query = "MATCH p1=(), (n), ({prop: p1.path_val}) RETURN *";
+        let mut parser = Parser::new(query);
+
+        let ast_result = parser.parse();
+        assert!(ast_result.is_ok(), "Query should parse successfully");
+
+        let ast = ast_result.unwrap();
+        let binder = Binder::default();
+
+        let result = binder.bind(ast);
+        assert!(result.is_err(), "Binding should fail");
+
+        let error = result.unwrap_err();
+
+        // Should contain "Type mismatch" and "Path"
+        assert!(
+            error.contains("Type mismatch"),
+            "Error should mention type mismatch, got: {}",
+            error
+        );
+        assert!(
+            error.contains("Path"),
+            "Error should mention Path type, got: {}",
+            error
+        );
+
+        // Should NOT be a "not defined" error
+        assert!(
+            !error.contains("not defined"),
+            "Should not be a 'not defined' error, got: {}",
+            error
+        );
+    }
+
+    #[test]
+    fn test_path_property_access_in_where_clause() {
+        ensure_functions_initialized();
+
+        // Test that property access on path in WHERE clause also fails with type error
+        // Query: MATCH p=()-[]->() WHERE p.name = 'test' RETURN p
+
+        let query = "MATCH p=()-[]->() WHERE p.name = 'test' RETURN p";
+        let mut parser = Parser::new(query);
+
+        let ast_result = parser.parse();
+        assert!(ast_result.is_ok(), "Query should parse successfully");
+
+        let ast = ast_result.unwrap();
+        let binder = Binder::default();
+
+        let result = binder.bind(ast);
+        assert!(result.is_err(), "Binding should fail with type error");
+
+        let error = result.unwrap_err();
+        assert!(
+            error.contains("Type mismatch") && error.contains("Path"),
+            "Should get type mismatch for Path, got: {}",
+            error
+        );
+    }
+
+    #[test]
+    fn test_valid_path_usage_with_length() {
+        ensure_functions_initialized();
+
+        // Test that valid path usage (like length(p)) works correctly
+        // Query: MATCH p=()-[]->() WHERE length(p) > 0 RETURN p
+
+        let query = "MATCH p=()-[]->() WHERE length(p) > 0 RETURN p";
+        let mut parser = Parser::new(query);
+
+        let ast_result = parser.parse();
+        assert!(ast_result.is_ok(), "Query should parse successfully");
+
+        let ast = ast_result.unwrap();
+        let binder = Binder::default();
+
+        let result = binder.bind(ast);
+        assert!(
+            result.is_ok(),
+            "Valid path usage should succeed, got error: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_node_property_access_still_works() {
+        ensure_functions_initialized();
+
+        // Ensure we didn't break normal node property access
+        // Query: MATCH (n {prop: 'value'}) RETURN n
+
+        let query = "MATCH (n {prop: 'value'}) RETURN n";
+        let mut parser = Parser::new(query);
+
+        let ast_result = parser.parse();
+        assert!(ast_result.is_ok(), "Query should parse successfully");
+
+        let ast = ast_result.unwrap();
+        let binder = Binder::default();
+
+        let result = binder.bind(ast);
+        assert!(
+            result.is_ok(),
+            "Normal node property access should work, got error: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_relationship_property_access_works() {
+        ensure_functions_initialized();
+
+        // Ensure relationship property access still works
+        // Query: MATCH ()-[r {prop: 'value'}]->() RETURN r
+
+        let query = "MATCH ()-[r {prop: 'value'}]->() RETURN r";
+        let mut parser = Parser::new(query);
+
+        let ast_result = parser.parse();
+        assert!(ast_result.is_ok(), "Query should parse successfully");
+
+        let ast = ast_result.unwrap();
+        let binder = Binder::default();
+
+        let result = binder.bind(ast);
+        assert!(
+            result.is_ok(),
+            "Relationship property access should work, got error: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_multiple_path_variables() {
+        ensure_functions_initialized();
+
+        // Test multiple path variables in the same query
+        // Query: MATCH p1=(), p2=() RETURN p1, p2
+
+        let query = "MATCH p1=(), p2=() RETURN p1, p2";
+        let mut parser = Parser::new(query);
+
+        let ast_result = parser.parse();
+        assert!(ast_result.is_ok(), "Query should parse successfully");
+
+        let ast = ast_result.unwrap();
+        let binder = Binder::default();
+
+        let result = binder.bind(ast);
+        assert!(
+            result.is_ok(),
+            "Multiple path variables should work, got error: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_path_in_inline_filter_catches_type_error_not_scope_error() {
+        ensure_functions_initialized();
+
+        // This is the key test - ensure we catch TYPE error before SCOPE error
+        // Query: MATCH p1=(), (n), ({prop: p1.nonexistent}) RETURN *
+
+        let query = "MATCH p1=(), (n), ({prop: p1.nonexistent}) RETURN *";
+        let mut parser = Parser::new(query);
+
+        let ast_result = parser.parse();
+        assert!(ast_result.is_ok(), "Query should parse successfully");
+
+        let ast = ast_result.unwrap();
+        let binder = Binder::default();
+
+        let result = binder.bind(ast);
+        assert!(result.is_err(), "Should fail with type error");
+
+        let error = result.unwrap_err();
+
+        // The key assertion: should be a type error, not a "not defined" error
+        assert!(
+            error.contains("Type mismatch") || error.contains("Path"),
+            "Should report type mismatch, not 'not defined'. Got: {}",
+            error
+        );
     }
 }
