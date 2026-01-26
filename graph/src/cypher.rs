@@ -1141,23 +1141,25 @@ impl<'a> Parser<'a> {
         let filter = if optional_match_token!(self.lexer => Yield) {
             loop {
                 let output_field = self.parse_ident()?;
-                
+
                 let var_name = if optional_match_token!(self.lexer => As) {
                     self.parse_ident()?
                 } else {
                     output_field.clone()
                 };
-                
+
                 // Validate output_field exists in procedure definition
                 if let FnType::Procedure(outputs) = &func.fn_type {
                     if !outputs.contains(&output_field.as_ref().clone()) {
-                        return Err(format!("Procedure '{}' does not have output field '{}'", 
-                                          function_name, output_field));
+                        return Err(format!(
+                            "Procedure '{}' does not have output field '{}'",
+                            function_name, output_field
+                        ));
                     }
                 }
-                
+
                 field_alias_pairs.push((output_field, var_name));
-                
+
                 if !optional_match_token!(self.lexer, Comma) {
                     break;
                 }
