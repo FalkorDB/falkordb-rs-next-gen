@@ -1691,16 +1691,20 @@ fn value_to_integer(
                 return Ok(Value::Null);
             }
 
-            // Try parsing as i64 first (handles exact i64::MAX/MIN)
+            // Try to parse as i64 first (simple integers only)
+            // This efficiently handles cases like "123", "-456"
+            // and catches exact i64::MAX and i64::MIN
             if let Ok(i) = s.parse::<i64>() {
                 return Ok(Value::Int(i));
             }
 
-            // Try as f64 then floor
+            // Try parsing as f64 to handle decimals and scientific notation
+            // This handles: "1.5", "1e-13", "1.23e10", etc.
             match s.parse::<f64>() {
                 Ok(f) if f.is_finite() => {
                     let floored = f.floor();
 
+                    // Check for overflow boundaries
                     // Use casted values for exact comparison
                     #[allow(clippy::cast_precision_loss)]
                     let i64_max_as_f64 = i64::MAX as f64;
@@ -3225,6 +3229,50 @@ mod tests {
     }
 
     #[test]
+    fn test_value_to_integer_scientific_notation() {
+        let runtime = get_test_runtime();
+
+        // THE PRIMARY BUG FIX: Scientific notation strings without decimal point
+        // This was failing before because the code checked for '.' which doesn't exist in '1e-13'
+        let result = value_to_integer(
+            runtime,
+            thin_vec![Value::String(Arc::new("1e-13".to_string()))],
+        )
+        .unwrap();
+        assert_eq!(result, Value::Int(0));
+
+        let result = value_to_integer(
+            runtime,
+            thin_vec![Value::String(Arc::new("1.5e-10".to_string()))],
+        )
+        .unwrap();
+        assert_eq!(result, Value::Int(0));
+
+        // Positive exponents
+        let result = value_to_integer(
+            runtime,
+            thin_vec![Value::String(Arc::new("1e2".to_string()))],
+        )
+        .unwrap();
+        assert_eq!(result, Value::Int(100));
+
+        let result = value_to_integer(
+            runtime,
+            thin_vec![Value::String(Arc::new("1.5e2".to_string()))],
+        )
+        .unwrap();
+        assert_eq!(result, Value::Int(150));
+
+        // Uppercase E
+        let result = value_to_integer(
+            runtime,
+            thin_vec![Value::String(Arc::new("1E2".to_string()))],
+        )
+        .unwrap();
+        assert_eq!(result, Value::Int(100));
+    }
+
+    #[test]
     fn test_value_to_integer_boundary_values() {
         let runtime = get_test_runtime();
 
@@ -3266,12 +3314,12 @@ mod tests {
         // Large positive number within range
         let args = thin_vec![Value::String(Arc::new("1790460441484152222".to_string()))];
         let result = value_to_integer(runtime, args).unwrap();
-        assert_eq!(result, Value::Int(1790460441484152222));
+        assert_eq!(result, Value::Int(1_790_460_441_484_152_222));
 
         // Large negative number within range
         let args = thin_vec![Value::String(Arc::new("-1790460441484152222".to_string()))];
         let result = value_to_integer(runtime, args).unwrap();
-        assert_eq!(result, Value::Int(-1790460441484152222));
+        assert_eq!(result, Value::Int(-1_790_460_441_484_152_222));
     }
 
     #[test]
@@ -3327,7 +3375,7 @@ mod tests {
         assert_eq!(result, Value::Int(1));
 
         // Empty string (NULL)
-        let args = thin_vec![Value::String(Arc::new("".to_string()))];
+        let args = thin_vec![Value::String(Arc::new(String::new()))];
         let result = value_to_integer(runtime, args).unwrap();
         assert_eq!(result, Value::Null);
 
