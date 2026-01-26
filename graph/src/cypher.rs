@@ -1145,7 +1145,7 @@ impl<'a> Parser<'a> {
                 let var_name = if optional_match_token!(self.lexer => As) {
                     self.parse_ident()?
                 } else {
-                    output_field.clone()
+                    Arc::clone(&output_field)
                 };
 
                 // Validate output_field exists in procedure definition
