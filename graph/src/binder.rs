@@ -204,17 +204,18 @@ impl Binder {
                 None,
                 write,
             ),
-            QueryIR::Call(func, args, vars, filter) => {
+            QueryIR::Call(func, args, field_alias_pairs, filter) => {
                 let args = args
                     .iter()
                     .map(|expr| self.bind_expr(expr))
                     .collect::<Result<Vec<_>, _>>()?;
-                let mut bound_vars = Vec::with_capacity(vars.len());
-                for name in vars {
-                    bound_vars.push(self.define_name_in_scope(name, Type::Any, true)?);
+                let mut bound_pairs = Vec::with_capacity(field_alias_pairs.len());
+                for (field, alias_name) in field_alias_pairs {
+                    let bound_alias = self.define_name_in_scope(alias_name, Type::Any, true)?;
+                    bound_pairs.push((field.clone(), bound_alias));
                 }
                 let filter = filter.map(|expr| self.bind_expr(&expr)).transpose()?;
-                Ok(QueryIR::Call(func, args, bound_vars, filter))
+                Ok(QueryIR::Call(func, args, bound_pairs, filter))
             }
         }
     }

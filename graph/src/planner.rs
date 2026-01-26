@@ -17,7 +17,7 @@ pub enum IR {
     Empty,
     Argument,
     Optional(Vec<Variable>),
-    ProcedureCall(Arc<GraphFn>, Vec<QueryExpr<Variable>>, Vec<Variable>),
+    Call(Arc<GraphFn>, Vec<QueryExpr<Variable>>, Vec<(Arc<String>, Variable)>),
     Unwind(QueryExpr<Variable>, Variable),
     Create(QueryGraph<Arc<String>, Arc<String>, Variable>),
     Merge(
@@ -89,7 +89,7 @@ impl Display for IR {
             Self::Empty => write!(f, "Empty"),
             Self::Argument => write!(f, "Argument"),
             Self::Optional(_) => write!(f, "Optional"),
-            Self::ProcedureCall(_, _, _) => write!(f, "ProcedureCall"),
+            Self::Call(_, _, _) => write!(f, "Call"),
             Self::Unwind(_, _) => {
                 write!(f, "Unwind")
             }
@@ -333,11 +333,11 @@ impl Planner {
         ir: QueryIR<Variable>,
     ) -> DynTree<IR> {
         match ir {
-            QueryIR::Call(proc, exprs, named_outputs, filter) => {
+            QueryIR::Call(proc, exprs, field_alias_pairs, filter) => {
                 if let Some(filter) = filter {
                     return tree!(
                         IR::Filter(filter),
-                        tree!(IR::ProcedureCall(proc, exprs, named_outputs))
+                        tree!(IR::Call(proc, exprs, field_alias_pairs))
                     );
                 }
                 if proc.name == "db.idx.fulltext.drop" {
@@ -378,7 +378,7 @@ impl Planner {
                         options: None,
                     });
                 }
-                tree!(IR::ProcedureCall(proc, exprs, named_outputs))
+                tree!(IR::Call(proc, exprs, field_alias_pairs))
             }
             QueryIR::Match {
                 pattern,
