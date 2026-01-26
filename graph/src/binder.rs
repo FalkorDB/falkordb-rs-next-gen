@@ -212,7 +212,7 @@ impl Binder {
                 let mut bound_pairs = Vec::with_capacity(field_alias_pairs.len());
                 for (field, alias_name) in field_alias_pairs {
                     let bound_alias = self.define_name_in_scope(alias_name, Type::Any, true)?;
-                    bound_pairs.push((Arc::clone(field), bound_alias));
+                    bound_pairs.push((Arc::clone(&field), bound_alias));
                 }
                 let filter = filter.map(|expr| self.bind_expr(&expr)).transpose()?;
                 Ok(QueryIR::Call(func, args, bound_pairs, filter))
