@@ -117,7 +117,7 @@ jobs:
           ./flow.sh
           TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
           llvm-profdata-20 merge --sparse `find . -name "*.profraw"` -o cov.profdata
-          llvm-cov-20 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so > codecov.txt.all
+          llvm-cov-20 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so $(find target/debug/deps -type f -executable -name 'test_*') > codecov.txt.all
           lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de

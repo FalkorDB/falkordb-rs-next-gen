@@ -10,8 +10,10 @@ tests/flow/test_graph_merge
 tests/flow/test_mix_labels
 tests/flow/test_multi_pattern
 tests/flow/test_multiple_edges
+tests/flow/test_query_validation
 tests/flow/test_reversed_patterns
 tests/flow/test_self_pointing_node
 tests/flow/test_unwind_clause
 tests/flow/test_value_comparisons
 tests/flow/test_with_clause
+

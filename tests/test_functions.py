@@ -158,7 +158,7 @@ def test_functions(name, types):
 @pytest.mark.extra
 def test_extra_functions():
     validate_function("string.matchRegEx", [Type.STRING | Type.NULL, Type.STRING | Type.NULL])
-    validate_function("string.replaceRegEx", [Type.STRING | Type.NULL, Type.STRING | Type.NULL, Type.STRING | Type.NULL])
+    validate_function("string.replaceRegEx", [Type.STRING | Type.NULL, Type.STRING | Type.NULL, Optional[Type.STRING | Type.NULL]])
 
 def query_exception(query: str, message: str, params=None):
     try:

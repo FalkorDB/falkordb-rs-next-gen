@@ -355,12 +355,17 @@ pub fn init_functions() -> Result<(), Functions> {
         property,
         false,
         vec![
-            Type::Union(vec![Type::Node, Type::Relationship, Type::Map, Type::Null]),
+            Type::Union(vec![
+                Type::Map,
+                Type::Node,
+                Type::Relationship,
+                Type::Null,
+                Type::Point,
+            ]),
             Type::String,
         ],
         FnType::Internal,
     );
-
     funcs.add(
         "labels",
         labels,
@@ -617,7 +622,7 @@ pub fn init_functions() -> Result<(), Functions> {
         string_join,
         false,
         vec![
-            Type::Union(vec![Type::List(Box::new(Type::String)), Type::Null]),
+            Type::Union(vec![Type::List(Box::new(Type::Any)), Type::Null]),
             Type::Optional(Box::new(Type::String)),
         ],
         FnType::Function,
@@ -639,7 +644,7 @@ pub fn init_functions() -> Result<(), Functions> {
         vec![
             Type::Union(vec![Type::String, Type::Null]),
             Type::Union(vec![Type::String, Type::Null]),
-            Type::Union(vec![Type::String, Type::Null]),
+            Type::Optional(Box::new(Type::Union(vec![Type::String, Type::Null]))),
         ],
         FnType::Function,
     );
@@ -891,7 +896,7 @@ pub fn init_functions() -> Result<(), Functions> {
         vecf32,
         false,
         vec![Type::Union(vec![
-            Type::List(Box::new(Type::Float)),
+            Type::List(Box::new(Type::Any)),
             Type::Null,
         ])],
         FnType::Function,
@@ -1686,20 +1691,64 @@ fn value_to_integer(
                 return Ok(Value::Null);
             }
 
-            // Try to parse as i64 first (no decimal point)
-            if !s.contains('.') {
-                return Ok(s.parse::<i64>().map(Value::Int).unwrap_or(Value::Null));
+            // Try to parse as i64 first (simple integers only)
+            // This efficiently handles cases like "123", "-456"
+            // and catches exact i64::MAX and i64::MIN
+            if let Ok(i) = s.parse::<i64>() {
+                return Ok(Value::Int(i));
             }
 
-            // Has decimal - parse as f64 then floor
-            s.parse::<f64>()
-                .ok()
-                .filter(|f| f.is_finite())
-                .map(|f| Value::Int(f.floor() as i64))
-                .ok_or_else(|| "Invalid number".to_string())
+            // Try parsing as f64 to handle decimals and scientific notation
+            // This handles: "1.5", "1e-13", "1.23e10", etc.
+            match s.parse::<f64>() {
+                Ok(f) if f.is_finite() => {
+                    let floored = f.floor();
+
+                    // Check for overflow boundaries
+                    // Use casted values for exact comparison
+                    #[allow(clippy::cast_precision_loss)]
+                    let i64_max_as_f64 = i64::MAX as f64;
+                    #[allow(clippy::cast_precision_loss)]
+                    let i64_min_as_f64 = i64::MIN as f64;
+
+                    // For string path:
+                    // - Upper bound: Use >= because i64::MAX+1 rounds to same f64 as i64::MAX
+                    // - Lower bound: Use <= because i64::MIN-1 rounds to same f64 as i64::MIN
+                    // Since exact i64::MAX/MIN were caught by parse::<i64>() above,
+                    // any value equal to the boundary must have rounded from out-of-range
+                    if floored >= i64_max_as_f64 || floored <= i64_min_as_f64 {
+                        return Ok(Value::Null);
+                    }
+
+                    #[allow(clippy::cast_possible_truncation)]
+                    Ok(Value::Int(floored as i64))
+                }
+                _ => Ok(Value::Null),
+            }
         }
         Some(Value::Int(i)) => Ok(Value::Int(i)),
-        Some(Value::Float(f)) => Ok(Value::Int(f.floor() as i64)),
+        Some(Value::Float(f)) => {
+            if !f.is_finite() {
+                return Ok(Value::Null);
+            }
+
+            let floored = f.floor();
+
+            #[allow(clippy::cast_precision_loss)]
+            let i64_max_as_f64 = i64::MAX as f64;
+            #[allow(clippy::cast_precision_loss)]
+            let i64_min_as_f64 = i64::MIN as f64;
+
+            // For float input path:
+            // Use >= and < because we want to allow exact i64::MIN as f64
+            // but reject i64::MAX as f64 (which represents i64::MAX+1 due to rounding)
+            if floored >= i64_max_as_f64 || floored < i64_min_as_f64 {
+                return Ok(Value::Null);
+            }
+
+            #[allow(clippy::cast_possible_truncation)]
+            Ok(Value::Int(floored as i64))
+        }
         Some(Value::Bool(b)) => Ok(Value::Int(i64::from(b))),
         _ => Ok(Value::Null),
     }
@@ -1759,7 +1808,7 @@ fn size(
     args: ThinVec<Value>,
 ) -> Result<Value, String> {
     match args.into_iter().next() {
-        Some(Value::String(s)) => Ok(Value::Int(s.len() as i64)),
+        Some(Value::String(s)) => Ok(Value::Int(s.chars().count() as i64)),
         Some(Value::List(v)) => Ok(Value::Int(v.len() as i64)),
         Some(Value::Arc(v)) => {
             if let Value::List(v) = &*v {
@@ -2179,12 +2228,21 @@ fn string_match_reg_ex(
             match regex::Regex::new(pattern.as_str()) {
                 Ok(re) => {
                     let mut all_matches = thin_vec![];
+                    // For each match, create a sub-list containing the full match and all capture groups
                     for caps in re.captures_iter(text.as_str()) {
+                        let mut match_list = thin_vec![];
+                        // Iterate through all capture groups (0 = full match, 1+ = capture groups)
+                        // Include NULL for non-participating optional groups to maintain index consistency
                         for i in 0..caps.len() {
                             if let Some(m) = caps.get(i) {
-                                all_matches.push(Value::String(Arc::new(String::from(m.as_str()))));
+                                match_list.push(Value::String(Arc::new(String::from(m.as_str()))));
+                            } else {
+                                // Non-participating optional group - use NULL to preserve position
+                                match_list.push(Value::Null);
                             }
                         }
+                        // Add this match's captures as a sub-list
+                        all_matches.push(Value::List(match_list));
                     }
                     Ok(Value::List(all_matches))
                 }
@@ -2202,24 +2260,45 @@ fn string_replace_reg_ex(
     args: ThinVec<Value>,
 ) -> Result<Value, String> {
     let mut iter = args.into_iter();
-    match (iter.next(), iter.next(), iter.next()) {
-        (
-            Some(Value::String(text)),
-            Some(Value::String(pattern)),
-            Some(Value::String(replacement)),
-        ) => match regex::Regex::new(pattern.as_str()) {
-            Ok(re) => {
-                let replaced_text = re
-                    .replace_all(text.as_str(), replacement.as_str())
-                    .into_owned();
-                Ok(Value::String(Arc::new(replaced_text)))
-            }
-            Err(e) => Err(format!("Invalid regex, {e}")),
-        },
-        (Some(Value::Null), Some(_), Some(_))
-        | (Some(_), Some(Value::Null), Some(_))
-        | (Some(_), Some(_), Some(Value::Null)) => Ok(Value::Null),
+    let text = iter.next();
+    let pattern = iter.next();
+    let replacement = iter.next(); // May be None (optional third argument)
 
+    match (text, pattern) {
+        // NULL text or pattern returns NULL
+        (Some(Value::Null), _) | (_, Some(Value::Null)) => Ok(Value::Null),
+
+        // Valid text and pattern
+        (Some(Value::String(text)), Some(Value::String(pattern))) => {
+            // Compile the regex first (before handling replacement)
+            let re = match regex::Regex::new(pattern.as_str()) {
+                Ok(re) => re,
+                Err(e) => return Err(format!("Invalid regex, {e}")),
+            };
+
+            // Now handle replacement and perform replacement in one step
+            match replacement {
+                // No third argument provided, default to empty string
+                None => {
+                    let replaced_text = re.replace_all(text.as_str(), "").into_owned();
+                    Ok(Value::String(Arc::new(replaced_text)))
+                }
+                // NULL replacement returns NULL
+                Some(Value::Null) => Ok(Value::Null),
+                // Use provided string
+                Some(Value::String(repl)) => {
+                    let replaced_text = re.replace_all(text.as_str(), repl.as_str()).into_owned();
+                    Ok(Value::String(Arc::new(replaced_text)))
+                }
+                // All other types should have been caught by type checking
+                Some(v) => Err(format!(
+                    "Type mismatch: expected String or Null but was {}",
+                    v.name()
+                )),
+            }
+        }
+
+        // All other type combinations should have been caught by type checking
         _ => unreachable!(),
     }
 }
@@ -2785,13 +2864,29 @@ fn vecf32(
     _: &Runtime,
     args: ThinVec<Value>,
 ) -> Result<Value, String> {
+    fn build_vecf32(vec: &[Value]) -> Result<Value, String> {
+        // Validate that all elements are numeric (Int or Float)
+        // Matching C implementation:  SIArray_AllOfType(arr, SI_NUMERIC)
+        for v in vec {
+            if !matches!(v, Value::Int(_) | Value::Float(_)) {
+                return Err("vectorf32 expects an array of numbers".to_string());
+            }
+        }
+
+        // All elements are numeric, convert to f32 vector
+        Ok(Value::VecF32(
+            vec.iter().map(|v| v.get_numeric() as f32).collect(),
+        ))
+    }
+
     let mut iter = args.into_iter();
     match iter.next() {
-        Some(Value::List(vec)) => Ok(Value::VecF32(
-            vec.into_iter().map(|v| v.get_numeric() as f32).collect(),
-        )),
+        Some(Value::List(vec)) => build_vecf32(&vec),
+        Some(Value::Arc(arc)) => match &*arc {
+            Value::List(vec) => build_vecf32(vec),
+            _ => unreachable!(),
+        },
         Some(Value::Null) => Ok(Value::Null),
-
         _ => unreachable!(),
     }
 }
@@ -3112,4 +3207,250 @@ fn db_fulltext_query_nodes(
     _args: ThinVec<Value>,
 ) -> Result<Value, String> {
     Ok(Value::List(thin_vec![]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::runtime::Runtime;
+    use std::sync::Arc;
+    use thin_vec::thin_vec;
+
+    /// Get a Runtime reference for testing.
+    ///
+    /// SAFETY: All functions being tested have `_runtime` parameters (never dereferenced).
+    /// We use a dangling pointer that's properly aligned but never accessed.
+    fn get_test_runtime() -> &'static Runtime {
+        unsafe {
+            // Create a dangling but aligned pointer
+            // SAFETY: This is safe because _runtime is never dereferenced in any function
+            &*(std::ptr::NonNull::dangling().as_ptr())
+        }
+    }
+
+    #[test]
+    fn test_value_to_integer_scientific_notation() {
+        let runtime = get_test_runtime();
+
+        // THE PRIMARY BUG FIX: Scientific notation strings without decimal point
+        // This was failing before because the code checked for '.' which doesn't exist in '1e-13'
+        let result = value_to_integer(
+            runtime,
+            thin_vec![Value::String(Arc::new("1e-13".to_string()))],
+        )
+        .unwrap();
+        assert_eq!(result, Value::Int(0));
+
+        let result = value_to_integer(
+            runtime,
+            thin_vec![Value::String(Arc::new("1.5e-10".to_string()))],
+        )
+        .unwrap();
+        assert_eq!(result, Value::Int(0));
+
+        // Positive exponents
+        let result = value_to_integer(
+            runtime,
+            thin_vec![Value::String(Arc::new("1e2".to_string()))],
+        )
+        .unwrap();
+        assert_eq!(result, Value::Int(100));
+
+        let result = value_to_integer(
+            runtime,
+            thin_vec![Value::String(Arc::new("1.5e2".to_string()))],
+        )
+        .unwrap();
+        assert_eq!(result, Value::Int(150));
+
+        // Uppercase E
+        let result = value_to_integer(
+            runtime,
+            thin_vec![Value::String(Arc::new("1E2".to_string()))],
+        )
+        .unwrap();
+        assert_eq!(result, Value::Int(100));
+    }
+
+    #[test]
+    fn test_value_to_integer_boundary_values() {
+        let runtime = get_test_runtime();
+
+        // Test i64::MAX - should parse successfully as string
+        let args = thin_vec![Value::String(Arc::new("9223372036854775807".to_string()))];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(i64::MAX));
+
+        // Test i64::MIN - should parse successfully as string
+        let args = thin_vec![Value::String(Arc::new("-9223372036854775808".to_string()))];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(i64::MIN));
+
+        // Test i64::MAX + 1 - should return NULL (out of range)
+        let args = thin_vec![Value::String(Arc::new("9223372036854775808".to_string()))];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Null);
+
+        // Test i64::MIN - 1 - should return NULL (out of range)
+        let args = thin_vec![Value::String(Arc::new("-9223372036854775809".to_string()))];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Null);
+
+        // Test way out of range (u64::MAX+1) - should return NULL
+        let args = thin_vec![Value::String(Arc::new("18446744073709551616".to_string()))];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Null);
+
+        // Test way out of range negative - should return NULL
+        let args = thin_vec![Value::String(Arc::new("-18446744073709551616".to_string()))];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Null);
+    }
+
+    #[test]
+    fn test_value_to_integer_large_valid_numbers() {
+        let runtime = get_test_runtime();
+
+        // Large positive number within range
+        let args = thin_vec![Value::String(Arc::new("1790460441484152222".to_string()))];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(1_790_460_441_484_152_222));
+
+        // Large negative number within range
+        let args = thin_vec![Value::String(Arc::new("-1790460441484152222".to_string()))];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(-1_790_460_441_484_152_222));
+    }
+
+    #[test]
+    fn test_value_to_integer_basic_types() {
+        let runtime = get_test_runtime();
+
+        // Integer passthrough
+        let args = thin_vec![Value::Int(42)];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(42));
+
+        // Float floor
+        let args = thin_vec![Value::Float(1.9)];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(1));
+
+        let args = thin_vec![Value::Float(1.1)];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(1));
+
+        // Boolean true
+        let args = thin_vec![Value::Bool(true)];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(1));
+
+        // Boolean false
+        let args = thin_vec![Value::Bool(false)];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(0));
+
+        // Null
+        let args = thin_vec![Value::Null];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Null);
+    }
+
+    #[test]
+    fn test_value_to_integer_string_conversions() {
+        let runtime = get_test_runtime();
+
+        // Simple integer string
+        let args = thin_vec![Value::String(Arc::new("1".to_string()))];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(1));
+
+        // String with decimal (floor)
+        let args = thin_vec![Value::String(Arc::new("1.1".to_string()))];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(1));
+
+        let args = thin_vec![Value::String(Arc::new("1.9".to_string()))];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(1));
+
+        // Empty string (NULL)
+        let args = thin_vec![Value::String(Arc::new(String::new()))];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Null);
+
+        // Invalid string (NULL)
+        let args = thin_vec![Value::String(Arc::new("z".to_string()))];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Null);
+
+        // Invalid string (NULL)
+        let args = thin_vec![Value::String(Arc::new("abc".to_string()))];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Null);
+    }
+
+    #[test]
+    fn test_value_to_integer_negative_numbers() {
+        let runtime = get_test_runtime();
+
+        // Negative integer string
+        let args = thin_vec![Value::String(Arc::new("-1".to_string()))];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(-1));
+
+        // Negative float string - floor(-1.9) = -2 (matches C behavior)
+        let args = thin_vec![Value::String(Arc::new("-1.9".to_string()))];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(-2)); // Changed from -1 to -2
+
+        // Negative float value - floor(-1.9) = -2
+        let args = thin_vec![Value::Float(-1.9)];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(-2)); // Changed from -1 to -2
+    }
+    #[test]
+    fn test_value_to_integer_edge_cases() {
+        let runtime = get_test_runtime();
+
+        // Zero
+        let args = thin_vec![Value::Int(0)];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(0));
+
+        // Zero float
+        let args = thin_vec![Value::Float(0.0)];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(0));
+
+        // Zero string
+        let args = thin_vec![Value::String(Arc::new("0".to_string()))];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(0));
+
+        // Negative zero float
+        let args = thin_vec![Value::Float(-0.0)];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(0));
+    }
+
+    #[test]
+    fn test_value_to_integer_special_floats() {
+        let runtime = get_test_runtime();
+
+        // Infinity should return NULL (non-finite)
+        let args = thin_vec![Value::Float(f64::INFINITY)];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Null);
+
+        // Negative infinity should return NULL (non-finite)
+        let args = thin_vec![Value::Float(f64::NEG_INFINITY)];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Null);
+
+        // NaN should return NULL (non-finite)
+        let args = thin_vec![Value::Float(f64::NAN)];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(result, Value::Null);
+    }
 }

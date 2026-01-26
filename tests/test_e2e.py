@@ -1070,15 +1070,14 @@ def test_string_match_regex():
     assert res.result_set == [[[]]]
 
     res = query("RETURN string.matchRegEx('foo bar', '.*') AS name")
-    assert res.result_set == [[["foo bar"]]]
+    assert res.result_set == [[[["foo bar"]]]]
 
     res = query("RETURN string.matchRegEx('foo bar', '[a-z]+\\s+[a-z]+') AS name")
-    assert res.result_set == [[["foo bar"]]]
+    assert res.result_set == [[[["foo bar"]]]]
 
     ## multiple groups
     res = query("RETURN string.matchRegEx('foo bar', '([a-z]+)\\s+([a-z]+)') AS name")
-    assert res.result_set == [[["foo bar", "foo", "bar"]]]
-
+    assert res.result_set == [[[["foo bar", "foo", "bar"]]]]
 
 @pytest.mark.extra
 def test_string_replace_regex():

@@ -502,6 +502,7 @@ impl Rem for Value {
                     Ok(Self::Int(a.wrapping_rem(b)))
                 }
             }
+            // All float operations return Float (C parity)
             (Self::Float(a), Self::Float(b)) => Ok(Self::Float(a % b)),
             (Self::Float(a), Self::Int(b)) => Ok(Self::Float(a % b as f64)),
             (Self::Int(a), Self::Float(b)) => Ok(Self::Float(a as f64 % b)),
@@ -1089,6 +1090,78 @@ impl ValuesDeduper {
         } else {
             seen.insert(hash);
             false
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_modulo_int_float_whole_result() {
+        // 5 % 2.5 = 0.0 → should return Float(0.0) per C parity
+        let result = (Value::Int(5) % Value::Float(2.5)).unwrap();
+        assert_eq!(result, Value::Float(0.0));
+    }
+
+    #[test]
+    fn test_modulo_float_int_whole_result() {
+        // 10.0 % 5 = 0.0 → should return Float(0.0) per C parity
+        let result = (Value::Float(10.0) % Value::Int(5)).unwrap();
+        assert_eq!(result, Value::Float(0.0));
+    }
+
+    #[test]
+    fn test_modulo_float_float_fractional_result() {
+        // 5.5 % 2.5 = 0.5 → should return Float(0.5)
+        let result = (Value::Float(5.5) % Value::Float(2.5)).unwrap();
+        assert_eq!(result, Value::Float(0.5));
+    }
+
+    #[test]
+    fn test_modulo_int_float_fractional_result() {
+        // 5 % 2.0 = 1.0 → should return Float(1.0) per C parity
+        let result = (Value::Int(5) % Value::Float(2.0)).unwrap();
+        assert_eq!(result, Value::Float(1.0));
+    }
+
+    #[test]
+    fn test_modulo_float_float_whole_result() {
+        // 10.0 % 2.5 = 0.0 → should return Float(0.0) per C parity
+        let result = (Value::Float(10.0) % Value::Float(2.5)).unwrap();
+        assert_eq!(result, Value::Float(0.0));
+    }
+
+    #[test]
+    fn test_modulo_large_float_stays_float() {
+        // Test that a whole number result just above MAX_SAFE_INT stays as Float
+        // 9007199254740993.0 is 2^53 + 1, just beyond the safe integer range for f64
+        let value_above_safe = 9_007_199_254_740_993.0;
+        let result = (Value::Float(value_above_safe) % Value::Float(1.0)).unwrap();
+        // Should remain a Float since any float operand produces float result
+        assert!(matches!(result, Value::Float(_)));
+    }
+
+    #[test]
+    fn test_modulo_at_max_safe_int_boundary() {
+        // Test floating-point precision at MAX_SAFE_INT boundary
+        // At 2^53, f64 precision loss means: 9007199254740992.0 + 1.0 == 9007199254740992.0
+        // Therefore: 9007199254740992.0 % 9007199254740992.0 == 0.0
+        let max_safe = 9_007_199_254_740_992.0;
+        let result = (Value::Float(max_safe) % Value::Float(max_safe + 1.0)).unwrap();
+        // Due to f64 precision limits at 2^53, the result is 0.0
+        assert_eq!(result, Value::Float(0.0));
+    }
+
+    #[test]
+    fn test_modulo_float_by_zero_returns_nan() {
+        // Test that modulo by zero with floats returns NaN (IEEE 754 behavior)
+        let result = (Value::Float(5.0) % Value::Float(0.0)).unwrap();
+        // Should return Float(NaN) since division by zero with floats gives NaN
+        match result {
+            Value::Float(f) => assert!(f.is_nan()),
+            _ => panic!("Expected Float(NaN), got {result:?}"),
         }
     }
 }

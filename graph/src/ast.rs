@@ -1,7 +1,6 @@
-use std::{collections::HashSet, fmt::Display, hash::Hash, sync::Arc};
-
 use itertools::Itertools;
 use orx_tree::{Dfs, DynTree, NodeRef};
+use std::{collections::HashSet, fmt::Display, hash::Hash, sync::Arc};
 
 use crate::{
     indexer::{EntityType, IndexType},
