@@ -894,20 +894,17 @@ mod tests {
         // Should contain "Type mismatch" and "Path"
         assert!(
             error.contains("Type mismatch"),
-            "Error should mention type mismatch, got: {}",
-            error
+            "Error should mention type mismatch, got: {error}"
         );
         assert!(
             error.contains("Path"),
-            "Error should mention Path type, got: {}",
-            error
+            "Error should mention Path type, got: {error}"
         );
 
         // Should NOT be a "not defined" error
         assert!(
             !error.contains("not defined"),
-            "Should not be a 'not defined' error, got: {}",
-            error
+            "Should not be a 'not defined' error, got: {error}"
         );
     }
 
@@ -933,8 +930,7 @@ mod tests {
         let error = result.unwrap_err();
         assert!(
             error.contains("Type mismatch") && error.contains("Path"),
-            "Should get type mismatch for Path, got: {}",
-            error
+            "Should get type mismatch for Path, got: {error}"
         );
     }
 
@@ -1058,8 +1054,7 @@ mod tests {
         // The key assertion: should be a type error, not a "not defined" error
         assert!(
             error.contains("Type mismatch") || error.contains("Path"),
-            "Should report type mismatch, not 'not defined'. Got: {}",
-            error
+            "Should report type mismatch, not 'not defined'. Got: {error}",
         );
     }
 }
