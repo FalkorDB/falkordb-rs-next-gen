@@ -1207,7 +1207,7 @@ impl<'a> Parser<'a> {
 
                 // Validate output_field exists in procedure definition
                 if let FnType::Procedure(outputs) = &func.fn_type {
-                    if !outputs.iter().any(|o| o == output_field.as_ref()) {
+                    if !outputs.contains(output_field.as_ref()) {
                         return Err(format!(
                             "Procedure '{}' does not have output field '{}'",
                             function_name, output_field
