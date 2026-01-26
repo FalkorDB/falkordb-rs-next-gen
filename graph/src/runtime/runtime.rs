@@ -158,9 +158,10 @@ impl ReturnNames for DynNode<'_, IR> {
             IR::Commit => self
                 .get_child(0)
                 .map_or(vec![], |child| child.get_return_names()),
-            IR::Call(_, _, field_alias_pairs) => {
-                field_alias_pairs.iter().map(|(_, alias)| alias.clone()).collect()
-            }
+            IR::Call(_, _, field_alias_pairs) => field_alias_pairs
+                .iter()
+                .map(|(_, alias)| alias.clone())
+                .collect(),
             IR::Sort(_) | IR::Skip(_) | IR::Limit(_) | IR::Distinct => {
                 self.child(0).get_return_names()
             }

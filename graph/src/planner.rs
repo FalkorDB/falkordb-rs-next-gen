@@ -17,7 +17,11 @@ pub enum IR {
     Empty,
     Argument,
     Optional(Vec<Variable>),
-    Call(Arc<GraphFn>, Vec<QueryExpr<Variable>>, Vec<(Arc<String>, Variable)>),
+    Call(
+        Arc<GraphFn>,
+        Vec<QueryExpr<Variable>>,
+        Vec<(Arc<String>, Variable)>,
+    ),
     Unwind(QueryExpr<Variable>, Variable),
     Create(QueryGraph<Arc<String>, Arc<String>, Variable>),
     Merge(
