@@ -1207,7 +1207,7 @@ impl<'a> Parser<'a> {
 
                 // Validate output_field exists in procedure definition
                 if let FnType::Procedure(outputs) = &func.fn_type {
-                    if !outputs.contains(&output_field.as_ref().clone()) {
+                    if !outputs.iter().any(|o| o == output_field.as_ref()) {
                         return Err(format!(
                             "Procedure '{}' does not have output field '{}'",
                             function_name, output_field
@@ -1225,7 +1225,7 @@ impl<'a> Parser<'a> {
         } else if let FnType::Procedure(defult_outputs) = &func.fn_type {
             for output in defult_outputs {
                 let name = Arc::new(output.clone());
-                field_alias_pairs.push((name.clone(), name));
+                field_alias_pairs.push((Arc::clone(&name), name));
             }
             None
         } else {
