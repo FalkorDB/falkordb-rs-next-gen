@@ -88,8 +88,8 @@ impl GetVariables for DynNode<'_, IR> {
         for node in self.walk::<Bfs>() {
             match node {
                 IR::Optional(variables) => vars.extend(variables.iter().cloned()),
-                IR::Call(_, _, named_outputs) => {
-                    vars.extend(named_outputs.clone());
+                IR::Call(_, _, field_alias_pairs) => {
+                    vars.extend(field_alias_pairs.iter().map(|(_, alias)| alias.clone()));
                 }
                 IR::Unwind(_, variable) => vars.push(variable.clone()),
                 IR::Create(query_graph) | IR::Merge(query_graph, _, _) => {
@@ -158,7 +158,9 @@ impl ReturnNames for DynNode<'_, IR> {
             IR::Commit => self
                 .get_child(0)
                 .map_or(vec![], |child| child.get_return_names()),
-            IR::Call(_, _, named_outputs) => named_outputs.clone(),
+            IR::Call(_, _, field_alias_pairs) => {
+                field_alias_pairs.iter().map(|(_, alias)| alias.clone()).collect()
+            }
             IR::Sort(_) | IR::Skip(_) | IR::Limit(_) | IR::Distinct => {
                 self.child(0).get_return_names()
             }
@@ -989,7 +991,7 @@ impl<'a> Runtime {
                         self.record.borrow_mut().push((idx, res.clone()));
                     }))
             }
-            IR::Call(func, trees, name_outputs) => {
+            IR::Call(func, trees, field_alias_pairs) => {
                 let args = trees
                     .iter()
                     .map(|ir| self.run_expr(ir, ir.root().idx(), &Env::default(), None))
@@ -1006,11 +1008,11 @@ impl<'a> Runtime {
                         .map(move |v| {
                             let mut env = Env::default();
                             if let Value::Map(map) = v {
-                                for output in name_outputs {
-                                    env.insert(
-                                        output,
-                                        map.get(output.name.as_ref().unwrap()).unwrap().clone(),
-                                    );
+                                for (field, alias) in field_alias_pairs {
+                                    // Extract using field name, store using alias
+                                    if let Some(value) = map.get(field.as_str()) {
+                                        env.insert(alias, value.clone());
+                                    }
                                 }
                             }
                             Ok(env)

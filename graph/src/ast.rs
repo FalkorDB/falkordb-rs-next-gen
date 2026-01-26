@@ -528,7 +528,7 @@ pub enum QueryIR<TVar> {
     Call(
         Arc<GraphFn>,
         Vec<QueryExpr<TVar>>,
-        Vec<TVar>,
+        Vec<(Arc<String>, TVar)>,
         Option<QueryExpr<TVar>>,
     ),
     Match {

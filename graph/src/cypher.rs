@@ -1137,25 +1137,43 @@ impl<'a> Parser<'a> {
             .into_iter()
             .map(Arc::new)
             .collect();
-        let mut named_outputs = vec![];
+        let mut field_alias_pairs = vec![];
         let filter = if optional_match_token!(self.lexer => Yield) {
-            let ident = self.parse_ident()?;
-            named_outputs.push(ident);
-            while optional_match_token!(self.lexer, Comma) {
-                let ident = self.parse_ident()?;
-                named_outputs.push(ident);
+            loop {
+                let output_field = self.parse_ident()?;
+                
+                let var_name = if optional_match_token!(self.lexer => As) {
+                    self.parse_ident()?
+                } else {
+                    output_field.clone()
+                };
+                
+                // Validate output_field exists in procedure definition
+                if let FnType::Procedure(outputs) = &func.fn_type {
+                    if !outputs.contains(&output_field.as_ref().clone()) {
+                        return Err(format!("Procedure '{}' does not have output field '{}'", 
+                                          function_name, output_field));
+                    }
+                }
+                
+                field_alias_pairs.push((output_field, var_name));
+                
+                if !optional_match_token!(self.lexer, Comma) {
+                    break;
+                }
             }
             self.parse_where()?
         } else if let FnType::Procedure(defult_outputs) = &func.fn_type {
             for output in defult_outputs {
-                named_outputs.push(Arc::new(output.clone()));
+                let name = Arc::new(output.clone());
+                field_alias_pairs.push((name.clone(), name));
             }
             None
         } else {
             None
         };
 
-        Ok(QueryIR::Call(func, args, named_outputs, filter))
+        Ok(QueryIR::Call(func, args, field_alias_pairs, filter))
     }
 
     fn parse_dotted_ident(&mut self) -> Result<Arc<String>, String> {
