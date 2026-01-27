@@ -50,32 +50,6 @@ use std::{fs::File, io::Write};
 
 use crate::allocator::{current_thread_usage, disable_tracking, enable_tracking, reset_counter};
 
-/// Format a float to match C's %.15g behavior
-#[inline]
-#[allow(clippy::cast_possible_truncation)]
-fn format_float_c_style(x: f64) -> String {
-    if x.is_finite() {
-        if x.fract() == 0.0 {
-            // Whole number: format as integer
-            format!("{}", x as i64)
-        } else if x.abs() >= 1e-4 && x.abs() < 1e15 {
-            // Normal range: use decimal notation
-            let formatted = format!("{x:.15}");
-            // Strip trailing zeros
-            formatted
-                .trim_end_matches('0')
-                .trim_end_matches('.')
-                .to_string()
-        } else {
-            // Very large or very small: use exponential
-            format!("{x:.14e}")
-        }
-    } else {
-        // NaN or infinity
-        format!("{x:.14e}")
-    }
-}
-
 const EMPTY_KEY_ERR: RedisResult = Err(RedisError::Str("ERR Invalid graph operation on empty key"));
 
 static GRAPH_TYPE: RedisType = RedisType::new(
@@ -248,7 +222,7 @@ fn reply_compact_value(
         }
         Value::Float(x) => {
             raw::reply_with_long_long(ctx.ctx, 5);
-            let str = format_float_c_style(x);
+            let str = format!("{x:.14e}");
             raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
         }
         Value::String(x) => {
@@ -459,7 +433,7 @@ fn reply_verbose_value(
             raw::reply_with_long_long(ctx.ctx, x as _);
         }
         Value::Float(x) => {
-            let str = format_float_c_style(x);
+            let str = format!("{x:.14e}");
             raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
         }
         Value::String(x) => {
