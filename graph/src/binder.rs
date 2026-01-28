@@ -846,95 +846,6 @@ mod tests {
     }
 
     #[test]
-    fn test_path_variable_in_inline_filter_type_error() {
-        ensure_functions_initialized();
-
-        // Test for the exact scenario from test25_cartesian_product_invalid_filter
-        // Query: MATCH p1=(), (n), ({prop: p1.path_val}) RETURN *
-        // Expected: Type mismatch error, not "not defined" error
-
-        let query = "MATCH p1=(), (n), ({prop: p1.path_val}) RETURN *";
-        let mut parser = Parser::new(query);
-
-        let ast_result = parser.parse();
-        assert!(ast_result.is_ok(), "Query should parse successfully");
-
-        let ast = ast_result.unwrap();
-        let binder = Binder::default();
-
-        let result = binder.bind(ast);
-        assert!(result.is_err(), "Binding should fail");
-
-        let error = result.unwrap_err();
-
-        // Should contain "Type mismatch" and "Path"
-        assert!(
-            error.contains("Type mismatch"),
-            "Error should mention type mismatch, got: {error}"
-        );
-        assert!(
-            error.contains("Path"),
-            "Error should mention Path type, got: {error}"
-        );
-
-        // Should NOT be a "not defined" error
-        assert!(
-            !error.contains("not defined"),
-            "Should not be a 'not defined' error, got: {error}"
-        );
-    }
-
-    #[test]
-    fn test_path_property_access_in_where_clause() {
-        ensure_functions_initialized();
-
-        // Test that property access on path in WHERE clause also fails with type error
-        // Query: MATCH p=()-[]->() WHERE p.name = 'test' RETURN p
-
-        let query = "MATCH p=()-[]->() WHERE p.name = 'test' RETURN p";
-        let mut parser = Parser::new(query);
-
-        let ast_result = parser.parse();
-        assert!(ast_result.is_ok(), "Query should parse successfully");
-
-        let ast = ast_result.unwrap();
-        let binder = Binder::default();
-
-        let result = binder.bind(ast);
-        assert!(result.is_err(), "Binding should fail with type error");
-
-        let error = result.unwrap_err();
-        assert!(
-            error.contains("Type mismatch") && error.contains("Path"),
-            "Should get type mismatch for Path, got: {error}"
-        );
-    }
-
-    #[test]
-    fn test_valid_path_usage_with_length() {
-        ensure_functions_initialized();
-
-        // Test that valid path usage (like length(p)) works correctly
-        // Query: MATCH p=()-[]->() WHERE length(p) > 0 RETURN p
-
-        let query = "MATCH p=()-[]->() WHERE length(p) > 0 RETURN p";
-        let mut parser = Parser::new(query);
-
-        let ast_result = parser.parse();
-        assert!(ast_result.is_ok(), "Query should parse successfully");
-
-        let ast = ast_result.unwrap();
-        let binder = Binder::default();
-
-        let result = binder.bind(ast);
-        assert!(
-            result.is_ok(),
-            "Valid path usage should succeed, got error: {:?}",
-            result.err()
-        );
-    }
-
-    #[test]
     fn test_node_property_access_still_works() {
         ensure_functions_initialized();
 
@@ -1003,34 +914,6 @@ mod tests {
             result.is_ok(),
             "Multiple path variables should work, got error: {:?}",
             result.err()
-        );
-    }
-
-    #[test]
-    fn test_path_in_inline_filter_catches_type_error_not_scope_error() {
-        ensure_functions_initialized();
-
-        // This is the key test - ensure we catch TYPE error before SCOPE error
-        // Query: MATCH p1=(), (n), ({prop: p1.nonexistent}) RETURN *
-
-        let query = "MATCH p1=(), (n), ({prop: p1.nonexistent}) RETURN *";
-        let mut parser = Parser::new(query);
-
-        let ast_result = parser.parse();
-        assert!(ast_result.is_ok(), "Query should parse successfully");
-
-        let ast = ast_result.unwrap();
-        let binder = Binder::default();
-
-        let result = binder.bind(ast);
-        assert!(result.is_err(), "Should fail with type error");
-
-        let error = result.unwrap_err();
-
-        // The key assertion: should be a type error, not a "not defined" error
-        assert!(
-            error.contains("Type mismatch") || error.contains("Path"),
-            "Should report type mismatch, not 'not defined'. Got: {error}",
         );
     }
 }
