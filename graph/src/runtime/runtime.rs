@@ -1007,23 +1007,28 @@ impl<'a> Runtime {
                 }
                 let res = (func.func)(self, args)?;
                 match res {
-                    Value::List(arr) => Ok(arr
-                        .into_iter()
-                        .map(move |v| {
-                            let mut env = Env::default();
-                            if let Value::Map(map) = v {
-                                for (field, alias) in field_alias_pairs {
-                                    // Extract using field name, store using alias
-                                    if let Some(value) = map.get(field) {
-                                        env.insert(alias, value.clone());
+                    Value::List(arr) => {
+                        // Clone field-alias pairs so they can be moved into the closure
+                        let field_alias_pairs = field_alias_pairs.clone();
+
+                        Ok(arr
+                            .into_iter()
+                            .map(move |v| {
+                                let mut env = Env::default();
+                                if let Value::Map(map) = v {
+                                    // Use field names to extract from map, aliases to store in env
+                                    for (field, alias) in &field_alias_pairs {
+                                        if let Some(value) = map.get(field) {
+                                            env.insert(alias, value.clone());
+                                        }
                                     }
                                 }
-                            }
-                            Ok(env)
-                        })
-                        .cond_inspect(self.inspect, move |res| {
-                            self.record.borrow_mut().push((idx, res.clone()));
-                        })),
+                                Ok(env)
+                            })
+                            .cond_inspect(self.inspect, move |res| {
+                                self.record.borrow_mut().push((idx, res.clone()));
+                            }))
+                    }
                     _ => unreachable!(),
                 }
             }

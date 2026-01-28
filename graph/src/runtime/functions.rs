@@ -1259,21 +1259,14 @@ fn property(
             "crs" => Ok(Value::String(Arc::new(String::from("wgs-84")))),
             _ => Ok(Value::Null),
         },
-        (Some(Value::Null), Some(Value::String(_))) => Ok(Value::Null),
+        (Some(Value::Null | Value::Path(_)), Some(Value::String(_))) => Ok(Value::Null),
         (Some(Value::Datetime(ts)), Some(Value::String(attr))) => {
             extract_datetime_component(ts, &attr)
-        },
-        (Some(Value::Date(ts)), Some(Value::String(attr))) => {
-            extract_date_component(ts, &attr)
-        },
-        (Some(Value::Time(ts)), Some(Value::String(attr))) => {
-            extract_time_component(ts, &attr)
-        },
+        }
+        (Some(Value::Date(ts)), Some(Value::String(attr))) => extract_date_component(ts, &attr),
+        (Some(Value::Time(ts)), Some(Value::String(attr))) => extract_time_component(ts, &attr),
         (Some(Value::Duration(dur)), Some(Value::String(attr))) => {
             extract_duration_component(dur, &attr)
-        },
-        (Some(Value::Path(_)), Some(Value::String(_))) => {
-            Err("Type mismatch: expected Map, Node, Edge, Datetime, Date, Time, Duration, Null, or Point but was Path".to_string())
         }
         _ => unreachable!(),
     }
