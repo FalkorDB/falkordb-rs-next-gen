@@ -3453,4 +3453,51 @@ mod tests {
         let result = value_to_integer(runtime, args).unwrap();
         assert_eq!(result, Value::Null);
     }
+
+    #[test]
+    fn test_value_to_integer_ci_failing_case() {
+        let runtime = get_test_runtime();
+
+        // THIS IS THE EXACT FAILING CASE FROM CI
+        // x = Decimal(1) becomes 1.0 as float, formatted as "1.0"
+        // The query becomes: RETURN toInteger(1.0), toInteger('1.0')
+        // Expected: [[1, 1]]
+        // Got:      [[1, None]]
+
+        // Test toInteger('1.0')
+        let args = thin_vec![Value::String(Arc::new("1.0".to_string()))];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(
+            result,
+            Value::Int(1),
+            "toInteger('1.0') should return 1, not None"
+        );
+
+        // Test toInteger('2.0')
+        let args = thin_vec![Value::String(Arc::new("2.0".to_string()))];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(
+            result,
+            Value::Int(2),
+            "toInteger('2.0') should return 2, not None"
+        );
+
+        // Test toInteger('0.0')
+        let args = thin_vec![Value::String(Arc::new("0.0".to_string()))];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(
+            result,
+            Value::Int(0),
+            "toInteger('0.0') should return 0, not None"
+        );
+
+        // Test toInteger('-1.0')
+        let args = thin_vec![Value::String(Arc::new("-1.0".to_string()))];
+        let result = value_to_integer(runtime, args).unwrap();
+        assert_eq!(
+            result,
+            Value::Int(-1),
+            "toInteger('-1.0') should return -1, not None"
+        );
+    }
 }
