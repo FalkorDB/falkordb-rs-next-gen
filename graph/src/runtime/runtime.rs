@@ -501,8 +501,8 @@ impl<'a> Runtime {
                             }
                             Value::Bool(false) => {}
                             Value::Null => is_null = true,
-                            ir => {
-                                return Err(format!("Type mismatch: expected Bool but was {ir:?}"));
+                            _ir => {
+                                return Err("Expected boolean predicate.".to_string());
                             }
                         }
                     }
@@ -525,8 +525,8 @@ impl<'a> Runtime {
                                 res.push(Value::Null);
                                 break;
                             }
-                            ir => {
-                                return Err(format!("Type mismatch: expected Bool but was {ir:?}"));
+                            _ir => {
+                                return Err("Expected boolean predicate.".to_string());
                             }
                         }
                     }
@@ -546,8 +546,8 @@ impl<'a> Runtime {
                             }
                             Value::Bool(true) => {}
                             Value::Null => is_null = true,
-                            ir => {
-                                return Err(format!("Type mismatch: expected Bool but was {ir:?}"));
+                            _ir => {
+                                return Err("Expected boolean predicate.".to_string());
                             }
                         }
                     }
@@ -804,6 +804,11 @@ impl<'a> Runtime {
                     }
 
                     res.push(Value::List(acc));
+                }
+                ExprIR::PatternComprehension => {
+                    return Err(
+                        "Pattern comprehension not yet fully implemented in runtime".to_string()
+                    );
                 }
                 ExprIR::Paren => {
                     res.push(self.run_expr(ir, node.child(0).idx(), env, agg_group_key)?);

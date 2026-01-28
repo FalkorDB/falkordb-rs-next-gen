@@ -96,6 +96,7 @@ pub enum ExprIR<TVar> {
     FuncInvocation(Arc<GraphFn>),
     Quantifier(QuantifierType, TVar),
     ListComprehension(TVar),
+    PatternComprehension,
     Paren,
 }
 
@@ -145,6 +146,9 @@ impl<TVar: Display> Display for ExprIR<TVar> {
             }
             Self::ListComprehension(var) => {
                 write!(f, "list comp({var})")
+            }
+            Self::PatternComprehension => {
+                write!(f, "pattern comp")
             }
             Self::Paren => write!(f, "()"),
         }
