@@ -3773,7 +3773,7 @@ mod tests {
             Value::String(Arc::new("seconds".to_string()))
         ];
         let result = property(runtime, args).unwrap();
-        assert_eq!(result, Value::Int(189330)); // 189330000 / 1000 = 189330
+        assert_eq!(result, Value::Int(189_330)); // 189330000 / 1000 = 189330
 
         // Test milliseconds
         let args = thin_vec![
