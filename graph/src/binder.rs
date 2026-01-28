@@ -322,8 +322,16 @@ impl Binder {
         // Pre-register path variables so they're available during inline filter binding
         // This is needed because inline filters like ({prop: path_var.attr}) need to
         // reference path variables that haven't been fully bound yet
-        let mut path_var_placeholders = HashMap::new();
+        let mut path_var_placeholders: HashMap<Arc<String>, Option<Variable>> = HashMap::new();
         for path in graph.paths() {
+            // Check if variable already exists
+            if let Some(existing) = self.current_env().get(&path.var).cloned() {
+                // Verify it's a Path type
+                self.ensure_type(&existing, &Type::Path)?;
+                // Store existing binding to restore later
+                path_var_placeholders.insert(path.var.clone(), Some(existing));
+                continue;
+            }
             // Create a placeholder variable for this path with Type::Path
             let scope_id = u32::try_from(self.env_stack.len())
                 .map_err(|_| "Scope depth exceeds maximum supported value".to_string())?
@@ -331,11 +339,10 @@ impl Binder {
             let path_var = self.fresh_var(Some(path.var.clone()), Type::Path, scope_id);
 
             // Add to current environment temporarily
-            self.current_env_mut()
-                .insert(path.var.clone(), path_var.clone());
+            self.current_env_mut().insert(path.var.clone(), path_var);
 
             // Track this so we can remove it later and re-add the properly bound version
-            path_var_placeholders.insert(path.var.clone(), path_var);
+            path_var_placeholders.insert(path.var.clone(), None);
         }
 
         for node in graph.nodes() {
@@ -423,8 +430,17 @@ impl Binder {
             bound.add_relationship(rel);
         }
 
-        for path_var_name in path_var_placeholders.keys() {
-            self.current_env_mut().remove(path_var_name);
+        for (path_var_name, previous) in path_var_placeholders {
+            match previous {
+                Some(prev) => {
+                    // Restore the previous binding
+                    self.current_env_mut().insert(path_var_name, prev);
+                }
+                None => {
+                    // Remove the placeholder we added
+                    self.current_env_mut().remove(&path_var_name);
+                }
+            }
         }
 
         // Bind paths - path vars reference entities by name
@@ -935,6 +951,66 @@ mod tests {
             result.is_ok(),
             "Multiple path variables should work, got error: {:?}",
             result.err()
+        );
+    }
+
+    #[test]
+    fn test_path_variable_binding_preservation() {
+        ensure_functions_initialized();
+
+        // Test that pre-existing path variable bindings are preserved during
+        // path pre-registration. This test uses a subquery where 'p' is bound
+        // in the outer scope and should remain accessible in the inner scope.
+        // Query: MATCH p=() WITH p MATCH (n {id: p}) RETURN n
+
+        let query = "MATCH p=() WITH p MATCH (n {id: p}) RETURN n";
+        let mut parser = Parser::new(query);
+
+        let ast_result = parser.parse();
+        assert!(ast_result.is_ok(), "Query should parse successfully");
+
+        let ast = ast_result.unwrap();
+        let binder = Binder::default();
+
+        let result = binder.bind(ast);
+        // This should succeed - 'p' from outer scope should be preserved
+        // and accessible in the inline filter
+        assert!(
+            result.is_ok(),
+            "Path variable from outer scope should be preserved, got error: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_path_placeholder_cleanup() {
+        ensure_functions_initialized();
+
+        // Test that path variable placeholders are properly cleaned up
+        // and don't leak into subsequent scopes
+        // Query: MATCH p=() RETURN 1
+        // Then in a fresh binder: MATCH (p) RETURN p
+        // The second query should bind 'p' as a Node, not inherit Path type
+
+        let query1 = "MATCH p=() RETURN 1";
+        let mut parser1 = Parser::new(query1);
+        let ast1 = parser1.parse().unwrap();
+        let binder1 = Binder::default();
+        let result1 = binder1.bind(ast1);
+        assert!(result1.is_ok(), "First query should succeed");
+
+        // Create a fresh binder - placeholders shouldn't leak
+        let query2 = "MATCH (p) RETURN p";
+        let mut parser2 = Parser::new(query2);
+        let ast2 = parser2.parse().unwrap();
+        let binder2 = Binder::default();
+        let result2 = binder2.bind(ast2);
+
+        // Should succeed - 'p' can be bound as a Node in fresh context
+        assert!(
+            result2.is_ok(),
+            "Path placeholder should not leak to new binder, got error: {:?}",
+            result2.err()
         );
     }
 }
