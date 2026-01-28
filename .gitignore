@@ -30,3 +30,4 @@ tests/flow/csvs
 redisearch
 .venv
 *.rlib
+.git-branch-info.txt
