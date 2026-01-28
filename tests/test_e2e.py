@@ -1665,7 +1665,7 @@ def test_case():
 def test_quantifier():
     # Test non-boolean expressions
     q = "RETURN all(x IN [1, 2, 3] WHERE x + 1) AS res"
-    query_exception(q, "Type mismatch: expected Boolean but was Integer")
+    query_exception(q, "Expected boolean predicate")
 
     res = query("RETURN any(x IN [1, 2, 3] WHERE null) AS res")
     assert res.result_set == [[None]]
