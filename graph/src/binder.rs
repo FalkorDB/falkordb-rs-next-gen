@@ -431,16 +431,11 @@ impl Binder {
         }
 
         for (path_var_name, previous) in path_var_placeholders {
-            match previous {
-                Some(prev) => {
-                    // Restore the previous binding
-                    self.current_env_mut().insert(path_var_name, prev);
-                }
-                None => {
-                    // Remove the placeholder we added
-                    self.current_env_mut().remove(&path_var_name);
-                }
+            if let Some(prev) = previous {
+                // Restore the previous binding
+                self.current_env_mut().insert(path_var_name, prev);
             }
+            // Keep placeholders we added so bind_paths reuses the same Variable.
         }
 
         // Bind paths - path vars reference entities by name

@@ -1226,8 +1226,14 @@ fn extract_duration_component(
         "minutes" => Ok(Value::Int(duration_ms / MS_PER_MINUTE)),
         "seconds" => Ok(Value::Int(duration_ms / MS_PER_SECOND)),
         "milliseconds" => Ok(Value::Int(duration_ms)),
-        "microseconds" => Ok(Value::Int(duration_ms * 1000)),
-        "nanoseconds" => Ok(Value::Int(duration_ms * 1_000_000)),
+        "microseconds" => duration_ms
+            .checked_mul(1000)
+            .map(Value::Int)
+            .ok_or_else(|| "duration overflow".to_string()),
+        "nanoseconds" => duration_ms
+            .checked_mul(1_000_000)
+            .map(Value::Int)
+            .ok_or_else(|| "duration overflow".to_string()),
         _ => Err(format!("unknown duration component {component}")),
     }
 }
