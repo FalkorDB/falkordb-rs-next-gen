@@ -644,30 +644,6 @@ impl Binder {
                     }
                 }
 
-                // Validate property access on supported types only
-                // This catches cases like: path_var.prop where path_var is a Path
-                if let ExprIR::FuncInvocation(func) = node_ref.data()
-                    && func.name == "property"
-                    && node_ref.num_children() >= 1
-                {
-                    // Get the first child (the entity we're accessing property on)
-                    let target_child = node_ref.child(0);
-
-                    // If it's a variable reference, check its type
-                    if let ExprIR::Variable(var_name) = target_child.data() {
-                        // Try to resolve the variable
-                        if let Ok(var) = self.resolve_name(var_name, locals) {
-                            // Check if the variable type is Path
-                            if var.ty == Type::Path {
-                                return Err(
-                                    "Type mismatch: expected Map, Node, Edge, Datetime, Date, Time, Duration, Null, or Point but was Path"
-                                    .to_string()
-                                );
-                            }
-                        }
-                    }
-                }
-
                 let children = node_ref
                     .children()
                     .map(|child| self.bind_expr_node(expr, child, locals))

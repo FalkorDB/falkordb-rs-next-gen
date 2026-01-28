@@ -361,6 +361,11 @@ pub fn init_functions() -> Result<(), Functions> {
                 Type::Relationship,
                 Type::Null,
                 Type::Point,
+                Type::Path,
+                Type::Datetime,
+                Type::Date,
+                Type::Time,
+                Type::Duration,
             ]),
             Type::String,
         ],
@@ -1163,6 +1168,9 @@ fn property(
             _ => Ok(Value::Null),
         },
         (Some(Value::Null), Some(Value::String(_))) => Ok(Value::Null),
+        (Some(Value::Path(_)), Some(Value::String(_))) => {
+            Err("Type mismatch: expected Map, Node, Edge, Datetime, Date, Time, Duration, Null, or Point but was Path".to_string())
+        }
         _ => unreachable!(),
     }
 }

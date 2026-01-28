@@ -2109,6 +2109,7 @@ impl<'a> Runtime {
                                 }
                             }
                         }
+
                         Value::Null | Value::Path(_) => {
                             // Silently skip for NULL, Path
                             // This matches C behavior where setting properties on paths is ignored
