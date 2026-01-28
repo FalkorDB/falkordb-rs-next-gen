@@ -1146,6 +1146,92 @@ pub fn get_functions() -> &'static Functions {
 ///////////// functions ///////////
 ///////////////////////////////////
 
+// Helper function to extract components from datetime values
+fn extract_datetime_component(
+    timestamp_ms: i64,
+    component: &str,
+) -> Result<Value, String> {
+    use chrono::{Datelike, TimeZone, Timelike, Utc};
+
+    match Utc.timestamp_millis_opt(timestamp_ms) {
+        chrono::LocalResult::Single(dt) => match component {
+            "year" => Ok(Value::Int(i64::from(dt.year()))),
+            "month" => Ok(Value::Int(i64::from(dt.month()))),
+            "day" => Ok(Value::Int(i64::from(dt.day()))),
+            "hour" => Ok(Value::Int(i64::from(dt.hour()))),
+            "minute" => Ok(Value::Int(i64::from(dt.minute()))),
+            "second" => Ok(Value::Int(i64::from(dt.second()))),
+            "millisecond" => Ok(Value::Int(i64::from(dt.timestamp_subsec_millis()))),
+            "microsecond" => Ok(Value::Int(i64::from(dt.timestamp_subsec_micros()))),
+            "nanosecond" => Ok(Value::Int(i64::from(dt.timestamp_subsec_nanos()))),
+            _ => Err(format!("unknown datetime component {component}")),
+        },
+        _ => Err(format!("invalid timestamp: {timestamp_ms}")),
+    }
+}
+
+// Helper function to extract components from date values
+fn extract_date_component(
+    timestamp_ms: i64,
+    component: &str,
+) -> Result<Value, String> {
+    use chrono::{Datelike, TimeZone, Utc};
+
+    match Utc.timestamp_millis_opt(timestamp_ms) {
+        chrono::LocalResult::Single(dt) => match component {
+            "year" => Ok(Value::Int(i64::from(dt.year()))),
+            "month" => Ok(Value::Int(i64::from(dt.month()))),
+            "day" => Ok(Value::Int(i64::from(dt.day()))),
+            _ => Err(format!("unknown date component {component}")),
+        },
+        _ => Err(format!("invalid timestamp: {timestamp_ms}")),
+    }
+}
+
+// Helper function to extract components from time values
+fn extract_time_component(
+    timestamp_ms: i64,
+    component: &str,
+) -> Result<Value, String> {
+    use chrono::{TimeZone, Timelike, Utc};
+
+    match Utc.timestamp_millis_opt(timestamp_ms) {
+        chrono::LocalResult::Single(dt) => match component {
+            "hour" => Ok(Value::Int(i64::from(dt.hour()))),
+            "minute" => Ok(Value::Int(i64::from(dt.minute()))),
+            "second" => Ok(Value::Int(i64::from(dt.second()))),
+            "millisecond" => Ok(Value::Int(i64::from(dt.timestamp_subsec_millis()))),
+            "microsecond" => Ok(Value::Int(i64::from(dt.timestamp_subsec_micros()))),
+            "nanosecond" => Ok(Value::Int(i64::from(dt.timestamp_subsec_nanos()))),
+            _ => Err(format!("unknown time component {component}")),
+        },
+        _ => Err(format!("invalid timestamp: {timestamp_ms}")),
+    }
+}
+
+// Helper function to extract components from duration values
+fn extract_duration_component(
+    duration_ms: i64,
+    component: &str,
+) -> Result<Value, String> {
+    // Duration is stored as milliseconds
+    const MS_PER_SECOND: i64 = 1000;
+    const MS_PER_MINUTE: i64 = 60 * MS_PER_SECOND;
+    const MS_PER_HOUR: i64 = 60 * MS_PER_MINUTE;
+    const MS_PER_DAY: i64 = 24 * MS_PER_HOUR;
+
+    match component {
+        "days" => Ok(Value::Int(duration_ms / MS_PER_DAY)),
+        "hours" => Ok(Value::Int(duration_ms / MS_PER_HOUR)),
+        "minutes" => Ok(Value::Int(duration_ms / MS_PER_MINUTE)),
+        "seconds" => Ok(Value::Int(duration_ms / MS_PER_SECOND)),
+        "milliseconds" => Ok(Value::Int(duration_ms)),
+        "microseconds" => Ok(Value::Int(duration_ms * 1000)),
+        "nanoseconds" => Ok(Value::Int(duration_ms * 1_000_000)),
+        _ => Err(format!("unknown duration component {component}")),
+    }
+}
+
 fn property(
     runtime: &Runtime,
     args: ThinVec<Value>,
@@ -1168,6 +1254,18 @@ fn property(
             _ => Ok(Value::Null),
         },
         (Some(Value::Null), Some(Value::String(_))) => Ok(Value::Null),
+        (Some(Value::Datetime(ts)), Some(Value::String(attr))) => {
+            extract_datetime_component(ts, &attr)
+        },
+        (Some(Value::Date(ts)), Some(Value::String(attr))) => {
+            extract_date_component(ts, &attr)
+        },
+        (Some(Value::Time(ts)), Some(Value::String(attr))) => {
+            extract_time_component(ts, &attr)
+        },
+        (Some(Value::Duration(dur)), Some(Value::String(attr))) => {
+            extract_duration_component(dur, &attr)
+        },
         (Some(Value::Path(_)), Some(Value::String(_))) => {
             Err("Type mismatch: expected Map, Node, Edge, Datetime, Date, Time, Duration, Null, or Point but was Path".to_string())
         }
@@ -3499,5 +3597,196 @@ mod tests {
             Value::Int(-1),
             "toInteger('-1.0') should return -1, not None"
         );
+    }
+
+    #[test]
+    fn test_datetime_component_extraction() {
+        let runtime = get_test_runtime();
+
+        // Create a datetime: 1984-10-11T12:31:14.645Z (466345874645 ms from epoch)
+        let datetime_ms = 466_345_874_645_i64;
+        let datetime = Value::Datetime(datetime_ms);
+
+        // Test year
+        let args = thin_vec![
+            datetime.clone(),
+            Value::String(Arc::new("year".to_string()))
+        ];
+        let result = property(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(1984));
+
+        // Test month
+        let args = thin_vec![
+            datetime.clone(),
+            Value::String(Arc::new("month".to_string()))
+        ];
+        let result = property(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(10));
+
+        // Test day
+        let args = thin_vec![datetime.clone(), Value::String(Arc::new("day".to_string()))];
+        let result = property(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(11));
+
+        // Test hour
+        let args = thin_vec![
+            datetime.clone(),
+            Value::String(Arc::new("hour".to_string()))
+        ];
+        let result = property(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(12));
+
+        // Test minute
+        let args = thin_vec![
+            datetime.clone(),
+            Value::String(Arc::new("minute".to_string()))
+        ];
+        let result = property(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(31));
+
+        // Test second
+        let args = thin_vec![
+            datetime.clone(),
+            Value::String(Arc::new("second".to_string()))
+        ];
+        let result = property(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(14));
+
+        // Test millisecond
+        let args = thin_vec![
+            datetime.clone(),
+            Value::String(Arc::new("millisecond".to_string()))
+        ];
+        let result = property(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(645));
+
+        // Test unknown component
+        let args = thin_vec![datetime, Value::String(Arc::new("invalid".to_string()))];
+        let result = property(runtime, args);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("unknown datetime component"));
+    }
+
+    #[test]
+    fn test_date_component_extraction() {
+        let runtime = get_test_runtime();
+
+        // Create a date: 1984-10-11 (466300800000 ms from epoch - midnight UTC)
+        let date_ms = 466_300_800_000_i64;
+        let date = Value::Date(date_ms);
+
+        // Test year
+        let args = thin_vec![date.clone(), Value::String(Arc::new("year".to_string()))];
+        let result = property(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(1984));
+
+        // Test month
+        let args = thin_vec![date.clone(), Value::String(Arc::new("month".to_string()))];
+        let result = property(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(10));
+
+        // Test day
+        let args = thin_vec![date.clone(), Value::String(Arc::new("day".to_string()))];
+        let result = property(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(11));
+
+        // Test unknown component
+        let args = thin_vec![date, Value::String(Arc::new("hour".to_string()))];
+        let result = property(runtime, args);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("unknown date component"));
+    }
+
+    #[test]
+    fn test_time_component_extraction() {
+        let runtime = get_test_runtime();
+
+        // Create a time: 12:31:14.645 (45074645 ms from epoch)
+        let time_ms = 45_074_645_i64;
+        let time = Value::Time(time_ms);
+
+        // Test hour
+        let args = thin_vec![time.clone(), Value::String(Arc::new("hour".to_string()))];
+        let result = property(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(12));
+
+        // Test minute
+        let args = thin_vec![time.clone(), Value::String(Arc::new("minute".to_string()))];
+        let result = property(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(31));
+
+        // Test second
+        let args = thin_vec![time.clone(), Value::String(Arc::new("second".to_string()))];
+        let result = property(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(14));
+
+        // Test millisecond
+        let args = thin_vec![
+            time.clone(),
+            Value::String(Arc::new("millisecond".to_string()))
+        ];
+        let result = property(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(645));
+
+        // Test unknown component
+        let args = thin_vec![time.clone(), Value::String(Arc::new("year".to_string()))];
+        let result = property(runtime, args);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("unknown time component"));
+    }
+
+    #[test]
+    fn test_duration_component_extraction() {
+        let runtime = get_test_runtime();
+
+        // Create a duration: 2 days, 3 hours, 15 minutes, 30 seconds (189330000 ms)
+        let duration_ms = 189_330_000_i64;
+        let duration = Value::Duration(duration_ms);
+
+        // Test days
+        let args = thin_vec![
+            duration.clone(),
+            Value::String(Arc::new("days".to_string()))
+        ];
+        let result = property(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(2)); // 189330000 / (24*60*60*1000) = 2
+
+        // Test hours
+        let args = thin_vec![
+            duration.clone(),
+            Value::String(Arc::new("hours".to_string()))
+        ];
+        let result = property(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(52)); // 189330000 / (60*60*1000) = 52
+
+        // Test minutes
+        let args = thin_vec![
+            duration.clone(),
+            Value::String(Arc::new("minutes".to_string()))
+        ];
+        let result = property(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(3155)); // 189330000 / (60*1000) = 3155
+
+        // Test seconds
+        let args = thin_vec![
+            duration.clone(),
+            Value::String(Arc::new("seconds".to_string()))
+        ];
+        let result = property(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(189330)); // 189330000 / 1000 = 189330
+
+        // Test milliseconds
+        let args = thin_vec![
+            duration.clone(),
+            Value::String(Arc::new("milliseconds".to_string()))
+        ];
+        let result = property(runtime, args).unwrap();
+        assert_eq!(result, Value::Int(189_330_000));
+
+        // Test unknown component
+        let args = thin_vec![duration, Value::String(Arc::new("years".to_string()))];
+        let result = property(runtime, args);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("unknown duration component"));
     }
 }
