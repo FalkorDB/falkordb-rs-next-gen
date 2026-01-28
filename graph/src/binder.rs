@@ -14,6 +14,7 @@ pub struct Binder {
     use_parent_scope: bool,
     parent_to_child_scope: HashMap<Arc<String>, Variable>,
     copy_from_parent: HashMap<Arc<String>, (Variable, Variable)>,
+    allow_path_property: bool,
 }
 
 impl Default for Binder {
@@ -24,6 +25,7 @@ impl Default for Binder {
             use_parent_scope: false,
             parent_to_child_scope: HashMap::new(),
             copy_from_parent: HashMap::new(),
+            allow_path_property: false,
         }
     }
 }
@@ -550,11 +552,14 @@ impl Binder {
         let mut res = Vec::with_capacity(items.len());
         for item in items {
             match item {
-                SetItem::Attribute(target, value, strict) => res.push(SetItem::Attribute(
-                    self.bind_expr(&target)?,
-                    self.bind_expr(&value)?,
-                    strict,
-                )),
+                SetItem::Attribute(target, value, strict) => {
+                    // Allow Path property access in SET operations (will just set 0 properties)
+                    self.allow_path_property = true;
+                    let bound_target = self.bind_expr(&target)?;
+                    self.allow_path_property = false;
+                    let bound_value = self.bind_expr(&value)?;
+                    res.push(SetItem::Attribute(bound_target, bound_value, strict));
+                }
                 SetItem::Label(name, labels) => {
                     let var = self.resolve_name(&name, &[])?;
                     res.push(SetItem::Label(var, labels));
@@ -648,6 +653,22 @@ impl Binder {
                     .children()
                     .map(|child| self.bind_expr_node(expr, child, locals))
                     .collect::<Result<Vec<_>, _>>()?;
+
+                // Validate property access on Path types (unless in SET context)
+                // Property access is represented as: FuncInvocation("property", entity, property_name)
+                if !self.allow_path_property
+                    && let ExprIR::FuncInvocation(func) = node_ref.data()
+                    && func.name == "property"
+                    && !children.is_empty()
+                {
+                    // Check if the first child (entity) is a Path variable
+                    if let ExprIR::Variable(var) = children[0].root().data()
+                        && var.ty == Type::Path
+                    {
+                        return Err("Type mismatch: expected Map, Node, Edge, Datetime, Date, Time, Duration, Null, or Point but was Path".to_string());
+                    }
+                }
+
                 let new_data = match node_ref.data().clone() {
                     ExprIR::Null => ExprIR::Null,
                     ExprIR::Bool(b) => ExprIR::Bool(b),

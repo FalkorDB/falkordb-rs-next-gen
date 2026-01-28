@@ -4,6 +4,7 @@ use crate::ast::{
 };
 use crate::indexer::{EntityType, IndexType};
 use crate::runtime::orderset::OrderSet;
+use crate::string_escape::cypher_unescape;
 use crate::{
     cypher::Token::RParen,
     runtime::{
@@ -13,7 +14,6 @@ use crate::{
     tree,
 };
 use itertools::Itertools;
-use crate::string_escape::cypher_unescape;
 use orx_tree::{DynTree, NodeRef};
 use std::sync::Arc;
 use std::{
@@ -384,16 +384,15 @@ impl<'a> Lexer<'a> {
                     if !end {
                         return Err((format!("Unterminated string starting at pos: {}", pos), len));
                     }
-                    Ok(cypher_unescape(&str[pos + 1..pos + len])
-                        .map_or_else(
-                            |_| {
-                                (
-                                    Token::String(Arc::new(String::from(&str[pos + 1..pos + len]))),
-                                    len + 1,
-                                )
-                            },
-                            |unescaped| (Token::String(Arc::new(unescaped)), len + 1),
-                        ))
+                    Ok(cypher_unescape(&str[pos + 1..pos + len]).map_or_else(
+                        |_| {
+                            (
+                                Token::String(Arc::new(String::from(&str[pos + 1..pos + len]))),
+                                len + 1,
+                            )
+                        },
+                        |unescaped| (Token::String(Arc::new(unescaped)), len + 1),
+                    ))
                 }
                 '\"' => {
                     let mut len = 1;
@@ -423,16 +422,15 @@ impl<'a> Lexer<'a> {
                     if !end {
                         return Err((format!("Unterminated string starting at pos: {}", pos), len));
                     }
-                    Ok(cypher_unescape(&str[pos + 1..pos + len])
-                        .map_or_else(
-                            |_| {
-                                (
-                                    Token::String(Arc::new(String::from(&str[pos + 1..pos + len]))),
-                                    len + 1,
-                                )
-                            },
-                            |unescaped| (Token::String(Arc::new(unescaped)), len + 1),
-                        ))
+                    Ok(cypher_unescape(&str[pos + 1..pos + len]).map_or_else(
+                        |_| {
+                            (
+                                Token::String(Arc::new(String::from(&str[pos + 1..pos + len]))),
+                                len + 1,
+                            )
+                        },
+                        |unescaped| (Token::String(Arc::new(unescaped)), len + 1),
+                    ))
                 }
                 d @ '0'..='9' => Self::lex_numeric(str, chars, pos, d, 1),
                 '$' => {
