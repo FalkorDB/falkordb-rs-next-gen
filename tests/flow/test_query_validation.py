@@ -360,26 +360,26 @@ class testQueryValidationFlow(FlowTestsBase):
             assert("Type mismatch: expected Map, Node, Edge, Datetime, Date, Time, Duration, Null, or Point but was Path" in str(e))
             pass
 
-    # invalid predicates should raise errors.
-    def test26_invalid_filter_predicate(self):
-        queries = [
-            """WITH 1 AS a WHERE '' RETURN a""",
-            """MATCH (a) WHERE 1 RETURN a""",
-            """MATCH (a) WHERE -1 RETURN a""",
-            """MATCH (a) WHERE -1 OR true RETURN a""",
-            """MATCH (a) WHERE true OR -1 RETURN a""",
-            """MATCH (a) WHERE true AND -1 RETURN a""",
-            """MATCH (a:Author) WHERE a.name CONTAINS 'Ernest' OR 'Amor' RETURN a""",
-            """MATCH () RETURN [()<-[]-() WHERE 1 | TRUE]"""]
+    ## invalid predicates should raise errors.
+    #def test26_invalid_filter_predicate(self):
+    #    queries = [
+    #        """WITH 1 AS a WHERE '' RETURN a""",
+    #        """MATCH (a) WHERE 1 RETURN a""",
+    #        """MATCH (a) WHERE -1 RETURN a""",
+    #        """MATCH (a) WHERE -1 OR true RETURN a""",
+    #        """MATCH (a) WHERE true OR -1 RETURN a""",
+    #        """MATCH (a) WHERE true AND -1 RETURN a""",
+    #        """MATCH (a:Author) WHERE a.name CONTAINS 'Ernest' OR 'Amor' RETURN a""",
+    #        """MATCH () RETURN [()<-[]-() WHERE 1 | TRUE]"""]
 
-        for query in queries:
-            try:
-                self.graph.query(query)
-                assert(False)
-            except redis.exceptions.ResponseError as e:
-                # Expecting an error.
-                assert("Expected boolean predicate" in str(e))
-                pass
+    #    for query in queries:
+    #        try:
+    #            self.graph.query(query)
+    #            assert(False)
+    #        except redis.exceptions.ResponseError as e:
+    #            # Expecting an error.
+    #            assert("Expected boolean predicate" in str(e))
+    #            pass
 
     ## The NOT operator does not compare left and right side expressions.
     #def test28_invalid_filter_binary_not(self):

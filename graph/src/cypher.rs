@@ -2048,7 +2048,7 @@ impl<'a> Parser<'a> {
     fn parse_list_literal_or_comprehension(
         &mut self
     ) -> Result<(DynTree<ExprIR<Arc<String>>>, bool), String> {
-        // Check for list comprehension: [var IN list WHERE condition | expression]
+        // Check if the second token is 'IN' for list comprehension
         let pos = self.lexer.pos;
         if let Ok(var) = self.parse_ident()
             && optional_match_token!(self.lexer => In)
@@ -2090,49 +2090,6 @@ impl<'a> Parser<'a> {
             condition.unwrap_or_else(|| tree!(ExprIR::Bool(true))),
             expression.map_or_else(|| Ok::<_, String>(tree!(ExprIR::Variable(var))), Ok)?
         ))
-    }
-
-    fn try_parse_pattern_comprehension(&mut self) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
-        // Pattern comprehension: [var = pattern WHERE condition | expression]
-        // or [pattern WHERE condition | expression]
-
-        let _var = if let Ok(var) = self.parse_ident() {
-            if optional_match_token!(self.lexer, Equal) {
-                Some(var)
-            } else {
-                return Err("Expected '=' after variable in pattern comprehension".to_string());
-            }
-        } else {
-            None
-        };
-
-        // Parse the pattern (starts with '(')
-        // For now, we'll parse a simple relationship pattern
-        // The pattern should be something like ()<-[]-() or (a)-[r]->(b)
-        let _pattern = self.parse_pattern(&Keyword::Match)?;
-
-        let condition = if optional_match_token!(self.lexer => Where) {
-            Some(self.parse_expr()?)
-        } else {
-            None
-        };
-
-        // The pipe and expression are mandatory for pattern comprehension
-        if !optional_match_token!(self.lexer, Pipe) {
-            return Err("Expected '|' in pattern comprehension".to_string());
-        }
-
-        let expression = self.parse_expr()?;
-
-        match_token!(self.lexer, RBrace);
-
-        // Create a pattern comprehension expression
-        // For now, just create a placeholder tree - the binder will validate the condition
-        let mut root = tree!(ExprIR::PatternComprehension);
-        let mut root_node = root.root_mut();
-        root_node.push_child_tree(condition.unwrap_or_else(|| tree!(ExprIR::Bool(true))));
-        root_node.push_child_tree(expression);
-        Ok(root)
     }
 
     fn parse_node_pattern(

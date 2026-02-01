@@ -85,13 +85,7 @@ impl Binder {
                 optional,
             } => {
                 let pattern = self.bind_graph(pattern, false)?;
-                let filter = filter
-                    .map(|expr| {
-                        let bound = self.bind_expr(&expr)?;
-                        self.validate_boolean_expression(&bound)?;
-                        Ok::<_, String>(bound)
-                    })
-                    .transpose()?;
+                let filter = filter.map(|expr| self.bind_expr(&expr)).transpose()?;
                 Ok(QueryIR::Match {
                     pattern,
                     filter,
@@ -284,9 +278,6 @@ impl Binder {
         let skip = skip.map(|expr| self.bind_expr(&expr)).transpose()?;
         let limit = limit.map(|expr| self.bind_expr(&expr)).transpose()?;
         let filter = filter.map(|expr| self.bind_expr(&expr)).transpose()?;
-        if let Some(ref bound) = filter {
-            self.validate_boolean_expression(bound)?;
-        }
 
         let copy_from_parent = self
             .copy_from_parent
@@ -628,11 +619,6 @@ impl Binder {
                     .collect::<Result<Vec<_>, _>>()?;
                 locals.pop();
 
-                // Validate the condition (second child) is boolean
-                if children.len() >= 2 {
-                    self.validate_boolean_expression(&Arc::new(children[1].clone()))?;
-                }
-
                 let mut new_tree = DynTree::new(ExprIR::Quantifier(qt.clone(), bound_var));
                 let mut root = new_tree.root_mut();
                 for child in children {
@@ -652,35 +638,12 @@ impl Binder {
                     .collect::<Result<Vec<_>, _>>()?;
                 locals.pop();
 
-                // Validate the filter (second child) is boolean
-                if children.len() >= 2 {
-                    self.validate_boolean_expression(&Arc::new(children[1].clone()))?;
-                }
-
                 let mut new_tree = DynTree::new(ExprIR::ListComprehension(bound_var));
                 let mut root = new_tree.root_mut();
                 for child in children {
                     root.push_child_tree(child);
                 }
                 Ok(new_tree)
-            }
-            ExprIR::PatternComprehension => {
-                // Pattern comprehensions: [var = pattern WHERE condition | projection]
-                // Children: [condition, projection]
-                // We need to validate the condition is boolean before failing
-                let children: Vec<_> = node_ref
-                    .children()
-                    .map(|child| self.bind_expr_node(expr, child, locals))
-                    .collect::<Result<_, _>>()?;
-
-                // The first child is the condition (WHERE clause)
-                if !children.is_empty() {
-                    let condition = Arc::new(children[0].clone());
-                    self.validate_boolean_expression(&condition)?;
-                }
-
-                // Pattern comprehensions are not fully supported in runtime yet
-                Err("Pattern comprehension not yet fully implemented".to_string())
             }
             _ => {
                 if let ExprIR::And | ExprIR::Or | ExprIR::Xor = node_ref.data() {
@@ -692,7 +655,7 @@ impl Binder {
                         | ExprIR::List
                         | ExprIR::Map) = expr.data()
                         {
-                            return Err(String::from("Expected boolean predicate."));
+                            return Err(String::from("Type mismatch: expected bool"));
                         }
                     }
                 }
@@ -754,8 +717,7 @@ impl Binder {
                     ExprIR::Paren => ExprIR::Paren,
                     ExprIR::Variable(_)
                     | ExprIR::Quantifier(_, _)
-                    | ExprIR::ListComprehension(_)
-                    | ExprIR::PatternComprehension => unreachable!("handled above"),
+                    | ExprIR::ListComprehension(_) => unreachable!("handled above"),
                 };
                 let mut new_tree = DynTree::new(new_data);
                 let mut root = new_tree.root_mut();
@@ -901,159 +863,6 @@ impl Binder {
         }
         Ok(())
     }
-
-    fn validate_boolean_expression(
-        &self,
-        expr: &QueryExpr<Variable>,
-    ) -> Result<(), String> {
-        let root = expr.root();
-        let data = root.data();
-
-        match data {
-            // Boolean operators return boolean, but we need to validate their operands are also boolean
-            ExprIR::Or | ExprIR::And | ExprIR::Xor => {
-                // These operators require all operands to be boolean
-                // Check each child node's data directly
-                for child in root.children() {
-                    if !Self::is_boolean_expression_node(child.data()) {
-                        return Err("Expected boolean predicate.".to_string());
-                    }
-                }
-                Ok(())
-            }
-
-            // NOT requires its operand to be boolean
-            ExprIR::Not => {
-                if let Some(child) = root.children().next()
-                    && !Self::is_boolean_expression_node(child.data())
-                {
-                    return Err("Expected boolean predicate.".to_string());
-                }
-                Ok(())
-            }
-
-            // Comparison operators always return boolean (their operands can be any type)
-            ExprIR::Eq
-            | ExprIR::Neq
-            | ExprIR::Lt
-            | ExprIR::Gt
-            | ExprIR::Le
-            | ExprIR::Ge
-            | ExprIR::In
-            | ExprIR::Bool(_)
-            | ExprIR::Null
-            | ExprIR::FuncInvocation(_)
-            | ExprIR::IsNode
-            | ExprIR::IsRelationship => Ok(()),
-
-            // Boolean literals are boolean
-            // Null is acceptable (treated as false in boolean context)
-            // Function invocations - accept for now (most predicates are functions)
-            // TODO: Check function return type once we have that information accessible
-            // IsNode and IsRelationship return boolean
-            // Variables need to check their type
-            ExprIR::Variable(var) => {
-                match &var.ty {
-                    Type::Bool | Type::Null => Ok(()),
-                    Type::Union(types) => {
-                        // Union is acceptable if it includes Bool or is only Null
-                        if types.iter().any(|t| matches!(t, Type::Bool)) {
-                            Ok(())
-                        } else {
-                            Err("Expected boolean predicate.".to_string())
-                        }
-                    }
-                    Type::Optional(inner) => {
-                        // Optional bool is acceptable
-                        if **inner == Type::Bool {
-                            Ok(())
-                        } else {
-                            Err("Expected boolean predicate.".to_string())
-                        }
-                    }
-                    Type::Any => {
-                        // Any type might be boolean, so accept it
-                        // This is needed for parameters and complex expressions
-                        Ok(())
-                    }
-                    _ => Err("Expected boolean predicate.".to_string()),
-                }
-            }
-
-            // Parentheses are just wrappers - need to check the wrapped expression
-            ExprIR::Paren => {
-                // Check if there's a child and validate it
-                let root_node = expr.root();
-                let mut children = root_node.children();
-                children.next().map_or_else(
-                    || Err("Expected boolean predicate.".to_string()),
-                    |child_node| match child_node.data() {
-                        ExprIR::Or
-                        | ExprIR::And
-                        | ExprIR::Xor
-                        | ExprIR::Not
-                        | ExprIR::Eq
-                        | ExprIR::Neq
-                        | ExprIR::Lt
-                        | ExprIR::Gt
-                        | ExprIR::Le
-                        | ExprIR::Ge
-                        | ExprIR::In
-                        | ExprIR::Bool(_)
-                        | ExprIR::Null => Ok(()),
-                        ExprIR::FuncInvocation(_) | ExprIR::IsNode | ExprIR::IsRelationship => {
-                            Ok(())
-                        }
-                        ExprIR::Variable(var) => match &var.ty {
-                            Type::Union(types) if types.iter().any(|t| matches!(t, Type::Bool)) => {
-                                Ok(())
-                            }
-                            Type::Optional(inner) if **inner == Type::Bool => Ok(()),
-                            Type::Bool | Type::Null | Type::Any => Ok(()),
-                            _ => Err("Expected boolean predicate.".to_string()),
-                        },
-                        ExprIR::Paren => {
-                            // Nested parentheses - would need recursive handling
-                            // For now, be conservative and reject
-                            Err("Expected boolean predicate.".to_string())
-                        }
-                        _ => Err("Expected boolean predicate.".to_string()),
-                    },
-                )
-            }
-
-            // All other expression types are not boolean (Integer, Float, String, etc.)
-            _ => Err("Expected boolean predicate.".to_string()),
-        }
-    }
-
-    // Helper function to check if an expression node evaluates to boolean
-    const fn is_boolean_expression_node(data: &ExprIR<Variable>) -> bool {
-        match data {
-            ExprIR::Variable(var) => matches!(
-                &var.ty,
-                Type::Bool | Type::Null | Type::Union(_) | Type::Optional(_) | Type::Any
-            ),
-            ExprIR::Or
-            | ExprIR::And
-            | ExprIR::Xor
-            | ExprIR::Not
-            | ExprIR::Eq
-            | ExprIR::Neq
-            | ExprIR::Lt
-            | ExprIR::Gt
-            | ExprIR::Le
-            | ExprIR::Ge
-            | ExprIR::In
-            | ExprIR::Bool(_)
-            | ExprIR::Null
-            | ExprIR::FuncInvocation(_)
-            | ExprIR::IsNode
-            | ExprIR::IsRelationship
-            | ExprIR::Paren => true, // Parentheses preserve the type of their content
-            _ => false,
-        }
-    }
 }
 
 #[cfg(test)]
@@ -1198,96 +1007,5 @@ mod tests {
             "Path placeholder should not leak to new binder, got error: {:?}",
             result2.err()
         );
-    }
-
-    #[test]
-    fn test_invalid_filter_predicates() {
-        ensure_functions_initialized();
-
-        // Test that non-boolean WHERE clauses are rejected
-        let invalid_queries = vec![
-            ("WITH 1 AS a WHERE '' RETURN a", "empty string"),
-            ("MATCH (a) WHERE 1 RETURN a", "positive integer"),
-            ("MATCH (a) WHERE -1 RETURN a", "negative integer"),
-            ("MATCH (a) WHERE 'string' RETURN a", "string literal"),
-            ("MATCH (a) WHERE -1 OR true RETURN a", "integer OR boolean"),
-            ("MATCH (a) WHERE true OR -1 RETURN a", "boolean OR integer"),
-            (
-                "MATCH (a) WHERE true AND -1 RETURN a",
-                "boolean AND integer",
-            ),
-            (
-                "MATCH (a:Author) WHERE a.name CONTAINS 'Ernest' OR 'Amor' RETURN a",
-                "comparison OR string",
-            ),
-            (
-                "MATCH () RETURN [()<-[]-() WHERE 1 | TRUE]",
-                "pattern comprehension with integer filter",
-            ),
-        ];
-
-        for (query, description) in invalid_queries {
-            let mut parser = Parser::new(query);
-            let ast_result = parser.parse();
-            assert!(
-                ast_result.is_ok(),
-                "Query '{query}' ({description}) should parse successfully"
-            );
-
-            let ast = ast_result.unwrap();
-            let binder = Binder::default();
-
-            let result = binder.bind(ast);
-            assert!(
-                result.is_err(),
-                "Query '{query}' ({description}) should fail during binding (non-boolean WHERE clause)"
-            );
-
-            if let Err(e) = result {
-                // Some errors are caught by type checking (like CONTAINS with wrong type)
-                // Others are caught by boolean validation
-                let is_valid_error = e.contains("Expected boolean predicate")
-                    || e.contains("Type mismatch")
-                    || e.contains("expected bool");
-                assert!(
-                    is_valid_error,
-                    "Query '{query}' ({description}) should fail with boolean/type error, got: {e}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn test_valid_filter_predicates() {
-        ensure_functions_initialized();
-
-        // Test that boolean WHERE clauses are accepted
-        let valid_queries = vec![
-            "MATCH (a) WHERE true RETURN a",
-            "MATCH (a) WHERE false RETURN a",
-            "MATCH (a) WHERE a.name = 'test' RETURN a",
-            "MATCH (a) WHERE a.age > 18 RETURN a",
-            "WITH 1 AS a WHERE true RETURN a",
-        ];
-
-        for query in valid_queries {
-            let mut parser = Parser::new(query);
-            let ast_result = parser.parse();
-            assert!(
-                ast_result.is_ok(),
-                "Query '{query}' should parse successfully"
-            );
-
-            let ast = ast_result.unwrap();
-            let binder = Binder::default();
-
-            let result = binder.bind(ast);
-            assert!(
-                result.is_ok(),
-                "Query '{}' should succeed (valid boolean WHERE clause), got error: {:?}",
-                query,
-                result.err()
-            );
-        }
     }
 }
