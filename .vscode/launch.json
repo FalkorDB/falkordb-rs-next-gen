@@ -39,6 +39,9 @@
                 "${workspaceFolder}/target/debug/libfalkordb.dylib"
             ],
             "cwd": "${workspaceFolder}",
+            "env": {
+                "RUST_BACKTRACE": "full"
+            },
             "sourceLanguages": [
                 "rust"
             ],
