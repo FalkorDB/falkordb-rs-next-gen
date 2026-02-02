@@ -31,3 +31,4 @@ redisearch
 .venv
 *.rlib
 .git-branch-info.txt
+.github/copilot-instuctions.yml

@@ -603,20 +603,10 @@ impl Binder {
     fn returns_boolean(node: &orx_tree::Node<orx_tree::Dyn<ExprIR<Variable>>>) -> Option<bool> {
         match node.data() {
             // Definitely non-boolean literals
-            ExprIR::Integer(_)
-            | ExprIR::Float(_)
-            | ExprIR::String(_)
-            | ExprIR::List
-            | ExprIR::Map => Some(false),
-
             // Definitely boolean
-            ExprIR::Bool(_) => Some(true),
-
-            // Null is allowed (per Cypher semantics)
-            ExprIR::Null => Some(true),
-
-            // Comparisons and boolean operations return bool
-            ExprIR::Eq
+            ExprIR::Bool(_)
+            | ExprIR::Null
+            | ExprIR::Eq
             | ExprIR::Neq
             | ExprIR::Lt
             | ExprIR::Gt
@@ -628,13 +618,25 @@ impl Binder {
             | ExprIR::Not
             | ExprIR::In
             | ExprIR::IsNode
-            | ExprIR::IsRelationship => Some(true),
+            | ExprIR::IsRelationship
+            | ExprIR::Quantifier(_, _) => Some(true),
 
+            // Null is allowed (per Cypher semantics)
+            // Comparisons and boolean operations return bool
             // Negate of a number is still a number - invalid!
-            ExprIR::Negate => Some(false),
+            ExprIR::Integer(_)
+            | ExprIR::Float(_)
+            | ExprIR::String(_)
+            | ExprIR::List
+            | ExprIR::Map
+            | ExprIR::Negate => Some(false),
 
             // Quantifiers (ANY, ALL, NONE, SINGLE) return boolean
-            ExprIR::Quantifier(_, _) => Some(true),
+            // Paren is transparent - check the child's return type
+            ExprIR::Paren => node
+                .children()
+                .next()
+                .and_then(|c| Self::returns_boolean(&c)),
 
             // Variables, Parameters, functions, etc. - unknown at bind time
             _ => None,
@@ -1103,6 +1105,95 @@ mod tests {
             result2.is_ok(),
             "Path placeholder should not leak to new binder, got error: {:?}",
             result2.err()
+        );
+    }
+
+    #[test]
+    fn test_invalid_filter_parenthesized_integer() {
+        ensure_functions_initialized();
+
+        // Test that WHERE (1) correctly rejects parenthesized non-boolean expression
+        // The parentheses should be transparent and the inner integer should be rejected
+        let query = "MATCH (n) WHERE (1) RETURN n";
+        let mut parser = Parser::new(query);
+        let ast = parser.parse().unwrap();
+        let binder = Binder::default();
+        let result = binder.bind(ast);
+
+        assert!(
+            result.is_err(),
+            "Parenthesized integer should be rejected as filter predicate"
+        );
+        assert!(
+            result
+                .as_ref()
+                .err()
+                .unwrap()
+                .contains("Expected boolean predicate"),
+            "Error message should mention 'Expected boolean predicate', got: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_invalid_filter_nested_parens() {
+        ensure_functions_initialized();
+
+        // Test that WHERE ((('string'))) correctly rejects nested parenthesized non-boolean
+        let query = "MATCH (n) WHERE ((('string'))) RETURN n";
+        let mut parser = Parser::new(query);
+        let ast = parser.parse().unwrap();
+        let binder = Binder::default();
+        let result = binder.bind(ast);
+
+        assert!(
+            result.is_err(),
+            "Nested parenthesized string should be rejected"
+        );
+        assert!(
+            result
+                .as_ref()
+                .err()
+                .unwrap()
+                .contains("Expected boolean predicate"),
+            "Error message should mention 'Expected boolean predicate', got: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_valid_filter_parenthesized_boolean() {
+        ensure_functions_initialized();
+
+        // Test that WHERE (true) is valid - parenthesized boolean should work
+        let query = "MATCH (n) WHERE (true) RETURN n";
+        let mut parser = Parser::new(query);
+        let ast = parser.parse().unwrap();
+        let binder = Binder::default();
+        let result = binder.bind(ast);
+
+        assert!(
+            result.is_ok(),
+            "Parenthesized boolean should be valid, got error: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_valid_filter_parenthesized_comparison() {
+        ensure_functions_initialized();
+
+        // Test that WHERE (1 = 1) is valid - parenthesized comparison should work
+        let query = "MATCH (n) WHERE (1 = 1) RETURN n";
+        let mut parser = Parser::new(query);
+        let ast = parser.parse().unwrap();
+        let binder = Binder::default();
+        let result = binder.bind(ast);
+
+        assert!(
+            result.is_ok(),
+            "Parenthesized comparison should be valid, got error: {:?}",
+            result.err()
         );
     }
 }
