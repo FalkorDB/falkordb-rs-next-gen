@@ -85,7 +85,13 @@ impl Binder {
                 optional,
             } => {
                 let pattern = self.bind_graph(pattern, false)?;
-                let filter = filter.map(|expr| self.bind_expr(&expr)).transpose()?;
+                let filter = filter
+                    .map(|expr| -> Result<QueryExpr<Variable>, String> {
+                        let bound = self.bind_expr(&expr)?;
+                        Self::validate_boolean_predicate(&bound)?;
+                        Ok(bound)
+                    })
+                    .transpose()?;
                 Ok(QueryIR::Match {
                     pattern,
                     filter,
@@ -216,7 +222,13 @@ impl Binder {
                     let bound_alias = self.define_name_in_scope(alias_name, Type::Any, true)?;
                     bound_pairs.push((Arc::clone(&field), bound_alias));
                 }
-                let filter = filter.map(|expr| self.bind_expr(&expr)).transpose()?;
+                let filter = filter
+                    .map(|expr| -> Result<QueryExpr<Variable>, String> {
+                        let bound = self.bind_expr(&expr)?;
+                        Self::validate_boolean_predicate(&bound)?;
+                        Ok(bound)
+                    })
+                    .transpose()?;
                 Ok(QueryIR::Call(func, args, bound_pairs, filter))
             }
         }
@@ -277,7 +289,13 @@ impl Binder {
             .collect::<Result<Vec<_>, String>>()?;
         let skip = skip.map(|expr| self.bind_expr(&expr)).transpose()?;
         let limit = limit.map(|expr| self.bind_expr(&expr)).transpose()?;
-        let filter = filter.map(|expr| self.bind_expr(&expr)).transpose()?;
+        let filter = filter
+            .map(|expr| -> Result<QueryExpr<Variable>, String> {
+                let bound = self.bind_expr(&expr)?;
+                Self::validate_boolean_predicate(&bound)?;
+                Ok(bound)
+            })
+            .transpose()?;
 
         let copy_from_parent = self
             .copy_from_parent
@@ -580,6 +598,74 @@ impl Binder {
         Ok(res)
     }
 
+    /// Returns `Some(false)` if the expression definitely cannot return a boolean,
+    /// `Some(true)` if it definitely returns boolean, and `None` if unknown.
+    fn returns_boolean(node: &orx_tree::Node<orx_tree::Dyn<ExprIR<Variable>>>) -> Option<bool> {
+        match node.data() {
+            // Definitely non-boolean literals
+            ExprIR::Integer(_)
+            | ExprIR::Float(_)
+            | ExprIR::String(_)
+            | ExprIR::List
+            | ExprIR::Map => Some(false),
+
+            // Definitely boolean
+            ExprIR::Bool(_) => Some(true),
+
+            // Null is allowed (per Cypher semantics)
+            ExprIR::Null => Some(true),
+
+            // Comparisons and boolean operations return bool
+            ExprIR::Eq
+            | ExprIR::Neq
+            | ExprIR::Lt
+            | ExprIR::Gt
+            | ExprIR::Le
+            | ExprIR::Ge
+            | ExprIR::And
+            | ExprIR::Or
+            | ExprIR::Xor
+            | ExprIR::Not
+            | ExprIR::In
+            | ExprIR::IsNode
+            | ExprIR::IsRelationship => Some(true),
+
+            // Negate of a number is still a number - invalid!
+            ExprIR::Negate => Some(false),
+
+            // Quantifiers (ANY, ALL, NONE, SINGLE) return boolean
+            ExprIR::Quantifier(_, _) => Some(true),
+
+            // Variables, Parameters, functions, etc. - unknown at bind time
+            _ => None,
+        }
+    }
+
+    /// Validates that a filter expression can return a boolean value.
+    /// Returns an error if the expression is statically determined to be non-boolean.
+    fn validate_boolean_predicate(tree: &DynTree<ExprIR<Variable>>) -> Result<(), String> {
+        Self::validate_boolean_node(&tree.root())
+    }
+
+    /// Recursively validates that a node and its AND/OR/XOR children can return boolean.
+    fn validate_boolean_node(
+        node: &orx_tree::Node<orx_tree::Dyn<ExprIR<Variable>>>
+    ) -> Result<(), String> {
+        // Check if the current node is statically non-boolean
+        if let Some(false) = Self::returns_boolean(node) {
+            return Err(String::from("Expected boolean predicate."));
+        }
+
+        // For AND/OR/XOR, validate each operand
+        if let ExprIR::And | ExprIR::Or | ExprIR::Xor = node.data() {
+            for child in node.children() {
+                Self::validate_boolean_node(&child)?;
+            }
+        }
+
+        Ok(())
+    }
+
     fn bind_expr(
         &mut self,
         expr: &QueryExpr<Arc<String>>,
@@ -619,6 +705,11 @@ impl Binder {
                     .collect::<Result<Vec<_>, _>>()?;
                 locals.pop();
 
+                // Validate the WHERE condition (child 1) is boolean
+                if children.len() >= 2 {
+                    Self::validate_boolean_predicate(&children[1])?;
+                }
+
                 let mut new_tree = DynTree::new(ExprIR::Quantifier(qt.clone(), bound_var));
                 let mut root = new_tree.root_mut();
                 for child in children {
@@ -638,6 +729,11 @@ impl Binder {
                     .collect::<Result<Vec<_>, _>>()?;
                 locals.pop();
 
+                // Validate the WHERE condition (child 1) is boolean
+                if children.len() >= 2 {
+                    Self::validate_boolean_predicate(&children[1])?;
+                }
+
                 let mut new_tree = DynTree::new(ExprIR::ListComprehension(bound_var));
                 let mut root = new_tree.root_mut();
                 for child in children {
@@ -653,9 +749,10 @@ impl Binder {
                         | ExprIR::Float(_)
                         | ExprIR::String(_)
                         | ExprIR::List
-                        | ExprIR::Map) = expr.data()
+                        | ExprIR::Map
+                        | ExprIR::Negate) = expr.data()
                         {
-                            return Err(String::from("Type mismatch: expected bool"));
+                            return Err(String::from("Expected boolean predicate."));
                         }
                     }
                 }
