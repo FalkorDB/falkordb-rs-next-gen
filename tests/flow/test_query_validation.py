@@ -384,17 +384,17 @@ class testQueryValidationFlow(FlowTestsBase):
                 pass
 
     ## The NOT operator does not compare left and right side expressions.
-    #def test28_invalid_filter_binary_not(self):
-    #    try:
-    #        # Query should have been:
-    #        # MATCH (u) where u.v IS NOT NULL RETURN u
-    #        query = """MATCH (u) where u.v NOT NULL RETURN u"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError as e:
-    #        # Expecting an error.
-    #        assert("Invalid usage of 'NOT' filter" in str(e))
-    #        pass
+    def test28_invalid_filter_binary_not(self):
+        try:
+            # Query should have been:
+            # MATCH (u) where u.v IS NOT NULL RETURN u
+            query = """MATCH (u) where u.v NOT NULL RETURN u"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError as e:
+            # Expecting an error.
+            assert("Invalid usage of 'NOT' filter" in str(e) or "Invalid input 'NOT'" in str(e))
+            pass
 
     #def test29_invalid_filter_non_boolean_constant(self):
     #    try:
