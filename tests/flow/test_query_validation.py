@@ -430,14 +430,14 @@ class testQueryValidationFlow(FlowTestsBase):
         self.graph.query(query)
 
     ## Encountering traversals as property values should raise compile-time errors.
-    #def test30_unexpected_traversals(self):
-    #    query = """MATCH (a {prop: ()-[]->()}) RETURN a"""
-    #    try:
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError as e:
-    #        # Expecting an error.
-    #        assert("Encountered unhandled type" in str(e))
+    def test30_unexpected_traversals(self):
+        query = """MATCH (a {prop: ()-[]->()}) RETURN a"""
+        try:
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError as e:
+            # Expecting an error.
+            assert("Encountered unhandled type" in str(e))
 
     #def test31_set_invalid_property_type(self):
     #    queries = ["""MATCH (a) CREATE (:L {v: a})""",

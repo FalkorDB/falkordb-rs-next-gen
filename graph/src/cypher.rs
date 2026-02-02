@@ -2218,6 +2218,47 @@ impl<'a> Parser<'a> {
         Ok(labels)
     }
 
+    /// Check if the current position looks like the start of a pattern path.
+    /// Pattern paths look like: (), (:Label), (n), (n:Label), etc.
+    /// We need to look ahead to detect these.
+    fn is_pattern_path_start(&mut self) -> Result<bool, String> {
+        if self.lexer.current()? != Token::LParen {
+            return Ok(false);
+        }
+
+        // Save position for lookahead
+        let saved_pos = self.lexer.pos;
+        self.lexer.next(); // consume '('
+
+        let result = match self.lexer.current()? {
+            // () - empty node pattern
+            // (:Label) - label only
+            Token::RParen | Token::Colon => true,
+            // (identifier...) - need to check what follows
+            Token::Ident(_) | Token::Keyword(_, _) => {
+                // Consume the identifier
+                self.lexer.next();
+                match self.lexer.current()? {
+                    // (n) - identifier then close paren
+                    // (n:Label) - identifier then label
+                    // (n {prop:...}) - identifier then property map
+                    // (n)-[...] - identifier then relationship
+                    Token::RParen
+                    | Token::Colon
+                    | Token::LBracket
+                    | Token::Dash
+                    | Token::LessThan => true,
+                    _ => false,
+                }
+            }
+            _ => false,
+        };
+
+        // Restore position
+        self.lexer.set_pos(saved_pos);
+        Ok(result)
+    }
+
     fn parse_map(&mut self) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
         let mut attrs = Vec::new();
         if self.lexer.current()? == Token::LBracket {
@@ -2234,6 +2275,13 @@ impl<'a> Parser<'a> {
         loop {
             let key = self.parse_ident()?;
             match_token!(self.lexer, Colon);
+            // Check for pattern paths in property values - these are not allowed
+            // Detect patterns like: ()-[]->(), (n)-[r]->(m), (:Label), etc.
+            if self.is_pattern_path_start()? {
+                return Err(self
+                    .lexer
+                    .format_error("Encountered unhandled type in inlined properties."));
+            }
             let value = self.parse_expr()?;
             attrs.push(tree!(ExprIR::String(key), value));
 
