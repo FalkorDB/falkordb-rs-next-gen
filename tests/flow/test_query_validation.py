@@ -396,38 +396,38 @@ class testQueryValidationFlow(FlowTestsBase):
             assert("Invalid usage of 'NOT' filter" in str(e) or "Invalid input 'NOT'" in str(e))
             pass
 
-    #def test29_invalid_filter_non_boolean_constant(self):
-    #    try:
-    #        query = """MATCH (a) WHERE a RETURN a"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError as e:
-    #        assert("expected Boolean but was Node" in str(e))
-    #        pass
+    def test29_invalid_filter_non_boolean_constant(self):
+        try:
+            query = """MATCH (a) WHERE a RETURN a"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError as e:
+            assert("expected Boolean but was Node" in str(e))
+            pass
 
-    #    try:
-    #        query = """MATCH (a) WHERE 1+rand() RETURN a"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError as e:
-    #        assert("expected Boolean but was Float" in str(e))
-    #        pass
+        try:
+            query = """MATCH (a) WHERE 1+rand() RETURN a"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError as e:
+            assert("expected Boolean but was Float" in str(e))
+            pass
 
-    #    try:
-    #        query = """CYPHER p=3 WITH 1 AS a WHERE $p RETURN a"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError as e:
-    #        assert("expected Boolean but was Integer" in str(e))
-    #        pass
+        try:
+            query = """CYPHER p=3 WITH 1 AS a WHERE $p RETURN a"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError as e:
+            assert("expected Boolean but was Integer" in str(e))
+            pass
 
-    #    # 'val' is a boolean, so this query is valid.
-    #    query = """WITH true AS val WHERE val return val"""
-    #    self.graph.query(query)
+        # 'val' is a boolean, so this query is valid.
+        query = """WITH true AS val WHERE val return val"""
+        self.graph.query(query)
 
-    #    # Non-existent properties are treated as NULLs, which are boolean in Cypher's 3-valued logic.
-    #    query = """MATCH (a) WHERE a.fakeprop RETURN a"""
-    #    self.graph.query(query)
+        # Non-existent properties are treated as NULLs, which are boolean in Cypher's 3-valued logic.
+        query = """MATCH (a) WHERE a.fakeprop RETURN a"""
+        self.graph.query(query)
 
     ## Encountering traversals as property values should raise compile-time errors.
     #def test30_unexpected_traversals(self):
