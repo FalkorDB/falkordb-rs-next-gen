@@ -379,8 +379,8 @@ class testQueryValidationFlow(FlowTestsBase):
                 self.graph.query(query)
                 assert(False)
             except redis.exceptions.ResponseError as e:
-                # Expecting an error.
-                assert("Expected boolean predicate" in str(e))
+                # Expecting an error - Type mismatch for boolean operators with non-boolean operands
+                assert("Type mismatch" in str(e) or "Expected boolean predicate" in str(e))
                 pass
 
     ## The NOT operator does not compare left and right side expressions.

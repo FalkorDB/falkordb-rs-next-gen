@@ -643,6 +643,23 @@ impl Binder {
         }
     }
 
+    /// Returns the type name for a statically-known non-boolean expression.
+    fn expr_type_name<T>(node: &orx_tree::Node<orx_tree::Dyn<ExprIR<T>>>) -> Option<&'static str> {
+        match node.data() {
+            ExprIR::Float(_) => Some("Float"),
+            ExprIR::String(_) => Some("String"),
+            ExprIR::List => Some("List"),
+            ExprIR::Map => Some("Map"),
+            ExprIR::Integer(_) | ExprIR::Negate => Some("Integer"), // -x produces numeric
+            // Paren is transparent - check the child's type
+            ExprIR::Paren => node
+                .children()
+                .next()
+                .and_then(|c| Self::expr_type_name(&c)),
+            _ => None,
+        }
+    }
+
     /// Validates that a filter expression can return a boolean value.
     /// Returns an error if the expression is statically determined to be non-boolean.
     fn validate_boolean_predicate(tree: &DynTree<ExprIR<Variable>>) -> Result<(), String> {
@@ -654,7 +671,7 @@ impl Binder {
         node: &orx_tree::Node<orx_tree::Dyn<ExprIR<Variable>>>
     ) -> Result<(), String> {
         // Check if the current node is statically non-boolean
-        if let Some(false) = Self::returns_boolean(node) {
+        if Self::returns_boolean(node) == Some(false) {
             return Err(String::from("Expected boolean predicate."));
         }
 
@@ -744,17 +761,13 @@ impl Binder {
                 Ok(new_tree)
             }
             _ => {
-                if let ExprIR::And | ExprIR::Or | ExprIR::Xor = node_ref.data() {
-                    debug_assert!(node_ref.num_children() >= 2);
+                // Validate boolean operators (AND, OR, XOR, NOT) have boolean operands
+                if let ExprIR::And | ExprIR::Or | ExprIR::Xor | ExprIR::Not = node_ref.data() {
                     for expr in node_ref.children() {
-                        if let _e @ (ExprIR::Integer(_)
-                        | ExprIR::Float(_)
-                        | ExprIR::String(_)
-                        | ExprIR::List
-                        | ExprIR::Map
-                        | ExprIR::Negate) = expr.data()
-                        {
-                            return Err(String::from("Expected boolean predicate."));
+                        if let Some(type_name) = Self::expr_type_name(&expr) {
+                            return Err(format!(
+                                "Type mismatch: expected Boolean or Null but was {type_name}"
+                            ));
                         }
                     }
                 }
