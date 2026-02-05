@@ -1105,6 +1105,11 @@ impl<'a> Parser<'a> {
         if optional_match_token!(self.lexer => Return) {
             clauses.push(self.parse_return_clause(write)?);
             write = false;
+            // After RETURN, only EndOfFile is valid (UNION would be handled separately)
+            // Check for unexpected clauses following RETURN
+            if !matches!(self.lexer.current()?, Token::EndOfFile) {
+                return Err(String::from("Unexpected clause following RETURN"));
+            }
         }
         match_token!(self.lexer, EndOfFile);
         Ok(QueryIR::Query(clauses, write))
