@@ -13,7 +13,7 @@ handling with `Result`, and use idiomatic modern Rust (Edition 2021+).
 5. **Testing & Verification:** Every code suggestion must be accompanied by relevant rust unit test. Your goal is to ensure "all tests are passing" with every iteration.
 Before running the system tests you should source the python activateion file ''source .venv/bin/activate'' to make sure you have the right python environment.
 I am running a selected file in the flow tests using TEST="tests/flow/test_query_validation" FAIL_FAST=1 ./flow.sh, before running the flow tests the falkor server have to run, Im running it with the editor lauhcer (Launch debug on mac), before that I am killking old servers using lsof -ti:6379 | xargs kill -9
-6. **Run System Flow at the end:** You should look at the ci and set up a machine to run the Flow tests at the end, when everything pass remove all the new unit tests that already covered by system tests.
+6. **Run System Flow at the end:** You should look at the ci and set up a machine to run the Flow tests at the end, when everything pass remove all the new unit tests that already covered by system tests, newlly added unit tests that are not covered by system tests should be converted to system tests.
 7. **when a test fail, compare the test in the rust to the same test in the C repo, the C is the source of true
 
 # Technical Constraints
