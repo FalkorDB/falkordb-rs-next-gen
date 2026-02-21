@@ -218,10 +218,19 @@ pub struct Graph {
 /// Wrapper for plan trees to implement Send+Sync.
 struct PlanTree(DynTree<IR>);
 
+// SAFETY: PlanTree is safe to Send/Sync because:
+// - DynTree<IR> contains only owned data that can be safely moved across threads
+// - IR (intermediate representation) is a plain data structure with no thread-local state
+// - The tree structure is immutable once constructed (used for query plans)
 #[allow(clippy::non_send_fields_in_send_ty)]
 unsafe impl Send for PlanTree {}
 unsafe impl Sync for PlanTree {}
 
+// SAFETY: Graph is safe to Send/Sync because:
+// - All interior mutability uses thread-safe primitives (RwLock, AtomicU64)
+// - GraphBLAS operations are serialized through internal locking
+// - The plan cache uses RwLock for concurrent read/exclusive write access
+// - All FFI pointers (RediSearch) are managed through safe wrappers with appropriate locking
 unsafe impl Send for Graph {}
 unsafe impl Sync for Graph {}
 

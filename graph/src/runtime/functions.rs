@@ -294,6 +294,11 @@ pub struct Functions {
     functions: HashMap<String, Arc<GraphFn>>,
 }
 
+// SAFETY: Functions is safe to Send/Sync because:
+// - HashMap with Arc values can be safely shared across threads
+// - GraphFn contains only function pointers and static data
+// - All function pointers are to static functions with no thread-local state
+// - Arc provides reference counting for safe shared access to GraphFn
 #[allow(clippy::non_send_fields_in_send_ty)]
 unsafe impl Send for Functions {}
 unsafe impl Sync for Functions {}

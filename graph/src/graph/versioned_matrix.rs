@@ -36,10 +36,15 @@ pub struct VersionedMatrix {
     m: Cow<Matrix>,
     /// Delta-plus: edges added in current transaction
     dp: Cow<Matrix>,
-    /// Delta-minus: edges removed in current transaction  
+    /// Delta-minus: edges removed in current transaction
     dm: Cow<Matrix>,
 }
 
+// SAFETY: VersionedMatrix is safe to Send/Sync because:
+// - Matrix is Send+Sync and Cow<Matrix> preserves these properties
+// - Copy-on-write semantics ensure each thread gets its own copy on mutation
+// - The base matrix (m) is immutable across threads in MVCC reads
+// - Delta matrices (dp/dm) are per-transaction and not shared across threads
 unsafe impl Send for VersionedMatrix {}
 unsafe impl Sync for VersionedMatrix {}
 
@@ -239,6 +244,10 @@ pub struct Iter {
     dm: Cow<Matrix>,
 }
 
+// SAFETY: Iter is safe to Send/Sync because:
+// - matrix::Iter is Send+Sync (proven above)
+// - Cow<Matrix> is Send+Sync (Matrix is Send+Sync)
+// - The iterator holds owned data that can be safely moved across threads
 unsafe impl Send for Iter {}
 unsafe impl Sync for Iter {}
 

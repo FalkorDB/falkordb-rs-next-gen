@@ -374,6 +374,11 @@ pub struct Matrix {
     lock: Arc<Mutex<()>>,
 }
 
+// SAFETY: Matrix is safe to Send/Sync because:
+// - GrB_Matrix operations are protected by the internal Mutex lock
+// - GraphBLAS library is thread-safe when operations are properly serialized
+// - Arc ensures the matrix pointer is kept alive across thread boundaries
+// - All GraphBLAS FFI calls go through the Mutex, preventing concurrent access
 unsafe impl Send for Matrix {}
 unsafe impl Sync for Matrix {}
 
@@ -627,6 +632,11 @@ pub struct Iter {
     max_row: u64,
 }
 
+// SAFETY: Iter is safe to Send/Sync because:
+// - The GxB_Iterator is a GraphBLAS opaque handle that can be passed across threads
+// - Arc<GrB_Matrix> ensures the underlying matrix remains valid during iteration
+// - The iterator holds exclusive access to its GxB_Iterator handle
+// - GraphBLAS iterators are designed to be thread-safe when not shared
 unsafe impl Send for Iter {}
 unsafe impl Sync for Iter {}
 

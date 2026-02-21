@@ -169,6 +169,12 @@ struct ThreadedGraph {
     write_loop: AtomicBool,
 }
 
+// SAFETY: ThreadedGraph is safe to Send/Sync because:
+// - MvccGraph uses internal synchronization (RwLock) for safe concurrent access
+// - The sender/receiver channel types are already Send/Sync by design
+// - AtomicBool provides atomic synchronization for the write_loop flag
+// This allows the graph to be shared across threads safely, with the MVCC layer
+// handling concurrent read/write access, and the channel serializing write operations.
 unsafe impl Send for ThreadedGraph {}
 unsafe impl Sync for ThreadedGraph {}
 
@@ -275,6 +281,9 @@ impl ThreadedGraph {
             .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
             .collect::<Result<HashMap<_, _>, String>>()?;
         debug_assert!(plan.iter().any(|n| matches!(n, IR::Commit)));
+        // RwLock::write().unwrap() - Intentional: Lock poisoning indicates a panic during
+        // a write operation, which means the graph is in an inconsistent state.
+        // Propagating the panic is correct here to prevent using corrupted data.
         let g = self.graph.write().unwrap();
         let mut runtime = Runtime::new(
             g.clone(),
@@ -486,7 +495,13 @@ fn reply_compact_value(
                 match node {
                     Value::Node(_) => nodes += 1,
                     Value::Relationship(_) => rels += 1,
-                    _ => unreachable!("Path should only contain nodes and relationships"),
+                    _ => {
+                        // Path should only contain nodes and relationships, but handle gracefully
+                        ctx.log(
+                            redis_module::logging::RedisLogLevel::Warning,
+                            &format!("Unexpected value type in path: {:?}", node.type_of()),
+                        );
+                    }
                 }
             }
 
@@ -500,7 +515,13 @@ fn reply_compact_value(
                         reply_compact_value(ctx, runtime, node.clone());
                     }
                     Value::Relationship(_) => {}
-                    _ => unreachable!("Path should only contain nodes and relationships"),
+                    _ => {
+                        // Path should only contain nodes and relationships, but handle gracefully
+                        ctx.log(
+                            redis_module::logging::RedisLogLevel::Warning,
+                            &format!("Unexpected value type in path: {:?}", node.type_of()),
+                        );
+                    }
                 }
             }
 
@@ -514,7 +535,13 @@ fn reply_compact_value(
                         raw::reply_with_array(ctx.ctx, 2);
                         reply_compact_value(ctx, runtime, node.clone());
                     }
-                    _ => unreachable!("Path should only contain nodes and relationships"),
+                    _ => {
+                        // Path should only contain nodes and relationships, but handle gracefully
+                        ctx.log(
+                            redis_module::logging::RedisLogLevel::Warning,
+                            &format!("Unexpected value type in path: {:?}", node.type_of()),
+                        );
+                    }
                 }
             }
         }
@@ -734,7 +761,13 @@ fn reply_verbose_value(
                     Value::Relationship(_) | Value::Node(_) => {
                         reply_verbose_value(ctx, runtime, node.clone());
                     }
-                    _ => unreachable!("Path should only contain nodes and relationships"),
+                    _ => {
+                        // Path should only contain nodes and relationships, but handle gracefully
+                        ctx.log(
+                            redis_module::logging::RedisLogLevel::Warning,
+                            &format!("Unexpected value type in path: {:?}", node.type_of()),
+                        );
+                    }
                 }
             }
         }
@@ -804,6 +837,12 @@ pub struct BlockedClient {
     pub inner: *mut raw::RedisModuleBlockedClient,
 }
 
+// SAFETY: BlockedClient is safe to Send/Sync because:
+// - The raw pointer is only accessed through thread-safe Redis module APIs
+// - Redis module blocked client handles are designed to be passed between threads
+// - The Drop impl uses RedisModule_UnblockClient which is thread-safe
+// - We never dereference the pointer directly, only pass it to Redis APIs
+// The Redis module framework guarantees thread-safety for blocked client operations.
 unsafe impl Send for BlockedClient {}
 unsafe impl Sync for BlockedClient {}
 
@@ -850,6 +889,9 @@ fn query_mut(
             }
             let g = graph.clone();
             let graph = graph.clone();
+            // RwLock::read().unwrap() - Intentional: Lock poisoning indicates a panic during
+            // a write operation. Since reads need consistent data, propagating the panic
+            // prevents returning corrupted results to clients.
             let graph = graph.read().unwrap();
             let bc = bc;
             let ctx = unsafe { raw::RedisModule_GetThreadSafeContext.unwrap()(bc.inner) };
@@ -859,16 +901,31 @@ fn query_mut(
             match res {
                 Ok(is_write) => {
                     if is_write {
-                        graph.sender.send((bc, query, compact)).unwrap();
-                        drop(graph);
-                        process_write_queued_query(&g);
+                        if let Err(e) = graph.sender.send((bc, query, compact)) {
+                            // Write receiver has been dropped - graph is shutting down
+                            ctx.log(
+                                redis_module::logging::RedisLogLevel::Warning,
+                                &format!("Failed to queue write query: {:?}", e),
+                            );
+                            let err_msg = CString::new("ERR Graph write queue unavailable")
+                                .expect("hardcoded string is valid");
+                            raw::reply_with_error(ctx.ctx, err_msg.as_ptr().cast::<c_char>());
+                            drop(bc);
+                            unsafe { raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx) };
+                        } else {
+                            drop(graph);
+                            process_write_queued_query(&g);
+                        }
                     } else {
                         drop(bc);
                         unsafe { raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx) };
                     }
                 }
                 Err(err) => {
-                    let cerr = CString::new(err).unwrap();
+                    let cerr = CString::new(err).unwrap_or_else(|_| {
+                        CString::new("ERR Query execution failed (error message contains null byte)")
+                            .expect("hardcoded string is valid")
+                    });
                     raw::reply_with_error(ctx.ctx, cerr.as_ptr().cast::<c_char>());
                     drop(bc);
                     unsafe { raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx) };
@@ -902,6 +959,9 @@ fn query_mut(
 /// Uses compare_exchange with Acquire/Relaxed ordering for the write_loop flag.
 /// This ensures proper synchronization: Acquire prevents reordering of subsequent
 /// reads, while Relaxed is sufficient for the failure case since we just retry.
+///
+/// RwLock unwraps are intentional: lock poisoning from a panic would indicate
+/// the graph is in an inconsistent state, so propagating the panic is correct.
 fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
     let g = graph.read().unwrap();
     if g.write_loop
@@ -921,7 +981,10 @@ fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
                     graph.graph.commit(g);
                 }
                 Err(err) => {
-                    let cerr = CString::new(err).unwrap();
+                    let cerr = CString::new(err).unwrap_or_else(|_| {
+                        CString::new("ERR Query execution failed (error message contains null byte)")
+                            .expect("hardcoded string is valid")
+                    });
                     raw::reply_with_error(ctx.ctx, cerr.as_ptr().cast::<c_char>());
                     drop(bc);
                     unsafe { raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx) };

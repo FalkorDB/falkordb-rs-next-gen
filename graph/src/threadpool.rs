@@ -62,7 +62,12 @@ impl ThreadPool {
         F: FnOnce() + Send + 'static,
     {
         let idx = idx.unwrap_or_else(|| rand::random::<u32>() as usize) % self.workers.len();
-        self.sender[idx].send(Box::new(job)).unwrap();
+        if let Err(e) = self.sender[idx].send(Box::new(job)) {
+            // Worker thread has exited - this is a critical error
+            // Log and propagate the panic since we can't recover
+            eprintln!("FATAL: Worker thread {} has exited: {:?}", idx, e);
+            panic!("Worker thread {} has exited unexpectedly", idx);
+        }
     }
 }
 

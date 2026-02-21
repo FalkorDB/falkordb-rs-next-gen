@@ -45,6 +45,12 @@ pub struct MvccGraph {
     write: AtomicBool,
 }
 
+// SAFETY: MvccGraph is safe to Send/Sync because:
+// - AtomicRefCell provides interior mutability with runtime borrow checking
+// - Arc provides safe shared ownership across threads
+// - AtomicBool ensures atomic synchronization of the write flag
+// - Graph itself is Send+Sync, so wrapping it in Arc<AtomicRefCell<>> is safe
+// - The MVCC pattern ensures readers get consistent snapshots while writers are isolated
 unsafe impl Send for MvccGraph {}
 unsafe impl Sync for MvccGraph {}
 

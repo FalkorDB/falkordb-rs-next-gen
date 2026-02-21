@@ -294,5 +294,10 @@ impl AttributeStore {
     }
 }
 
+// SAFETY: AttributeStore is safe to Send/Sync because:
+// - fjall::Keyspace is thread-safe with internal locking
+// - fjall::SnapshotRef is designed to be shared across threads safely
+// - BlockVec is Send+Sync as it contains only owned data
+// - All operations on fjall types are thread-safe by design
 unsafe impl Send for AttributeStore {}
 unsafe impl Sync for AttributeStore {}

@@ -64,7 +64,8 @@ impl Tensor {
         src: u64,
         dest: u64,
     ) -> versioned_matrix::Iter {
-        debug_assert!(u32::try_from(src).is_ok() && u32::try_from(dest).is_ok());
+        assert!(u32::try_from(src).is_ok() && u32::try_from(dest).is_ok(),
+                "Node IDs must fit in 32 bits: src={}, dest={}", src, dest);
         let row = src << 32 | dest;
         self.me.iter(row, row)
     }
@@ -75,6 +76,8 @@ impl Tensor {
         dest: u64,
         id: u64,
     ) {
+        assert!(u32::try_from(src).is_ok() && u32::try_from(dest).is_ok(),
+                "Node IDs must fit in 32 bits: src={}, dest={}", src, dest);
         self.m.set(src, dest, true);
         self.mt.set(dest, src, true);
         self.me.set(src << 32 | dest, id, true);
@@ -85,6 +88,8 @@ impl Tensor {
         rels: Vec<(u64, u64, u64)>,
     ) {
         for (id, src, dest) in &rels {
+            assert!(u32::try_from(*src).is_ok() && u32::try_from(*dest).is_ok(),
+                    "Node IDs must fit in 32 bits: src={}, dest={}", src, dest);
             self.me.remove(src << 32 | dest, *id);
         }
         for (_, src, dest) in rels {
@@ -195,6 +200,8 @@ impl Iterator for Iter<'_> {
                 self.src = src;
                 self.dest = dest;
             }
+            assert!(u32::try_from(self.src).is_ok() && u32::try_from(self.dest).is_ok(),
+                    "Node IDs must fit in 32 bits: src={}, dest={}", self.src, self.dest);
             let row = self.src << 32 | self.dest;
             self.vit = Some(self.t.me.iter(row, row));
             return self.next();

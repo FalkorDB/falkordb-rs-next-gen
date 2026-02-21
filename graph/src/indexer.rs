@@ -104,7 +104,7 @@ impl Document {
                     1.0,
                     null_mut(),
                 );
-                debug_assert!(!doc.is_null(), "Failed to create RediSearch document");
+                assert!(!doc.is_null(), "Failed to create RediSearch document");
                 doc
             },
         }
@@ -262,6 +262,11 @@ pub struct Indexer {
     index: Arc<RwLock<HashMap<Arc<String>, Index>>>,
 }
 
+// SAFETY: Indexer is safe to Send/Sync because:
+// - The internal Arc<RwLock<HashMap>> provides thread-safe shared access
+// - RwLock ensures exclusive write access and concurrent read access
+// - All Index fields are either thread-safe primitives (AtomicI32) or protected by the RwLock
+// - RediSearch FFI calls are serialized through the RwLock, preventing data races
 unsafe impl Send for Indexer {}
 unsafe impl Sync for Indexer {}
 
@@ -299,7 +304,9 @@ impl Indexer {
                     IndexType::Point => Arc::new(format!("point:{attr}")),
                 };
                 let field = Arc::new(Field {
-                    name: CString::new(field_name.as_str()).unwrap(),
+                    name: CString::new(field_name.as_str()).map_err(|_| {
+                        format!("Invalid field name '{}': contains null byte", field_name)
+                    })?,
                     ty: index_type.clone(),
                 });
                 f.push(field);
@@ -311,7 +318,9 @@ impl Indexer {
                     IndexType::Point => Arc::new(format!("point:{attr}")),
                 };
                 let field = Arc::new(Field {
-                    name: CString::new(field_name.as_str()).unwrap(),
+                    name: CString::new(field_name.as_str()).map_err(|_| {
+                        format!("Invalid field name '{}': contains null byte", field_name)
+                    })?,
                     ty: index_type.clone(),
                 });
                 a.fields.insert(attr.clone(), vec![field]);
@@ -325,7 +334,9 @@ impl Indexer {
             RediSearch_IndexOptionsSetGCPolicy(options, GC_POLICY_FORK as _);
             RediSearch_IndexOptionsSetStopwords(options, null_mut(), 0);
 
-            let clabel = CString::new(label.as_str()).unwrap();
+            let clabel = CString::new(label.as_str()).map_err(|_| {
+                format!("Invalid label name '{}': contains null byte", label)
+            })?;
             let index = RediSearch_CreateIndex(clabel.as_ptr().cast::<c_char>(), options);
             RediSearch_FreeIndexOptions(options);
 
@@ -459,7 +470,7 @@ impl Indexer {
         &self,
         label: Arc<String>,
         query: IndexQuery<Value>,
-    ) -> Vec<u64> {
+    ) -> Result<Vec<u64>, String> {
         if let Some(index) = self.index.read().unwrap().get(&label) {
             let query = match query {
                 IndexQuery::Equal(key, Value::Int(value)) => unsafe {
@@ -476,7 +487,9 @@ impl Indexer {
                 IndexQuery::Equal(key, Value::String(value)) => unsafe {
                     let field = &index.fields.get(&key).unwrap()[0];
                     let query = RediSearch_CreateTagNode(index.rs_idx, field.name.as_ptr());
-                    let msg = CString::new(value.as_str()).unwrap();
+                    let msg = CString::new(value.as_str()).map_err(|_| {
+                        format!("Invalid query value '{}': contains null byte", value)
+                    })?;
                     let child =
                         RediSearch_CreateTagTokenNode(index.rs_idx, msg.as_ptr().cast::<c_char>());
                     RediSearch_QueryNodeAddChild(query, child);
@@ -558,11 +571,11 @@ impl Indexer {
                     res.push(node_id.read_unaligned());
                 }
                 RediSearch_ResultsIteratorFree(iter);
-                return res;
+                return Ok(res);
             }
         }
 
-        vec![]
+        Ok(vec![])
     }
 
     pub fn enable(
@@ -572,7 +585,7 @@ impl Indexer {
         let mut index = self.index.write().unwrap();
         if let Some(index) = index.get_mut(&label) {
             let res = index.pending_changes.fetch_sub(1, Ordering::SeqCst);
-            debug_assert!(res > 0);
+            assert!(res > 0, "pending_changes underflow for label {}", label);
             return res == 1;
         }
         false
@@ -628,7 +641,7 @@ impl Indexer {
                         REDISEARCH_ADD_REPLACE as c_int,
                         null_mut(),
                     );
-                    debug_assert_eq!(res, 0);
+                    assert_eq!(res, 0, "Failed to add document to RediSearch index");
                 }
             }
             index.status = IndexStatus::Operational;
