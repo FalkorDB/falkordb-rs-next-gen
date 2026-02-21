@@ -59,7 +59,7 @@ When the user invokes `/test`, determine which tests to run:
    - `tests/tck/features/clauses/return` - RETURN clause tests
 
    Notes:
-   - TCK tests verify Cypher language compliance against the openCypher spec
+   - TCK tests verify Cypher language compliance against the OpenCypher spec
    - `tck_done.txt` contains the list of passing test scenarios
 
 7. **Flow tests**: Run the flow test suite which tests query flows against the running database
