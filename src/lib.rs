@@ -909,7 +909,9 @@ fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
         .is_ok()
     {
         drop(g);
-        let mut graph = graph.write().unwrap();
+        let mut graph = graph
+            .write()
+            .expect("ThreadedGraph write lock poisoned in process_write_queued_query");
         while let Ok((bc, query, compact)) = { graph.receiver.try_recv() } {
             let ctx = unsafe { raw::RedisModule_GetThreadSafeContext.unwrap()(bc.inner) };
             let ctx = Context::new(ctx);
