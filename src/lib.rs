@@ -275,7 +275,10 @@ impl ThreadedGraph {
             .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
             .collect::<Result<HashMap<_, _>, String>>()?;
         debug_assert!(plan.iter().any(|n| matches!(n, IR::Commit)));
-        let g = self.graph.write().unwrap();
+        let g = self
+            .graph
+            .write()
+            .expect("failed to acquire write lock on graph (lock poisoned)");
         let mut runtime = Runtime::new(
             g.clone(),
             parameters,
