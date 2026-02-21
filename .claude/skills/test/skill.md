@@ -43,7 +43,7 @@ When the user invokes `/test`, determine which tests to run:
    source venv/bin/activate && pytest tests/test_concurrency.py -vv
    ```
 
-6. **TCK tests**: Run Technology Compatibility Kit tests for Cypher language compliance
+6. **TCK tests**: Run Technology Compatibility Kit (TCK) tests for Cypher language compliance
    - **All passing TCK tests** (no path argument):
      ```bash
      source venv/bin/activate && TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
