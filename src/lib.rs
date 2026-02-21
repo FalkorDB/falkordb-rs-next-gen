@@ -850,7 +850,7 @@ fn query_mut(
             }
             let g = graph.clone();
             let graph = graph.clone();
-            let graph = graph.read().unwrap();
+            let graph = graph.read().expect("Failed to acquire read lock on graph: lock is poisoned");
             let bc = bc;
             let ctx = unsafe { raw::RedisModule_GetThreadSafeContext.unwrap()(bc.inner) };
             let ctx = Context::new(ctx);
