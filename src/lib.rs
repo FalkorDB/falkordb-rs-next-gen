@@ -899,8 +899,10 @@ fn query_mut(
                 }
                 Err(err) => {
                     let cerr = CString::new(err).unwrap_or_else(|_| {
-                        CString::new("ERR Query execution failed (error message contains null byte)")
-                            .expect("hardcoded string is valid")
+                        CString::new(
+                            "ERR Query execution failed (error message contains null byte)",
+                        )
+                        .expect("hardcoded string is valid")
                     });
                     raw::reply_with_error(ctx.ctx, cerr.as_ptr().cast::<c_char>());
                     drop(bc);
@@ -958,8 +960,10 @@ fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
                 }
                 Err(err) => {
                     let cerr = CString::new(err).unwrap_or_else(|_| {
-                        CString::new("ERR Query execution failed (error message contains null byte)")
-                            .expect("hardcoded string is valid")
+                        CString::new(
+                            "ERR Query execution failed (error message contains null byte)",
+                        )
+                        .expect("hardcoded string is valid")
                     });
                     raw::reply_with_error(ctx.ctx, cerr.as_ptr().cast::<c_char>());
                     drop(bc);

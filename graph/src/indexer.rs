@@ -334,9 +334,8 @@ impl Indexer {
             RediSearch_IndexOptionsSetGCPolicy(options, GC_POLICY_FORK as _);
             RediSearch_IndexOptionsSetStopwords(options, null_mut(), 0);
 
-            let clabel = CString::new(label.as_str()).map_err(|_| {
-                format!("Invalid label name '{}': contains null byte", label)
-            })?;
+            let clabel = CString::new(label.as_str())
+                .map_err(|_| format!("Invalid label name '{}': contains null byte", label))?;
             let index = RediSearch_CreateIndex(clabel.as_ptr().cast::<c_char>(), options);
             RediSearch_FreeIndexOptions(options);
 
