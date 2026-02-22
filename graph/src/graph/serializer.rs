@@ -414,7 +414,7 @@ fn load_v14(
     // Restore schema
     graph.set_node_attr_names(node_attr_names);
     graph.set_relationship_attr_names(rel_attr_names);
-    graph.set_label_names(label_names.clone());
+    graph.set_label_names(label_names);
     graph.set_relationship_type_names(rel_type_names);
 
     // Load nodes
