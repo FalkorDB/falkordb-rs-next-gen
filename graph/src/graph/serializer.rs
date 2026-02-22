@@ -263,7 +263,10 @@ fn save_deleted_entities(
 ) {
     // Deleted nodes
     let mut buf = Vec::new();
-    graph.deleted_nodes().serialize_into(&mut buf).unwrap();
+    graph
+        .deleted_nodes()
+        .serialize_into(&mut buf)
+        .expect("failed to serialize deleted nodes bitmap");
     io.save_slice(&buf);
 
     // Deleted relationships
@@ -271,7 +274,7 @@ fn save_deleted_entities(
     graph
         .deleted_relationships()
         .serialize_into(&mut buf)
-        .unwrap();
+        .expect("failed to serialize deleted relationships bitmap");
     io.save_slice(&buf);
 }
 
@@ -290,7 +293,11 @@ fn serialize_matrix(
             **raw,
             std::ptr::null_mut(),
         );
-        debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        assert_eq!(
+            info,
+            GrB_Info::GrB_SUCCESS,
+            "GxB_Matrix_serialize failed: {info:?}"
+        );
         let slice = std::slice::from_raw_parts(blob as *const u8, blob_size as usize);
         io.save_slice(slice);
         super::matrix::graphblas_free(blob);
@@ -518,6 +525,11 @@ fn load_value(io: &mut impl RdbLoadIO) -> Value {
         }
         7 => {
             let bytes = io.load_slice();
+            assert!(
+                bytes.len() % 4 == 0,
+                "corrupt VecF32 data: length {} not a multiple of 4",
+                bytes.len()
+            );
             let vec: thin_vec::ThinVec<f32> = bytes
                 .chunks_exact(4)
                 .map(|chunk| f32::from_le_bytes(chunk.try_into().unwrap()))
@@ -543,7 +555,11 @@ fn deserialize_matrix(io: &mut impl RdbLoadIO) -> Matrix {
             blob.len() as u64,
             std::ptr::null_mut(),
         );
-        debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        assert_eq!(
+            info,
+            GrB_Info::GrB_SUCCESS,
+            "GxB_Matrix_deserialize failed: {info:?}"
+        );
         Matrix::from_raw(m_ptr)
     }
 }
