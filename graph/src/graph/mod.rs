@@ -34,6 +34,3 @@ pub mod mvcc_graph;
 pub mod tensor;
 pub mod vector;
 pub mod versioned_matrix;
-
-#[cfg(test)]
-mod tensor_tests;

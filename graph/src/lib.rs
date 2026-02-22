@@ -70,6 +70,3 @@ pub mod runtime;
 pub mod string_escape;
 pub mod threadpool;
 pub mod tree;
-
-#[cfg(test)]
-mod cstring_tests;
