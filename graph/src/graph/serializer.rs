@@ -46,7 +46,7 @@ use crate::runtime::orderset::OrderSet;
 use crate::runtime::value::Value;
 
 use super::GraphBLAS::{
-    GrB_BOOL, GrB_Info, GrB_Matrix, GrB_Matrix_free, GrB_Matrix_new, GxB_Matrix_deserialize,
+    GrB_BOOL, GrB_Info, GrB_Matrix, GrB_Matrix_new, GxB_Matrix_deserialize,
     GxB_Matrix_serialize,
 };
 
