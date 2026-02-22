@@ -250,15 +250,15 @@ mod tests {
 
         let edges = tensor.get(0, max_32bit).collect::<Vec<_>>();
         assert_eq!(edges.len(), 1);
-        assert_eq!(edges[0].2, 1);
+        assert_eq!(edges[0].1, 1);
 
         let edges = tensor.get(max_32bit, 0).collect::<Vec<_>>();
         assert_eq!(edges.len(), 1);
-        assert_eq!(edges[0].2, 2);
+        assert_eq!(edges[0].1, 2);
 
         let edges = tensor.get(max_32bit, max_32bit).collect::<Vec<_>>();
         assert_eq!(edges.len(), 1);
-        assert_eq!(edges[0].2, 3);
+        assert_eq!(edges[0].1, 3);
     }
 
     #[test]
