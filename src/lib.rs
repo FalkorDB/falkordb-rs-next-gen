@@ -495,13 +495,7 @@ fn reply_compact_value(
                 match node {
                     Value::Node(_) => nodes += 1,
                     Value::Relationship(_) => rels += 1,
-                    _ => {
-                        // Path should only contain nodes and relationships, but handle gracefully
-                        ctx.log(
-                            redis_module::logging::RedisLogLevel::Warning,
-                            &format!("Unexpected value type in path: {:?}", node.type_of()),
-                        );
-                    }
+                    _ => unreachable!("Path should only contain nodes and relationships"),
                 }
             }
 
@@ -515,33 +509,21 @@ fn reply_compact_value(
                         reply_compact_value(ctx, runtime, node.clone());
                     }
                     Value::Relationship(_) => {}
-                    _ => {
-                        // Path should only contain nodes and relationships, but handle gracefully
-                        ctx.log(
-                            redis_module::logging::RedisLogLevel::Warning,
-                            &format!("Unexpected value type in path: {:?}", node.type_of()),
-                        );
-                    }
+                    _ => unreachable!("Path should only contain nodes and relationships"),
                 }
             }
 
             raw::reply_with_array(ctx.ctx, 2);
             raw::reply_with_long_long(ctx.ctx, 6);
             raw::reply_with_array(ctx.ctx, rels);
-            for node in path {
+            for node in &path {
                 match node {
                     Value::Node(_) => {}
                     Value::Relationship(_) => {
                         raw::reply_with_array(ctx.ctx, 2);
                         reply_compact_value(ctx, runtime, node.clone());
                     }
-                    _ => {
-                        // Path should only contain nodes and relationships, but handle gracefully
-                        ctx.log(
-                            redis_module::logging::RedisLogLevel::Warning,
-                            &format!("Unexpected value type in path: {:?}", node.type_of()),
-                        );
-                    }
+                    _ => unreachable!("Path should only contain nodes and relationships"),
                 }
             }
         }
@@ -756,18 +738,12 @@ fn reply_verbose_value(
         Value::Path(path) => {
             raw::reply_with_array(ctx.ctx, path.len() as _);
 
-            for node in path {
+            for node in &path {
                 match node {
                     Value::Relationship(_) | Value::Node(_) => {
                         reply_verbose_value(ctx, runtime, node.clone());
                     }
-                    _ => {
-                        // Path should only contain nodes and relationships, but handle gracefully
-                        ctx.log(
-                            redis_module::logging::RedisLogLevel::Warning,
-                            &format!("Unexpected value type in path: {:?}", node.type_of()),
-                        );
-                    }
+                    _ => unreachable!("Path should only contain nodes and relationships"),
                 }
             }
         }

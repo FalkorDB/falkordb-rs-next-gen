@@ -4,7 +4,7 @@
 mod tests {
     use crate::graph::{
         matrix::New,
-        tensor::Tensor,
+        tensor::{GrB_INDEX_MAX, Tensor},
     };
 
     #[test]
@@ -31,7 +31,8 @@ mod tests {
 
     #[test]
     fn test_tensor_boundary_values() {
-        let mut tensor = Tensor::new(u64::from(u32::MAX) + 1, u64::from(u32::MAX) + 1);
+        // Use GrB_INDEX_MAX as the tensor size - this is the GraphBLAS maximum index
+        let mut tensor = Tensor::new(GrB_INDEX_MAX, GrB_INDEX_MAX);
 
         // Test with boundary values (max 32-bit value)
         let max_32bit = u64::from(u32::MAX);
