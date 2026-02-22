@@ -58,6 +58,17 @@ impl New for Tensor {
 }
 
 impl Tensor {
+    /// Creates a Tensor from pre-existing versioned matrices.
+    /// Used during deserialization to restore from RDB.
+    #[must_use]
+    pub fn from_parts(
+        m: VersionedMatrix,
+        mt: VersionedMatrix,
+        me: VersionedMatrix,
+    ) -> Self {
+        Self { m, mt, me }
+    }
+
     #[must_use]
     pub fn get(
         &self,
@@ -121,6 +132,18 @@ impl Tensor {
     #[must_use]
     pub const fn matrix(&self) -> &VersionedMatrix {
         &self.m
+    }
+
+    /// Returns a reference to the transpose (backward adjacency) matrix.
+    #[must_use]
+    pub const fn transpose_matrix(&self) -> &VersionedMatrix {
+        &self.mt
+    }
+
+    /// Returns a reference to the edge ID matrix.
+    #[must_use]
+    pub const fn edge_matrix(&self) -> &VersionedMatrix {
+        &self.me
     }
 
     #[must_use]

@@ -31,6 +31,7 @@ pub mod cow;
 pub mod graph;
 pub mod matrix;
 pub mod mvcc_graph;
+pub mod serializer;
 pub mod tensor;
 pub mod vector;
 pub mod versioned_matrix;

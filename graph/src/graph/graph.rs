@@ -1245,4 +1245,233 @@ impl Graph {
         // size += self.node_indexer.memory_usage();
         size
     }
+
+    // ----- Accessors for serialization -----
+
+    #[must_use]
+    pub const fn relationship_count(&self) -> u64 {
+        self.relationship_count
+    }
+
+    #[must_use]
+    pub fn relationship_types_count(&self) -> usize {
+        self.relationship_types.len()
+    }
+
+    #[must_use]
+    pub fn deleted_nodes(&self) -> &RoaringTreemap {
+        &self.deleted_nodes
+    }
+
+    #[must_use]
+    pub fn deleted_relationships(&self) -> &RoaringTreemap {
+        &self.deleted_relationships
+    }
+
+    #[must_use]
+    pub fn node_attr_names(&self) -> Vec<Arc<String>> {
+        self.node_attrs.attrs_name.iter().cloned().collect()
+    }
+
+    #[must_use]
+    pub fn relationship_attr_names(&self) -> Vec<Arc<String>> {
+        self.relationship_attrs.attrs_name.iter().cloned().collect()
+    }
+
+    #[must_use]
+    pub fn node_attr_name_by_id(
+        &self,
+        id: usize,
+    ) -> Option<Arc<String>> {
+        if id < self.node_attrs.attrs_name.len() {
+            Some(self.node_attrs.attrs_name[id].clone())
+        } else {
+            None
+        }
+    }
+
+    #[must_use]
+    pub fn relationship_attr_name_by_id(
+        &self,
+        id: usize,
+    ) -> Option<Arc<String>> {
+        if id < self.relationship_attrs.attrs_name.len() {
+            Some(self.relationship_attrs.attrs_name[id].clone())
+        } else {
+            None
+        }
+    }
+
+    #[must_use]
+    pub fn get_relationship_attribute_id_by_name(
+        &self,
+        attr: &Arc<String>,
+    ) -> Option<usize> {
+        self.relationship_attrs.get_attr_id(attr)
+    }
+
+    #[must_use]
+    pub fn get_relationship_all_attrs_by_raw_id(
+        &self,
+        id: u64,
+    ) -> OrderMap<Arc<String>, Value> {
+        self.relationship_attrs.get_all_attrs(id)
+    }
+
+    /// Returns an iterator over all (edge_id, type_id_column) pairs
+    /// from the relationship_type_matrix.
+    #[must_use]
+    pub fn all_relationship_ids(&self) -> Vec<(u64, u64)> {
+        self.relationship_type_matrix.iter(0, u64::MAX).collect()
+    }
+
+    #[must_use]
+    pub const fn adjacency_matrix(&self) -> &VersionedMatrix {
+        &self.adjacancy_matrix
+    }
+
+    #[must_use]
+    pub const fn all_nodes_matrix(&self) -> &VersionedMatrix {
+        &self.all_nodes_matrix
+    }
+
+    #[must_use]
+    pub const fn node_labels_matrix(&self) -> &VersionedMatrix {
+        &self.node_labels_matrix
+    }
+
+    #[must_use]
+    pub const fn relationship_type_matrix(&self) -> &VersionedMatrix {
+        &self.relationship_type_matrix
+    }
+
+    #[must_use]
+    pub fn label_matrices(&self) -> &[VersionedMatrix] {
+        &self.labels_matices
+    }
+
+    #[must_use]
+    pub fn relationship_tensors(&self) -> &[Tensor] {
+        &self.relationship_matrices
+    }
+
+    // ----- Setters for deserialization -----
+
+    pub fn set_node_attr_names(
+        &mut self,
+        names: OrderSet<Arc<String>>,
+    ) {
+        self.node_attrs.attrs_name = names;
+    }
+
+    pub fn set_relationship_attr_names(
+        &mut self,
+        names: OrderSet<Arc<String>>,
+    ) {
+        self.relationship_attrs.attrs_name = names;
+    }
+
+    pub fn set_label_names(
+        &mut self,
+        names: Vec<Arc<String>>,
+    ) {
+        self.node_labels = names;
+    }
+
+    pub fn set_relationship_type_names(
+        &mut self,
+        names: Vec<Arc<String>>,
+    ) {
+        self.relationship_types = names;
+    }
+
+    pub fn restore_node(
+        &mut self,
+        id: u64,
+        attrs: OrderMap<Arc<String>, Value>,
+    ) {
+        if !attrs.is_empty() {
+            let _ = self.node_attrs.insert_attrs(id, &attrs);
+        }
+    }
+
+    pub fn restore_edge(
+        &mut self,
+        id: u64,
+        attrs: OrderMap<Arc<String>, Value>,
+    ) {
+        if !attrs.is_empty() {
+            let _ = self.relationship_attrs.insert_attrs(id, &attrs);
+        }
+    }
+
+    pub fn set_deleted_nodes(
+        &mut self,
+        deleted: RoaringTreemap,
+    ) {
+        self.deleted_nodes = deleted;
+    }
+
+    pub fn set_deleted_relationships(
+        &mut self,
+        deleted: RoaringTreemap,
+    ) {
+        self.deleted_relationships = deleted;
+    }
+
+    pub fn set_node_count(
+        &mut self,
+        count: u64,
+    ) {
+        self.node_count = count;
+    }
+
+    pub fn set_relationship_count_val(
+        &mut self,
+        count: u64,
+    ) {
+        self.relationship_count = count;
+    }
+
+    pub fn set_adjacency_matrix(
+        &mut self,
+        m: VersionedMatrix,
+    ) {
+        self.adjacancy_matrix = m;
+    }
+
+    pub fn set_all_nodes_matrix(
+        &mut self,
+        m: VersionedMatrix,
+    ) {
+        self.all_nodes_matrix = m;
+    }
+
+    pub fn set_node_labels_matrix(
+        &mut self,
+        m: VersionedMatrix,
+    ) {
+        self.node_labels_matrix = m;
+    }
+
+    pub fn set_relationship_type_matrix(
+        &mut self,
+        m: VersionedMatrix,
+    ) {
+        self.relationship_type_matrix = m;
+    }
+
+    pub fn set_label_matrices(
+        &mut self,
+        matrices: Vec<VersionedMatrix>,
+    ) {
+        self.labels_matices = matrices;
+    }
+
+    pub fn set_relationship_tensors(
+        &mut self,
+        tensors: Vec<Tensor>,
+    ) {
+        self.relationship_matrices = tensors;
+    }
 }

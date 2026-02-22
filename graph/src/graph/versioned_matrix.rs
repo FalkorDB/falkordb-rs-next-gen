@@ -93,6 +93,52 @@ impl Dup<Self> for VersionedMatrix {
 }
 
 impl VersionedMatrix {
+    /// Creates a VersionedMatrix from a committed (base) matrix.
+    /// Used during deserialization to load a matrix from RDB.
+    #[must_use]
+    pub fn from_committed(m: Matrix) -> Self {
+        let nrows = m.nrows();
+        let ncols = m.ncols();
+        Self {
+            m: Cow::new(m),
+            dp: Cow::new(Matrix::new(nrows, ncols)),
+            dm: Cow::new(Matrix::new(nrows, ncols)),
+        }
+    }
+
+    /// Creates a VersionedMatrix from all 3 component matrices.
+    #[must_use]
+    pub fn from_parts(
+        m: Matrix,
+        dp: Matrix,
+        dm: Matrix,
+    ) -> Self {
+        Self {
+            m: Cow::new(m),
+            dp: Cow::new(dp),
+            dm: Cow::new(dm),
+        }
+    }
+
+    /// Returns a reference to the committed base matrix.
+    /// Used for RDB serialization to avoid creating new matrices.
+    #[must_use]
+    pub fn committed_matrix(&self) -> &Matrix {
+        &self.m
+    }
+
+    /// Returns a reference to the delta-plus matrix (pending additions).
+    #[must_use]
+    pub fn delta_plus(&self) -> &Matrix {
+        &self.dp
+    }
+
+    /// Returns a reference to the delta-minus matrix (pending deletions).
+    #[must_use]
+    pub fn delta_minus(&self) -> &Matrix {
+        &self.dm
+    }
+
     pub fn flush(&mut self) {
         self.wait();
         if self.dp.nvals() >= 10000 {

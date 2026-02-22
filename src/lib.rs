@@ -61,6 +61,7 @@ use graph::{
         graph::{Graph, Plan},
         matrix::init,
         mvcc_graph::MvccGraph,
+        serializer::{RdbLoadIO, RdbSaveIO, rdb_load, rdb_save},
     },
     planner::IR,
     redisearch::{REDISEARCH_INIT_LIBRARY, RediSearch_Init},
@@ -295,27 +296,128 @@ impl ThreadedGraph {
     }
 }
 
-/// RDB load callback for graph persistence (currently no-op).
-///
-/// TODO: Implement graph deserialization from RDB format.
-#[unsafe(no_mangle)]
-#[allow(clippy::missing_const_for_fn)]
-unsafe extern "C" fn graph_rdb_load(
-    _: *mut RedisModuleIO,
-    _: i32,
-) -> *mut c_void {
-    null_mut()
+/// Wrapper around `RedisModuleIO` implementing `RdbSaveIO`.
+struct RedisRdbSaveIO {
+    rdb: *mut RedisModuleIO,
 }
 
-/// RDB save callback for graph persistence (currently no-op).
+impl RdbSaveIO for RedisRdbSaveIO {
+    fn save_unsigned(
+        &mut self,
+        val: u64,
+    ) {
+        raw::save_unsigned(self.rdb, val);
+    }
+
+    fn save_signed(
+        &mut self,
+        val: i64,
+    ) {
+        raw::save_signed(self.rdb, val);
+    }
+
+    fn save_double(
+        &mut self,
+        val: f64,
+    ) {
+        raw::save_double(self.rdb, val);
+    }
+
+    fn save_float(
+        &mut self,
+        val: f32,
+    ) {
+        raw::save_float(self.rdb, val);
+    }
+
+    fn save_string(
+        &mut self,
+        val: &str,
+    ) {
+        raw::save_string(self.rdb, val);
+    }
+
+    fn save_slice(
+        &mut self,
+        val: &[u8],
+    ) {
+        raw::save_slice(self.rdb, val);
+    }
+}
+
+/// Wrapper around `RedisModuleIO` implementing `RdbLoadIO`.
+struct RedisRdbLoadIO {
+    rdb: *mut RedisModuleIO,
+}
+
+impl RdbLoadIO for RedisRdbLoadIO {
+    fn load_unsigned(&mut self) -> u64 {
+        raw::load_unsigned(self.rdb).expect("RDB load: failed to read unsigned")
+    }
+
+    fn load_signed(&mut self) -> i64 {
+        raw::load_signed(self.rdb).expect("RDB load: failed to read signed")
+    }
+
+    fn load_double(&mut self) -> f64 {
+        raw::load_double(self.rdb).expect("RDB load: failed to read double")
+    }
+
+    fn load_float(&mut self) -> f32 {
+        raw::load_float(self.rdb).expect("RDB load: failed to read float")
+    }
+
+    fn load_string(&mut self) -> String {
+        let buf = raw::load_string_buffer(self.rdb).expect("RDB load: failed to read string");
+        String::from_utf8_lossy(buf.as_ref()).into_owned()
+    }
+
+    fn load_slice(&mut self) -> Vec<u8> {
+        let buf = raw::load_string_buffer(self.rdb).expect("RDB load: failed to read slice");
+        buf.as_ref().to_vec()
+    }
+}
+
+/// RDB load callback for graph persistence.
 ///
-/// TODO: Implement graph serialization to RDB format.
+/// Deserializes a graph from Redis RDB format, reconstructing the full
+/// graph state including nodes, edges, properties, and matrices.
 #[unsafe(no_mangle)]
-#[allow(clippy::missing_const_for_fn)]
+unsafe extern "C" fn graph_rdb_load(
+    rdb: *mut RedisModuleIO,
+    _encver: i32,
+) -> *mut c_void {
+    let mut io = RedisRdbLoadIO { rdb };
+    let cache_size = 25; // default cache size
+    let (_name, graph) = rdb_load(&mut io, cache_size);
+    let mvcc = MvccGraph::from_graph(graph);
+    let (sender, receiver) = channel();
+    let tg = ThreadedGraph {
+        graph: mvcc,
+        sender,
+        receiver,
+        write_loop: AtomicBool::new(false),
+    };
+    let boxed = Box::new(Arc::new(RwLock::new(tg)));
+    Box::into_raw(boxed).cast::<c_void>()
+}
+
+/// RDB save callback for graph persistence.
+///
+/// Serializes the graph to Redis RDB format including all nodes, edges,
+/// properties, deleted entity bitmaps, and matrix data.
+#[unsafe(no_mangle)]
 unsafe extern "C" fn graph_rdb_save(
-    _: *mut RedisModuleIO,
-    _: *mut c_void,
+    rdb: *mut RedisModuleIO,
+    value: *mut c_void,
 ) {
+    let graph_arc = unsafe { &*(value.cast::<Arc<RwLock<ThreadedGraph>>>()) };
+    let graph = graph_arc.read().expect("RDB save: failed to lock graph");
+    let g = graph.graph.read();
+    let g = g.borrow();
+    let mut io = RedisRdbSaveIO { rdb };
+    // Use a placeholder name; the key name is managed by Redis.
+    rdb_save(&mut io, &g, "graph");
 }
 
 /// Frees graph memory when Redis key is deleted or expires.

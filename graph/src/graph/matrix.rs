@@ -31,7 +31,7 @@ use std::{
     mem::MaybeUninit,
     os::raw::c_void,
     ptr::null_mut,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, atomic::AtomicPtr},
 };
 
 use crate::graph::GraphBLAS::{
@@ -52,6 +52,23 @@ use crate::graph::GraphBLAS::{
     GxB_rowIterator_nextRow, GxB_rowIterator_seekRow,
 };
 
+/// Stored free function pointer from GraphBLAS init (for freeing serialized blobs).
+static GRAPHBLAS_FREE: AtomicPtr<()> = AtomicPtr::new(null_mut());
+
+/// Free memory allocated by GraphBLAS (using the custom allocator).
+///
+/// # Safety
+/// The pointer must have been allocated by GraphBLAS.
+pub unsafe fn graphblas_free(ptr: *mut c_void) {
+    let f = GRAPHBLAS_FREE.load(std::sync::atomic::Ordering::Relaxed);
+    if !f.is_null() {
+        unsafe {
+            let free_fn: unsafe extern "C" fn(*mut c_void) = std::mem::transmute(f);
+            free_fn(ptr);
+        }
+    }
+}
+
 /// Initializes the GraphBLAS library in non-blocking mode.
 ///
 /// Custom allocators can be provided to integrate with Redis memory management.
@@ -65,6 +82,9 @@ pub fn init(
     >,
     user_free_function: Option<unsafe extern "C" fn(arg1: *mut c_void)>,
 ) {
+    if let Some(f) = user_free_function {
+        GRAPHBLAS_FREE.store(f as *mut (), std::sync::atomic::Ordering::Relaxed);
+    }
     unsafe {
         GxB_init(
             GrB_Mode::GrB_NONBLOCKING as _,
@@ -400,6 +420,24 @@ impl Matrix {
             );
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             pending.assume_init() == 1
+        }
+    }
+
+    /// Returns the raw GrB_Matrix pointer (for FFI serialization).
+    #[must_use]
+    pub fn raw(&self) -> &Arc<GrB_Matrix> {
+        &self.m
+    }
+
+    /// Creates a Matrix from a raw GrB_Matrix pointer.
+    ///
+    /// # Safety
+    /// The caller must ensure the pointer is valid and exclusively owned.
+    #[must_use]
+    pub unsafe fn from_raw(m: GrB_Matrix) -> Self {
+        Self {
+            m: Arc::new(m),
+            lock: Arc::new(Mutex::new(())),
         }
     }
 
