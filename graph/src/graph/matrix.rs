@@ -60,7 +60,7 @@ static GRAPHBLAS_FREE: AtomicPtr<()> = AtomicPtr::new(null_mut());
 /// # Safety
 /// The pointer must have been allocated by GraphBLAS.
 pub unsafe fn graphblas_free(ptr: *mut c_void) {
-    let f = GRAPHBLAS_FREE.load(std::sync::atomic::Ordering::Relaxed);
+    let f = GRAPHBLAS_FREE.load(std::sync::atomic::Ordering::Acquire);
     if !f.is_null() {
         unsafe {
             let free_fn: unsafe extern "C" fn(*mut c_void) = std::mem::transmute(f);
@@ -83,7 +83,7 @@ pub fn init(
     user_free_function: Option<unsafe extern "C" fn(arg1: *mut c_void)>,
 ) {
     if let Some(f) = user_free_function {
-        GRAPHBLAS_FREE.store(f as *mut (), std::sync::atomic::Ordering::Relaxed);
+        GRAPHBLAS_FREE.store(f as *mut (), std::sync::atomic::Ordering::Release);
     }
     unsafe {
         GxB_init(

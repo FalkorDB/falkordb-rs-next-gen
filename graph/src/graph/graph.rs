@@ -1391,7 +1391,9 @@ impl Graph {
         attrs: OrderMap<Arc<String>, Value>,
     ) {
         if !attrs.is_empty() {
-            let _ = self.node_attrs.insert_attrs(id, &attrs);
+            self.node_attrs
+                .insert_attrs(id, &attrs)
+                .expect("failed to restore node attributes during RDB load");
         }
     }
 
@@ -1401,7 +1403,9 @@ impl Graph {
         attrs: OrderMap<Arc<String>, Value>,
     ) {
         if !attrs.is_empty() {
-            let _ = self.relationship_attrs.insert_attrs(id, &attrs);
+            self.relationship_attrs
+                .insert_attrs(id, &attrs)
+                .expect("failed to restore edge attributes during RDB load");
         }
     }
 

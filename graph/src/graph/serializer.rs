@@ -46,8 +46,7 @@ use crate::runtime::orderset::OrderSet;
 use crate::runtime::value::Value;
 
 use super::GraphBLAS::{
-    GrB_BOOL, GrB_Info, GrB_Matrix, GrB_Matrix_new, GxB_Matrix_deserialize,
-    GxB_Matrix_serialize,
+    GrB_BOOL, GrB_Info, GrB_Matrix, GxB_Matrix_deserialize, GxB_Matrix_serialize,
 };
 
 /// Current encoding version for the Rust serializer.
@@ -231,7 +230,9 @@ fn save_nodes(
         let attrs = graph.get_node_all_attrs(node_id);
         io.save_unsigned(attrs.len() as u64);
         for (name, value) in attrs.iter() {
-            let attr_id = graph.get_node_attribute_id(name).unwrap_or(0);
+            let attr_id = graph
+                .get_node_attribute_id(name)
+                .expect("missing node attribute id during save");
             io.save_unsigned(attr_id as u64);
             save_value(io, value);
         }
@@ -249,7 +250,7 @@ fn save_edges(
         for (name, value) in attrs.iter() {
             let attr_id = graph
                 .get_relationship_attribute_id_by_name(name)
-                .unwrap_or(0);
+                .expect("missing relationship attribute id during save");
             io.save_unsigned(attr_id as u64);
             save_value(io, value);
         }
@@ -350,10 +351,7 @@ pub fn rdb_load(
     cache_size: usize,
 ) -> (String, Graph) {
     let version = io.load_unsigned();
-    assert!(
-        version == ENCODING_VERSION,
-        "Unsupported encoding version: {version}, expected {ENCODING_VERSION}"
-    );
+    assert_eq!(version, ENCODING_VERSION, "Unsupported encoding version");
     load_v14(io, cache_size)
 }
 
@@ -395,8 +393,14 @@ fn load_v14(
     // Create graph with sufficient capacity
     let total_nodes = node_count + deleted_node_count;
     let total_edges = edge_count + deleted_edge_count;
-    let node_cap = total_nodes.next_power_of_two().max(16384);
-    let edge_cap = total_edges.next_power_of_two().max(16384);
+    let node_cap = total_nodes
+        .checked_next_power_of_two()
+        .unwrap_or(total_nodes)
+        .max(16384);
+    let edge_cap = total_edges
+        .checked_next_power_of_two()
+        .unwrap_or(total_edges)
+        .max(16384);
 
     let mut graph = Graph::new(node_cap, edge_cap, cache_size, 0, &graph_name);
 
@@ -531,12 +535,9 @@ fn load_value(io: &mut impl RdbLoadIO) -> Value {
 fn deserialize_matrix(io: &mut impl RdbLoadIO) -> Matrix {
     let blob = io.load_slice();
     unsafe {
-        let mut m: std::mem::MaybeUninit<GrB_Matrix> = std::mem::MaybeUninit::uninit();
-        let info = GrB_Matrix_new(m.as_mut_ptr(), GrB_BOOL, 0, 0);
-        debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
-        let m_ptr = m.assume_init();
+        let mut m_ptr: GrB_Matrix = std::ptr::null_mut();
         let info = GxB_Matrix_deserialize(
-            &raw const m_ptr as *mut GrB_Matrix,
+            &raw mut m_ptr,
             GrB_BOOL,
             blob.as_ptr() as *const std::os::raw::c_void,
             blob.len() as u64,
