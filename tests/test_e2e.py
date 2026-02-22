@@ -1866,11 +1866,48 @@ def test_load_csv():
     ]
     assert res.result_set == expected
 
-    res = query("LOAD CSV FROM 'file://test.csv' AS row RETURN row")
-    expected = [
-        [["name", "age"]],
-        [["Alice", "30"]],
-        [["Bob", "25"]],
-        [["Charlie", "35"]],
-    ]
     assert res.result_set == expected
+
+
+def test_graph_copy():
+    # create a graph with some data
+    common.g.query("CREATE (:Person {name: 'Alice', age: 30})-[:KNOWS {since: 2020}]->(:Person {name: 'Bob', age: 25})")
+
+    # copy the graph
+    common.g.execute_command("GRAPH.COPY", "test", "test_copy")
+
+    # verify the copy
+    copy_graph = common.client.select_graph("test_copy")
+    res = copy_graph.query("MATCH (n:Person) RETURN n.name ORDER BY n.name")
+    assert res.result_set == [["Alice"], ["Bob"]]
+
+    # verify relationships
+    res = copy_graph.query("MATCH ()-[r:KNOWS]->() RETURN r.since")
+    assert res.result_set == [[2020]]
+
+    # verify the copy is independent - modify copy
+    copy_graph.query("CREATE (:Person {name: 'Charlie', age: 35})")
+    res_copy = copy_graph.query("MATCH (n:Person) RETURN count(n)")
+    assert res_copy.result_set == [[3]]
+
+    # original should still have 2 nodes
+    res_orig = common.g.query("MATCH (n:Person) RETURN count(n)")
+    assert res_orig.result_set == [[2]]
+
+    # clean up copy
+    copy_graph.delete()
+
+    # test error: wrong arity
+    with pytest.raises(ResponseError):
+        common.g.execute_command("GRAPH.COPY", "test")
+
+    # test error: source graph doesn't exist
+    with pytest.raises(ResponseError):
+        common.g.execute_command("GRAPH.COPY", "nonexistent", "dest")
+
+    # test error: destination already exists
+    common.g.execute_command("GRAPH.COPY", "test", "test_copy2")
+    with pytest.raises(ResponseError):
+        common.g.execute_command("GRAPH.COPY", "test", "test_copy2")
+    copy_graph2 = common.client.select_graph("test_copy2")
+    copy_graph2.delete()

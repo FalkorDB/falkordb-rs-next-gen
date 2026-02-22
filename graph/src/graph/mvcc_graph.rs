@@ -94,4 +94,20 @@ impl MvccGraph {
     pub fn rollback(&self) {
         self.write.store(false, Ordering::Release);
     }
+
+    /// Creates a fully independent copy of this graph with a new name.
+    ///
+    /// The copy starts at version 0 with its own attribute stores and cache.
+    #[must_use]
+    pub fn copy(
+        &self,
+        cache_size: usize,
+        name: &str,
+    ) -> Self {
+        let copied_graph = self.graph.borrow().copy(cache_size, name);
+        Self {
+            graph: Arc::new(AtomicRefCell::new(copied_graph)),
+            write: AtomicBool::new(false),
+        }
+    }
 }

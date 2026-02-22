@@ -357,6 +357,51 @@ impl Graph {
         }
     }
 
+    /// Creates a deep copy of this graph with a new name and independent resources.
+    ///
+    /// Unlike `new_version()` which creates a CoW version sharing the same keyspace,
+    /// `copy()` produces a fully independent graph with its own attribute stores,
+    /// cache, and version counter starting at 0.
+    #[must_use]
+    pub fn copy(
+        &self,
+        cache_size: usize,
+        name: &str,
+    ) -> Self {
+        Self {
+            node_cap: self.node_cap,
+            relationship_cap: self.relationship_cap,
+            reserved_node_count: 0,
+            reserved_relationship_count: 0,
+            node_count: self.node_count,
+            relationship_count: self.relationship_count,
+            deleted_nodes: self.deleted_nodes.clone(),
+            deleted_relationships: self.deleted_relationships.clone(),
+            zero_matrix: self.zero_matrix.dup(),
+            adjacancy_matrix: self.adjacancy_matrix.dup(),
+            node_labels_matrix: self.node_labels_matrix.dup(),
+            relationship_type_matrix: self.relationship_type_matrix.dup(),
+            all_nodes_matrix: self.all_nodes_matrix.dup(),
+            labels_matices: self
+                .labels_matices
+                .iter()
+                .map(VersionedMatrix::dup)
+                .collect(),
+            relationship_matrices: self.relationship_matrices.iter().map(Tensor::dup).collect(),
+            node_attrs: self.node_attrs.copy(&format!("{name}/nodes")),
+            relationship_attrs: self
+                .relationship_attrs
+                .copy(&format!("{name}/relationships")),
+            node_indexer: Indexer::default(),
+            node_labels: self.node_labels.clone(),
+            relationship_types: self.relationship_types.clone(),
+            cache: Arc::new(Mutex::new(LruCache::new(
+                NonZeroUsize::new(cache_size).unwrap(),
+            ))),
+            version: 0,
+        }
+    }
+
     #[must_use]
     pub const fn node_count(&self) -> u64 {
         self.node_count

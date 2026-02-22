@@ -276,6 +276,36 @@ impl AttributeStore {
         Ok(nremoved)
     }
 
+    /// Creates a deep copy of this attribute store with a new keyspace name.
+    ///
+    /// Copies all data from the current keyspace into a fresh keyspace,
+    /// producing an independent attribute store for a copied graph.
+    pub fn copy(
+        &self,
+        name: &str,
+    ) -> Self {
+        let new_keyspace = self
+            .database
+            .keyspace(name, KeyspaceCreateOptions::default)
+            .unwrap();
+        new_keyspace.clear().unwrap();
+
+        let mut batch = self.database.batch();
+        for entry in self.snapshot.iter(&self.keyspace) {
+            if let Ok((k, v)) = entry.into_inner() {
+                batch.insert(&new_keyspace, k, v);
+            }
+        }
+        batch.durability(None).commit().unwrap();
+
+        Self {
+            database: self.database.clone(),
+            snapshot: self.database.snapshot(),
+            keyspace: new_keyspace,
+            attrs_name: self.attrs_name.clone(),
+        }
+    }
+
     #[must_use]
     pub fn get_attr_id(
         &self,

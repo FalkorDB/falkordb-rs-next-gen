@@ -37,6 +37,7 @@
 //! - `GRAPH.EXPLAIN` - Show query execution plan without executing
 //! - `GRAPH.LIST` - List all graphs in the database
 //! - `GRAPH.MEMORY` - Get memory usage of a graph
+//! - `GRAPH.COPY` - Copy a graph to a new key
 //! - `GRAPH.CONFIG` - Configuration operations
 //!
 //! ## Threading Model
@@ -1440,6 +1441,72 @@ fn graph_config(
     Ok(RedisValue::Integer(0))
 }
 
+/// Handles `GRAPH.COPY` command - copies a graph to a new key.
+///
+/// Creates a deep copy of the source graph under a new destination key.
+/// The copy is fully independent with its own attribute stores, cache,
+/// and version counter.
+///
+/// # Usage
+/// ```text
+/// GRAPH.COPY <src_graph> <dest_graph>
+/// ```
+///
+/// # Errors
+/// - Returns error if wrong number of arguments
+/// - Returns error if source key does not exist or is not a graph
+/// - Returns error if destination key already exists
+fn graph_copy(
+    ctx: &Context,
+    args: Vec<RedisString>,
+) -> RedisResult {
+    if args.len() != 3 {
+        return Err(RedisError::WrongArity);
+    }
+
+    let mut args = args.into_iter().skip(1);
+    let src_key = args.next_arg()?;
+    let dest_key = args.next_arg()?;
+
+    // Read source graph
+    let src = ctx.open_key(&src_key);
+    let src_graph = src
+        .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)?
+        .ok_or(RedisError::Str("source graph does not exist"))?;
+
+    // Check destination key does not already exist
+    let dest = ctx.open_key_writable(&dest_key);
+    if dest
+        .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)?
+        .is_some()
+    {
+        return Err(RedisError::Str("destination key already exists"));
+    }
+
+    let cache_size = *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize;
+    let dest_name = dest_key.to_string();
+
+    // Copy the graph
+    let copied_mvcc = src_graph
+        .read()
+        .expect("failed to acquire read lock on source graph")
+        .graph
+        .copy(cache_size, &dest_name);
+
+    let (sender, receiver) = channel();
+    let new_graph = Arc::new(RwLock::new(ThreadedGraph {
+        graph: copied_mvcc,
+        sender,
+        receiver,
+        write_loop: AtomicBool::new(false),
+    }));
+
+    // Set the copy as the destination key
+    dest.set_value(&GRAPH_TYPE, new_graph)?;
+
+    Ok(RedisValue::SimpleStringStatic("OK"))
+}
+
 /// Module initialization callback - called when Redis loads the module.
 ///
 /// Performs critical initialization:
@@ -1549,6 +1616,7 @@ redis_module! {
         ["graph.LIST", graph_list, "readonly deny-script allow-busy", 0, 0, 0, ""],
         ["graph.RECORD", graph_record, "write deny-oom deny-script blocking", 1, 1, 1, ""],
         ["graph.MEMORY", graph_memory, "readonly deny-script", 1, 1, 1, ""],
+        ["graph.COPY", graph_copy, "write deny-script", 1, 2, 1, ""],
         ["graph.CONFIG", graph_config, "readonly deny-script allow-busy", 0, 0, 0, ""],
     ],
     configurations: [
