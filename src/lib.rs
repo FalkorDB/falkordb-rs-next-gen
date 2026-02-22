@@ -83,7 +83,7 @@ use redis_module::{
     RedisModule_Alloc, RedisModule_Calloc, RedisModule_Free, RedisModule_Realloc,
     RedisModule_SubscribeToServerEvent, RedisModuleCtx, RedisModuleEvent, RedisModuleIO,
     RedisModuleTypeMethods, RedisResult, RedisString, RedisValue, Status,
-    configuration::ConfigurationFlags, logging, native_types::RedisType, raw, redis_module,
+    configuration::ConfigurationFlags, native_types::RedisType, raw, redis_module,
 };
 #[cfg(feature = "pyro")]
 use std::mem;
@@ -352,87 +352,29 @@ struct RedisRdbLoadIO {
 
 impl RdbLoadIO for RedisRdbLoadIO {
     fn load_unsigned(&mut self) -> u64 {
-        match raw::load_unsigned(self.rdb) {
-            Ok(v) => v,
-            Err(_) => {
-                logging::log_io_error(
-                    self.rdb,
-                    logging::RedisLogLevel::Warning,
-                    "RDB load: failed to read unsigned integer",
-                );
-                std::process::abort();
-            }
-        }
+        raw::load_unsigned(self.rdb).expect("RDB load: failed to read unsigned")
     }
 
     fn load_signed(&mut self) -> i64 {
-        match raw::load_signed(self.rdb) {
-            Ok(v) => v,
-            Err(_) => {
-                logging::log_io_error(
-                    self.rdb,
-                    logging::RedisLogLevel::Warning,
-                    "RDB load: failed to read signed integer",
-                );
-                std::process::abort();
-            }
-        }
+        raw::load_signed(self.rdb).expect("RDB load: failed to read signed")
     }
 
     fn load_double(&mut self) -> f64 {
-        match raw::load_double(self.rdb) {
-            Ok(v) => v,
-            Err(_) => {
-                logging::log_io_error(
-                    self.rdb,
-                    logging::RedisLogLevel::Warning,
-                    "RDB load: failed to read double",
-                );
-                std::process::abort();
-            }
-        }
+        raw::load_double(self.rdb).expect("RDB load: failed to read double")
     }
 
     fn load_float(&mut self) -> f32 {
-        match raw::load_float(self.rdb) {
-            Ok(v) => v,
-            Err(_) => {
-                logging::log_io_error(
-                    self.rdb,
-                    logging::RedisLogLevel::Warning,
-                    "RDB load: failed to read float",
-                );
-                std::process::abort();
-            }
-        }
+        raw::load_float(self.rdb).expect("RDB load: failed to read float")
     }
 
     fn load_string(&mut self) -> String {
-        match raw::load_string_buffer(self.rdb) {
-            Ok(buf) => String::from_utf8_lossy(buf.as_ref()).into_owned(),
-            Err(_) => {
-                logging::log_io_error(
-                    self.rdb,
-                    logging::RedisLogLevel::Warning,
-                    "RDB load: failed to read string",
-                );
-                std::process::abort();
-            }
-        }
+        let buf = raw::load_string_buffer(self.rdb).expect("RDB load: failed to read string");
+        String::from_utf8_lossy(buf.as_ref()).into_owned()
     }
 
     fn load_slice(&mut self) -> Vec<u8> {
-        match raw::load_string_buffer(self.rdb) {
-            Ok(buf) => buf.as_ref().to_vec(),
-            Err(_) => {
-                logging::log_io_error(
-                    self.rdb,
-                    logging::RedisLogLevel::Warning,
-                    "RDB load: failed to read byte slice",
-                );
-                std::process::abort();
-            }
-        }
+        let buf = raw::load_string_buffer(self.rdb).expect("RDB load: failed to read slice");
+        buf.as_ref().to_vec()
     }
 }
 
