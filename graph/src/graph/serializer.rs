@@ -570,3 +570,379 @@ fn deserialize_versioned_matrix(io: &mut impl RdbLoadIO) -> VersionedMatrix {
     let dm = deserialize_matrix(io);
     VersionedMatrix::from_parts(m, dp, dm)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::graph::matrix::{New, Set, Size};
+    use crate::runtime::ordermap::OrderMap;
+    use std::sync::Once;
+    use thin_vec::thin_vec;
+
+    static INIT: Once = Once::new();
+
+    fn init_graphblas() {
+        INIT.call_once(|| unsafe {
+            super::super::GraphBLAS::GrB_init(
+                super::super::GraphBLAS::GrB_Mode::GrB_NONBLOCKING as _,
+            );
+        });
+    }
+
+    /// Buffer-based mock IO for testing serialization round-trips.
+    struct MockIO {
+        buf: Vec<u8>,
+        pos: usize,
+    }
+
+    impl MockIO {
+        fn new() -> Self {
+            Self {
+                buf: Vec::new(),
+                pos: 0,
+            }
+        }
+
+        fn write_bytes(
+            &mut self,
+            data: &[u8],
+        ) {
+            self.buf.extend_from_slice(data);
+        }
+
+        fn read_bytes(
+            &mut self,
+            n: usize,
+        ) -> Vec<u8> {
+            let end = self.pos + n;
+            assert!(end <= self.buf.len(), "read past end of buffer");
+            let data = self.buf[self.pos..end].to_vec();
+            self.pos = end;
+            data
+        }
+    }
+
+    impl RdbSaveIO for MockIO {
+        fn save_unsigned(
+            &mut self,
+            val: u64,
+        ) {
+            self.write_bytes(&val.to_le_bytes());
+        }
+        fn save_signed(
+            &mut self,
+            val: i64,
+        ) {
+            self.write_bytes(&val.to_le_bytes());
+        }
+        fn save_double(
+            &mut self,
+            val: f64,
+        ) {
+            self.write_bytes(&val.to_le_bytes());
+        }
+        fn save_float(
+            &mut self,
+            val: f32,
+        ) {
+            self.write_bytes(&val.to_le_bytes());
+        }
+        fn save_string(
+            &mut self,
+            val: &str,
+        ) {
+            let bytes = val.as_bytes();
+            self.write_bytes(&(bytes.len() as u64).to_le_bytes());
+            self.write_bytes(bytes);
+        }
+        fn save_slice(
+            &mut self,
+            val: &[u8],
+        ) {
+            self.write_bytes(&(val.len() as u64).to_le_bytes());
+            self.write_bytes(val);
+        }
+    }
+
+    impl RdbLoadIO for MockIO {
+        fn load_unsigned(&mut self) -> u64 {
+            let bytes = self.read_bytes(8);
+            u64::from_le_bytes(bytes.try_into().unwrap())
+        }
+        fn load_signed(&mut self) -> i64 {
+            let bytes = self.read_bytes(8);
+            i64::from_le_bytes(bytes.try_into().unwrap())
+        }
+        fn load_double(&mut self) -> f64 {
+            let bytes = self.read_bytes(8);
+            f64::from_le_bytes(bytes.try_into().unwrap())
+        }
+        fn load_float(&mut self) -> f32 {
+            let bytes = self.read_bytes(4);
+            f32::from_le_bytes(bytes.try_into().unwrap())
+        }
+        fn load_string(&mut self) -> String {
+            let len = self.load_unsigned() as usize;
+            let bytes = self.read_bytes(len);
+            String::from_utf8(bytes).unwrap()
+        }
+        fn load_slice(&mut self) -> Vec<u8> {
+            let len = self.load_unsigned() as usize;
+            self.read_bytes(len)
+        }
+    }
+
+    /// Build a graph with nodes, edges, attributes, labels, and deleted entities,
+    /// then serialize and deserialize it, and verify the round-trip preserves state.
+    #[test]
+    fn test_serializer_round_trip() {
+        init_graphblas();
+
+        let graph_name = "test_graph";
+        let mut graph = Graph::new(16384, 16384, 25, 0, graph_name);
+
+        // Set up schema
+        let mut node_attr_names = OrderSet::default();
+        node_attr_names.insert(Arc::new("name".to_string()));
+        node_attr_names.insert(Arc::new("age".to_string()));
+        graph.set_node_attr_names(node_attr_names);
+
+        let mut rel_attr_names = OrderSet::default();
+        rel_attr_names.insert(Arc::new("since".to_string()));
+        graph.set_relationship_attr_names(rel_attr_names);
+
+        graph.set_label_names(vec![Arc::new("Person".to_string())]);
+        graph.set_relationship_type_names(vec![Arc::new("KNOWS".to_string())]);
+
+        // Insert node attributes
+        let mut attrs0 = OrderMap::default();
+        attrs0.insert(Arc::new("name".to_string()), Value::String(Arc::new("Alice".to_string())));
+        attrs0.insert(Arc::new("age".to_string()), Value::Int(30));
+        graph.restore_node(0, attrs0);
+
+        let mut attrs1 = OrderMap::default();
+        attrs1.insert(Arc::new("name".to_string()), Value::String(Arc::new("Bob".to_string())));
+        attrs1.insert(Arc::new("age".to_string()), Value::Int(25));
+        graph.restore_node(1, attrs1);
+
+        // Insert edge attributes
+        let mut edge_attrs = OrderMap::default();
+        edge_attrs.insert(Arc::new("since".to_string()), Value::Int(2020));
+        graph.restore_edge(0, edge_attrs);
+
+        // Set node/edge counts
+        graph.set_node_count(2);
+        graph.set_relationship_count_val(1);
+
+        // Set deleted entities
+        let mut deleted_nodes = RoaringTreemap::new();
+        deleted_nodes.insert(5);
+        graph.set_deleted_nodes(deleted_nodes);
+
+        let mut deleted_rels = RoaringTreemap::new();
+        deleted_rels.insert(3);
+        graph.set_deleted_relationships(deleted_rels);
+
+        // Populate matrices with entries so nodes/edges are iterable
+        // all_nodes_matrix: mark nodes 0 and 1 as existing (diagonal entries)
+        let mut all_nodes = VersionedMatrix::new(16384, 16384);
+        all_nodes.set(0, 0, true);
+        all_nodes.set(1, 1, true);
+        graph.set_all_nodes_matrix(all_nodes);
+
+        // adjacency matrix: edge from 0 -> 1
+        let mut adj = VersionedMatrix::new(16384, 16384);
+        adj.set(0, 1, true);
+        graph.set_adjacency_matrix(adj);
+
+        // node_labels_matrix
+        let node_labels = VersionedMatrix::new(16384, 16384);
+        graph.set_node_labels_matrix(node_labels);
+
+        // relationship_type_matrix: edge 0 at column 0 (type index 0)
+        let mut rel_type = VersionedMatrix::new(16384, 16384);
+        rel_type.set(0, 0, true);
+        graph.set_relationship_type_matrix(rel_type);
+
+        // label matrices: one label matrix with nodes 0, 1
+        let mut label_mat = VersionedMatrix::new(16384, 16384);
+        label_mat.set(0, 0, true);
+        label_mat.set(1, 0, true);
+        graph.set_label_matrices(vec![label_mat]);
+
+        // relationship tensors: one tensor for "KNOWS"
+        let mut t_m = VersionedMatrix::new(16384, 16384);
+        t_m.set(0, 1, true);
+        let mut t_mt = VersionedMatrix::new(16384, 16384);
+        t_mt.set(1, 0, true);
+        let t_me = VersionedMatrix::new(
+            crate::graph::tensor::GrB_INDEX_MAX,
+            crate::graph::tensor::GrB_INDEX_MAX,
+        );
+        graph.set_relationship_tensors(vec![Tensor::from_parts(t_m, t_mt, t_me)]);
+
+        graph.commit_attrs();
+
+        // Serialize
+        let mut save_io = MockIO::new();
+        rdb_save(&mut save_io, &graph, graph_name);
+
+        // Deserialize
+        save_io.pos = 0;
+        let (loaded_name, loaded_graph) = rdb_load(&mut save_io, 25);
+
+        // Verify header
+        assert_eq!(loaded_name, graph_name);
+        assert_eq!(loaded_graph.node_count(), 2);
+        assert_eq!(loaded_graph.relationship_count(), 1);
+        assert_eq!(loaded_graph.labels_count(), 1);
+        assert_eq!(loaded_graph.relationship_types_count(), 1);
+
+        // Verify schema
+        let node_attrs = loaded_graph.node_attr_names();
+        assert_eq!(node_attrs.len(), 2);
+        assert_eq!(*node_attrs[0], "name");
+        assert_eq!(*node_attrs[1], "age");
+
+        let rel_attrs = loaded_graph.relationship_attr_names();
+        assert_eq!(rel_attrs.len(), 1);
+        assert_eq!(*rel_attrs[0], "since");
+
+        let labels = loaded_graph.get_labels();
+        assert_eq!(labels.len(), 1);
+        assert_eq!(*labels[0], "Person");
+
+        let types = loaded_graph.get_types();
+        assert_eq!(types.len(), 1);
+        assert_eq!(*types[0], "KNOWS");
+
+        // Verify deleted entities
+        assert_eq!(loaded_graph.deleted_nodes().len(), 1);
+        assert!(loaded_graph.deleted_nodes().contains(5));
+        assert_eq!(loaded_graph.deleted_relationships().len(), 1);
+        assert!(loaded_graph.deleted_relationships().contains(3));
+
+        // Verify node attributes
+        let empty = OrderSet::default();
+        let node_ids: Vec<_> = loaded_graph.get_nodes(&empty, 0).collect();
+        assert_eq!(node_ids.len(), 2);
+
+        let alice_attrs = loaded_graph.get_node_all_attrs(node_ids[0]);
+        assert_eq!(alice_attrs.len(), 2);
+
+        let bob_attrs = loaded_graph.get_node_all_attrs(node_ids[1]);
+        assert_eq!(bob_attrs.len(), 2);
+
+        // Verify edge attributes
+        let edge_ids = loaded_graph.all_relationship_ids();
+        assert_eq!(edge_ids.len(), 1);
+
+        let edge_attrs = loaded_graph.get_relationship_all_attrs_by_raw_id(edge_ids[0].0);
+        assert_eq!(edge_attrs.len(), 1);
+
+        // Verify matrices have correct entry counts
+        // Entries set via VersionedMatrix::set go to delta_plus (dp), not committed (m)
+        assert_eq!(loaded_graph.all_nodes_matrix().delta_plus().nvals(), 2);
+        assert_eq!(loaded_graph.adjacency_matrix().delta_plus().nvals(), 1);
+        assert_eq!(loaded_graph.label_matrices().len(), 1);
+        assert_eq!(loaded_graph.relationship_tensors().len(), 1);
+    }
+
+    /// Test value serialization round-trip for all supported types.
+    #[test]
+    fn test_value_round_trip() {
+        init_graphblas();
+
+        let test_values = vec![
+            Value::Null,
+            Value::Bool(true),
+            Value::Bool(false),
+            Value::Int(42),
+            Value::Int(-100),
+            Value::Float(3.14),
+            Value::String(Arc::new("hello world".to_string())),
+            Value::Date(1234567890),
+            Value::Time(9876543210),
+            Value::Datetime(1111111111),
+            Value::Duration(5000),
+            Value::Point(crate::runtime::value::Point::new(40.7128, -74.0060)),
+            Value::VecF32(thin_vec::thin_vec![1.0f32, 2.5, 3.75]),
+            Value::List(thin_vec::thin_vec![Value::Int(1), Value::String(Arc::new("two".to_string())), Value::Null]),
+        ];
+
+        for original in &test_values {
+            let mut io = MockIO::new();
+            save_value(&mut io, original);
+            io.pos = 0;
+            let loaded = load_value(&mut io);
+            assert_eq!(io.pos, io.buf.len(), "not all bytes consumed for {original:?}");
+            match (original, &loaded) {
+                (Value::Null, Value::Null) => {}
+                (Value::Bool(a), Value::Bool(b)) => assert_eq!(a, b),
+                (Value::Int(a), Value::Int(b)) => assert_eq!(a, b),
+                (Value::Float(a), Value::Float(b)) => assert!((a - b).abs() < f64::EPSILON),
+                (Value::String(a), Value::String(b)) => assert_eq!(a, b),
+                (Value::Date(a), Value::Date(b)) => assert_eq!(a, b),
+                (Value::Time(a), Value::Time(b)) => assert_eq!(a, b),
+                (Value::Datetime(a), Value::Datetime(b)) => assert_eq!(a, b),
+                (Value::Duration(a), Value::Duration(b)) => assert_eq!(a, b),
+                (Value::Point(a), Value::Point(b)) => {
+                    assert!((a.latitude - b.latitude).abs() < f32::EPSILON);
+                    assert!((a.longitude - b.longitude).abs() < f32::EPSILON);
+                }
+                (Value::VecF32(a), Value::VecF32(b)) => {
+                    assert_eq!(a.len(), b.len());
+                    for (x, y) in a.iter().zip(b.iter()) {
+                        assert!((x - y).abs() < f32::EPSILON);
+                    }
+                }
+                (Value::List(a), Value::List(b)) => assert_eq!(a.len(), b.len()),
+                _ => panic!("type mismatch: {original:?} vs {loaded:?}"),
+            }
+        }
+    }
+
+    /// Test serialization of an empty graph.
+    #[test]
+    fn test_empty_graph_round_trip() {
+        init_graphblas();
+
+        let graph_name = "empty_graph";
+        let graph = Graph::new(16384, 16384, 25, 0, graph_name);
+
+        let mut save_io = MockIO::new();
+        rdb_save(&mut save_io, &graph, graph_name);
+
+        save_io.pos = 0;
+        let (loaded_name, loaded_graph) = rdb_load(&mut save_io, 25);
+
+        assert_eq!(loaded_name, graph_name);
+        assert_eq!(loaded_graph.node_count(), 0);
+        assert_eq!(loaded_graph.relationship_count(), 0);
+        assert_eq!(loaded_graph.labels_count(), 0);
+        assert_eq!(loaded_graph.relationship_types_count(), 0);
+        assert_eq!(loaded_graph.deleted_nodes().len(), 0);
+        assert_eq!(loaded_graph.deleted_relationships().len(), 0);
+    }
+
+    /// Test that matrix serialization/deserialization preserves entries.
+    #[test]
+    fn test_matrix_serialize_round_trip() {
+        init_graphblas();
+
+        let mut matrix = Matrix::new(100, 100);
+        matrix.set(0, 1, true);
+        matrix.set(5, 10, true);
+        matrix.set(99, 99, true);
+
+        let mut io = MockIO::new();
+        serialize_matrix(&mut io, &matrix);
+
+        io.pos = 0;
+        let loaded = deserialize_matrix(&mut io);
+
+        assert_eq!(loaded.nvals(), 3);
+        assert_eq!(loaded.nrows(), 100);
+        assert_eq!(loaded.ncols(), 100);
+    }
+}
