@@ -1226,6 +1226,7 @@ impl Graph {
     ) -> Vec<NodeId> {
         self.node_indexer
             .query(label.clone(), query)
+            .unwrap_or_default()
             .into_iter()
             .map(NodeId)
             .collect()
