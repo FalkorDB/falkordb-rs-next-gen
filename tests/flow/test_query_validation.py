@@ -53,227 +53,154 @@ class testQueryValidationFlow(FlowTestsBase):
        expected_result = [["single ' char", 'double " char', 'mixed \' and " chars']]
        self.env.assertEqual(actual_result.result_set, expected_result)
 
-    #def test05_invalid_entity_references(self):
-    #    try:
-    #        query = """MATCH (a) RETURN e"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError:
-    #        # Expecting an error.
-    #        pass
+    def test05_invalid_entity_references(self):
+        try:
+            query = """MATCH (a) RETURN e"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError:
+            # Expecting an error.
+            pass
 
-    #    try:
-    #        query = """MATCH (a) RETURN a ORDER BY e"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError:
-    #        # Expecting an error.
-    #        pass
+        try:
+            query = """MATCH (a) RETURN a ORDER BY e"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError:
+            # Expecting an error.
+            pass
 
-    #    try:
-    #        query = """MATCH (@anon_0) RETURN @anon_0"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError:
-    #        # Expecting an error.
-    #        pass
+        try:
+            query = """MATCH (@anon_0) RETURN @anon_0"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError:
+            # Expecting an error.
+            pass
 
-    #def test06_where_references(self):
-    #    try:
-    #        query = """MATCH (a) WHERE fake = true RETURN a"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError:
-    #        # Expecting an error.
-    #        pass
+    def test06_where_references(self):
+        try:
+            query = """MATCH (a) WHERE fake = true RETURN a"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError:
+            # Expecting an error.
+            pass
 
-    #def test07_with_references(self):
-    #    try:
-    #        query = """MATCH (a) WITH e RETURN e"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError:
-    #        # Expecting an error.
-    #        pass
+    def test07_with_references(self):
+        try:
+            query = """MATCH (a) WITH e RETURN e"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError:
+            # Expecting an error.
+            pass
 
-    #def test08_count_distinct_star(self):
-    #    try:
-    #        query = """MATCH (a) RETURN COUNT(DISTINCT *)"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError:
-    #        # Expecting an error.
-    #        pass
+    def test08_count_distinct_star(self):
+        try:
+            query = """MATCH (a) RETURN COUNT(DISTINCT *)"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError:
+            # Expecting an error.
+            pass
 
-    #def test09_invalid_apply_all(self):
-    #    try:
-    #        query = """MATCH (a) RETURN SUM(*)"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError:
-    #        # Expecting an error.
-    #        pass
+    def test09_invalid_apply_all(self):
+        try:
+            query = """MATCH (a) RETURN SUM(*)"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError:
+            # Expecting an error.
+            pass
 
-    #def test10_missing_params(self):
-    #    try:
-    #        query = """MATCH (a {name:$name}) RETURN a"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError:
-    #        # Expecting an error.
-    #        pass
+    def test10_missing_params(self):
+        try:
+            query = """MATCH (a {name:$name}) RETURN a"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError:
+            # Expecting an error.
+            pass
     
-    #def test11_param_error(self):
-    #    try:
-    #        query = """CYPHER name=({name:'a'}) MATCH (a {name:$name}) RETURN a"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError:
-    #        # Expecting an error.
-    #        pass
+    def test11_param_error(self):
+        try:
+            query = """CYPHER name=({name:'a'}) MATCH (a {name:$name}) RETURN a"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError:
+            # Expecting an error.
+            pass
 
-    #def test12_invalid_query_order(self):
-    #    try:
-    #        query = """MERGE (a) MATCH (a)-[]->(b) RETURN b"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError:
-    #        # Expecting an error.
-    #        pass
+    def test12_invalid_query_order(self):
+        try:
+            query = """MERGE (a) MATCH (a)-[]->(b) RETURN b"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError:
+            # Expecting an error.
+            pass
 
-    #def test13_create_bound_variables(self):
-    #    try:
-    #        query = """MATCH (a)-[e]->(b) CREATE (a)-[e]->(b)"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError:
-    #        # Expecting an error.
-    #        pass
+    def test13_create_bound_variables(self):
+        try:
+            query = """MATCH (a)-[e]->(b) CREATE (a)-[e]->(b)"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError:
+            # Expecting an error.
+            pass
 
-    #def test14_treat_path_as_entity(self):
-    #    self.graph.query("CREATE ()-[:R]->()")
-    #    try:
-    #        query= """MATCH x=()-[]->() RETURN x.name"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError:
-    #        # Expecting an error.
-    #        pass
+    def test14_treat_path_as_entity(self):
+        self.graph.query("CREATE ()-[:R]->()")
+        try:
+            query= """MATCH x=()-[]->() RETURN x.name"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError:
+            # Expecting an error.
+            pass
 
-    #def test15_dont_crash_on_multiple_errors(self):
-    #    try:
-    #        query = """MATCH (a) where id(a) IN range(0) OR id(a) in range(1)"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError:
-    #        # Expecting an error.
-    #        pass
+    def test15_dont_crash_on_multiple_errors(self):
+        try:
+            query = """MATCH (a) where id(a) IN range(0) OR id(a) in range(1)"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError:
+            # Expecting an error.
+            pass
 
-    ## Run a query in which a parsed parameter introduces a type in an unsupported context.
-    #def test16_param_introduces_unhandled_type(self):
-    #    try:
-    #        query = """CYPHER props={a:1,b:2} CREATE (a:A $props)"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError as e:
-    #        # Expecting an error.
-    #        assert("Encountered unhandled type" in str(e))
-    #        pass
+    # Run a query in which a parsed parameter introduces a type in an unsupported context.
+    def test16_param_introduces_unhandled_type(self):
+        try:
+            query = """CYPHER props={a:1,b:2} CREATE (a:A $props)"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError as e:
+            # Expecting an error.
+            assert("Encountered unhandled type" in str(e))
+            pass
 
-    ## Validate that the module fails properly with incorrect argument counts.
-    #def test17_query_arity(self):
-    #    # Call GRAPH.QUERY with a missing query argument.
-    #    try:
-    #        res = self.redis_con.execute_command("GRAPH.QUERY", "G")
-    #        assert(False)
-    #    except redis.exceptions.ResponseError as e:
-    #        # Expecting an error.
-    #        assert("wrong number of arguments" in str(e))
-    #        pass
+    # Validate that the module fails properly with incorrect argument counts.
+    def test17_query_arity(self):
+        # Call GRAPH.QUERY with a missing query argument.
+        try:
+            res = self.redis_con.execute_command("GRAPH.QUERY", "G")
+            assert(False)
+        except redis.exceptions.ResponseError as e:
+            # Expecting an error.
+            assert("wrong number of arguments" in str(e))
+            pass
 
-    ## Run queries in which compile-time variables are accessed but not defined.
-    #def test18_undefined_variable_access(self):
-    #    try:
-    #        query = """CREATE (:person{name:bar[1]})"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError as e:
-    #        # Expecting an error.
-    #        assert("not defined" in str(e))
-    #        pass
-
-    #    try:
-    #        query = """MATCH (a {val: undeclared}) RETURN a"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError as e:
-    #        # Expecting an error.
-    #        assert("not defined" in str(e))
-    #        pass
-
-    #    try:
-    #        query = """UNWIND [fake] AS ref RETURN ref"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError as e:
-    #        # Expecting an error.
-    #        assert("not defined" in str(e))
-    #        pass
-
-    #def test19_invalid_cypher_options(self):
-    #    query = "EXPLAIN MATCH (p:president)-[:born]->(:state {name:'Hawaii'}) RETURN p"
-    #    try:
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except:
-    #        # Expecting an error.
-    #        pass
-
-    #    query = "PROFILE MATCH (p:president)-[:born]->(:state {name:'Hawaii'}) RETURN p"
-    #    try:
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except:
-    #        # Expecting an error.
-    #        pass
-
-    #    query = "CYPHER val=1 EXPLAIN MATCH (p:president)-[:born]->(:state {name:'Hawaii'}) RETURN p"
-    #    try:
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except:
-    #        # Expecting an error.
-    #        pass
-
-    #    query = "CYPHER val=1 PROFILE MATCH (p:president)-[:born]->(:state {name:'Hawaii'}) RETURN p"
-    #    try:
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except:
-    #        # Expecting an error.
-    #        pass
-
-    ## Undirected edges are not allowed in CREATE clauses.
-    #def test20_undirected_edge_creation(self):
-    #    try:
-    #        query = """CREATE (:Endpoint)-[:R]-(:Endpoint)"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError as e:
-    #        # Expecting an error.
-    #        assert("Only directed relationships" in str(e))
-    #        pass
-
-    ## Applying a filter for non existing entity.
-    #def test20_non_existing_graph_entity(self):
-    #    try:
-    #        query = """MATCH p=() WHERE p.name='value' RETURN p"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError as e:
-    #        # Expecting an error.
-    #        assert("Type mismatch: expected Map, Node, Edge, Null, or Point but was Path" in str(e))
-    #        pass
+    # Run queries in which compile-time variables are accessed but not defined.
+    def test18_undefined_variable_access(self):
+        try:
+            query = """CREATE (:person{name:bar[1]})"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError as e:
+            # Expecting an error.
+            assert("not defined" in str(e))
+            pass
 
     ## Comments should not affect query functionality.
     #def test21_ignore_query_comments(self):
@@ -308,78 +235,152 @@ class testQueryValidationFlow(FlowTestsBase):
     #    expected_result = [[34]]
     #    self.env.assertEqual(actual_result.result_set, expected_result)
 
-    ## Validate procedure call refrences and definitions
-    #def test22_procedure_validations(self):
-    #    try:
-    #        # procedure call refering to a none existing alias 'n'
-    #        query = """CALL db.idx.fulltext.queryNodes(n, 'B') YIELD node RETURN node"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError as e:
-    #        # Expecting an error.
-    #        assert("not defined" in str(e))
-    #        pass
+        query = "CYPHER val=1 EXPLAIN MATCH (p:president)-[:born]->(:state {name:'Hawaii'}) RETURN p"
+        try:
+            self.graph.query(query)
+            assert(False)
+        except:
+            # Expecting an error.
+            pass
 
-    #    # refer to procedure call original output when output is aliased.
-    #    try:
-    #        query = """CALL db.idx.fulltext.queryNodes('A', 'B') YIELD node AS n RETURN node"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError as e:
-    #        # Expecting an error.
-    #        assert("not defined" in str(e))
-    #        pass
+        query = "CYPHER val=1 PROFILE MATCH (p:president)-[:born]->(:state {name:'Hawaii'}) RETURN p"
+        try:
+            self.graph.query(query)
+            assert(False)
+        except:
+            # Expecting an error.
+            pass
 
-    #    # valid procedure call, no output aliasing
-    #    query = """CALL db.idx.fulltext.queryNodes('A', 'B') YIELD node RETURN node"""
-    #    self.graph.query(query)
+    # Undirected edges are not allowed in CREATE clauses.
+    def test20_undirected_edge_creation(self):
+        try:
+            query = """CREATE (:Endpoint)-[:R]-(:Endpoint)"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError as e:
+            # Expecting an error.
+            assert("Only directed relationships" in str(e))
+            pass
 
-    #    # valid procedure call, output aliasing
-    #    query = """CALL db.idx.fulltext.queryNodes('A', 'B') YIELD node AS n RETURN n"""
-    #    self.graph.query(query)
+    # Applying a filter for non existing entity.
+    def test20_non_existing_graph_entity(self):
+        try:
+            query = """MATCH p=() WHERE p.name='value' RETURN p"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError as e:
+            # Expecting an error.
+            assert("Type mismatch: expected Map, Node, Edge, Datetime, Date, Time, Duration, Null, or Point but was Path" in str(e))
+            pass
 
-    ## Referencing a variable before defining it should raise a compile-time error.
-    #def test24_reference_before_definition(self):
-    #    try:
-    #        query = """MATCH ({prop: reference}) MATCH (reference) RETURN *"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError as e:
-    #        # Expecting an error.
-    #        assert("not defined" in str(e))
-    #        pass
+    # Comments should not affect query functionality.
+    def test21_ignore_query_comments(self):
+        query = """MATCH (n)  // This is a comment
+                   /* This is a block comment */
+                   WHERE EXISTS(n.age)
+                   RETURN n.age /* Also a block comment*/"""
+        actual_result = self.graph.query(query)
+        expected_result = [[34]]
+        self.env.assertEquals(actual_result.result_set, expected_result)
 
-    ## Invalid filters in cartesian products should raise errors.
-    #def test25_cartesian_product_invalid_filter(self):
-    #    try:
-    #        query = """MATCH p1=(), (n), ({prop: p1.path_val}) RETURN *"""
-    #        self.graph.query(query)
-    #        assert(False)
-    #    except redis.exceptions.ResponseError as e:
-    #        # Expecting an error.
-    #        assert("Type mismatch: expected Map, Node, Edge, Null, or Point but was Path" in str(e))
-    #        pass
+        query = """/* A block comment*/ MATCH (n)  // This is a comment
+                /* This is a block comment */
+                WHERE EXISTS(n.age)
+                RETURN n.age /* Also a block comment*/"""
+        actual_result = self.graph.query(query)
+        expected_result = [[34]]
+        self.env.assertEquals(actual_result.result_set, expected_result)
 
-    ## invalid predicates should raise errors.
-    #def test26_invalid_filter_predicate(self):
-    #    queries = [
-    #        """WITH 1 AS a WHERE '' RETURN a""",
-    #        """MATCH (a) WHERE 1 RETURN a""",
-    #        """MATCH (a) WHERE -1 RETURN a""",
-    #        """MATCH (a) WHERE -1 OR true RETURN a""",
-    #        """MATCH (a) WHERE true OR -1 RETURN a""",
-    #        """MATCH (a) WHERE true AND -1 RETURN a""",
-    #        """MATCH (a:Author) WHERE a.name CONTAINS 'Ernest' OR 'Amor' RETURN a""",
-    #        """MATCH () RETURN [()<-[]-() WHERE 1 | TRUE]"""]
+        query = """// This is a comment
+                MATCH (n)  // This is a comment
+                /* This is a block comment */
+                WHERE EXISTS(n.age)
+                RETURN n.age /* Also a block comment*/"""
+        actual_result = self.graph.query(query)
+        expected_result = [[34]]
+        self.env.assertEquals(actual_result.result_set, expected_result)
 
-    #    for query in queries:
-    #        try:
-    #            self.graph.query(query)
-    #            assert(False)
-    #        except redis.exceptions.ResponseError as e:
-    #            # Expecting an error.
-    #            assert("Expected boolean predicate" in str(e))
-    #            pass
+        query = """MATCH (n)  /* This is a block comment */ WHERE EXISTS(n.age)
+                RETURN n.age /* Also a block comment*/"""
+        actual_result = self.graph.query(query)
+        expected_result = [[34]]
+        self.env.assertEquals(actual_result.result_set, expected_result)
+
+    # Validate procedure call refrences and definitions
+    def test22_procedure_validations(self):
+        try:
+            # procedure call refering to a none existing alias 'n'
+            query = """CALL db.idx.fulltext.queryNodes(n, 'B') YIELD node RETURN node"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError as e:
+            # Expecting an error.
+            assert("not defined" in str(e))
+            pass
+
+        #@todo barak implement aliasing yield	
+        # refer to procedure call original output when output is aliased.
+        #try:
+        #    query = """CALL db.idx.fulltext.queryNodes('A', 'B') YIELD node AS n RETURN node"""
+        #    self.graph.query(query)
+        #    assert(False)
+        #except redis.exceptions.ResponseError as e:
+        #    # Expecting an error.
+        #    assert("not defined" in str(e))
+        #    pass
+
+        # valid procedure call, no output aliasing
+        query = """CALL db.idx.fulltext.queryNodes('A', 'B') YIELD node RETURN node"""
+        self.graph.query(query)
+        
+        #@todo barak implement aliasing yield
+        # valid procedure call, output aliasing
+        #query = """CALL db.idx.fulltext.queryNodes('A', 'B') YIELD node AS n RETURN n"""
+        #self.graph.query(query)
+
+    # Referencing a variable before defining it should raise a compile-time error.
+    def test24_reference_before_definition(self):
+        try:
+            query = """MATCH ({prop: reference}) MATCH (reference) RETURN *"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError as e:
+            # Expecting an error.
+            assert("not defined" in str(e))
+            pass
+
+    # Invalid filters in cartesian products should raise errors.
+    def test25_cartesian_product_invalid_filter(self):
+        try:
+            query = """MATCH p1=(), (n), ({prop: p1.path_val}) RETURN *"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError as e:
+            # Expecting an error.
+           assert("Type mismatch: expected Map, Node, Edge, Datetime, Date, Time, Duration, Null, or Point but was Path" in str(e))
+
+    # invalid predicates should raise errors.
+    def test26_invalid_filter_predicate(self):
+        queries = [
+            """WITH 1 AS a WHERE '' RETURN a""",
+            """MATCH (a) WHERE 1 RETURN a""",
+            """MATCH (a) WHERE -1 RETURN a""",
+            """MATCH (a) WHERE -1 OR true RETURN a""",
+            """MATCH (a) WHERE true OR -1 RETURN a""",
+            """MATCH (a) WHERE true AND -1 RETURN a""",
+            """MATCH (a:Author) WHERE a.name CONTAINS 'Ernest' OR 'Amor' RETURN a""",
+            #@todo barak implement list comprehension predicates
+            # """MATCH () RETURN [()<-[]-() WHERE 1 | TRUE]"""
+            ]
+
+        for query in queries:
+            try:
+                self.graph.query(query)
+                assert(False)
+            except redis.exceptions.ResponseError as e:
+                # Expecting an error.
+                assert("Expected boolean predicate" in str(e))
+                pass
 
     ## The NOT operator does not compare left and right side expressions.
     #def test28_invalid_filter_binary_not(self):

@@ -37,7 +37,9 @@ When the user invokes `/build`:
 ## Notes
 
 - `CXX=clang++` is required for clippy due to GraphBLAS FFI bindings
+- In the devcontainer, `CXX=clang++-21` is automatically set
 - Format check uses the project's `rustfmt.toml` configuration
 - For release builds, use `cargo build --release`
+- This skill works both inside and outside the devcontainer
 
 If any step fails, report the errors clearly and help fix them.

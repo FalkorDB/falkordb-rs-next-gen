@@ -1517,7 +1517,7 @@ impl<'a> Parser<'a> {
             if let Ok(ident) = self.parse_ident() {
                 match_token!(self.lexer, Equal);
                 let mut vars = vec![];
-                let mut left = self.parse_node_pattern(clause)?;
+                let mut left = self.parse_node_pattern()?;
                 vars.push(left.alias.clone());
                 if nodes_alias.insert(left.alias.clone()) {
                     query_graph.add_node(left.clone());
@@ -1546,7 +1546,7 @@ impl<'a> Parser<'a> {
                     }
                 }
             } else {
-                let mut left = self.parse_node_pattern(clause)?;
+                let mut left = self.parse_node_pattern()?;
 
                 if nodes_alias.insert(left.alias.clone()) {
                     query_graph.add_node(left.clone());
@@ -1680,6 +1680,11 @@ impl<'a> Parser<'a> {
                                 return Err(self.lexer.format_error(
                                     "COUNT is the only function which can accept * as an argument",
                                 ));
+                            }
+                            if distinct {
+                                return Err(self
+                                    .lexer
+                                    .format_error("COUNT(DISTINCT *) is not supported"));
                             }
                             // Create args array like count(x) does
                             let mut args = vec![tree!(ExprIR::Integer(1))]; // Dummy value for count(*)
@@ -2143,10 +2148,7 @@ impl<'a> Parser<'a> {
         ))
     }
 
-    fn parse_node_pattern(
-        &mut self,
-        clause: &Keyword,
-    ) -> Result<Arc<QueryNode<Arc<String>, Arc<String>>>, String> {
+    fn parse_node_pattern(&mut self) -> Result<Arc<QueryNode<Arc<String>, Arc<String>>>, String> {
         match_token!(self.lexer, LParen);
         let alias = if let Ok(id) = self.parse_ident() {
             id
@@ -2158,11 +2160,6 @@ impl<'a> Parser<'a> {
         let labels = self.parse_labels()?;
         let attrs = if let Token::Parameter(param) = self.lexer.current()? {
             self.lexer.next();
-            if clause == &Keyword::Match {
-                return Err(self
-                    .lexer
-                    .format_error("Encountered unhandled type in inlined properties."));
-            }
             tree!(ExprIR::Parameter(param))
         } else {
             self.parse_map()?
@@ -2228,11 +2225,6 @@ impl<'a> Parser<'a> {
             };
             let attrs = if let Token::Parameter(param) = self.lexer.current()? {
                 self.lexer.next();
-                if clause == &Keyword::Match {
-                    return Err(self
-                        .lexer
-                        .format_error("Encountered unhandled type in inlined properties."));
-                }
                 tree!(ExprIR::Parameter(param))
             } else {
                 self.parse_map()?
@@ -2246,7 +2238,7 @@ impl<'a> Parser<'a> {
         };
         match_token!(self.lexer, Dash);
         let is_outgoing = optional_match_token!(self.lexer, GreaterThan);
-        let dst = self.parse_node_pattern(clause)?;
+        let dst = self.parse_node_pattern()?;
         let relationship = match (is_incoming, is_outgoing) {
             (true, true) | (false, false) => {
                 if *clause == Keyword::Create {

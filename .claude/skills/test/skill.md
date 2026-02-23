@@ -18,6 +18,20 @@ Run the appropriate tests based on what changed or what the user specifies.
 
 When the user invokes `/test`, determine which tests to run:
 
+**Environment Setup:**
+First, determine the correct Python virtual environment path:
+- Inside devcontainer: `/data/venv`
+- Outside devcontainer: `venv`
+
+Check if `/data/venv` exists to detect devcontainer:
+```bash
+if [ -d "/data/venv" ]; then
+  VENV_PATH="/data/venv"
+else
+  VENV_PATH="venv"
+fi
+```
+
 1. **Unit tests (default)**: Run Rust unit tests
    ```bash
    cargo test -p graph
@@ -25,32 +39,32 @@ When the user invokes `/test`, determine which tests to run:
 
 2. **E2E tests**: Run Python end-to-end tests
    ```bash
-   source venv/bin/activate && pytest tests/test_e2e.py -vv
+   source $VENV_PATH/bin/activate && pytest tests/test_e2e.py -vv
    ```
 
 3. **Function tests**: Run Python function tests
    ```bash
-   source venv/bin/activate && pytest tests/test_functions.py -vv
+   source $VENV_PATH/bin/activate && pytest tests/test_functions.py -vv
    ```
 
 4. **MVCC tests**: Run MVCC concurrency tests
    ```bash
-   source venv/bin/activate && pytest tests/test_mvcc.py -vv
+   source $VENV_PATH/bin/activate && pytest tests/test_mvcc.py -vv
    ```
 
 5. **Concurrency tests**: Run concurrency tests
    ```bash
-   source venv/bin/activate && pytest tests/test_concurrency.py -vv
+   source $VENV_PATH/bin/activate && pytest tests/test_concurrency.py -vv
    ```
 
 6. **TCK tests**: Run Technology Compatibility Kit tests for Cypher language compliance
    - **All passing TCK tests** (no path argument):
      ```bash
-     source venv/bin/activate && TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
+     source $VENV_PATH/bin/activate && TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
      ```
    - **Specific feature tests** (with path argument):
      ```bash
-     source venv/bin/activate && TCK_INCLUDE=<path> pytest tests/tck/test_tck.py -s
+     source $VENV_PATH/bin/activate && TCK_INCLUDE=<path> pytest tests/tck/test_tck.py -s
      ```
    Common TCK paths:
    - `tests/tck/features/expressions/list` - List expression tests
@@ -72,6 +86,7 @@ When the user invokes `/test`, determine which tests to run:
    - Flow tests are located in `tests/flow/` directory
    - These tests verify complete query execution flows
    - Progress is tracked in `flow_tests_done.txt` and `flow_tests_todo.txt`
+   - This skill automatically detects and uses the correct venv path
 
 If no argument is provided, run the Rust unit tests (`cargo test -p graph`).
 

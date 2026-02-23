@@ -492,9 +492,13 @@ class testGraphMergeFlow():
 
     def test26_merge_set_invalid_property(self):
         self.graph.delete()
-        query = """MATCH p=() MERGE () ON MATCH SET p.prop4 = 5"""
-        result = self.graph.query(query)
-        self.env.assertEqual(result.properties_set, 0)
+        try:
+            query = """MATCH p=() MERGE () ON MATCH SET p.prop4 = 5"""
+            self.graph.query(query)
+            assert(False)
+        except redis.exceptions.ResponseError as e:
+            self.env.assertContains("Type mismatch", str(e))
+            self.env.assertContains("Path", str(e))
 
     def test27_merge_create_invalid_entity(self):
         try:

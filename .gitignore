@@ -3,6 +3,7 @@ __pycache__
 .pytest_cache
 venv
 redis-test.log
+redis-debug.log
 .vscode
 *.ipr
 .idea
@@ -11,7 +12,7 @@ myenv
 coverage.sh
 codecov.*
 temp-*
-coverage
+/coverage
 dump.rdb
 .antlr
 cov.profdata
@@ -32,3 +33,4 @@ redisearch
 .zed/
 .github/copilot-instructions.md
 attrs/
+.cargo-cache

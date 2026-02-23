@@ -124,6 +124,11 @@ impl Binder {
             } => {
                 let pattern = self.bind_graph(pattern, false)?;
                 let filter = filter.map(|expr| self.bind_expr(&expr)).transpose()?;
+                if let Some(ref f) = filter {
+                    if !Self::expr_may_return_boolean(f.root()) {
+                        return Err(String::from("Expected boolean predicate"));
+                    }
+                }
                 Ok(QueryIR::Match {
                     pattern,
                     filter,
@@ -254,6 +259,11 @@ impl Binder {
                     bound_vars.push(self.define_name_in_scope(name, Type::Any, true)?);
                 }
                 let filter = filter.map(|expr| self.bind_expr(&expr)).transpose()?;
+                if let Some(ref f) = filter {
+                    if !Self::expr_may_return_boolean(f.root()) {
+                        return Err(String::from("Expected boolean predicate"));
+                    }
+                }
                 Ok(QueryIR::Call(func, args, bound_vars, filter))
             }
         }
@@ -274,7 +284,11 @@ impl Binder {
     ) -> Result<QueryIR<Variable>, String> {
         let bound_exprs = exprs
             .iter()
-            .map(|(name, expr)| Ok((name.clone(), self.bind_expr(expr)?)))
+            .map(|(name, expr)| {
+                let bound = self.bind_expr(expr)?;
+                Self::validate_boolean_operands(&bound)?;
+                Ok((name.clone(), bound))
+            })
             .collect::<Result<Vec<_>, String>>()?;
 
         let mut projected = Vec::with_capacity(bound_exprs.len());
@@ -316,6 +330,11 @@ impl Binder {
         let skip = skip.map(|expr| self.bind_expr(&expr)).transpose()?;
         let limit = limit.map(|expr| self.bind_expr(&expr)).transpose()?;
         let filter = filter.map(|expr| self.bind_expr(&expr)).transpose()?;
+        if let Some(ref f) = filter {
+            if !Self::expr_may_return_boolean(f.root()) {
+                return Err(String::from("Expected boolean predicate"));
+            }
+        }
 
         let copy_from_parent = self
             .copy_from_parent
@@ -356,6 +375,12 @@ impl Binder {
         is_create: bool,
     ) -> Result<QueryGraph<Arc<String>, Arc<String>, Variable>, String> {
         let mut bound: QueryGraph<Arc<String>, Arc<String>, Variable> = QueryGraph::default();
+
+        // Pre-register path variables in scope so they can be resolved
+        // when binding node/relationship inline properties below.
+        for raw_path in graph.paths() {
+            self.define_name_in_scope(raw_path.var.clone(), Type::Path, true)?;
+        }
 
         for node in graph.nodes() {
             self.bind_expr(&node.attrs)?;
@@ -597,7 +622,11 @@ impl Binder {
         Ok(Arc::new(self.bind_expr_node(expr, root, locals)?))
     }
 
-    #[allow(clippy::only_used_in_recursion)]
+    #[allow(
+        clippy::only_used_in_recursion,
+        clippy::too_many_lines,
+        clippy::needless_pass_by_value
+    )]
     fn bind_expr_node(
         &mut self,
         expr: &DynTree<ExprIR<Arc<String>>>,
@@ -640,6 +669,11 @@ impl Binder {
                     .collect::<Result<Vec<_>, _>>()?;
                 locals.pop();
 
+                // Child 1 is the WHERE condition — validate it returns boolean
+                if children.len() > 1 && !Self::expr_may_return_boolean(children[1].root()) {
+                    return Err(String::from("Expected boolean predicate"));
+                }
+
                 let mut new_tree = DynTree::new(ExprIR::ListComprehension(bound_var));
                 let mut root = new_tree.root_mut();
                 for child in children {
@@ -648,19 +682,6 @@ impl Binder {
                 Ok(new_tree)
             }
             _ => {
-                if let ExprIR::And | ExprIR::Or | ExprIR::Xor = node_ref.data() {
-                    debug_assert!(node_ref.num_children() >= 2);
-                    for expr in node_ref.children() {
-                        if let _e @ (ExprIR::Integer(_)
-                        | ExprIR::Float(_)
-                        | ExprIR::String(_)
-                        | ExprIR::List
-                        | ExprIR::Map) = expr.data()
-                        {
-                            return Err(String::from("Type mismatch: expected bool"));
-                        }
-                    }
-                }
                 let children = node_ref
                     .children()
                     .map(|child| self.bind_expr_node(expr, child, locals))
@@ -698,7 +719,26 @@ impl Binder {
                     ExprIR::Pow => ExprIR::Pow,
                     ExprIR::Modulo => ExprIR::Modulo,
                     ExprIR::Distinct => ExprIR::Distinct,
-                    ExprIR::Property(prop) => ExprIR::Property(prop),
+                    ExprIR::Property(prop) => {
+                        // Property access is not valid on Path types.
+                        if let Some(first_child) = children.first() {
+                            let root = first_child.root();
+                            let inner = if matches!(root.data(), ExprIR::Paren) {
+                                root.get_child(0)
+                            } else {
+                                Some(root)
+                            };
+                            if inner.is_some_and(
+                                |n| matches!(n.data(), ExprIR::Variable(v) if v.ty == Type::Path),
+                            ) {
+                                return Err("Type mismatch: expected Map, Node, Edge, \
+                                             Datetime, Date, Time, Duration, Null, \
+                                             or Point but was Path"
+                                    .to_string());
+                            }
+                        }
+                        ExprIR::Property(prop)
+                    }
                     ExprIR::FuncInvocation(func) => ExprIR::FuncInvocation(func),
                     ExprIR::Paren => ExprIR::Paren,
                     ExprIR::Variable(_)
@@ -848,5 +888,89 @@ impl Binder {
             ));
         }
         Ok(())
+    }
+
+    /// Walks an expression tree and validates that every AND/OR/XOR/NOT node
+    /// has operands that can return boolean.  Produces a "Type mismatch"
+    /// error for non-filter contexts (e.g. RETURN expressions).
+    fn validate_boolean_operands(expr: &QueryExpr<Variable>) -> Result<(), String> {
+        Self::validate_boolean_operands_impl(expr.root())
+    }
+
+    fn validate_boolean_operands_impl(
+        node: orx_tree::Node<orx_tree::Dyn<ExprIR<Variable>>>
+    ) -> Result<(), String> {
+        if matches!(
+            node.data(),
+            ExprIR::And | ExprIR::Or | ExprIR::Xor | ExprIR::Not
+        ) {
+            for child in node.children() {
+                if !Self::expr_may_return_boolean(child) {
+                    return Err(String::from("Type mismatch: expected Boolean"));
+                }
+            }
+        }
+        for child in node.children() {
+            Self::validate_boolean_operands_impl(child)?;
+        }
+        Ok(())
+    }
+
+    /// Recursively determines whether an expression tree node can return a
+    /// boolean value at compile time. For nodes whose type cannot be
+    /// determined statically (variables, parameters, properties), returns
+    /// `true` (deferring to the runtime check).
+    #[allow(clippy::needless_pass_by_value)]
+    fn expr_may_return_boolean(node: orx_tree::Node<orx_tree::Dyn<ExprIR<Variable>>>) -> bool {
+        match node.data() {
+            // Logical operators – result is boolean, but each child must
+            // also return boolean (mirrors the C recursive FilterTree_Valid)
+            ExprIR::Or | ExprIR::And | ExprIR::Xor | ExprIR::Not => {
+                node.children().all(Self::expr_may_return_boolean)
+            }
+
+            // Transparent wrappers – recurse into the single child
+            ExprIR::Paren | ExprIR::Distinct => {
+                node.get_child(0).is_some_and(Self::expr_may_return_boolean)
+            }
+
+            // Function calls – use the registered return type
+            ExprIR::FuncInvocation(func) => func.ret_type.can_return_boolean(),
+
+            // Non-boolean: literals, arithmetic, subscript, list comprehension
+            ExprIR::Integer(_)
+            | ExprIR::Float(_)
+            | ExprIR::String(_)
+            | ExprIR::List
+            | ExprIR::Map
+            | ExprIR::Negate
+            | ExprIR::Add
+            | ExprIR::Sub
+            | ExprIR::Mul
+            | ExprIR::Div
+            | ExprIR::Pow
+            | ExprIR::Modulo
+            | ExprIR::Length
+            | ExprIR::GetElement
+            | ExprIR::GetElements
+            | ExprIR::ListComprehension(_) => false,
+
+            // Boolean literals, comparisons, predicates, and runtime-typed nodes
+            ExprIR::Bool(_)
+            | ExprIR::Null
+            | ExprIR::Eq
+            | ExprIR::Neq
+            | ExprIR::Lt
+            | ExprIR::Gt
+            | ExprIR::Le
+            | ExprIR::Ge
+            | ExprIR::In
+            | ExprIR::IsNode
+            | ExprIR::IsRelationship
+            | ExprIR::Quantifier(_, _)
+            | ExprIR::Variable(_)
+            | ExprIR::Parameter(_)
+            | ExprIR::Property(_) => true,
+        }
     }
 }

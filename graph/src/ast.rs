@@ -861,7 +861,8 @@ impl<TVar: Eq + Hash> QueryIR<TVar> {
                 }
                 Ok(())
             }
-            Self::Match { .. } => {
+            Self::Match { pattern, .. } => {
+                Self::validate_inlined_properties(pattern)?;
                 iter.next().map_or_else(|| Err(String::from(
                         "Query cannot conclude with MATCH (must be a RETURN clause, an update clause, a procedure call or a non-returning subquery)",
                     )), |first| first.inner_validate(iter))
@@ -872,6 +873,7 @@ impl<TVar: Eq + Hash> QueryIR<TVar> {
                     )), |first| first.inner_validate(iter))
             }
             Self::Merge(p, on_create_set_items, on_match_set_items) => {
+                Self::validate_inlined_properties(p)?;
                 for relationship in &p.relationships {
                     if relationship.types.len() != 1 {
                         return Err(String::from(
@@ -885,6 +887,7 @@ impl<TVar: Eq + Hash> QueryIR<TVar> {
                     .map_or(Ok(()), |first| first.inner_validate(iter))
             }
             Self::Create(p) => {
+                Self::validate_inlined_properties(p)?;
                 for relationship in &p.relationships {
                     if relationship.types.len() != 1 {
                         return Err(String::from(
@@ -947,6 +950,28 @@ impl<TVar: Eq + Hash> QueryIR<TVar> {
                         "FalkorDB does not currently support non-alias references on the left-hand side of SET expressions",
                     ));
                 }
+            }
+        }
+        Ok(())
+    }
+
+    /// Validates that inlined properties in node/relationship patterns are maps.
+    /// Mirrors `_ValidateInlinedProperties` in the C `ast_validations.c`.
+    fn validate_inlined_properties(
+        p: &QueryGraph<Arc<String>, Arc<String>, TVar>
+    ) -> Result<(), String> {
+        for node in &p.nodes {
+            if !matches!(node.attrs.root().data(), ExprIR::Map) {
+                return Err(String::from(
+                    "Encountered unhandled type in inlined properties.",
+                ));
+            }
+        }
+        for rel in &p.relationships {
+            if !matches!(rel.attrs.root().data(), ExprIR::Map) {
+                return Err(String::from(
+                    "Encountered unhandled type in inlined properties.",
+                ));
             }
         }
         Ok(())

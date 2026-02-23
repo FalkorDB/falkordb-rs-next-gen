@@ -6,13 +6,30 @@
 
 ## Developer Guide
 
-### Build
+### Quick Start with Dev Container (Recommended)
+
+The easiest way to get started is using the development container, which includes all dependencies pre-installed:
+
+1. Install [Docker](https://docs.docker.com/get-docker/) and [VS Code](https://code.visualstudio.com/)
+2. Install the [Dev Containers extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers)
+3. Open this project in VS Code
+4. Click "Reopen in Container" when prompted (or press F1 and select "Dev Containers: Reopen in Container")
+5. Wait for the container to build (first time takes ~10-15 minutes)
+6. Start developing! All dependencies are ready to use.
+
+See [.devcontainer/README.md](.devcontainer/README.md) for more details.
+
+### Manual Setup
+
+If you prefer to set up the environment manually:
+
+#### Build
 
 ```
 cargo build
 ```
 
-### Dependencies:
+#### Dependencies:
 
 GraphBLAS & RediSearch must be built and installed before building this project.
 
