@@ -280,5 +280,9 @@ impl AttributeStore {
     }
 }
 
+// SAFETY: AttributeStore wraps fjall Database/Keyspace/Snapshot, all of which are
+// designed for concurrent access. The attrs_name OrderSet is only mutated during
+// write transactions (which are serialized by MvccGraph). Each reader gets its own
+// snapshot, so there is no shared mutable state across threads.
 unsafe impl Send for AttributeStore {}
 unsafe impl Sync for AttributeStore {}

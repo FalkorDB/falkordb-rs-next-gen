@@ -313,6 +313,10 @@ pub struct Functions {
     functions: HashMap<String, Arc<GraphFn>>,
 }
 
+// SAFETY: Functions contains a HashMap<String, Arc<GraphFn>> that is initialized once
+// at startup (init_functions) and never mutated afterward. All access is read-only
+// through Arc, making it safe to share across threads. The GraphFn function pointers
+// inside are stateless and thread-safe.
 #[allow(clippy::non_send_fields_in_send_ty)]
 unsafe impl Send for Functions {}
 unsafe impl Sync for Functions {}

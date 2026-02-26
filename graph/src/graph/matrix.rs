@@ -200,7 +200,11 @@ impl MaskedElementWiseAdd for Matrix {
                 b.map_or(*self.m, |b| *b.m),
                 descriptor.map_or(null_mut(), std::convert::Into::into),
             );
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(
+                info,
+                GrB_Info::GrB_SUCCESS,
+                "GrB_Matrix_eWiseAdd_Semiring failed"
+            );
         }
     }
 }
@@ -307,7 +311,11 @@ impl MaskedElementWiseMultiply for Matrix {
                 b.map_or(*self.m, |b| *b.m),
                 descriptor.map_or(null_mut(), std::convert::Into::into),
             );
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(
+                info,
+                GrB_Info::GrB_SUCCESS,
+                "GrB_Matrix_eWiseMult_Semiring failed"
+            );
         }
     }
 }
@@ -343,7 +351,7 @@ impl MxM for Matrix {
                 *b.m,
                 null_mut(),
             );
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(info, GrB_Info::GrB_SUCCESS, "GrB_mxm failed");
         }
     }
 
@@ -361,7 +369,7 @@ impl MxM for Matrix {
                 *self.m,
                 null_mut(),
             );
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(info, GrB_Info::GrB_SUCCESS, "GrB_mxm failed");
         }
     }
 }
@@ -374,6 +382,10 @@ pub struct Matrix {
     lock: Arc<Mutex<()>>,
 }
 
+// SAFETY: Matrix wraps a GraphBLAS GrB_Matrix behind Arc (shared ownership) and
+// Arc<Mutex> (for wait synchronization). GraphBLAS operations on distinct matrix
+// objects are thread-safe. The Arc ensures the underlying C matrix is not freed while
+// references exist, and the Mutex serializes materialization (wait) operations.
 unsafe impl Send for Matrix {}
 unsafe impl Sync for Matrix {}
 
@@ -382,7 +394,7 @@ impl Drop for Matrix {
         if let Some(m) = Arc::get_mut(&mut self.m) {
             unsafe {
                 let info = GrB_Matrix_free(m);
-                debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+                assert_eq!(info, GrB_Info::GrB_SUCCESS, "GrB_Matrix_free failed");
             }
         }
     }
@@ -398,16 +410,19 @@ impl Matrix {
                 pending.as_mut_ptr(),
                 GxB_Option_Field::GxB_WILL_WAIT as _,
             );
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(info, GrB_Info::GrB_SUCCESS, "GrB_Matrix_get_INT32 failed");
             pending.assume_init() == 1
         }
     }
 
     pub fn wait(&self) {
+        // Intentional unwrap: a poisoned Mutex means a prior panic occurred during
+        // matrix materialization, leaving GraphBLAS state potentially corrupt.
+        // Propagating the panic is correct.
         let lock = self.lock.lock().unwrap();
         unsafe {
             let info = GrB_Matrix_wait(*self.m, GrB_WaitMode::GrB_MATERIALIZE as _);
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(info, GrB_Info::GrB_SUCCESS, "GrB_Matrix_wait failed");
         }
         drop(lock);
     }
@@ -417,7 +432,7 @@ impl Matrix {
         unsafe {
             let mut usage = 0usize;
             let info = GxB_Matrix_memoryUsage(&raw mut usage, *self.m);
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(info, GrB_Info::GrB_SUCCESS, "GxB_Matrix_memoryUsage failed");
             usage
         }
     }
@@ -425,7 +440,7 @@ impl Matrix {
     pub fn clear(&mut self) {
         unsafe {
             let info = GrB_Matrix_clear(*self.m);
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(info, GrB_Info::GrB_SUCCESS, "GrB_Matrix_clear failed");
         }
     }
 
@@ -435,7 +450,7 @@ impl Matrix {
     ) {
         unsafe {
             let info = GrB_transpose(*self.m, *b.m, null_mut(), *self.m, GrB_DESC_RCT0);
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(info, GrB_Info::GrB_SUCCESS, "GrB_transpose failed");
         }
     }
 }
@@ -445,7 +460,7 @@ impl Size for Matrix {
         unsafe {
             let mut nrows = 0u64;
             let info = GrB_Matrix_nrows(&raw mut nrows, *self.m);
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(info, GrB_Info::GrB_SUCCESS, "GrB_Matrix_nrows failed");
             nrows
         }
     }
@@ -454,7 +469,7 @@ impl Size for Matrix {
         unsafe {
             let mut ncols = 0u64;
             let info = GrB_Matrix_ncols(&raw mut ncols, *self.m);
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(info, GrB_Info::GrB_SUCCESS, "GrB_Matrix_ncols failed");
             ncols
         }
     }
@@ -466,7 +481,7 @@ impl Size for Matrix {
     ) {
         unsafe {
             let info = GrB_Matrix_resize(*self.m, nrows, ncols);
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(info, GrB_Info::GrB_SUCCESS, "GrB_Matrix_resize failed");
         }
     }
 
@@ -474,7 +489,7 @@ impl Size for Matrix {
         unsafe {
             let mut nvals = 0u64;
             let info = GrB_Matrix_nvals(&raw mut nvals, *self.m);
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(info, GrB_Info::GrB_SUCCESS, "GrB_Matrix_nvals failed");
             nvals
         }
     }
@@ -495,7 +510,7 @@ impl New for Matrix {
         unsafe {
             let mut m: MaybeUninit<GrB_Matrix> = MaybeUninit::uninit();
             let info = GrB_Matrix_new(m.as_mut_ptr(), GrB_BOOL, nrows, ncols);
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(info, GrB_Info::GrB_SUCCESS, "GrB_Matrix_new failed");
             Self {
                 m: Arc::new(m.assume_init()),
                 lock: Arc::new(Mutex::new(())),
@@ -514,7 +529,7 @@ impl Dup<Self> for Matrix {
             m: Arc::new(unsafe {
                 let mut m: MaybeUninit<GrB_Matrix> = MaybeUninit::uninit();
                 let info = GrB_Matrix_dup(m.as_mut_ptr(), *self.m);
-                debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+                assert_eq!(info, GrB_Info::GrB_SUCCESS, "GrB_Matrix_dup failed");
                 m.assume_init()
             }),
             lock: Arc::new(Mutex::new(())),
@@ -539,7 +554,7 @@ impl Matrix {
     ) {
         unsafe {
             let info = GxB_Matrix_fprint(*self.m, null_mut(), level as _, null_mut());
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(info, GrB_Info::GrB_SUCCESS, "GxB_Matrix_fprint failed");
         }
     }
 }
@@ -552,7 +567,11 @@ impl Remove for Matrix {
     ) {
         unsafe {
             let info = GrB_Matrix_removeElement(*self.m, i, j);
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(
+                info,
+                GrB_Info::GrB_SUCCESS,
+                "GrB_Matrix_removeElement failed"
+            );
         }
     }
 }
@@ -594,7 +613,11 @@ impl Set for Matrix {
     ) {
         unsafe {
             let info = GrB_Matrix_setElement_BOOL(*self.m, value, i, j);
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(
+                info,
+                GrB_Info::GrB_SUCCESS,
+                "GrB_Matrix_setElement_BOOL failed"
+            );
         }
     }
 }
@@ -611,7 +634,7 @@ where
         let transpose = Self::new(self.ncols(), self.nrows());
         unsafe {
             let info = GrB_transpose(*transpose.m, null_mut(), null_mut(), *self.m, null_mut());
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(info, GrB_Info::GrB_SUCCESS, "GrB_transpose failed");
         }
         transpose
     }
@@ -627,6 +650,10 @@ pub struct Iter {
     max_row: u64,
 }
 
+// SAFETY: Iter holds an Arc<GrB_Matrix> (preventing premature free) and a GxB_Iterator
+// which is bound to that matrix. The iterator is used single-threaded (Iterator trait
+// requires &mut self), and the Arc ensures the matrix outlives the iterator. GraphBLAS
+// iterators are safe to move between threads when not concurrently accessed.
 unsafe impl Send for Iter {}
 unsafe impl Sync for Iter {}
 
@@ -636,7 +663,7 @@ impl Drop for Iter {
         unsafe {
             if let Some(m) = Arc::get_mut(&mut self.m) {
                 let info = GrB_Matrix_free(m);
-                debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+                assert_eq!(info, GrB_Info::GrB_SUCCESS, "GrB_Matrix_free failed");
             }
             GxB_Iterator_free(&raw mut self.inner);
         }
@@ -659,15 +686,16 @@ impl Iter {
         unsafe {
             let mut iter = MaybeUninit::uninit();
             let info = GxB_Iterator_new(iter.as_mut_ptr());
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(info, GrB_Info::GrB_SUCCESS, "GxB_Iterator_new failed");
             let iter = iter.assume_init();
             let info = GxB_rowIterator_attach(iter, *m.m, null_mut());
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(info, GrB_Info::GrB_SUCCESS, "GxB_rowIterator_attach failed");
             let mut info = GxB_rowIterator_seekRow(iter, min_row);
-            debug_assert!(
+            assert!(
                 info == GrB_Info::GrB_SUCCESS
                     || info == GrB_Info::GrB_NO_VALUE
-                    || info == GrB_Info::GxB_EXHAUSTED
+                    || info == GrB_Info::GxB_EXHAUSTED,
+                "GxB_rowIterator_seekRow failed"
             );
             while info == GrB_Info::GrB_NO_VALUE && GxB_rowIterator_getRowIndex(iter) < max_row {
                 info = GxB_rowIterator_nextRow(iter);
@@ -700,10 +728,11 @@ impl Iterator for Iter {
             let col = GxB_rowIterator_getColIndex(self.inner);
             if GxB_rowIterator_nextCol(self.inner) != GrB_Info::GrB_SUCCESS {
                 let mut info = GxB_rowIterator_nextRow(self.inner);
-                debug_assert!(
+                assert!(
                     info == GrB_Info::GrB_SUCCESS
                         || info == GrB_Info::GrB_NO_VALUE
-                        || info == GrB_Info::GxB_EXHAUSTED
+                        || info == GrB_Info::GxB_EXHAUSTED,
+                    "GxB_rowIterator_nextRow failed"
                 );
                 while info == GrB_Info::GrB_NO_VALUE
                     && GxB_rowIterator_getRowIndex(self.inner) < self.max_row

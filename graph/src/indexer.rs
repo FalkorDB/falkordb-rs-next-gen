@@ -104,7 +104,7 @@ impl Document {
                     1.0,
                     null_mut(),
                 );
-                debug_assert!(!doc.is_null(), "Failed to create RediSearch document");
+                assert!(!doc.is_null(), "Failed to create RediSearch document");
                 doc
             },
         }
@@ -262,9 +262,17 @@ pub struct Indexer {
     index: Arc<RwLock<HashMap<Arc<String>, Index>>>,
 }
 
+// SAFETY: Indexer's only field is Arc<RwLock<HashMap<..., Index>>>, which is Send+Sync.
+// The RwLock protects all access to the inner Index structs. The raw *mut RSIndex
+// pointers inside Index are only accessed while holding the RwLock, and RediSearch's
+// C API is thread-safe when properly serialized through external locking.
 unsafe impl Send for Indexer {}
 unsafe impl Sync for Indexer {}
 
+// Note: All .read().unwrap() and .write().unwrap() calls on self.index in this impl
+// are intentional. A poisoned RwLock means a prior panic occurred while holding the
+// lock during a critical index operation, leaving index state potentially corrupt.
+// Propagating the panic is the correct response rather than silently using bad state.
 impl Indexer {
     #[must_use]
     pub fn has_indices(&self) -> bool {
@@ -299,7 +307,8 @@ impl Indexer {
                     IndexType::Point => Arc::new(format!("point:{attr}")),
                 };
                 let field = Arc::new(Field {
-                    name: CString::new(field_name.as_str()).unwrap(),
+                    name: CString::new(field_name.as_str())
+                        .map_err(|e| format!("invalid field name for CString: {e}"))?,
                     ty: index_type.clone(),
                 });
                 f.push(field);
@@ -311,7 +320,8 @@ impl Indexer {
                     IndexType::Point => Arc::new(format!("point:{attr}")),
                 };
                 let field = Arc::new(Field {
-                    name: CString::new(field_name.as_str()).unwrap(),
+                    name: CString::new(field_name.as_str())
+                        .map_err(|e| format!("invalid field name for CString: {e}"))?,
                     ty: index_type.clone(),
                 });
                 a.fields.insert(attr.clone(), vec![field]);
@@ -325,7 +335,8 @@ impl Indexer {
             RediSearch_IndexOptionsSetGCPolicy(options, GC_POLICY_FORK as _);
             RediSearch_IndexOptionsSetStopwords(options, null_mut(), 0);
 
-            let clabel = CString::new(label.as_str()).unwrap();
+            let clabel = CString::new(label.as_str())
+                .map_err(|e| format!("invalid label for CString: {e}"))?;
             let index = RediSearch_CreateIndex(clabel.as_ptr().cast::<c_char>(), options);
             RediSearch_FreeIndexOptions(options);
 
@@ -476,7 +487,8 @@ impl Indexer {
                 IndexQuery::Equal(key, Value::String(value)) => unsafe {
                     let field = &index.fields.get(&key).unwrap()[0];
                     let query = RediSearch_CreateTagNode(index.rs_idx, field.name.as_ptr());
-                    let msg = CString::new(value.as_str()).unwrap();
+                    let msg = CString::new(value.replace('\0', ""))
+                        .expect("CString::new failed after removing null bytes");
                     let child =
                         RediSearch_CreateTagTokenNode(index.rs_idx, msg.as_ptr().cast::<c_char>());
                     RediSearch_QueryNodeAddChild(query, child);
@@ -572,7 +584,7 @@ impl Indexer {
         let mut index = self.index.write().unwrap();
         if let Some(index) = index.get_mut(&label) {
             let res = index.pending_changes.fetch_sub(1, Ordering::SeqCst);
-            debug_assert!(res > 0);
+            assert!(res > 0, "pending_changes underflow");
             return res == 1;
         }
         false
@@ -628,7 +640,7 @@ impl Indexer {
                         REDISEARCH_ADD_REPLACE as c_int,
                         null_mut(),
                     );
-                    debug_assert_eq!(res, 0);
+                    assert_eq!(res, 0, "Failed to add document to RediSearch index");
                 }
             }
             index.status = IndexStatus::Operational;

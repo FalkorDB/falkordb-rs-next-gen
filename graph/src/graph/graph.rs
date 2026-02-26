@@ -218,10 +218,18 @@ pub struct Graph {
 /// Wrapper for plan trees to implement Send+Sync.
 struct PlanTree(DynTree<IR>);
 
+// SAFETY: PlanTree wraps DynTree<IR> which contains Arc<String> and other Send types.
+// Plan trees are immutable after construction and shared via Arc across threads.
+// The IR nodes contain no raw pointers or interior mutability.
 #[allow(clippy::non_send_fields_in_send_ty)]
 unsafe impl Send for PlanTree {}
 unsafe impl Sync for PlanTree {}
 
+// SAFETY: Graph is accessed through MvccGraph which enforces single-writer/multi-reader
+// semantics via AtomicRefCell and an atomic write lock. All GraphBLAS FFI operations
+// (matrices, tensors) operate on distinct objects per Graph instance, and GraphBLAS is
+// thread-safe for operations on distinct matrix objects. The Arc<Mutex<LruCache>> cache
+// is internally synchronized. AttributeStore uses fjall's thread-safe keyspace.
 unsafe impl Send for Graph {}
 unsafe impl Sync for Graph {}
 

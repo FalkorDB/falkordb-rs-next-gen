@@ -169,6 +169,11 @@ struct ThreadedGraph {
     write_loop: AtomicBool,
 }
 
+// SAFETY: ThreadedGraph is sent between Redis main thread and the query thread pool.
+// All fields are thread-safe: MvccGraph uses atomic operations and Arc<AtomicRefCell>
+// for synchronization, the mpsc channel (Sender/Receiver) is designed for cross-thread
+// use, and AtomicBool is inherently thread-safe. The GraphBLAS C library's matrix
+// operations are documented as thread-safe for distinct matrix objects.
 unsafe impl Send for ThreadedGraph {}
 unsafe impl Sync for ThreadedGraph {}
 
@@ -275,6 +280,8 @@ impl ThreadedGraph {
             .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
             .collect::<Result<HashMap<_, _>, String>>()?;
         debug_assert!(plan.iter().any(|n| matches!(n, IR::Commit)));
+        // Intentional unwrap: a poisoned lock means a prior write panicked mid-transaction,
+        // leaving graph state corrupt. Propagating the panic is the correct response.
         let g = self.graph.write().unwrap();
         let mut runtime = Runtime::new(
             g.clone(),
@@ -826,6 +833,10 @@ pub struct BlockedClient {
     pub inner: *mut raw::RedisModuleBlockedClient,
 }
 
+// SAFETY: The inner *mut RedisModuleBlockedClient pointer is only accessed through
+// Redis module thread-safe APIs (RedisModule_GetThreadSafeContext, RedisModule_UnblockClient).
+// Each BlockedClient is created on the main thread and consumed exactly once on the
+// worker thread, so there is no concurrent mutable access to the pointer itself.
 unsafe impl Send for BlockedClient {}
 unsafe impl Sync for BlockedClient {}
 
@@ -872,6 +883,7 @@ fn query_mut(
             }
             let g = graph.clone();
             let graph = graph.clone();
+            // Intentional unwrap: a poisoned RwLock means a prior panic corrupted state.
             let graph = graph.read().unwrap();
             let bc = bc;
             let ctx = unsafe { raw::RedisModule_GetThreadSafeContext.unwrap()(bc.inner) };
@@ -881,7 +893,10 @@ fn query_mut(
             match res {
                 Ok(is_write) => {
                     if is_write {
-                        graph.sender.send((bc, query, compact)).unwrap();
+                        graph
+                            .sender
+                            .send((bc, query, compact))
+                            .expect("write query channel closed — receiver dropped unexpectedly");
                         drop(graph);
                         process_write_queued_query(&g);
                     } else {
@@ -890,7 +905,8 @@ fn query_mut(
                     }
                 }
                 Err(err) => {
-                    let cerr = CString::new(err).unwrap();
+                    let cerr = CString::new(err.replace('\0', ""))
+                        .expect("CString::new failed after removing null bytes");
                     raw::reply_with_error(ctx.ctx, cerr.as_ptr().cast::<c_char>());
                     drop(bc);
                     unsafe { raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx) };
@@ -925,12 +941,14 @@ fn query_mut(
 /// This ensures proper synchronization: Acquire prevents reordering of subsequent
 /// reads, while Relaxed is sufficient for the failure case since we just retry.
 fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
+    // Intentional unwrap: a poisoned RwLock means a prior panic corrupted state.
     let g = graph.read().unwrap();
     if g.write_loop
         .compare_exchange(false, true, Ordering::Acquire, Ordering::Acquire)
         .is_ok()
     {
         drop(g);
+        // Intentional unwrap: a poisoned RwLock means a prior panic corrupted state.
         let mut graph = graph.write().unwrap();
         while let Ok((bc, query, compact)) = { graph.receiver.try_recv() } {
             let ctx = unsafe { raw::RedisModule_GetThreadSafeContext.unwrap()(bc.inner) };
@@ -943,7 +961,8 @@ fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
                     graph.graph.commit(g);
                 }
                 Err(err) => {
-                    let cerr = CString::new(err).unwrap();
+                    let cerr = CString::new(err.replace('\0', ""))
+                        .expect("CString::new failed after removing null bytes");
                     raw::reply_with_error(ctx.ctx, cerr.as_ptr().cast::<c_char>());
                     drop(bc);
                     unsafe { raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx) };
@@ -1128,6 +1147,7 @@ fn record_mut(
     // Create a child span for parsing and execution
     let Plan {
         plan, parameters, ..
+    // Intentional unwrap on read(): a poisoned RwLock means a prior panic corrupted state.
     } = graph
         .read()
         .unwrap()
@@ -1142,6 +1162,7 @@ fn record_mut(
         .collect::<Result<HashMap<_, _>, String>>()
         .map_err(RedisError::String)?;
     let mut runtime = Runtime::new(
+        // Intentional unwrap: a poisoned RwLock means a prior panic corrupted state.
         graph.read().unwrap().graph.read(),
         parameters,
         true,
@@ -1408,6 +1429,7 @@ fn graph_explain(
         // If the key does not exist, we return an error
         EMPTY_KEY_ERR,
         |graph| {
+            // Intentional unwrap: a poisoned RwLock means a prior panic corrupted state.
             let Plan { plan, .. } = graph
                 .read()
                 .unwrap()
@@ -1446,6 +1468,7 @@ fn graph_memory(
         .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)?
         .expect("Graph does not exist");
 
+    // Intentional unwrap: a poisoned RwLock means a prior panic corrupted state.
     Ok(RedisValue::Integer(
         g.read().unwrap().graph.read().borrow().memory_usage() as i64,
     ))
@@ -1506,7 +1529,10 @@ fn graph_init(
             RedisModuleEvent_FlushDB,
             Some(on_flush),
         );
-        debug_assert_eq!(res, REDISMODULE_OK as c_int);
+        assert_eq!(
+            res, REDISMODULE_OK as c_int,
+            "RedisModule_SubscribeToServerEvent failed"
+        );
     }
     match init_functions() {
         Ok(()) => Status::Ok,

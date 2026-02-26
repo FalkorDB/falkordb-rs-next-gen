@@ -36,7 +36,7 @@ impl<T> Drop for Vector<T> {
     fn drop(&mut self) {
         unsafe {
             let info = GrB_Vector_free(addr_of_mut!(self.v));
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(info, GrB_Info::GrB_SUCCESS, "GrB_Vector_free failed");
         }
     }
 }
@@ -55,7 +55,7 @@ impl Vector<bool> {
         unsafe {
             let mut v: MaybeUninit<GrB_Vector> = MaybeUninit::uninit();
             let info = GrB_Vector_new(v.as_mut_ptr(), GrB_BOOL, nrows);
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(info, GrB_Info::GrB_SUCCESS, "GrB_Vector_new failed");
             Self {
                 v: v.assume_init(),
                 phantom: PhantomData,
@@ -70,14 +70,18 @@ impl Vector<bool> {
     ) {
         unsafe {
             let info = GrB_Vector_setElement_BOOL(self.v, value, i);
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(
+                info,
+                GrB_Info::GrB_SUCCESS,
+                "GrB_Vector_setElement_BOOL failed"
+            );
         }
     }
 
     pub fn wait(&mut self) {
         unsafe {
             let info = GrB_Vector_wait(self.v, GrB_WaitMode::GrB_MATERIALIZE as _);
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(info, GrB_Info::GrB_SUCCESS, "GrB_Vector_wait failed");
         }
     }
 
@@ -122,7 +126,7 @@ impl Size<bool> for Vector<bool> {
         unsafe {
             let mut size: u64 = 0;
             let info = GrB_Vector_size(&raw mut size, self.v);
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(info, GrB_Info::GrB_SUCCESS, "GrB_Vector_size failed");
             size
         }
     }
@@ -134,7 +138,7 @@ impl Size<bool> for Vector<bool> {
     ) {
         unsafe {
             let info = GrB_Vector_resize(self.v, nrows);
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(info, GrB_Info::GrB_SUCCESS, "GrB_Vector_resize failed");
         }
     }
 }
@@ -147,7 +151,11 @@ impl Set<bool> for Vector<bool> {
     ) {
         unsafe {
             let info = GrB_Vector_setElement_BOOL(self.v, value, i);
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(
+                info,
+                GrB_Info::GrB_SUCCESS,
+                "GrB_Vector_setElement_BOOL failed"
+            );
         }
     }
 }
@@ -159,7 +167,11 @@ impl Remove<bool> for Vector<bool> {
     ) {
         unsafe {
             let info = GrB_Vector_removeElement(self.v, i);
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(
+                info,
+                GrB_Info::GrB_SUCCESS,
+                "GrB_Vector_removeElement failed"
+            );
         }
     }
 }
@@ -174,7 +186,7 @@ impl<T> Drop for Iter<T> {
     fn drop(&mut self) {
         unsafe {
             let info = GxB_Iterator_free(addr_of_mut!(self.inner));
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(info, GrB_Info::GrB_SUCCESS, "GxB_Iterator_free failed");
         }
     }
 }
@@ -185,10 +197,14 @@ impl<T> Iter<T> {
         unsafe {
             let mut iter = MaybeUninit::uninit();
             let info = GxB_Iterator_new(iter.as_mut_ptr());
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(info, GrB_Info::GrB_SUCCESS, "GxB_Iterator_new failed");
             let iter = iter.assume_init();
             let info = GxB_Vector_Iterator_attach(iter, v.v, null_mut());
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            assert_eq!(
+                info,
+                GrB_Info::GrB_SUCCESS,
+                "GxB_Vector_Iterator_attach failed"
+            );
             let info = GxB_Vector_Iterator_seek(iter, 0);
             Self {
                 inner: iter,

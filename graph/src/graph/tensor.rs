@@ -64,7 +64,10 @@ impl Tensor {
         src: u64,
         dest: u64,
     ) -> versioned_matrix::Iter {
-        debug_assert!(u32::try_from(src).is_ok() && u32::try_from(dest).is_ok());
+        assert!(
+            u32::try_from(src).is_ok() && u32::try_from(dest).is_ok(),
+            "tensor key overflow: src={src}, dest={dest} must fit in u32"
+        );
         let row = src << 32 | dest;
         self.me.iter(row, row)
     }
@@ -75,6 +78,10 @@ impl Tensor {
         dest: u64,
         id: u64,
     ) {
+        assert!(
+            u32::try_from(src).is_ok() && u32::try_from(dest).is_ok(),
+            "tensor key overflow: src={src}, dest={dest} must fit in u32"
+        );
         self.m.set(src, dest, true);
         self.mt.set(dest, src, true);
         self.me.set(src << 32 | dest, id, true);
@@ -85,9 +92,17 @@ impl Tensor {
         rels: Vec<(u64, u64, u64)>,
     ) {
         for (id, src, dest) in &rels {
+            assert!(
+                u32::try_from(*src).is_ok() && u32::try_from(*dest).is_ok(),
+                "tensor key overflow: src={src}, dest={dest} must fit in u32"
+            );
             self.me.remove(src << 32 | dest, *id);
         }
         for (_, src, dest) in rels {
+            assert!(
+                u32::try_from(src).is_ok() && u32::try_from(dest).is_ok(),
+                "tensor key overflow: src={src}, dest={dest} must fit in u32"
+            );
             if self
                 .me
                 .iter(src << 32 | dest, src << 32 | dest)
@@ -145,6 +160,30 @@ impl Tensor {
     }
 }
 
+/// Encode a (src, dest) pair into a compound key for the edge matrix.
+///
+/// The key packs two u32-range values into a single u64: `src << 32 | dest`.
+/// Both `src` and `dest` must fit in u32; this function panics otherwise.
+#[inline]
+fn encode_key(
+    src: u64,
+    dest: u64,
+) -> u64 {
+    assert!(
+        u32::try_from(src).is_ok() && u32::try_from(dest).is_ok(),
+        "tensor key overflow: src={src}, dest={dest} must fit in u32"
+    );
+    src << 32 | dest
+}
+
+/// Decode a compound key back into (src, dest).
+#[inline]
+fn decode_key(key: u64) -> (u64, u64) {
+    let src = key >> 32;
+    let dest = key & 0xFFFF_FFFF;
+    (src, dest)
+}
+
 pub struct Iter<'a> {
     t: &'a Tensor,
     mit: versioned_matrix::Iter,
@@ -195,11 +234,96 @@ impl Iterator for Iter<'_> {
                 self.src = src;
                 self.dest = dest;
             }
+            assert!(
+                u32::try_from(self.src).is_ok() && u32::try_from(self.dest).is_ok(),
+                "tensor key overflow: src={}, dest={} must fit in u32",
+                self.src,
+                self.dest
+            );
             let row = self.src << 32 | self.dest;
             self.vit = Some(self.t.me.iter(row, row));
             return self.next();
         }
 
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ========================================================================
+    // Key Encoding Roundtrip Tests
+    // ========================================================================
+
+    #[test]
+    fn test_key_roundtrip_zero_zero() {
+        let key = encode_key(0, 0);
+        assert_eq!(decode_key(key), (0, 0));
+    }
+
+    #[test]
+    fn test_key_roundtrip_zero_one() {
+        let key = encode_key(0, 1);
+        assert_eq!(decode_key(key), (0, 1));
+    }
+
+    #[test]
+    fn test_key_roundtrip_one_zero() {
+        let key = encode_key(1, 0);
+        assert_eq!(decode_key(key), (1, 0));
+    }
+
+    #[test]
+    fn test_key_roundtrip_u32_max() {
+        let max = u32::MAX as u64;
+        let key = encode_key(max, max);
+        assert_eq!(decode_key(key), (max, max));
+    }
+
+    #[test]
+    fn test_key_roundtrip_asymmetric() {
+        // Verify encoding is not symmetric: (1, 2) != (2, 1)
+        let key_a = encode_key(1, 2);
+        let key_b = encode_key(2, 1);
+        assert_ne!(key_a, key_b);
+        assert_eq!(decode_key(key_a), (1, 2));
+        assert_eq!(decode_key(key_b), (2, 1));
+    }
+
+    #[test]
+    fn test_key_roundtrip_mixed_boundary() {
+        let max = u32::MAX as u64;
+        let key = encode_key(0, max);
+        assert_eq!(decode_key(key), (0, max));
+
+        let key = encode_key(max, 0);
+        assert_eq!(decode_key(key), (max, 0));
+    }
+
+    // ========================================================================
+    // Overflow / Panic Tests
+    // ========================================================================
+
+    #[test]
+    #[should_panic(expected = "tensor key overflow")]
+    fn test_key_encode_panics_src_overflow() {
+        let overflow = u32::MAX as u64 + 1;
+        encode_key(overflow, 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "tensor key overflow")]
+    fn test_key_encode_panics_dest_overflow() {
+        let overflow = u32::MAX as u64 + 1;
+        encode_key(0, overflow);
+    }
+
+    #[test]
+    #[should_panic(expected = "tensor key overflow")]
+    fn test_key_encode_panics_both_overflow() {
+        let overflow = u32::MAX as u64 + 1;
+        encode_key(overflow, overflow);
     }
 }

@@ -35,6 +35,10 @@ struct ThreadPool {
     sender: Vec<Tx<List<Job>>>,
 }
 
+// SAFETY: ThreadPool is stored in a global OnceCell and accessed from any thread.
+// The workers Vec<JoinHandle> is only read after initialization (never mutated).
+// The sender Vec<Tx> uses crossfire's lock-free SPSC channels which are thread-safe
+// for sending from multiple threads (each send targets a specific index).
 unsafe impl Sync for ThreadPool {}
 
 impl ThreadPool {
@@ -62,7 +66,9 @@ impl ThreadPool {
         F: FnOnce() + Send + 'static,
     {
         let idx = idx.unwrap_or_else(|| rand::random::<u32>() as usize) % self.workers.len();
-        self.sender[idx].send(Box::new(job)).unwrap();
+        self.sender[idx]
+            .send(Box::new(job))
+            .expect("thread pool worker channel closed — worker thread terminated unexpectedly");
     }
 }
 

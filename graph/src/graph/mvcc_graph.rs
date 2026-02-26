@@ -45,6 +45,10 @@ pub struct MvccGraph {
     write: AtomicBool,
 }
 
+// SAFETY: MvccGraph's fields are Arc<AtomicRefCell<Graph>> and AtomicBool, both of which
+// are thread-safe. The AtomicBool serializes write acquisition, and AtomicRefCell
+// provides runtime borrow checking. Readers clone the Arc (lock-free), while writers
+// create a new Graph version that is only visible after atomic commit.
 unsafe impl Send for MvccGraph {}
 unsafe impl Sync for MvccGraph {}
 
