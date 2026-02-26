@@ -40,6 +40,10 @@ pub struct VersionedMatrix {
     dm: Cow<Matrix>,
 }
 
+// SAFETY: VersionedMatrix contains three Cow<Matrix> fields (base, delta-plus, delta-minus).
+// Each Cow<Matrix> wraps a Matrix which is Send+Sync (see matrix.rs). The MVCC protocol
+// ensures that only one writer modifies a VersionedMatrix at a time, while readers
+// operate on separate snapshot copies created via dup().
 unsafe impl Send for VersionedMatrix {}
 unsafe impl Sync for VersionedMatrix {}
 
@@ -239,6 +243,9 @@ pub struct Iter {
     dm: Cow<Matrix>,
 }
 
+// SAFETY: Iter holds matrix::Iter instances (which are Send+Sync, see matrix.rs) and a
+// Cow<Matrix> for the delta-minus mask. All are safe to move between threads.
+// The iterator is consumed single-threaded via Iterator trait (&mut self).
 unsafe impl Send for Iter {}
 unsafe impl Sync for Iter {}
 
