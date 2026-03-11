@@ -24,3 +24,4 @@ tests/flow/test_unwind_clause
 tests/flow/test_value_comparisons
 tests/flow/test_with_clause
 tests/flow/test_index_create
+tests/flow/test_intern_string
