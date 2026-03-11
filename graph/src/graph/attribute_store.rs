@@ -84,7 +84,7 @@ fn release_interned_refs(value: &Value) {
 fn acquire_interned_refs(value: &Value) {
     match value {
         Value::InternedString(s) => {
-            get_object_pool().acquire(s);
+            let _ = get_object_pool().acquire(s);
         }
         Value::List(items) => {
             for item in items.iter() {
@@ -135,13 +135,14 @@ impl AttributeStore {
         &mut self,
         key: u64,
     ) -> Result<(), String> {
-        // Release interned string refs before removing
+        // Collect values to release after successful commit
         let prefix = key.to_be_bytes();
+        let mut to_release: Vec<Value> = Vec::new();
         for entry in self.snapshot.prefix(&self.keyspace, prefix) {
             if let Ok((_, data)) = entry.into_inner()
                 && let Some((value, _)) = Value::from_bytes(&data)
             {
-                release_interned_refs(&value);
+                to_release.push(value);
             }
         }
 
@@ -153,6 +154,11 @@ impl AttributeStore {
             }
         }
         batch.durability(None).commit().map_err(|e| e.to_string())?;
+
+        // Release interned string refs only after successful commit
+        for value in &to_release {
+            release_interned_refs(value);
+        }
         Ok(())
     }
 
@@ -243,15 +249,21 @@ impl AttributeStore {
     ) -> Result<bool, String> {
         if let Some(idx) = self.attrs_name.get_index_of(attr) {
             let composite_key = make_key(key, idx as u16);
-            // Release interned string refs before removing
-            if let Ok(Some(data)) = self.snapshot.get(&self.keyspace, composite_key)
+            // Collect value to release after successful removal
+            let old_value = if let Ok(Some(data)) = self.snapshot.get(&self.keyspace, composite_key)
                 && let Some((value, _)) = Value::from_bytes(&data)
             {
-                release_interned_refs(&value);
-            }
+                Some(value)
+            } else {
+                None
+            };
             self.keyspace
                 .remove(composite_key)
                 .map_err(|e| e.to_string())?;
+            // Release interned string refs only after successful removal
+            if let Some(value) = &old_value {
+                release_interned_refs(value);
+            }
             return Ok(true);
         }
         Ok(false)
@@ -261,14 +273,15 @@ impl AttributeStore {
         &mut self,
         keys: &RoaringTreemap,
     ) -> Result<(), String> {
-        // Release interned string refs before removing
+        // Collect values to release after successful commit
+        let mut to_release: Vec<Value> = Vec::new();
         for key in keys {
             let prefix = key.to_be_bytes();
             for entry in self.snapshot.prefix(&self.keyspace, prefix) {
                 if let Ok((_, data)) = entry.into_inner()
                     && let Some((value, _)) = Value::from_bytes(&data)
                 {
-                    release_interned_refs(&value);
+                    to_release.push(value);
                 }
             }
         }
@@ -283,6 +296,11 @@ impl AttributeStore {
             }
         }
         batch.durability(None).commit().map_err(|e| e.to_string())?;
+
+        // Release interned string refs only after successful commit
+        for value in &to_release {
+            release_interned_refs(value);
+        }
         Ok(())
     }
 
@@ -294,6 +312,9 @@ impl AttributeStore {
     ) -> Result<usize, String> {
         let mut nremoved = 0;
         let mut batch = self.database.batch();
+        // Collect ref adjustments to apply only after successful commit
+        let mut to_release: Vec<Value> = Vec::new();
+        let mut to_acquire: Vec<Value> = Vec::new();
 
         for (key, attrs) in attrs {
             for (attr, value) in attrs.iter() {
@@ -305,30 +326,38 @@ impl AttributeStore {
                 let composite_key = make_key(*key, idx);
 
                 if *value == Value::Null {
-                    // Check snapshot for existence and release old interned refs
+                    // Check snapshot for existence
                     if let Ok(Some(data)) = self.snapshot.get(&self.keyspace, composite_key) {
                         if let Some((old_value, _)) = Value::from_bytes(&data) {
-                            release_interned_refs(&old_value);
+                            to_release.push(old_value);
                         }
                         batch.remove(&self.keyspace, composite_key);
                         nremoved += 1;
                     }
                 } else {
-                    // Release old interned refs if overwriting
+                    // Check if overwriting
                     if let Ok(Some(data)) = self.snapshot.get(&self.keyspace, composite_key) {
                         if let Some((old_value, _)) = Value::from_bytes(&data) {
-                            release_interned_refs(&old_value);
+                            to_release.push(old_value);
                         }
                         nremoved += 1;
                     }
-                    // Acquire interned refs for new value
-                    acquire_interned_refs(value);
+                    to_acquire.push(value.clone());
                     batch.insert(&self.keyspace, composite_key, value.to_bytes());
                 }
             }
         }
 
         batch.durability(None).commit().map_err(|e| e.to_string())?;
+
+        // Apply ref adjustments only after successful commit
+        for value in &to_release {
+            release_interned_refs(value);
+        }
+        for value in &to_acquire {
+            acquire_interned_refs(value);
+        }
+
         Ok(nremoved)
     }
 

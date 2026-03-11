@@ -298,7 +298,7 @@ impl Value {
             Self::Date(ts) => Self::get_date_component(*ts, attr),
             Self::Time(ts) => Self::get_time_component(*ts, attr),
             Self::Duration(dur) => Self::get_duration_component(*dur, attr),
-            Self::Null | Self::InternedString(_) => Ok(Self::Null),
+            Self::Null => Ok(Self::Null),
             v => Err(format!(
                 "Type mismatch: expected Map, Node, Edge, Datetime, Date, Time, Duration, Null, or Point but was {}",
                 v.name()

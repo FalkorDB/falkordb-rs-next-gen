@@ -30,12 +30,18 @@ impl ObjectPool {
     pub fn acquire(
         &self,
         s: &Arc<String>,
-    ) {
+    ) -> Arc<String> {
         let mut map = self.inner.write();
-        if let Some(count) = map.get_mut(s) {
-            *count += 1;
-        } else {
-            map.insert(s.clone(), 1);
+        match map.entry(s.clone()) {
+            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                *entry.get_mut() += 1;
+                entry.key().clone()
+            }
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                let canonical = entry.key().clone();
+                entry.insert(1);
+                canonical
+            }
         }
     }
 
@@ -47,9 +53,17 @@ impl ObjectPool {
     ) {
         let mut map = self.inner.write();
         if let Some(count) = map.get_mut(s) {
-            *count -= 1;
-            if *count == 0 {
-                map.remove(s);
+            match count.checked_sub(1) {
+                Some(0) => {
+                    map.remove(s);
+                }
+                Some(new_count) => {
+                    *count = new_count;
+                }
+                None => {
+                    debug_assert!(false, "ObjectPool::release underflow for {:?}", s);
+                    map.remove(s);
+                }
             }
         }
     }
@@ -77,9 +91,7 @@ pub fn init_object_pool() {
 }
 
 /// Get a reference to the global object pool.
-///
-/// # Panics
-/// Panics if called before [`init_object_pool`].
+/// Lazily initializes the pool if it hasn't been initialized yet.
 pub fn get_object_pool() -> &'static ObjectPool {
-    OBJECT_POOL.get().expect("ObjectPool not initialized")
+    OBJECT_POOL.get_or_init(ObjectPool::new)
 }
