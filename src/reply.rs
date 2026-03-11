@@ -54,7 +54,7 @@ pub fn reply_compact_value(
             let str = format!("{x:.14e}");
             raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
         }
-        Value::String(x) => {
+        Value::String(x) | Value::InternedString(x) => {
             raw::reply_with_long_long(ctx.ctx, 2);
             raw::reply_with_string_buffer(ctx.ctx, x.as_str().as_ptr().cast::<c_char>(), x.len());
         }
@@ -272,7 +272,7 @@ pub fn reply_verbose_value(
             let str = format!("{x:.14e}");
             raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
         }
-        Value::String(x) => {
+        Value::String(x) | Value::InternedString(x) => {
             raw::reply_with_string_buffer(ctx.ctx, x.as_str().as_ptr().cast::<c_char>(), x.len());
         }
         Value::Datetime(ts) => {

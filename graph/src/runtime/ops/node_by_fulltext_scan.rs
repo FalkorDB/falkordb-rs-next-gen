@@ -69,7 +69,7 @@ impl Iterator for NodeByFulltextScanOp<'_> {
                     .runtime
                     .run_expr(self.label, self.label.root().idx(), &vars, None)
                 {
-                    Ok(Value::String(s)) => s,
+                    Ok(Value::String(s) | Value::InternedString(s)) => s,
                     Ok(_) => {
                         let result = Err("fulltext query expects a string label".into());
                         self.runtime.inspect_result(self.idx, &result);
@@ -86,7 +86,7 @@ impl Iterator for NodeByFulltextScanOp<'_> {
                     .runtime
                     .run_expr(self.query, self.query.root().idx(), &vars, None)
                 {
-                    Ok(Value::String(s)) => s,
+                    Ok(Value::String(s) | Value::InternedString(s)) => s,
                     Ok(_) => {
                         let result = Err("fulltext query expects a string query".into());
                         self.runtime.inspect_result(self.idx, &result);

@@ -25,7 +25,10 @@
 use graph::{
     graph::graphblas::matrix::init,
     index::redisearch::{REDISEARCH_INIT_LIBRARY, RediSearch_Init},
-    runtime::functions::init_functions,
+    runtime::{
+        functions::init_functions,
+        object_pool::{get_object_pool, init_object_pool},
+    },
 };
 #[cfg(feature = "pyro")]
 use pyroscope::PyroscopeAgent;
@@ -78,16 +81,18 @@ pub fn graph_init(
         );
         debug_assert_eq!(res, REDISMODULE_OK as c_int);
     }
+    init_object_pool();
     match init_functions() {
         Ok(()) => Status::Ok,
         Err(_) => Status::Err,
     }
 }
 
-const unsafe extern "C" fn on_flush(
+unsafe extern "C" fn on_flush(
     _ctx: *mut RedisModuleCtx,
     _eid: RedisModuleEvent,
     _subevent: u64,
     _data: *mut c_void,
 ) {
+    get_object_pool().clear();
 }

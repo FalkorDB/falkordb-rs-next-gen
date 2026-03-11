@@ -24,6 +24,7 @@
 pub mod bitset;
 pub mod env;
 pub mod functions;
+pub mod object_pool;
 pub mod ops;
 pub mod ordermap;
 pub mod orderset;

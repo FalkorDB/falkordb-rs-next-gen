@@ -165,7 +165,7 @@ impl Point {
 ///
 /// Values are cloneable and use Arc for large data (strings, shared values)
 /// to minimize copying during query execution.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default)]
 pub enum Value {
     /// Cypher NULL value - represents missing or unknown data
     #[default]
@@ -200,6 +200,39 @@ pub enum Value {
     Time(i64),
     /// Duration in milliseconds
     Duration(i64),
+    /// Interned (deduplicated) string from the global object pool
+    InternedString(Arc<String>),
+}
+
+impl PartialEq for Value {
+    fn eq(
+        &self,
+        other: &Self,
+    ) -> bool {
+        match (self, other) {
+            (Self::Null, Self::Null) => true,
+            (Self::Bool(a), Self::Bool(b)) => a == b,
+            (Self::Int(a), Self::Int(b)) => a == b,
+            (Self::Float(a), Self::Float(b)) => a == b,
+            // String and InternedString are interchangeable
+            (
+                Self::String(a) | Self::InternedString(a),
+                Self::String(b) | Self::InternedString(b),
+            ) => a == b,
+            (Self::List(a), Self::List(b)) => a == b,
+            (Self::Map(a), Self::Map(b)) => a == b,
+            (Self::Node(a), Self::Node(b)) => a == b,
+            (Self::Relationship(a), Self::Relationship(b)) => a == b,
+            (Self::Path(a), Self::Path(b)) => a == b,
+            (Self::VecF32(a), Self::VecF32(b)) => a == b,
+            (Self::Point(a), Self::Point(b)) => a == b,
+            (Self::Datetime(a), Self::Datetime(b))
+            | (Self::Date(a), Self::Date(b))
+            | (Self::Time(a), Self::Time(b))
+            | (Self::Duration(a), Self::Duration(b)) => a == b,
+            _ => false,
+        }
+    }
 }
 
 impl Value {
@@ -265,7 +298,7 @@ impl Value {
             Self::Date(ts) => Self::get_date_component(*ts, attr),
             Self::Time(ts) => Self::get_time_component(*ts, attr),
             Self::Duration(dur) => Self::get_duration_component(*dur, attr),
-            Self::Null => Ok(Self::Null),
+            Self::Null | Self::InternedString(_) => Ok(Self::Null),
             v => Err(format!(
                 "Type mismatch: expected Map, Node, Edge, Datetime, Date, Time, Duration, Null, or Point but was {}",
                 v.name()
@@ -536,7 +569,7 @@ impl Hash for Value {
                     x.to_bits().hash(state);
                 }
             }
-            Self::String(x) => {
+            Self::String(x) | Self::InternedString(x) => {
                 3.hash(state);
                 x.hash(state);
             }
@@ -642,14 +675,29 @@ impl Add for Value {
                 }
                 Ok(Self::Map(Arc::new(map)))
             }
-            (Self::String(a), Self::String(b)) => Ok(Self::String(Arc::new(format!("{a}{b}")))),
-            (Self::String(s), Self::Int(i)) => Ok(Self::String(Arc::new(format!("{s}{i}")))),
-            (Self::String(s), Self::Float(f)) => Ok(Self::String(Arc::new(format!("{s}{f:.6}")))),
-            (Self::String(s), Self::Bool(b)) => Ok(Self::String(Arc::new(format!("{s}{b}")))),
+            (
+                Self::String(a) | Self::InternedString(a),
+                Self::String(b) | Self::InternedString(b),
+            ) => Ok(Self::String(Arc::new(format!("{a}{b}")))),
+            (Self::String(s) | Self::InternedString(s), Self::Int(i)) => {
+                Ok(Self::String(Arc::new(format!("{s}{i}"))))
+            }
+            (Self::String(s) | Self::InternedString(s), Self::Float(f)) => {
+                Ok(Self::String(Arc::new(format!("{s}{f:.6}"))))
+            }
+            (Self::String(s) | Self::InternedString(s), Self::Bool(b)) => {
+                Ok(Self::String(Arc::new(format!("{s}{b}"))))
+            }
 
-            (Self::Int(i), Self::String(s)) => Ok(Self::String(Arc::new(format!("{i}{s}")))),
-            (Self::Float(f), Self::String(s)) => Ok(Self::String(Arc::new(format!("{f:.6}{s}")))),
-            (Self::Bool(b), Self::String(s)) => Ok(Self::String(Arc::new(format!("{b}{s}")))),
+            (Self::Int(i), Self::String(s) | Self::InternedString(s)) => {
+                Ok(Self::String(Arc::new(format!("{i}{s}"))))
+            }
+            (Self::Float(f), Self::String(s) | Self::InternedString(s)) => {
+                Ok(Self::String(Arc::new(format!("{f:.6}{s}"))))
+            }
+            (Self::Bool(b), Self::String(s) | Self::InternedString(s)) => {
+                Ok(Self::String(Arc::new(format!("{b}{s}"))))
+            }
 
             (Self::Map(_), _) | (_, Self::Map(_)) => {
                 Err("Cannot merge a map with a non-map value".to_string())
@@ -781,7 +829,7 @@ impl OrderedEnum for Value {
             Self::Bool(_) => 1 << 12,
             Self::Int(_) => 1 << 13,
             Self::Float(_) => 1 << 14,
-            Self::String(_) => 1 << 11,
+            Self::String(_) | Self::InternedString(_) => 1 << 11,
             Self::List(_) => 1 << 3,
             Self::Map(_) => 1 << 0,
             Self::Node(_) => 1 << 1,
@@ -820,7 +868,10 @@ impl CompareValue for Value {
         match (self, b) {
             (Self::Bool(a), Self::Bool(b)) => (a.cmp(b), DisjointOrNull::None),
             (Self::Float(a), Self::Float(b)) => compare_floats(*a, *b),
-            (Self::String(a), Self::String(b)) => (a.cmp(b), DisjointOrNull::None),
+            (
+                Self::String(a) | Self::InternedString(a),
+                Self::String(b) | Self::InternedString(b),
+            ) => (a.cmp(b), DisjointOrNull::None),
             (Self::List(a), Self::List(b)) | (Self::Path(a), Self::Path(b)) => {
                 Self::compare_list(a, b)
             }
@@ -881,7 +932,7 @@ impl ValueTypeOf for Value {
             | (Self::Bool(_), Type::Bool)
             | (Self::Int(_), Type::Int)
             | (Self::Float(_), Type::Float)
-            | (Self::String(_), Type::String)
+            | (Self::String(_) | Self::InternedString(_), Type::String)
             | (Self::Map(_), Type::Map)
             | (Self::Node(_), Type::Node)
             | (Self::Relationship(_), Type::Relationship)
@@ -915,7 +966,7 @@ impl ValueGetType for Value {
             Self::Bool(_) => Type::Bool,
             Self::Int(_) => Type::Int,
             Self::Float(_) => Type::Float,
-            Self::String(_) => Type::String,
+            Self::String(_) | Self::InternedString(_) => Type::String,
             Self::List(_) => Type::List(Box::new(Type::Any)),
             Self::Map(_) => Type::Map,
             Self::Node(_) => Type::Node,
@@ -939,7 +990,7 @@ impl Value {
             Self::Bool(_) => String::from("Boolean"),
             Self::Int(_) => String::from("Integer"),
             Self::Float(_) => String::from("Float"),
-            Self::String(_) => String::from("String"),
+            Self::String(_) | Self::InternedString(_) => String::from("String"),
             Self::List(_) => String::from("List"),
             Self::Map(_) => String::from("Map"),
             Self::Node(_) => String::from("Node"),
@@ -1089,7 +1140,7 @@ impl DisplayJson for Value {
                     write!(f, "{fl}")
                 }
             }
-            Self::String(s) => write_json_string(f, s),
+            Self::String(s) | Self::InternedString(s) => write_json_string(f, s),
             Self::List(list) => {
                 write!(f, "[")?;
                 for (i, v) in list.iter().enumerate() {
@@ -1359,6 +1410,7 @@ enum ValueTypeTag {
     Time = 11,
     Duration = 12,
     Arc = 13,
+    InternedString = 14,
 }
 
 impl Value {
@@ -1438,6 +1490,12 @@ impl Value {
             Self::Duration(ms) => {
                 buf.push(ValueTypeTag::Duration.into());
                 buf.extend_from_slice(&ms.to_be_bytes());
+            }
+            Self::InternedString(s) => {
+                buf.push(ValueTypeTag::InternedString.into());
+                let bytes = s.as_bytes();
+                buf.extend_from_slice(&(bytes.len() as u32).to_be_bytes());
+                buf.extend_from_slice(bytes);
             }
             _ => {
                 unreachable!()
@@ -1534,6 +1592,11 @@ impl Value {
             ValueTypeTag::Arc => {
                 let (v, consumed) = Self::from_bytes(rest)?;
                 Some((v, 1 + consumed))
+            }
+            ValueTypeTag::InternedString => {
+                let len = u32::from_be_bytes(rest.get(..4)?.try_into().ok()?) as usize;
+                let s = std::str::from_utf8(rest.get(4..4 + len)?).ok()?;
+                Some((Self::InternedString(Arc::new(s.to_owned())), 1 + 4 + len))
             }
         }
     }

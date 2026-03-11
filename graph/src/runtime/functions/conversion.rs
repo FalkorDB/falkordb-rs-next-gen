@@ -43,7 +43,7 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::Union(vec![Type::Int, Type::Null]),
         fn value_to_integer(_runtime, args) {
             match args.into_iter().next() {
-                Some(Value::String(s)) => {
+                Some(Value::String(s) | Value::InternedString(s)) => {
                     if s.is_empty() {
                         return Ok(Value::Null);
                     }
@@ -94,7 +94,7 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::Union(vec![Type::Float, Type::Null]),
         fn value_to_float(_runtime, args) {
             match args.into_iter().next() {
-                Some(Value::String(s)) => s.parse::<f64>().map(Value::Float).or(Ok(Value::Null)),
+                Some(Value::String(s) | Value::InternedString(s)) => s.parse::<f64>().map(Value::Float).or(Ok(Value::Null)),
                 Some(Value::Float(f)) => Ok(Value::Float(f)),
                 Some(Value::Int(i)) => Ok(Value::Float(i as f64)),
                 _ => Ok(Value::Null),
@@ -115,7 +115,7 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::Union(vec![Type::String, Type::Null]),
         fn value_to_string(_runtime, args) {
             match args.into_iter().next() {
-                Some(Value::String(s)) => Ok(Value::String(s)),
+                Some(Value::String(s) | Value::InternedString(s)) => Ok(Value::String(s)),
                 Some(Value::Int(i)) => Ok(Value::String(Arc::new(i.to_string()))),
                 Some(Value::Float(f)) => Ok(Value::String(Arc::new(format!("{f:.6}")))),
                 Some(Value::Bool(b)) => Ok(Value::String(Arc::new(b.to_string()))),
@@ -161,7 +161,7 @@ pub fn register(funcs: &mut Functions) {
         fn is_empty(_, args) {
             match args.into_iter().next() {
                 Some(Value::Null) => Ok(Value::Null),
-                Some(Value::String(s)) => Ok(Value::Bool(s.is_empty())),
+                Some(Value::String(s) | Value::InternedString(s)) => Ok(Value::Bool(s.is_empty())),
                 Some(Value::List(v)) => Ok(Value::Bool(v.is_empty())),
                 Some(Value::Map(m)) => Ok(Value::Bool(m.is_empty())),
                 _ => unreachable!(),
@@ -175,7 +175,7 @@ pub fn register(funcs: &mut Functions) {
         fn to_boolean(_, args) {
             match args.into_iter().next() {
                 Some(Value::Bool(b)) => Ok(Value::Bool(b)),
-                Some(Value::String(s)) => {
+                Some(Value::String(s) | Value::InternedString(s)) => {
                     if s.eq_ignore_ascii_case("true") {
                         Ok(Value::Bool(true))
                     } else if s.eq_ignore_ascii_case("false") {

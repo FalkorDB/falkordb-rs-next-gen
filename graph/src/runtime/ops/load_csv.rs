@@ -263,7 +263,7 @@ impl Iterator for LoadCsvOp<'_> {
                 &vars,
                 None,
             ) {
-                Ok(Value::String(s)) => s,
+                Ok(Value::String(s) | Value::InternedString(s)) => s,
                 Ok(_) => {
                     let result = Err(String::from("Delimiter must be a string"));
                     self.runtime.inspect_result(self.idx, &result);
@@ -280,7 +280,7 @@ impl Iterator for LoadCsvOp<'_> {
                 self.runtime.inspect_result(self.idx, &result);
                 return Some(result);
             }
-            let Value::String(path) = path else {
+            let (Value::String(path) | Value::InternedString(path)) = path else {
                 let result = Err(String::from("File path must be a string"));
                 self.runtime.inspect_result(self.idx, &result);
                 return Some(result);

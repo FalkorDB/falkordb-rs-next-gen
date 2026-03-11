@@ -22,7 +22,9 @@ use std::{collections::HashMap, sync::Arc};
 use fjall::{Database, Keyspace, KeyspaceCreateOptions, Readable, Snapshot};
 use roaring::RoaringTreemap;
 
-use crate::runtime::{ordermap::OrderMap, orderset::OrderSet, value::Value};
+use crate::runtime::{
+    object_pool::get_object_pool, ordermap::OrderMap, orderset::OrderSet, value::Value,
+};
 
 /// Columnar attribute storage for graph entities backed by fjall.
 ///
@@ -54,6 +56,47 @@ fn extract_attr_idx(key: &[u8]) -> Option<u16> {
         Some(u16::from_be_bytes([key[8], key[9]]))
     } else {
         None
+    }
+}
+
+/// Recursively adjust object pool reference counts for interned strings
+/// within a value (including nested lists/maps).
+fn release_interned_refs(value: &Value) {
+    match value {
+        Value::InternedString(s) => {
+            get_object_pool().release(s);
+        }
+        Value::List(items) => {
+            for item in items.iter() {
+                release_interned_refs(item);
+            }
+        }
+        Value::Map(map) => {
+            for v in map.values() {
+                release_interned_refs(v);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Recursively acquire object pool references for interned strings.
+fn acquire_interned_refs(value: &Value) {
+    match value {
+        Value::InternedString(s) => {
+            get_object_pool().acquire(s);
+        }
+        Value::List(items) => {
+            for item in items.iter() {
+                acquire_interned_refs(item);
+            }
+        }
+        Value::Map(map) => {
+            for v in map.values() {
+                acquire_interned_refs(v);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -92,8 +135,17 @@ impl AttributeStore {
         &mut self,
         key: u64,
     ) -> Result<(), String> {
-        // Remove all attributes for this entity using a batch
+        // Release interned string refs before removing
         let prefix = key.to_be_bytes();
+        for entry in self.snapshot.prefix(&self.keyspace, prefix) {
+            if let Ok((_, data)) = entry.into_inner()
+                && let Some((value, _)) = Value::from_bytes(&data)
+            {
+                release_interned_refs(&value);
+            }
+        }
+
+        // Remove all attributes for this entity using a batch
         let mut batch = self.database.batch();
         for entry in self.keyspace.prefix(prefix) {
             if let Ok(k) = entry.key() {
@@ -191,6 +243,12 @@ impl AttributeStore {
     ) -> Result<bool, String> {
         if let Some(idx) = self.attrs_name.get_index_of(attr) {
             let composite_key = make_key(key, idx as u16);
+            // Release interned string refs before removing
+            if let Ok(Some(data)) = self.snapshot.get(&self.keyspace, composite_key)
+                && let Some((value, _)) = Value::from_bytes(&data)
+            {
+                release_interned_refs(&value);
+            }
             self.keyspace
                 .remove(composite_key)
                 .map_err(|e| e.to_string())?;
@@ -203,6 +261,18 @@ impl AttributeStore {
         &mut self,
         keys: &RoaringTreemap,
     ) -> Result<(), String> {
+        // Release interned string refs before removing
+        for key in keys {
+            let prefix = key.to_be_bytes();
+            for entry in self.snapshot.prefix(&self.keyspace, prefix) {
+                if let Ok((_, data)) = entry.into_inner()
+                    && let Some((value, _)) = Value::from_bytes(&data)
+                {
+                    release_interned_refs(&value);
+                }
+            }
+        }
+
         let mut batch = self.database.batch();
         for key in keys {
             let prefix = key.to_be_bytes();
@@ -235,24 +305,24 @@ impl AttributeStore {
                 let composite_key = make_key(*key, idx);
 
                 if *value == Value::Null {
-                    // Check snapshot for existence
-                    if self
-                        .snapshot
-                        .contains_key(&self.keyspace, composite_key)
-                        .map_err(|e| e.to_string())?
-                    {
+                    // Check snapshot for existence and release old interned refs
+                    if let Ok(Some(data)) = self.snapshot.get(&self.keyspace, composite_key) {
+                        if let Some((old_value, _)) = Value::from_bytes(&data) {
+                            release_interned_refs(&old_value);
+                        }
                         batch.remove(&self.keyspace, composite_key);
                         nremoved += 1;
                     }
                 } else {
-                    // Check snapshot for replaced count
-                    if self
-                        .snapshot
-                        .contains_key(&self.keyspace, composite_key)
-                        .map_err(|e| e.to_string())?
-                    {
+                    // Release old interned refs if overwriting
+                    if let Ok(Some(data)) = self.snapshot.get(&self.keyspace, composite_key) {
+                        if let Some((old_value, _)) = Value::from_bytes(&data) {
+                            release_interned_refs(&old_value);
+                        }
                         nremoved += 1;
                     }
+                    // Acquire interned refs for new value
+                    acquire_interned_refs(value);
                     batch.insert(&self.keyspace, composite_key, value.to_bytes());
                 }
             }

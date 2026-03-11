@@ -57,7 +57,7 @@ pub fn register(funcs: &mut Functions) {
                 Some(Value::Bool(_)) => "Boolean",
                 Some(Value::Int(_)) => "Integer",
                 Some(Value::Float(_)) => "Float",
-                Some(Value::String(_)) => "String",
+                Some(Value::String(_) | Value::InternedString(_)) => "String",
                 Some(Value::List(_)) => "List",
                 Some(Value::Map(_)) => "Map",
                 Some(Value::Node(_)) => "Node",
@@ -88,7 +88,7 @@ pub fn register(funcs: &mut Functions) {
                     // Validate that all items in the list are strings
                     for label_value in required_labels.iter() {
                         match label_value {
-                            Value::String(_) => {}
+                            Value::String(_) | Value::InternedString(_) => {}
                             Value::Int(_) => {
                                 return Err("Type mismatch: expected String but was Integer".to_string());
                             }
@@ -106,7 +106,7 @@ pub fn register(funcs: &mut Functions) {
                     let node_labels = runtime.get_node_labels(id);
                     // Check if all required labels are present
                     let has_all = required_labels.iter().all(|req_label| {
-                        if let Value::String(req_str) = req_label {
+                        if let Value::String(req_str) | Value::InternedString(req_str) = req_label {
                             node_labels.iter().any(|node_label| node_label == req_str)
                         } else {
                             false

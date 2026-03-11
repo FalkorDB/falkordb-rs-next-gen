@@ -471,16 +471,19 @@ impl Runtime {
                                 v.name()
                             ));
                         }
-                        (Value::Node(id), Value::String(key)) => {
+                        (Value::Node(id), Value::String(key) | Value::InternedString(key)) => {
                             res.push(self.get_node_attribute(id, &key).unwrap_or(Value::Null));
                         }
-                        (Value::Relationship(rel), Value::String(key)) => {
+                        (
+                            Value::Relationship(rel),
+                            Value::String(key) | Value::InternedString(key),
+                        ) => {
                             res.push(
                                 self.get_relationship_attribute(rel.0, &key)
                                     .unwrap_or(Value::Null),
                             );
                         }
-                        (Value::Map(map), Value::String(key)) => {
+                        (Value::Map(map), Value::String(key) | Value::InternedString(key)) => {
                             res.push(map.get(&key).map_or(Value::Null, std::clone::Clone::clone));
                         }
                         (Value::Map(_), Value::Null) | (Value::Null, _) => res.push(Value::Null),
@@ -1675,7 +1678,7 @@ fn map_to_index_options(
                 _ => return Err("Phonetic must be bool".into()),
             };
             let language = match get("language") {
-                Some(Value::String(s)) => Some(s.clone()),
+                Some(Value::String(s) | Value::InternedString(s)) => Some(s.clone()),
                 None => None,
                 _ => return Err("Language must be string".into()),
             };
@@ -1684,7 +1687,7 @@ fn map_to_index_options(
                     let mut words = Vec::with_capacity(list.len());
                     for v in list.iter() {
                         match v {
-                            Value::String(s) => words.push(s.clone()),
+                            Value::String(s) | Value::InternedString(s) => words.push(s.clone()),
                             _ => {
                                 return Err("Stopwords must be an array of strings".into());
                             }

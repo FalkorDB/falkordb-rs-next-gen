@@ -31,7 +31,7 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::Union(vec![Type::Int, Type::Null]),
         fn size(_, args) {
             match args.into_iter().next() {
-                Some(Value::String(s)) => Ok(Value::Int(s.chars().count() as i64)),
+                Some(Value::String(s) | Value::InternedString(s)) => Ok(Value::Int(s.chars().count() as i64)),
                 Some(Value::List(v)) => Ok(Value::Int(v.len() as i64)),
                 Some(Value::Null) => Ok(Value::Null),
                 _ => unreachable!(),
@@ -113,7 +113,7 @@ pub fn register(funcs: &mut Functions) {
                     Arc::make_mut(&mut v).reverse();
                     Ok(Value::List(v))
                 }
-                Some(Value::String(s)) => Ok(Value::String(Arc::new(s.chars().rev().collect()))),
+                Some(Value::String(s) | Value::InternedString(s)) => Ok(Value::String(Arc::new(s.chars().rev().collect()))),
                 Some(Value::Null) => Ok(Value::Null),
                 _ => unreachable!(),
             }

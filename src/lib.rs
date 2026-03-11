@@ -38,8 +38,8 @@ mod reply;
 
 use allocator::ThreadCountingAllocator;
 use commands::{
-    graph_config, graph_delete, graph_explain, graph_list, graph_memory, graph_query, graph_record,
-    graph_ro_query,
+    graph_config, graph_delete, graph_explain, graph_info, graph_list, graph_memory, graph_query,
+    graph_record, graph_ro_query,
 };
 use config::{CONFIGURATION_CACHE_SIZE, CONFIGURATION_IMPORT_FOLDER};
 use module_init::graph_init;
@@ -61,6 +61,7 @@ redis_module! {
         ["graph.RECORD", graph_record, "write deny-oom deny-script blocking", 1, 1, 1, ""],
         ["graph.MEMORY", graph_memory, "readonly deny-script", 1, 1, 1, ""],
         ["graph.CONFIG", graph_config, "readonly deny-script allow-busy", 0, 0, 0, ""],
+        ["graph.INFO", graph_info, "readonly deny-script allow-busy", 0, 0, 0, ""],
     ],
     configurations: [
         i64: [

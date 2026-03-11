@@ -40,7 +40,7 @@ pub fn register(funcs: &mut Functions) {
         fn internal_starts_with(_, args) {
             let mut iter = args.into_iter();
             match (iter.next(), iter.next()) {
-                (Some(Value::String(s)), Some(Value::String(prefix))) => {
+                (Some(Value::String(s) | Value::InternedString(s)), Some(Value::String(prefix) | Value::InternedString(prefix))) => {
                     Ok(Value::Bool(s.starts_with(prefix.as_str())))
                 }
                 (_, Some(Value::Null)) | (Some(Value::Null), _) => Ok(Value::Null),
@@ -59,7 +59,7 @@ pub fn register(funcs: &mut Functions) {
         fn internal_ends_with(_, args) {
             let mut iter = args.into_iter();
             match (iter.next(), iter.next()) {
-                (Some(Value::String(s)), Some(Value::String(suffix))) => {
+                (Some(Value::String(s) | Value::InternedString(s)), Some(Value::String(suffix) | Value::InternedString(suffix))) => {
                     Ok(Value::Bool(s.ends_with(suffix.as_str())))
                 }
                 (_, Some(Value::Null)) | (Some(Value::Null), _) => Ok(Value::Null),
@@ -78,7 +78,7 @@ pub fn register(funcs: &mut Functions) {
         fn internal_contains(_, args) {
             let mut iter = args.into_iter();
             match (iter.next(), iter.next()) {
-                (Some(Value::String(s)), Some(Value::String(substring))) => {
+                (Some(Value::String(s) | Value::InternedString(s)), Some(Value::String(substring) | Value::InternedString(substring))) => {
                     Ok(Value::Bool(s.contains(substring.as_str())))
                 }
                 (_, Some(Value::Null)) | (Some(Value::Null), _) => Ok(Value::Null),
@@ -111,7 +111,7 @@ pub fn register(funcs: &mut Functions) {
         fn internal_regex_matches(_, args) {
             let mut iter = args.into_iter();
             match (iter.next(), iter.next()) {
-                (Some(Value::String(s)), Some(Value::String(pattern))) => {
+                (Some(Value::String(s) | Value::InternedString(s)), Some(Value::String(pattern) | Value::InternedString(pattern))) => {
                     match regex::Regex::new(pattern.as_str()) {
                         Ok(re) => Ok(Value::Bool(re.is_match(s.as_str()))),
                         Err(e) => Err(format!("Invalid regex pattern: {e}")),

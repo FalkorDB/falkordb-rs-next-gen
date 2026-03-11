@@ -252,7 +252,7 @@ impl Document {
                         RSFLDTYPE_NUMERIC,
                     );
                 }
-                Value::String(s) => {
+                Value::String(s) | Value::InternedString(s) => {
                     RediSearch_DocumentAddFieldString(
                         self.rs_doc,
                         field.name.as_ptr(),
@@ -450,7 +450,7 @@ impl Index {
                     1,
                 )
             },
-            IndexQuery::Equal(key, Value::String(value)) => unsafe {
+            IndexQuery::Equal(key, Value::String(value) | Value::InternedString(value)) => unsafe {
                 let field = &self.fields.get(&key).unwrap()[0];
                 let query = RediSearch_CreateTagNode(self.rs_idx, field.name.as_ptr());
                 let msg = CString::new(value.as_str()).unwrap();
