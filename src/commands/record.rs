@@ -23,7 +23,10 @@ use crate::{
 };
 use graph::{
     graph::graph::Plan,
-    runtime::runtime::{GetVariables, Runtime, evaluate_param},
+    runtime::{
+        pool::Pool,
+        runtime::{GetVariables, Runtime, evaluate_param},
+    },
 };
 use orx_tree::{Bfs, Collection, NodeRef};
 use parking_lot::RwLock;
@@ -50,13 +53,15 @@ fn record_mut(
         .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
         .collect::<Result<HashMap<_, _>, String>>()
         .map_err(RedisError::String)?;
-    let mut runtime = Runtime::new(
+    let env_pool = Pool::new();
+    let runtime = Runtime::new(
         graph.read().graph.read(),
         parameters,
         true,
         plan.clone(),
         true,
         (*CONFIGURATION_IMPORT_FOLDER.lock(ctx)).clone(),
+        &env_pool,
     );
     let _ = runtime.query();
     let ids = plan.root().indices::<Bfs>().collect::<Vec<_>>();
@@ -70,17 +75,21 @@ fn record_mut(
                 raw::reply_with_long_long(ctx.ctx, 0);
                 raw::reply_with_string_buffer(ctx.ctx, err.as_ptr().cast::<c_char>(), err.len());
             }
-            Ok(env) => {
+            Ok((values, bound)) => {
                 raw::reply_with_long_long(ctx.ctx, 1);
                 let vars = plan.node(*idx).get_variables();
                 raw::reply_with_array(ctx.ctx, vars.len() as _);
                 for name in &vars {
-                    match env.get(name) {
-                        None => {
-                            raw::reply_with_null(ctx.ctx);
-                        }
-                        Some(value) => {
-                            reply_verbose_value(ctx, &runtime, value);
+                    if !bound.test(name.id as usize) {
+                        raw::reply_with_null(ctx.ctx);
+                    } else {
+                        match values.get(name.id as usize) {
+                            None => {
+                                raw::reply_with_null(ctx.ctx);
+                            }
+                            Some(value) => {
+                                reply_verbose_value(ctx, &runtime, value);
+                            }
                         }
                     }
                 }

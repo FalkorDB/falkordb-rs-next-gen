@@ -32,7 +32,7 @@ use std::os::raw::c_char;
 #[allow(clippy::too_many_lines)]
 pub fn reply_compact_value(
     ctx: &Context,
-    runtime: &Runtime,
+    runtime: &Runtime<'_>,
     r: &Value,
 ) {
     match r {
@@ -141,14 +141,15 @@ pub fn reply_compact_value(
             }
         }
         Value::Relationship(rel) => {
+            let (rel_id, rel_src, rel_dst) = (&rel.0, &rel.1, &rel.2);
             raw::reply_with_long_long(ctx.ctx, 7);
             raw::reply_with_array(ctx.ctx, 5);
-            raw::reply_with_long_long(ctx.ctx, u64::from(rel.0) as _);
+            raw::reply_with_long_long(ctx.ctx, u64::from(*rel_id) as _);
             let dr = runtime.deleted_relationships.borrow();
-            if let Some(x) = dr.get(&rel.0) {
+            if let Some(x) = dr.get(rel_id) {
                 raw::reply_with_long_long(ctx.ctx, usize::from(x.type_id) as _);
-                raw::reply_with_long_long(ctx.ctx, u64::from(rel.1) as _);
-                raw::reply_with_long_long(ctx.ctx, u64::from(rel.2) as _);
+                raw::reply_with_long_long(ctx.ctx, u64::from(*rel_src) as _);
+                raw::reply_with_long_long(ctx.ctx, u64::from(*rel_dst) as _);
                 raw::reply_with_array(ctx.ctx, x.attrs.len() as _);
                 let bg = runtime.g.borrow();
                 for (key, value) in x.attrs.iter() {
@@ -161,13 +162,13 @@ pub fn reply_compact_value(
                 let bg = runtime.g.borrow();
                 raw::reply_with_long_long(
                     ctx.ctx,
-                    usize::from(bg.get_relationship_type_id(rel.0)) as _,
+                    usize::from(bg.get_relationship_type_id(*rel_id)) as _,
                 );
-                raw::reply_with_long_long(ctx.ctx, u64::from(rel.1) as _);
-                raw::reply_with_long_long(ctx.ctx, u64::from(rel.2) as _);
+                raw::reply_with_long_long(ctx.ctx, u64::from(*rel_src) as _);
+                raw::reply_with_long_long(ctx.ctx, u64::from(*rel_dst) as _);
                 raw::reply_with_array(ctx.ctx, raw::REDISMODULE_POSTPONED_LEN as _);
                 let attrs_len = bg
-                    .get_relationship_all_attrs_by_id(rel.0)
+                    .get_relationship_all_attrs_by_id(*rel_id)
                     .inspect(|(key, value)| {
                         raw::reply_with_array(ctx.ctx, 3);
                         raw::reply_with_long_long(ctx.ctx, *key as _);
@@ -254,7 +255,7 @@ pub fn reply_compact_value(
 #[allow(clippy::too_many_lines)]
 pub fn reply_verbose_value(
     ctx: &Context,
-    runtime: &Runtime,
+    runtime: &Runtime<'_>,
     r: &Value,
 ) {
     match r {
@@ -385,13 +386,14 @@ pub fn reply_verbose_value(
             }
         }
         Value::Relationship(rel) => {
+            let (rel_id, rel_src, rel_dst) = (&rel.0, &rel.1, &rel.2);
             raw::reply_with_array(ctx.ctx, 5);
-            raw::reply_with_long_long(ctx.ctx, u64::from(rel.0) as _);
+            raw::reply_with_long_long(ctx.ctx, u64::from(*rel_id) as _);
             let dr = runtime.deleted_relationships.borrow();
-            if let Some(x) = dr.get(&rel.0) {
+            if let Some(x) = dr.get(rel_id) {
                 raw::reply_with_long_long(ctx.ctx, usize::from(x.type_id) as _);
-                raw::reply_with_long_long(ctx.ctx, u64::from(rel.1) as _);
-                raw::reply_with_long_long(ctx.ctx, u64::from(rel.2) as _);
+                raw::reply_with_long_long(ctx.ctx, u64::from(*rel_src) as _);
+                raw::reply_with_long_long(ctx.ctx, u64::from(*rel_dst) as _);
                 raw::reply_with_array(ctx.ctx, x.attrs.len() as _);
                 for (key, value) in x.attrs.iter() {
                     raw::reply_with_array(ctx.ctx, 2);
@@ -404,13 +406,13 @@ pub fn reply_verbose_value(
                 }
             } else {
                 let bg = runtime.g.borrow();
-                let rel_type = bg.get_relationship_type_id(rel.0);
+                let rel_type = bg.get_relationship_type_id(*rel_id);
                 raw::reply_with_long_long(ctx.ctx, usize::from(rel_type) as _);
-                raw::reply_with_long_long(ctx.ctx, u64::from(rel.1) as _);
-                raw::reply_with_long_long(ctx.ctx, u64::from(rel.2) as _);
+                raw::reply_with_long_long(ctx.ctx, u64::from(*rel_src) as _);
+                raw::reply_with_long_long(ctx.ctx, u64::from(*rel_dst) as _);
                 raw::reply_with_array(ctx.ctx, raw::REDISMODULE_POSTPONED_LEN as _);
                 let attrs_len = bg
-                    .get_relationship_all_attrs(rel.0)
+                    .get_relationship_all_attrs(*rel_id)
                     .inspect(|(key, value)| {
                         raw::reply_with_array(ctx.ctx, 2);
                         raw::reply_with_string_buffer(
@@ -544,8 +546,8 @@ pub fn reply_stats(
 
 pub fn reply_verbose(
     ctx: &Context,
-    runtime: &Runtime,
-    result: ResultSummary,
+    runtime: &Runtime<'_>,
+    result: ResultSummary<'_>,
 ) {
     raw::reply_with_array(ctx.ctx, 3);
     raw::reply_with_array(ctx.ctx, runtime.return_names.len() as _);
@@ -570,8 +572,8 @@ pub fn reply_verbose(
 
 pub fn reply_compact(
     ctx: &Context,
-    runtime: &Runtime,
-    result: ResultSummary,
+    runtime: &Runtime<'_>,
+    result: ResultSummary<'_>,
 ) {
     raw::reply_with_array(ctx.ctx, 3);
     raw::reply_with_array(ctx.ctx, runtime.return_names.len() as _);

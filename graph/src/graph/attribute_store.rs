@@ -174,7 +174,19 @@ impl AttributeStore {
         attr: &Arc<String>,
     ) -> Option<Value> {
         let idx = self.attrs_name.get_index_of(attr)? as u16;
-        let composite_key = make_key(key, idx);
+        self.get_attr_by_idx(key, idx)
+    }
+
+    /// Fetch an attribute value using a pre-resolved attribute index.
+    /// This avoids the string-to-index lookup when fetching the same
+    /// property for many entities.
+    #[must_use]
+    pub fn get_attr_by_idx(
+        &self,
+        key: u64,
+        attr_idx: u16,
+    ) -> Option<Value> {
+        let composite_key = make_key(key, attr_idx);
 
         match self.snapshot.get(&self.keyspace, composite_key) {
             Ok(Some(data)) => Value::from_bytes(&data).map(|(v, _)| v),

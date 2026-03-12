@@ -41,7 +41,7 @@ use redis_module::{
 };
 #[cfg(feature = "pyro")]
 use std::mem;
-use std::{os::raw::c_int, os::raw::c_void};
+use std::{os::raw::c_int, os::raw::c_void, panic};
 
 /// Redis event ID for FlushDB event (database flush/clear).
 #[allow(non_upper_case_globals)]
@@ -51,6 +51,10 @@ pub fn graph_init(
     ctx: &Context,
     _: &Vec<redis_module::RedisString>,
 ) -> Status {
+    panic::set_hook(Box::new(|info| {
+        eprintln!("FalkorDB panic: {info}");
+        std::process::exit(1);
+    }));
     #[cfg(feature = "pyro")]
     {
         let agent = PyroscopeAgent::builder("http://localhost:4040", "falkordb")

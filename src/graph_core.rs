@@ -42,7 +42,10 @@ use graph::{
         mvcc_graph::MvccGraph,
     },
     planner::IR,
-    runtime::runtime::{Runtime, evaluate_param},
+    runtime::{
+        pool::Pool,
+        runtime::{Runtime, evaluate_param},
+    },
     threadpool::spawn,
 };
 use orx_tree::Collection;
@@ -118,13 +121,15 @@ impl ThreadedGraph {
         } else {
             self.graph.read()
         };
-        let mut runtime = Runtime::new(
+        let env_pool = Pool::new();
+        let runtime = Runtime::new(
             g,
             parameters,
             write,
             plan,
             false,
             (*CONFIGURATION_IMPORT_FOLDER.lock(ctx)).clone(),
+            &env_pool,
         );
         let mut result = runtime.query()?;
         result.stats.cached = cached;
@@ -157,13 +162,15 @@ impl ThreadedGraph {
             IR::Commit | IR::CreateIndex { .. } | IR::DropIndex { .. }
         )));
         let g = self.graph.write().unwrap();
-        let mut runtime = Runtime::new(
+        let env_pool = Pool::new();
+        let runtime = Runtime::new(
             g.clone(),
             parameters,
             true,
             plan,
             false,
             (*CONFIGURATION_IMPORT_FOLDER.lock(ctx)).clone(),
+            &env_pool,
         );
         let mut result = runtime.query()?;
         result.stats.cached = cached;

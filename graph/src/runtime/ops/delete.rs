@@ -1,80 +1,96 @@
-//! Delete operator — marks nodes and relationships for deletion.
+//! Batch-mode delete operator — marks nodes and relationships for deletion.
 //!
-//! Implements Cypher `DELETE n` / `DETACH DELETE n`. For each incoming row,
-//! evaluates the delete expressions and records deletions in the pending
-//! batch. Node deletions cascade: all connected relationships are also
-//! marked for deletion. Deleted entity metadata (labels, attributes) is
-//! captured for statistics reporting.
-//!
-//! ```text
-//!  child iter ──► env
-//!                  │
-//!    ┌─────────────┴──────────────┐
-//!    │  for each delete expr:     │
-//!    │    Node(id)  ──► delete    │──► also delete connected relationships
-//!    │    Rel(id)   ──► delete    │
-//!    │    Path(vs)  ──► recurse   │
-//!    └─────────────┬──────────────┘
-//!                  │
-//!              yield Env ──► parent
-//! ```
+//! For each active row in each input batch, evaluates the delete expressions
+//! and records deletions in the pending batch. Node deletions cascade: all
+//! connected relationships are also marked for deletion.
 
-use super::OpIter;
-use crate::parser::ast::{QueryExpr, Variable};
+use crate::parser::ast::{ExprIR, QueryExpr, Variable};
 use crate::planner::IR;
 use crate::runtime::{
-    env::Env,
+    batch::{Batch, BatchOp},
     runtime::Runtime,
     value::{DeletedNode, DeletedRelationship, Value},
 };
 use orx_tree::{Dyn, NodeIdx, NodeRef};
 
 pub struct DeleteOp<'a> {
-    runtime: &'a Runtime,
-    pub iter: Box<OpIter<'a>>,
+    pub(crate) runtime: &'a Runtime<'a>,
+    pub(crate) child: Box<BatchOp<'a>>,
     trees: &'a Vec<QueryExpr<Variable>>,
-    idx: NodeIdx<Dyn<IR>>,
+    pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
 impl<'a> DeleteOp<'a> {
     pub const fn new(
-        runtime: &'a Runtime,
-        iter: Box<OpIter<'a>>,
+        runtime: &'a Runtime<'a>,
+        child: Box<BatchOp<'a>>,
         trees: &'a Vec<QueryExpr<Variable>>,
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
         Self {
             runtime,
-            iter,
+            child,
             trees,
             idx,
         }
     }
 }
 
-impl Iterator for DeleteOp<'_> {
-    type Item = Result<Env, String>;
+impl<'a> Iterator for DeleteOp<'a> {
+    type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let result = match self.iter.next()? {
-            Ok(vars) => self.runtime.delete(self.trees, &vars).map(|()| vars),
-            Err(e) => Err(e),
+        let batch = match self.child.next()? {
+            Ok(b) => b,
+            Err(e) => return Some(Err(e)),
         };
-        self.runtime.inspect_result(self.idx, &result);
-        Some(result)
+
+        if let Err(e) = self.runtime.delete_batch(self.trees, &batch) {
+            return Some(Err(e));
+        }
+
+        Some(Ok(batch))
     }
 }
-
-impl Runtime {
-    pub fn delete(
+impl Runtime<'_> {
+    pub fn delete_batch(
         &self,
         trees: &Vec<QueryExpr<Variable>>,
-        vars: &Env,
+        batch: &Batch<'_>,
     ) -> Result<(), String> {
+        // Partition trees: collect var IDs for simple variable references (fast path),
+        // and keep references to non-variable trees (slow path).
+        let mut var_ids = Vec::new();
+        let mut expr_trees = Vec::new();
+
         for tree in trees {
-            let value = self.run_expr(tree, tree.root().idx(), vars, None)?;
-            self.delete_entity(&value)?;
+            match tree.root().data() {
+                ExprIR::Variable(var) => var_ids.push(var.id),
+                _ => expr_trees.push(tree),
+            }
         }
+
+        // Fast path: read all simple variable columns at once, no env needed
+        if !var_ids.is_empty() {
+            let rows = batch.read_columns(&var_ids);
+            for row in rows {
+                for val in row {
+                    self.delete_entity(val)?;
+                }
+            }
+        }
+
+        // Slow path: evaluate remaining expression trees via env_ref
+        if !expr_trees.is_empty() {
+            for row in batch.active_indices() {
+                let env = batch.env_ref(row);
+                for tree in &expr_trees {
+                    let value = self.run_expr(tree, tree.root().idx(), env, None)?;
+                    self.delete_entity(&value)?;
+                }
+            }
+        }
+
         Ok(())
     }
 

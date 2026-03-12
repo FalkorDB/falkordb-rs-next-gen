@@ -419,7 +419,7 @@ impl<'a> Parser<'a> {
                 if next_all != all {
                     return Err(self
                         .lexer
-                        .format_error("Cannot mix UNION and UNION ALL in same query"));
+                        .format_error("Invalid combination of UNION and UNION ALL."));
                 }
                 branches.push(self.parse_single_query()?);
             }

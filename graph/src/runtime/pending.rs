@@ -125,18 +125,26 @@ impl Pending {
             .resize(node_cap, labels_count as u64);
     }
 
-    pub fn created_node(
+    pub fn created_nodes(
         &mut self,
-        id: NodeId,
+        ids: &[NodeId],
     ) {
-        self.created_nodes.insert(id.into());
-        let mut cap = self.set_node_labels.nrows();
-        if cap <= u64::from(id) {
-            while cap <= u64::from(id) {
-                cap *= 2;
+        let max_id = ids.iter().map(|id| u64::from(*id)).max();
+        for id in ids {
+            self.created_nodes.insert((*id).into());
+        }
+        if let Some(max_id) = max_id {
+            let mut cap = self.set_node_labels.nrows();
+            if cap <= max_id {
+                if cap == 0 {
+                    cap = 1;
+                }
+                while cap <= max_id {
+                    cap *= 2;
+                }
+                self.set_node_labels
+                    .resize(cap, self.set_node_labels.ncols());
             }
-            self.set_node_labels
-                .resize(cap, self.set_node_labels.ncols());
         }
     }
 
@@ -257,6 +265,19 @@ impl Pending {
         }
     }
 
+    pub fn set_nodes_labels(
+        &mut self,
+        ids: &[NodeId],
+        labels: &OrderSet<LabelId>,
+    ) {
+        for id in ids {
+            for label in labels.iter() {
+                self.set_node_labels
+                    .set((*id).into(), usize::from(*label) as u64, true);
+            }
+        }
+    }
+
     pub fn remove_node_labels(
         &mut self,
         id: NodeId,
@@ -293,15 +314,14 @@ impl Pending {
         self.deleted_nodes.insert(id.into());
     }
 
-    pub fn created_relationship(
+    pub fn created_relationships(
         &mut self,
-        id: RelationshipId,
-        from: NodeId,
-        to: NodeId,
-        type_name: Arc<String>,
+        rels: Vec<(RelationshipId, NodeId, NodeId, Arc<String>)>,
     ) {
-        self.created_relationships
-            .insert(id, PendingRelationship::new(from, to, type_name));
+        for (id, from, to, type_name) in rels {
+            self.created_relationships
+                .insert(id, PendingRelationship::new(from, to, type_name));
+        }
     }
 
     pub fn set_relationship_attributes(

@@ -317,7 +317,7 @@ class testGraphDeletionFlow(FlowTestsBase):
             self.graph.query(query)
             self.env.assertTrue(False)
         except ResponseError as e:
-            self.env.assertContains("Delete type mismatch", str(e))
+            self.env.assertContains("DELETE can only be called on nodes, paths and relationships", str(e))
 
         # try deleting all scalar types at runtime
         queries = ["WITH 1 AS n DELETE n",

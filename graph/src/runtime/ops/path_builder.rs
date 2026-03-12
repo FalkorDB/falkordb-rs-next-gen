@@ -1,74 +1,89 @@
-//! Path builder operator — assembles named path values from bound variables.
+//! Batch-mode path builder operator — assembles named path values.
 //!
-//! Implements Cypher named paths like `p = (a)-[r]->(b)`. For each incoming
-//! row, collects the values of the variables that make up the path and
-//! stores them as a `Value::Path` list under the path's alias.
+//! Implements Cypher named paths like `p = (a)-[r]->(b)`. For each path,
+//! reads the component variable columns via `read_columns`, maps each row
+//! into a `Value::Path`, and writes the result column back via `write_column`.
 
-use super::OpIter;
+use std::sync::Arc;
+
 use crate::parser::ast::{QueryPath, Variable};
 use crate::planner::IR;
-use crate::runtime::{env::Env, runtime::Runtime, value::Value};
+use crate::runtime::{
+    batch::{Batch, BatchOp},
+    runtime::Runtime,
+    value::Value,
+};
 use orx_tree::{Dyn, NodeIdx};
-use std::sync::Arc;
 use thin_vec::ThinVec;
 
 pub struct PathBuilderOp<'a> {
-    runtime: &'a Runtime,
-    pub iter: Box<OpIter<'a>>,
+    pub(crate) runtime: &'a Runtime<'a>,
+    pub(crate) child: Box<BatchOp<'a>>,
     paths: &'a [Arc<QueryPath<Variable>>],
-    idx: NodeIdx<Dyn<IR>>,
+    pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
 impl<'a> PathBuilderOp<'a> {
     pub const fn new(
-        runtime: &'a Runtime,
-        iter: Box<OpIter<'a>>,
+        runtime: &'a Runtime<'a>,
+        child: Box<BatchOp<'a>>,
         paths: &'a [Arc<QueryPath<Variable>>],
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
         Self {
             runtime,
-            iter,
+            child,
             paths,
             idx,
         }
     }
 }
 
-impl Iterator for PathBuilderOp<'_> {
-    type Item = Result<Env, String>;
+impl<'a> Iterator for PathBuilderOp<'a> {
+    type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let result = match self.iter.next()? {
-            Ok(mut vars) => {
-                let mut paths = self.paths.to_vec();
-                for path in &mut paths {
-                    let p: Result<ThinVec<Value>, String> = path
-                        .vars
+        let mut batch = match self.child.next()? {
+            Ok(b) => b,
+            Err(e) => return Some(Err(e)),
+        };
+
+        for path in self.paths {
+            let var_ids: Vec<u32> = path.vars.iter().map(|v| v.id).collect();
+
+            // read_columns returns row-major: rows[row][var_index] = &Value
+            let rows = batch.read_columns(&var_ids);
+
+            let path_values: Result<Vec<Value>, String> = rows
+                .iter()
+                .zip(batch.active_indices())
+                .map(|(row, row_idx)| {
+                    let elems: Result<ThinVec<Value>, String> = row
                         .iter()
-                        .map(|v| {
-                            vars.get(v)
-                                .map_or_else(
-                                    || Err(format!("Variable {} not found", v.as_str())),
-                                    Ok,
-                                )
-                                .cloned()
+                        .enumerate()
+                        .map(|(i, val)| {
+                            // Check the bound bitset to distinguish unbound variables
+                            // from variables explicitly set to Null (e.g. OPTIONAL MATCH).
+                            let env = batch.env_ref(row_idx);
+                            if env.is_bound(&path.vars[i]) {
+                                Ok((*val).clone())
+                            } else {
+                                Err(format!("Variable {} not found", path.vars[i].as_str()))
+                            }
                         })
                         .collect();
-                    match p {
-                        Ok(p) => vars.insert(&path.var, Value::Path(Arc::new(p))),
-                        Err(e) => {
-                            let result = Err(e);
-                            self.runtime.inspect_result(self.idx, &result);
-                            return Some(result);
-                        }
-                    }
-                }
-                Ok(vars)
-            }
-            Err(e) => Err(e),
-        };
-        self.runtime.inspect_result(self.idx, &result);
-        Some(result)
+                    Ok(Value::Path(Arc::new(elems?)))
+                })
+                .collect();
+
+            let path_values = match path_values {
+                Ok(v) => v,
+                Err(e) => return Some(Err(e)),
+            };
+
+            batch.write_column(path.var.id, path_values);
+        }
+
+        Some(Ok(batch))
     }
 }

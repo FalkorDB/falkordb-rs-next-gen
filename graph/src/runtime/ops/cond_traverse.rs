@@ -1,253 +1,307 @@
-//! Conditional traverse operator — expands single-hop relationships.
+//! Batch-mode conditional traverse operator — single-hop relationship expansion.
 //!
-//! For each incoming row, scans relationships matching the given type/label
-//! constraints and property filters. Supports both directed and bidirectional
-//! traversal patterns.
+//! For each active row in the input batch, extracts the source node and scans
+//! matching relationships, producing output rows with relationship and endpoint
+//! bindings.
 //!
 //! ```text
-//!  child iter ──► env (with bound src node)
-//!                     │
-//!       ┌─────────────┴─────────────┐
-//!       │  scan matching relations  │  (type filter, label filter, attr filter)
-//!       └─────────────┬─────────────┘
-//!                     │
-//!        for each (src, rel, dst):
-//!          env += {rel_alias: rel, from: src, to: dst}
-//!                     │
-//!                 yield Env ──► parent
+//!  Input batch (1 parent row with n=Node(5)):
+//!  ┌──────┐
+//!  │ n=5  │  ──expand_row──►  ┌─────────────────────┐
+//!  └──────┘                   │ n=5, r=Rel(1,5,7)   │
+//!                             │ n=5, r=Rel(2,5,9)   │
+//!                             │ ...                  │
+//!                             └─────────────────────┘
+//!                             (buffered in `pending`, drained to output batches)
 //! ```
 //!
-//! When `bidirectional` is set, the reverse direction is also scanned
-//! (skipping self-loops to avoid duplicates).
+//! ## State Machine
+//!
+//! The operator maintains three pieces of state across `next()` calls:
+//! - `current_batch` / `current_pos`: position within the current input batch
+//! - `pending`: VecDeque of already-expanded output rows awaiting emission
+//!
+//! Each `next()` drains pending rows, then continues expanding input rows
+//! until `BATCH_SIZE` output rows are collected or input is exhausted.
 
-use std::iter::empty;
+use std::collections::VecDeque;
 use std::sync::Arc;
 
-use super::OpIter;
-use crate::graph::graph::NodeId;
 use crate::parser::ast::{QueryRelationship, Variable};
 use crate::planner::IR;
-use crate::runtime::{env::Env, runtime::Runtime, value::Value};
+use crate::runtime::{
+    batch::{BATCH_SIZE, Batch, BatchOp},
+    env::Env,
+    runtime::Runtime,
+    value::Value,
+};
 use orx_tree::{Dyn, NodeIdx, NodeRef};
 
 pub struct CondTraverseOp<'a> {
-    runtime: &'a Runtime,
-    pub iter: Box<OpIter<'a>>,
-    current: Option<Box<dyn Iterator<Item = Result<Env, String>> + 'a>>,
+    pub(crate) runtime: &'a Runtime<'a>,
+    pub(crate) child: Box<BatchOp<'a>>,
     relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
-    idx: NodeIdx<Dyn<IR>>,
+    /// Buffered output rows from a partial expansion.
+    pending: VecDeque<Env<'a>>,
+    /// Current input batch being expanded (may span multiple output batches).
+    current_batch: Option<Batch<'a>>,
+    /// Index into active rows of the current batch.
+    current_pos: usize,
+    pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
 impl<'a> CondTraverseOp<'a> {
-    pub fn new(
-        runtime: &'a Runtime,
-        iter: Box<OpIter<'a>>,
+    pub const fn new(
+        runtime: &'a Runtime<'a>,
+        child: Box<BatchOp<'a>>,
         relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
         Self {
             runtime,
-            iter,
-            current: None,
+            child,
             relationship_pattern,
+            pending: VecDeque::new(),
+            current_batch: None,
+            current_pos: 0,
             idx,
+        }
+    }
+
+    fn expand_row(
+        &self,
+        env: &Env<'a>,
+        out: &mut Vec<Env<'a>>,
+    ) -> Result<(), String> {
+        let runtime = self.runtime;
+        let rp = self.relationship_pattern;
+
+        let filter_attrs = runtime.run_expr(&rp.attrs, rp.attrs.root().idx(), env, None)?;
+        let from_node_attrs =
+            runtime.run_expr(&rp.from.attrs, rp.from.attrs.root().idx(), env, None)?;
+        let to_node_attrs = runtime.run_expr(&rp.to.attrs, rp.to.attrs.root().idx(), env, None)?;
+
+        let from_id = env.get(&rp.from.alias).and_then(|v| match v {
+            Value::Node(id) => Some(*id),
+            _ => None,
+        });
+        if from_id.is_none() && env.is_bound(&rp.from.alias) {
+            return Ok(());
+        }
+        let to_id = env.get(&rp.to.alias).and_then(|v| match v {
+            Value::Node(id) => Some(*id),
+            _ => None,
+        });
+        if to_id.is_none() && env.is_bound(&rp.to.alias) {
+            return Ok(());
+        }
+
+        let g = runtime.g.borrow();
+
+        // Process forward relationships without collecting into a Vec.
+        Self::process_pairs(
+            g.get_relationships(&rp.types, &rp.from.labels, &rp.to.labels),
+            false,
+            from_id,
+            to_id,
+            &from_node_attrs,
+            &to_node_attrs,
+            &filter_attrs,
+            &g,
+            rp,
+            env,
+            runtime,
+            out,
+        );
+
+        // Process reverse relationships for bidirectional patterns.
+        if rp.bidirectional {
+            Self::process_pairs(
+                g.get_relationships(&rp.types, &rp.to.labels, &rp.from.labels)
+                    .filter(|(s, d)| s != d),
+                true,
+                from_id,
+                to_id,
+                &from_node_attrs,
+                &to_node_attrs,
+                &filter_attrs,
+                &g,
+                rp,
+                env,
+                runtime,
+                out,
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Processes relationship pairs from an iterator without materializing them.
+    #[allow(clippy::too_many_arguments)]
+    fn process_pairs(
+        pairs: impl Iterator<Item = (crate::graph::graph::NodeId, crate::graph::graph::NodeId)>,
+        is_reverse: bool,
+        from_id: Option<crate::graph::graph::NodeId>,
+        to_id: Option<crate::graph::graph::NodeId>,
+        from_node_attrs: &Value,
+        to_node_attrs: &Value,
+        filter_attrs: &Value,
+        g: &crate::graph::graph::Graph,
+        rp: &QueryRelationship<Arc<String>, Arc<String>, Variable>,
+        env: &Env<'a>,
+        runtime: &'a Runtime<'a>,
+        out: &mut Vec<Env<'a>>,
+    ) {
+        for (src, dst) in pairs {
+            let (from_node, to_node) = if is_reverse { (dst, src) } else { (src, dst) };
+            if from_id.is_some() && from_id.unwrap() != from_node {
+                continue;
+            }
+            if to_id.is_some() && to_id.unwrap() != to_node {
+                continue;
+            }
+            // Check from node attrs
+            if let Value::Map(attrs) = from_node_attrs
+                && !attrs.is_empty()
+            {
+                let mut skip = false;
+                for (attr, avalue) in attrs.iter() {
+                    match g.get_node_attribute(from_node, attr) {
+                        Some(pvalue) if pvalue == *avalue => {}
+                        _ => {
+                            skip = true;
+                            break;
+                        }
+                    }
+                }
+                if skip {
+                    continue;
+                }
+            }
+            // Check to node attrs
+            if let Value::Map(attrs) = to_node_attrs
+                && !attrs.is_empty()
+            {
+                let mut skip = false;
+                for (attr, avalue) in attrs.iter() {
+                    match g.get_node_attribute(to_node, attr) {
+                        Some(pvalue) if pvalue == *avalue => {}
+                        _ => {
+                            skip = true;
+                            break;
+                        }
+                    }
+                }
+                if skip {
+                    continue;
+                }
+            }
+            // Scan edges
+            for id in g.get_src_dest_relationships(src, dst, &rp.types) {
+                if let Value::Map(filter_map) = filter_attrs
+                    && !filter_map.is_empty()
+                {
+                    let mut matches = true;
+                    for (attr, avalue) in filter_map.iter() {
+                        if let Some(pvalue) = g.get_relationship_attribute(id, attr) {
+                            if *avalue == pvalue {
+                                continue;
+                            }
+                            matches = false;
+                            break;
+                        }
+                        matches = false;
+                        break;
+                    }
+                    if !matches {
+                        continue;
+                    }
+                }
+                let mut row = env.clone_pooled(runtime.env_pool);
+                row.insert(&rp.alias, Value::Relationship(Box::new((id, src, dst))));
+                row.insert(&rp.from.alias, Value::Node(from_node));
+                row.insert(&rp.to.alias, Value::Node(to_node));
+                out.push(row);
+            }
+        }
+    }
+
+    /// Drains rows from `self.pending` into `envs` until `BATCH_SIZE` is reached
+    /// or all pending rows are exhausted.
+    fn drain_pending(
+        &mut self,
+        envs: &mut Vec<Env<'a>>,
+    ) {
+        while envs.len() < BATCH_SIZE {
+            if let Some(row) = self.pending.pop_front() {
+                envs.push(row);
+            } else {
+                break;
+            }
         }
     }
 }
 
-impl Iterator for CondTraverseOp<'_> {
-    type Item = Result<Env, String>;
+impl<'a> Iterator for CondTraverseOp<'a> {
+    type Item = Result<Batch<'a>, String>;
 
-    #[allow(clippy::too_many_lines)]
     fn next(&mut self) -> Option<Self::Item> {
+        let mut envs = Vec::with_capacity(BATCH_SIZE);
+
+        // Drain leftover rows from previous call.
+        self.drain_pending(&mut envs);
+
         loop {
-            if let Some(ref mut current) = self.current {
-                if let Some(item) = current.next() {
-                    self.runtime.inspect_result(self.idx, &item);
-                    return Some(item);
-                }
-                self.current = None;
-            }
-            let vars = match self.iter.next()? {
-                Ok(vars) => vars,
-                Err(e) => {
-                    let result = Err(e);
-                    self.runtime.inspect_result(self.idx, &result);
-                    return Some(result);
-                }
-            };
-            let runtime = self.runtime;
-            let relationship_pattern = self.relationship_pattern;
-
-            let filter_attrs = match runtime.run_expr(
-                &relationship_pattern.attrs,
-                relationship_pattern.attrs.root().idx(),
-                &vars,
-                None,
-            ) {
-                Ok(v) => v,
-                Err(e) => {
-                    let result = Err(e);
-                    self.runtime.inspect_result(self.idx, &result);
-                    return Some(result);
-                }
-            };
-            let from_node_attrs = match runtime.run_expr(
-                &relationship_pattern.from.attrs,
-                relationship_pattern.from.attrs.root().idx(),
-                &vars,
-                None,
-            ) {
-                Ok(v) => v,
-                Err(e) => {
-                    let result = Err(e);
-                    self.runtime.inspect_result(self.idx, &result);
-                    return Some(result);
-                }
-            };
-            let to_node_attrs = match runtime.run_expr(
-                &relationship_pattern.to.attrs,
-                relationship_pattern.to.attrs.root().idx(),
-                &vars,
-                None,
-            ) {
-                Ok(v) => v,
-                Err(e) => {
-                    let result = Err(e);
-                    self.runtime.inspect_result(self.idx, &result);
-                    return Some(result);
-                }
-            };
-            let from_id = vars
-                .get(&relationship_pattern.from.alias)
-                .and_then(|v| match v {
-                    Value::Node(id) => Some(*id),
-                    _ => None,
-                });
-            if from_id.is_none() && vars.is_bound(&relationship_pattern.from.alias) {
-                self.current = Some(Box::new(empty()));
-                continue;
-            }
-            let to_id = vars
-                .get(&relationship_pattern.to.alias)
-                .and_then(|v| match v {
-                    Value::Node(id) => Some(*id),
-                    _ => None,
-                });
-            if to_id.is_none() && vars.is_bound(&relationship_pattern.to.alias) {
-                self.current = Some(Box::new(empty()));
-                continue;
+            if envs.len() >= BATCH_SIZE {
+                break;
             }
 
-            self.current = Some(Box::new(
-                Box::new(
-                    runtime
-                        .g
-                        .borrow()
-                        .get_relationships(
-                            &relationship_pattern.types,
-                            &relationship_pattern.from.labels,
-                            &relationship_pattern.to.labels,
-                        )
-                        .map(|(src, dst)| (src, dst, false)),
-                )
-                .chain(if relationship_pattern.bidirectional {
-                    // For bidirectional traversals, also scan the reverse direction
-                    // Skip self-loops (src == dst) as they are already included in the forward scan
-                    Box::new(
-                        runtime
-                            .g
-                            .borrow()
-                            .get_relationships(
-                                &relationship_pattern.types,
-                                &relationship_pattern.to.labels,
-                                &relationship_pattern.from.labels,
-                            )
-                            .filter(|(src, dst)| src != dst)
-                            .map(|(src, dst)| (src, dst, true)),
-                    ) as Box<dyn Iterator<Item = (NodeId, NodeId, bool)>>
-                } else {
-                    Box::new(empty())
-                })
-                .flat_map(move |(src, dst, is_reverse)| {
-                    let (from_node, to_node) = if is_reverse { (dst, src) } else { (src, dst) };
-                    if from_id.is_some() && from_id.unwrap() != from_node {
-                        return Box::new(empty()) as Box<dyn Iterator<Item = Result<Env, String>>>;
+            // Get or fetch current batch.
+            if self.current_batch.is_none() {
+                match self.child.next() {
+                    Some(Ok(b)) => {
+                        self.current_batch = Some(b);
+                        self.current_pos = 0;
                     }
-                    if to_id.is_some() && to_id.unwrap() != to_node {
-                        return Box::new(empty()) as Box<dyn Iterator<Item = Result<Env, String>>>;
+                    Some(Err(e)) => return Some(Err(e)),
+                    None => break,
+                }
+            }
+
+            {
+                let batch = self.current_batch.as_ref().unwrap();
+                let active: Vec<usize> = batch.active_indices().collect();
+
+                while self.current_pos < active.len() {
+                    let row_idx = active[self.current_pos];
+                    self.current_pos += 1;
+                    let env = batch.env_ref(row_idx);
+                    let mut expanded = Vec::new();
+                    if let Err(e) = self.expand_row(env, &mut expanded) {
+                        return Some(Err(e));
                     }
-                    // Check from node property attributes
-                    if let Value::Map(ref attrs) = from_node_attrs
-                        && !attrs.is_empty()
-                    {
-                        let g = runtime.g.borrow();
-                        for (attr, avalue) in attrs.iter() {
-                            match g.get_node_attribute(from_node, attr) {
-                                Some(pvalue) if pvalue == *avalue => {}
-                                _ => {
-                                    return Box::new(empty())
-                                        as Box<dyn Iterator<Item = Result<Env, String>>>;
-                                }
-                            }
-                        }
+                    self.pending.extend(expanded);
+
+                    if self.pending.len() >= BATCH_SIZE {
+                        break;
                     }
-                    // Check to node property attributes
-                    if let Value::Map(ref attrs) = to_node_attrs
-                        && !attrs.is_empty()
-                    {
-                        let g = runtime.g.borrow();
-                        for (attr, avalue) in attrs.iter() {
-                            match g.get_node_attribute(to_node, attr) {
-                                Some(pvalue) if pvalue == *avalue => {}
-                                _ => {
-                                    return Box::new(empty())
-                                        as Box<dyn Iterator<Item = Result<Env, String>>>;
-                                }
-                            }
-                        }
-                    }
-                    let vars = vars.clone();
-                    let filter_attrs = filter_attrs.clone();
-                    Box::new(
-                        runtime
-                            .g
-                            .borrow()
-                            .get_src_dest_relationships(src, dst, &relationship_pattern.types)
-                            .filter(move |v| {
-                                if let Value::Map(filter_attrs) = &filter_attrs
-                                    && !filter_attrs.is_empty()
-                                {
-                                    let g = runtime.g.borrow();
-                                    for (attr, avalue) in filter_attrs.iter() {
-                                        if let Some(pvalue) = g.get_relationship_attribute(*v, attr)
-                                        {
-                                            if *avalue == pvalue {
-                                                continue;
-                                            }
-                                            return false;
-                                        }
-                                        return false;
-                                    }
-                                }
-                                true
-                            })
-                            .map(move |id| {
-                                let mut vars = vars.clone();
-                                vars.insert(
-                                    &relationship_pattern.alias,
-                                    Value::Relationship(Box::new((id, src, dst))),
-                                );
-                                vars.insert(
-                                    &relationship_pattern.from.alias,
-                                    Value::Node(from_node),
-                                );
-                                vars.insert(&relationship_pattern.to.alias, Value::Node(to_node));
-                                Ok(vars)
-                            }),
-                    ) as Box<dyn Iterator<Item = Result<Env, String>>>
-                }),
-            ));
+                }
+            }
+
+            self.drain_pending(&mut envs);
+
+            // Check if batch is exhausted.
+            if let Some(ref batch) = self.current_batch
+                && self.current_pos >= batch.active_len()
+            {
+                self.current_batch = None;
+            }
+        }
+
+        if envs.is_empty() {
+            None
+        } else {
+            Some(Ok(Batch::from_envs(envs)))
         }
     }
 }

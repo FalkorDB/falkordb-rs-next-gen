@@ -1,33 +1,38 @@
 //! Query execution engine.
 //!
-//! This module contains the [`Runtime`] struct which executes query plans against
-//! the graph. The runtime implements a pull-based iterator model where each
-//! operator requests tuples from its children.
+//! This module contains the [`Runtime`] struct which executes query plans
+//! against the graph. The runtime builds a tree of [`BatchOp`] operators
+//! that process data in batches of up to 1024 rows.
 //!
 //! ## Execution Model
 //!
 //! ```text
-//! Plan Tree (IR)          Runtime Execution
-//!     Return               → Iterator yielding Env tuples
-//!       │                        │
-//!     Filter               → Filters tuples via predicate
-//!       │                        │
-//!     Expand               → Traverses relationships
-//!       │                        │
-//!     NodeScan             → Scans nodes by label
+//!  IR Plan Tree                BatchOp Tree (built by run_batch)
+//! ┌──────────┐               ┌──────────────────┐
+//! │  Return  │  ────────►    │  ProjectOp        │◄── yields Batch<'a>
+//! │    │     │               │    │              │
+//! │  Filter  │               │  FilterOp         │◄── sets selection vector
+//! │    │     │               │    │              │
+//! │  Expand  │               │  CondTraverseOp   │◄── expands per-row
+//! │    │     │               │    │              │
+//! │ NodeScan │               │  NodeByLabelScan  │◄── produces BATCH_SIZE rows
+//! └──────────┘               └──────────────────┘
+//!
+//!  query() drives the root BatchOp, collecting Env rows into ResultSummary.
 //! ```
 //!
 //! ## Key Types
 //!
-//! - [`Runtime`]: Main execution context
-//! - [`ResultSummary`]: Query result with statistics
-//! - [`QueryStatistics`]: Mutation counts and timing
-//! - [`Env`]: Tuple of variable bindings during execution
+//! - [`Runtime`]: Main execution context (carries `Pool`, graph ref, plan)
+//! - [`ResultSummary`]: Query result with collected rows and statistics
+//! - [`BatchOp`]: Enum-dispatch operator tree (28+ variants)
+//! - [`Batch`]: Columnar/env-backed batch of up to 1024 rows
+//! - [`Env`]: Tuple of variable bindings (pool-backed)
 //!
 //! ## Write Operations
 //!
-//! Write operations (CREATE, DELETE, SET) are batched in [`Pending`] and applied
-//! at the end of the query. This allows reads to see a consistent snapshot.
+//! Write operations (CREATE, DELETE, SET) are batched in [`Pending`] and
+//! applied atomically by [`CommitOp`] at the end of the query.
 
 #![allow(clippy::cast_sign_loss)]
 #![allow(clippy::cast_possible_wrap)]
@@ -39,19 +44,22 @@ use crate::{
     parser::ast::{ExprIR, QuantifierType, QueryExpr, Variable},
     planner::IR,
     runtime::{
+        batch::{Batch, BatchOp, Column, NullBitmap, classify_column},
+        bitset::BitSet,
         env::Env,
         functions::{FnType, apply_pow},
         ops::{
-            AggregateOp, ApplyOp, ArgumentOp, CartesianProductOp, CommitOp, CondTraverseOp,
-            CondVarLenTraverseOp, CreateOp, DeleteOp, DistinctOp, EmptyOp, ExpandIntoOp, FilterOp,
-            LimitOp, LoadCsvOp, MergeOp, NodeByFulltextScanOp, NodeByIdSeekOp, NodeByIndexScanOp,
-            NodeByLabelAndIdScanOp, NodeByLabelScanOp, OpIter, OptionalOp, OrApplyMultiplexerOp,
+            AggregateOp, ApplyOp, CartesianProductOp, CommitOp, CondTraverseOp,
+            CondVarLenTraverseOp, CreateOp, DeleteOp, DistinctOp, ExpandIntoOp, FilterOp, LimitOp,
+            LoadCsvOp, MergeOp, NodeByFulltextScanOp, NodeByIdSeekOp, NodeByIndexScanOp,
+            NodeByLabelAndIdScanOp, NodeByLabelScanOp, OptionalOp, OrApplyMultiplexerOp,
             PathBuilderOp, ProcedureCallOp, ProjectOp, RemoveOp, SemiApplyOp, SetOp, SkipOp,
             SortOp, UnionOp, UnwindOp,
         },
         ordermap::OrderMap,
         orderset::OrderSet,
         pending::Pending,
+        pool::Pool,
         value::{
             CompareValue, Contains, DeletedNode, DeletedRelationship, DisjointOrNull, Value,
             ValuesDeduper,
@@ -104,11 +112,11 @@ impl Iterator for ValueIter {
 }
 
 /// Query result containing statistics and returned tuples.
-pub struct ResultSummary {
+pub struct ResultSummary<'a> {
     /// Mutation statistics (nodes created, etc.)
     pub stats: QueryStatistics,
     /// Result tuples, each Env contains variable bindings
-    pub result: Vec<Env>,
+    pub result: Vec<Env<'a>>,
 }
 
 /// Statistics about query execution and mutations performed.
@@ -143,7 +151,7 @@ pub struct QueryStatistics {
 /// 2. Call `run()` to execute
 /// 3. Pending mutations applied at end of execution
 /// 4. Return `ResultSummary` with results and stats
-pub struct Runtime {
+pub struct Runtime<'a> {
     /// Query parameters ($param syntax)
     pub parameters: HashMap<String, Value>,
     /// Graph being queried (shared, thread-safe reference)
@@ -163,15 +171,18 @@ pub struct Runtime {
     /// Debug mode: record operator execution
     pub inspect: bool,
     /// Debug records of operator execution
-    pub record: RefCell<Vec<(NodeIdx<Dyn<IR>>, Result<Env, String>)>>,
+    pub record: RefCell<Vec<(NodeIdx<Dyn<IR>>, Result<(Vec<Value>, BitSet), String>)>>,
     /// Folder for LOAD CSV operations
     pub import_folder: String,
     /// Cache of deleted nodes for result consistency
     pub deleted_nodes: RefCell<HashMap<NodeId, DeletedNode>>,
     /// Cache of deleted relationships for result consistency
     pub deleted_relationships: RefCell<HashMap<RelationshipId, DeletedRelationship>>,
-    /// Cache for MERGE pattern matching
-    pub merge_pattern_cache: RefCell<HashMap<u64, Env>>,
+    /// Cache for MERGE pattern matching — stores only the created entity bindings (variable id → value)
+    pub merge_pattern_cache: RefCell<HashMap<u64, Vec<(u32, Value)>>>,
+    /// Per-query object pool for Env backing Vec<Value> buffers.
+    /// Owned externally and borrowed here to avoid self-referential lifetimes.
+    pub env_pool: &'a Pool<Value>,
 }
 
 pub trait GetVariables {
@@ -285,7 +296,7 @@ impl ReturnNames for DynNode<'_, IR> {
     }
 }
 
-impl Debug for Env {
+impl Debug for Env<'_> {
     fn fmt(
         &self,
         f: &mut std::fmt::Formatter<'_>,
@@ -294,15 +305,25 @@ impl Debug for Env {
     }
 }
 
-impl Runtime {
+impl<'a> Runtime<'a> {
     #[inline]
-    pub fn inspect_result(
+    pub fn inspect_batch(
         &self,
         idx: NodeIdx<Dyn<IR>>,
-        result: &Result<Env, String>,
+        result: &Result<Batch<'_>, String>,
     ) {
         if self.inspect {
-            self.record.borrow_mut().push((idx, result.clone()));
+            match result {
+                Ok(batch) => {
+                    let mut record = self.record.borrow_mut();
+                    for env in batch.active_env_iter() {
+                        record.push((idx, Ok(env.to_raw())));
+                    }
+                }
+                Err(err) => {
+                    self.record.borrow_mut().push((idx, Err(err.clone())));
+                }
+            }
         }
     }
 
@@ -314,6 +335,7 @@ impl Runtime {
         plan: Arc<DynTree<IR>>,
         inspect: bool,
         import_folder: String,
+        env_pool: &'a Pool<Value>,
     ) -> Self {
         let return_names = plan.root().get_return_names();
         Self {
@@ -331,17 +353,21 @@ impl Runtime {
             deleted_nodes: RefCell::new(HashMap::new()),
             deleted_relationships: RefCell::new(HashMap::new()),
             merge_pattern_cache: RefCell::new(HashMap::new()),
+            env_pool,
         }
     }
 
-    pub fn query(&mut self) -> Result<ResultSummary, String> {
+    pub fn query(&self) -> Result<ResultSummary<'a>, String> {
         let start = Instant::now();
         let idx = self.plan.root().idx();
         let labels_count = self.g.borrow().labels_count();
         let mut result = vec![];
-        for env in self.run(idx)? {
-            let env = env?;
-            result.push(env);
+        let mut batch_op = self.run_batch(idx)?;
+        for batch_result in &mut batch_op {
+            let batch = batch_result?;
+            for env in batch.active_env_iter() {
+                result.push(env.clone_pooled(self.env_pool));
+            }
         }
         let run_duration = start.elapsed();
 
@@ -353,13 +379,396 @@ impl Runtime {
         })
     }
 
+    /// Creates a single-row default batch.
+    fn default_batch(&self) -> Batch<'_> {
+        let envs = vec![Env::new(self.env_pool)];
+        Batch::from_envs(envs)
+    }
+
+    /// Resolves the first child of `idx` into a `BatchOp`, falling back to a
+    /// single-row default batch when no child exists.
+    fn child_batch_op(
+        &self,
+        idx: NodeIdx<Dyn<IR>>,
+    ) -> Result<BatchOp<'_>, String> {
+        self.plan.node(idx).get_child(0).map_or_else(
+            || Ok(BatchOp::Once(Some(self.default_batch()))),
+            |child| self.run_batch(child.idx()),
+        )
+    }
+
+    /// Builds a batch-mode operator tree for the given IR node.
+    pub fn run_batch(
+        &self,
+        idx: NodeIdx<Dyn<IR>>,
+    ) -> Result<BatchOp<'_>, String> {
+        match self.plan.node(idx).data() {
+            IR::NodeByLabelScan(_) | IR::AllNodeScan(_) => {
+                let child = self.child_batch_op(idx)?;
+                let (IR::NodeByLabelScan(node_pattern) | IR::AllNodeScan(node_pattern)) =
+                    self.plan.node(idx).data()
+                else {
+                    unreachable!()
+                };
+                Ok(BatchOp::NodeByLabelScan(NodeByLabelScanOp::new(
+                    self,
+                    Box::new(child),
+                    node_pattern,
+                    idx,
+                )))
+            }
+            IR::Filter(tree) => {
+                let child = self.child_batch_op(idx)?;
+                Ok(BatchOp::Filter(FilterOp::new(
+                    self,
+                    Box::new(child),
+                    tree,
+                    idx,
+                )))
+            }
+            IR::Project(trees, copy_from_parent) => {
+                let child = self.child_batch_op(idx)?;
+                Ok(BatchOp::Project(ProjectOp::new(
+                    self,
+                    Box::new(child),
+                    trees,
+                    copy_from_parent,
+                    idx,
+                )))
+            }
+            IR::Skip(skip) => {
+                let child = self.child_batch_op(idx)?;
+                let Value::Int(skip) =
+                    self.run_expr(skip, skip.root().idx(), &Env::new(self.env_pool), None)?
+                else {
+                    return Err(String::from("Skip operator requires an integer argument"));
+                };
+                if skip < 0 {
+                    return Err(format!("SKIP must be a non-negative integer, got {skip}"));
+                }
+                Ok(BatchOp::Skip(SkipOp::new(
+                    self,
+                    Box::new(child),
+                    skip as usize,
+                    idx,
+                )))
+            }
+            IR::Limit(limit) => {
+                let child = self.child_batch_op(idx)?;
+                let Value::Int(limit) =
+                    self.run_expr(limit, limit.root().idx(), &Env::new(self.env_pool), None)?
+                else {
+                    return Err(String::from("Limit operator requires an integer argument"));
+                };
+                if limit < 0 {
+                    return Err(format!("LIMIT must be a non-negative integer, got {limit}"));
+                }
+                Ok(BatchOp::Limit(LimitOp::new(
+                    self,
+                    Box::new(child),
+                    limit as usize,
+                    idx,
+                )))
+            }
+            IR::Distinct => {
+                let child = self.child_batch_op(idx)?;
+                Ok(BatchOp::Distinct(DistinctOp::new(
+                    self,
+                    Box::new(child),
+                    idx,
+                )))
+            }
+            IR::Sort(trees) => {
+                let child = self.child_batch_op(idx)?;
+                Ok(BatchOp::Sort(SortOp::new(
+                    self,
+                    Box::new(child),
+                    trees,
+                    idx,
+                )))
+            }
+            IR::Aggregate(_, keys, agg) => {
+                let child = self.child_batch_op(idx)?;
+                Ok(BatchOp::Aggregate(AggregateOp::new(
+                    self,
+                    Box::new(child),
+                    keys,
+                    agg,
+                    idx,
+                )))
+            }
+            IR::Unwind(list, name) => {
+                let child = self.child_batch_op(idx)?;
+                Ok(BatchOp::Unwind(UnwindOp::new(
+                    self,
+                    Box::new(child),
+                    list,
+                    name,
+                    idx,
+                )))
+            }
+            IR::CondTraverse(relationship_pattern) => {
+                let child = self.child_batch_op(idx)?;
+                Ok(BatchOp::CondTraverse(CondTraverseOp::new(
+                    self,
+                    Box::new(child),
+                    relationship_pattern,
+                    idx,
+                )))
+            }
+            IR::ExpandInto(relationship_pattern) => {
+                let child = self.child_batch_op(idx)?;
+                Ok(BatchOp::ExpandInto(ExpandIntoOp::new(
+                    self,
+                    Box::new(child),
+                    relationship_pattern,
+                    idx,
+                )))
+            }
+            IR::NodeByIdSeek { node, filter } => {
+                let child = self.child_batch_op(idx)?;
+                Ok(BatchOp::NodeByIdSeek(NodeByIdSeekOp::new(
+                    self,
+                    Box::new(child),
+                    node,
+                    filter,
+                    idx,
+                )))
+            }
+            IR::NodeByIndexScan { node, index, query } => {
+                let child = self.child_batch_op(idx)?;
+                Ok(BatchOp::NodeByIndexScan(NodeByIndexScanOp::new(
+                    self,
+                    Box::new(child),
+                    node,
+                    index,
+                    query,
+                    idx,
+                )))
+            }
+            IR::CartesianProduct => {
+                let child = self.child_batch_op(idx)?;
+                Ok(BatchOp::CartesianProduct(CartesianProductOp::new(
+                    self,
+                    Box::new(child),
+                    idx,
+                )))
+            }
+            IR::Apply => {
+                let child = self.child_batch_op(idx)?;
+                Ok(BatchOp::Apply(ApplyOp::new(self, Box::new(child), idx)))
+            }
+            IR::SemiApply | IR::AntiSemiApply => {
+                let is_anti = matches!(self.plan.node(idx).data(), IR::AntiSemiApply);
+                let child = self.child_batch_op(idx)?;
+                Ok(BatchOp::SemiApply(SemiApplyOp::new(
+                    self,
+                    Box::new(child),
+                    is_anti,
+                    idx,
+                )))
+            }
+            IR::Optional(vars) => {
+                let child = if self.plan.node(idx).num_children() > 1 {
+                    self.run_batch(self.plan.node(idx).child(0).idx())?
+                } else {
+                    BatchOp::Once(Some(self.default_batch()))
+                };
+                Ok(BatchOp::Optional(OptionalOp::new(
+                    self,
+                    Box::new(child),
+                    vars,
+                    idx,
+                )))
+            }
+            IR::Create(pattern) => {
+                let child = self.child_batch_op(idx)?;
+                Ok(BatchOp::Create(CreateOp::new(
+                    self,
+                    Box::new(child),
+                    pattern,
+                    idx,
+                )))
+            }
+            IR::Delete(trees, _) => {
+                let child = self.child_batch_op(idx)?;
+                Ok(BatchOp::Delete(DeleteOp::new(
+                    self,
+                    Box::new(child),
+                    trees,
+                    idx,
+                )))
+            }
+            IR::Set(items) => {
+                let child = self.child_batch_op(idx)?;
+                Ok(BatchOp::Set(SetOp::new(self, Box::new(child), items, idx)))
+            }
+            IR::Remove(items) => {
+                let child = self.child_batch_op(idx)?;
+                Ok(BatchOp::Remove(RemoveOp::new(
+                    self,
+                    Box::new(child),
+                    items,
+                    idx,
+                )))
+            }
+            IR::Merge(pattern, on_create_set_items, on_match_set_items) => {
+                let child = if self.plan.node(idx).num_children() > 1 {
+                    self.run_batch(self.plan.node(idx).child(0).idx())?
+                } else {
+                    BatchOp::Once(Some(self.default_batch()))
+                };
+                Ok(BatchOp::Merge(MergeOp::new(
+                    self,
+                    Box::new(child),
+                    pattern,
+                    on_create_set_items,
+                    on_match_set_items,
+                    idx,
+                )))
+            }
+            IR::Commit => {
+                let child = self.child_batch_op(idx)?;
+                Ok(BatchOp::Commit(CommitOp::new(self, Box::new(child), idx)?))
+            }
+            IR::Union => Ok(BatchOp::Union(UnionOp::new(self, idx))),
+            IR::PathBuilder(paths) => {
+                let child = self.child_batch_op(idx)?;
+                Ok(BatchOp::PathBuilder(PathBuilderOp::new(
+                    self,
+                    Box::new(child),
+                    paths,
+                    idx,
+                )))
+            }
+            IR::LoadCsv {
+                file_path,
+                headers,
+                delimiter,
+                var,
+            } => {
+                let child = self.child_batch_op(idx)?;
+                Ok(BatchOp::LoadCsv(LoadCsvOp::new(
+                    self,
+                    Box::new(child),
+                    file_path,
+                    headers,
+                    delimiter,
+                    var,
+                    idx,
+                )))
+            }
+            IR::ProcedureCall(func, trees, name_outputs) => Ok(BatchOp::ProcedureCall(
+                ProcedureCallOp::new(self, func, trees, name_outputs, idx)?,
+            )),
+            IR::NodeByFulltextScan {
+                node,
+                label,
+                query,
+                score,
+            } => {
+                let child = self.child_batch_op(idx)?;
+                Ok(BatchOp::NodeByFulltextScan(NodeByFulltextScanOp::new(
+                    self,
+                    Box::new(child),
+                    node,
+                    label,
+                    query,
+                    score,
+                    idx,
+                )))
+            }
+            IR::NodeByLabelAndIdScan { node, filter } => {
+                let child = self.child_batch_op(idx)?;
+                Ok(BatchOp::NodeByLabelAndIdScan(NodeByLabelAndIdScanOp::new(
+                    self,
+                    Box::new(child),
+                    node,
+                    filter,
+                    idx,
+                )))
+            }
+            IR::CondVarLenTraverse(relationship_pattern) => {
+                let child = self.child_batch_op(idx)?;
+                Ok(BatchOp::CondVarLenTraverse(CondVarLenTraverseOp::new(
+                    self,
+                    Box::new(child),
+                    relationship_pattern,
+                    idx,
+                )))
+            }
+            IR::OrApplyMultiplexer(anti_flags) => {
+                let child = self.child_batch_op(idx)?;
+                Ok(BatchOp::OrApplyMultiplexer(OrApplyMultiplexerOp::new(
+                    self,
+                    Box::new(child),
+                    anti_flags,
+                    idx,
+                )))
+            }
+            IR::Argument => Ok(BatchOp::Argument(Some(self.default_batch()))),
+            IR::CreateIndex {
+                label,
+                attrs,
+                index_type,
+                entity_type,
+                options,
+            } => {
+                if !self.write {
+                    return Err(String::from(
+                        "graph.RO_QUERY is to be executed only on read-only queries",
+                    ));
+                }
+                let index_options = match options {
+                    Some(expr) => {
+                        let val =
+                            self.run_expr(expr, expr.root().idx(), &Env::new(self.env_pool), None)?;
+                        match val {
+                            Value::Map(map) => map_to_index_options(index_type, &map)?,
+                            _ => return Err("Index options must be a map".into()),
+                        }
+                    }
+                    None => None,
+                };
+                self.g.borrow_mut().create_index(
+                    index_type,
+                    entity_type,
+                    label,
+                    attrs,
+                    index_options,
+                )?;
+                self.stats.borrow_mut().indexes_created += attrs.len();
+                Ok(BatchOp::Once(None))
+            }
+            IR::DropIndex {
+                label,
+                attrs,
+                index_type,
+                entity_type,
+            } => {
+                if !self.write {
+                    return Err(String::from(
+                        "graph.RO_QUERY is to be executed only on read-only queries",
+                    ));
+                }
+
+                let dropped =
+                    self.g
+                        .borrow_mut()
+                        .drop_index(index_type, entity_type, label, attrs)?;
+                self.stats.borrow_mut().indexes_dropped += dropped;
+                Ok(BatchOp::Once(None))
+            }
+        }
+    }
+
     #[allow(clippy::too_many_lines)]
     #[allow(clippy::cognitive_complexity)]
     pub fn run_expr(
         &self,
         ir: &DynTree<ExprIR<Variable>>,
         idx: NodeIdx<Dyn<ExprIR<Variable>>>,
-        env: &Env,
+        env: &Env<'_>,
         agg_group_key: Option<u64>,
     ) -> Result<Value, String> {
         match ir.node(idx).data() {
@@ -403,7 +812,8 @@ impl Runtime {
             }
             _ => {}
         }
-        let mut res: Vec<Value> = vec![];
+        let mut res = self.env_pool.acquire(0);
+        res.clear();
         let mut stack = thin_vec![(idx, false)];
         while let Some((idx, reenter)) = stack.pop() {
             let node = ir.node(idx);
@@ -797,7 +1207,7 @@ impl Runtime {
                     let list = self.run_expr(ir, node.child(0).idx(), env, agg_group_key)?;
                     match list {
                         Value::List(values) => {
-                            let mut env = env.clone();
+                            let mut env = env.clone_pooled(self.env_pool);
                             let mut t = 0;
                             let mut f = 0;
                             let mut n = 0;
@@ -830,7 +1240,7 @@ impl Runtime {
                 }
                 ExprIR::ListComprehension(var) => {
                     let iter = self.run_iter_expr(ir, node.child(0).idx(), env)?;
-                    let mut env = env.clone();
+                    let mut env = env.clone_pooled(self.env_pool);
                     let mut acc = thin_vec![];
                     for value in iter {
                         env.insert(var, value);
@@ -853,7 +1263,7 @@ impl Runtime {
                     // For single-hop patterns (the common case), there's
                     // exactly one relationship; multi-hop chains expand
                     // intermediate envs through each hop.
-                    let mut envs = vec![env.clone()];
+                    let mut envs = vec![env.clone_pooled(self.env_pool)];
                     for rel_pattern in graph.relationships() {
                         let mut next_envs = Vec::new();
                         for current_env in &envs {
@@ -893,7 +1303,7 @@ impl Runtime {
 
                             // Phase 2: build envs per match (graph borrow released).
                             for (src, dst, rel_id) in matches {
-                                let mut local_env = current_env.clone();
+                                let mut local_env = current_env.clone_pooled(self.env_pool);
                                 local_env.insert(
                                     &rel_pattern.alias,
                                     Value::Relationship(Box::new((rel_id, src, dst))),
@@ -945,7 +1355,7 @@ impl Runtime {
                                     .collect()
                                 };
                                 for (src, dst, rel_id) in rev_matches {
-                                    let mut local_env = current_env.clone();
+                                    let mut local_env = current_env.clone_pooled(self.env_pool);
                                     local_env.insert(
                                         &rel_pattern.alias,
                                         Value::Relationship(Box::new((rel_id, src, dst))),
@@ -1017,14 +1427,15 @@ impl Runtime {
             }
         }
         debug_assert_eq!(res.len(), 1);
-        Ok(res.pop().unwrap())
+        let result = res.pop().unwrap();
+        Ok(result)
     }
 
     pub fn run_iter_expr(
         &self,
         ir: &DynTree<ExprIR<Variable>>,
         idx: NodeIdx<Dyn<ExprIR<Variable>>>,
-        env: &Env,
+        env: &Env<'_>,
     ) -> Result<ValueIter, String> {
         match ir.node(idx).data() {
             ExprIR::FuncInvocation(func) if func.name == "range" => {
@@ -1128,223 +1539,10 @@ impl Runtime {
         }
     }
 
-    #[allow(clippy::too_many_lines)]
-    pub fn run(
-        &self,
-        idx: NodeIdx<Dyn<IR>>,
-    ) -> Result<OpIter<'_>, String> {
-        let child0_idx = self.plan.node(idx).get_child(0).map(|n| n.idx());
-        let iter = if matches!(
-            self.plan.node(idx).data(),
-            IR::Optional(_) | IR::Merge(_, _, _)
-        ) {
-            if let Some(child_idx) = child0_idx
-                && self.plan.node(idx).num_children() > 1
-            {
-                self.run(child_idx)?
-            } else {
-                OpIter::OnceOk(Some(Env::default()))
-            }
-        } else if matches!(self.plan.node(idx).data(), IR::Delete(_, _))
-            && self.plan.node(idx).num_children() == 0
-        {
-            return Err(String::from(
-                "DELETE can only be called on nodes, paths and relationships",
-            ));
-        } else if matches!(
-            self.plan.node(idx).data(),
-            IR::Set(_)
-                | IR::PathBuilder(_)
-                | IR::Filter(_)
-                | IR::Sort(_)
-                | IR::Skip(_)
-                | IR::Limit(_)
-                | IR::Distinct
-                | IR::Commit
-        ) && self.plan.node(idx).num_children() == 0
-        {
-            println!(
-                "Runtime error: {:?} node has no children",
-                self.plan.node(idx).data()
-            );
-            unreachable!();
-        } else if matches!(self.plan.node(idx).data(), IR::Union) {
-            // Union handles all children in its match arm.
-            OpIter::Empty(EmptyOp)
-        } else if let Some(child_idx) = child0_idx {
-            self.run(child_idx)?
-        } else {
-            OpIter::OnceOk(Some(Env::default()))
-        };
-        let iter = Box::new(iter);
-        match self.plan.node(idx).data() {
-            IR::Argument => Ok(OpIter::Argument(ArgumentOp::new())),
-            IR::Optional(vars) => Ok(OpIter::Optional(OptionalOp::new(self, iter, vars, idx))),
-            IR::ProcedureCall(func, trees, name_outputs) => Ok(OpIter::ProcedureCall(
-                ProcedureCallOp::new(self, func, trees, name_outputs, idx)?,
-            )),
-            IR::Unwind(list, name) => {
-                Ok(OpIter::Unwind(UnwindOp::new(self, iter, list, name, idx)))
-            }
-            IR::Create(pattern) => Ok(OpIter::Create(CreateOp::new(self, iter, pattern, idx))),
-            IR::Merge(pattern, on_create_set_items, on_match_set_items) => {
-                Ok(OpIter::Merge(MergeOp::new(
-                    self,
-                    iter,
-                    pattern,
-                    on_create_set_items,
-                    on_match_set_items,
-                    idx,
-                )))
-            }
-            IR::Delete(trees, _) => Ok(OpIter::Delete(DeleteOp::new(self, iter, trees, idx))),
-            IR::Set(items) => Ok(OpIter::Set(SetOp::new(self, iter, items, idx))),
-            IR::Remove(items) => Ok(OpIter::Remove(RemoveOp::new(self, iter, items, idx))),
-            IR::NodeByLabelScan(node) | IR::AllNodeScan(node) => Ok(OpIter::NodeByLabelScan(
-                NodeByLabelScanOp::new(self, iter, node, idx),
-            )),
-            IR::NodeByLabelAndIdScan { node, filter } => Ok(OpIter::NodeByLabelAndIdScan(
-                NodeByLabelAndIdScanOp::new(self, iter, node, filter, idx),
-            )),
-            IR::NodeByIdSeek { node, filter } => Ok(OpIter::NodeByIdSeek(NodeByIdSeekOp::new(
-                self, iter, node, filter, idx,
-            ))),
-            IR::NodeByIndexScan { node, index, query } => Ok(OpIter::NodeByIndexScan(
-                NodeByIndexScanOp::new(self, iter, node, index, query, idx),
-            )),
-            IR::NodeByFulltextScan {
-                node,
-                label,
-                query,
-                score,
-            } => Ok(OpIter::NodeByFulltextScan(NodeByFulltextScanOp::new(
-                self, iter, node, label, query, score, idx,
-            ))),
-            IR::CondTraverse(relationship_pattern) => Ok(OpIter::CondTraverse(
-                CondTraverseOp::new(self, iter, relationship_pattern, idx),
-            )),
-            IR::CondVarLenTraverse(relationship_pattern) => Ok(OpIter::CondVarLenTraverse(
-                CondVarLenTraverseOp::new(self, iter, relationship_pattern, idx),
-            )),
-            IR::ExpandInto(relationship_pattern) => Ok(OpIter::ExpandInto(ExpandIntoOp::new(
-                self,
-                iter,
-                relationship_pattern,
-                idx,
-            ))),
-            IR::PathBuilder(paths) => Ok(OpIter::PathBuilder(PathBuilderOp::new(
-                self, iter, paths, idx,
-            ))),
-            IR::Filter(tree) => Ok(OpIter::Filter(FilterOp::new(self, iter, tree, idx))),
-            IR::CartesianProduct => Ok(OpIter::CartesianProduct(CartesianProductOp::new(
-                self, iter, idx,
-            ))),
-            IR::Union => Ok(OpIter::Union(UnionOp::new(self, idx))),
-            IR::Apply => Ok(OpIter::Apply(ApplyOp::new(self, iter, idx))),
-            IR::SemiApply | IR::AntiSemiApply => {
-                let is_anti = matches!(self.plan.node(idx).data(), IR::AntiSemiApply);
-                Ok(OpIter::SemiApply(SemiApplyOp::new(
-                    self, iter, is_anti, idx,
-                )))
-            }
-            IR::OrApplyMultiplexer(anti_flags) => Ok(OpIter::OrApplyMultiplexer(
-                OrApplyMultiplexerOp::new(self, iter, anti_flags, idx),
-            )),
-            IR::LoadCsv {
-                file_path,
-                headers,
-                delimiter,
-                var,
-            } => Ok(OpIter::LoadCsv(LoadCsvOp::new(
-                self, iter, file_path, headers, delimiter, var, idx,
-            ))),
-            IR::Sort(trees) => Ok(OpIter::Sort(SortOp::new(self, iter, trees, idx))),
-            IR::Skip(skip) => {
-                let Value::Int(skip) =
-                    self.run_expr(skip, skip.root().idx(), &Env::default(), None)?
-                else {
-                    return Err(String::from("Skip operator requires an integer argument"));
-                };
-                Ok(OpIter::Skip(SkipOp::new(self, iter, skip as usize, idx)))
-            }
-            IR::Limit(limit) => {
-                let Value::Int(limit) =
-                    self.run_expr(limit, limit.root().idx(), &Env::default(), None)?
-                else {
-                    return Err(String::from("Limit operator requires an integer argument"));
-                };
-                Ok(OpIter::Limit(LimitOp::new(self, iter, limit as usize, idx)))
-            }
-            IR::Aggregate(_, keys, agg) => Ok(OpIter::Aggregate(AggregateOp::new(
-                self, iter, keys, agg, idx,
-            ))),
-            IR::Project(trees, copy_from_parent) => Ok(OpIter::Project(ProjectOp::new(
-                self,
-                iter,
-                trees,
-                copy_from_parent,
-                idx,
-            ))),
-            IR::Distinct => Ok(OpIter::Distinct(DistinctOp::new(self, iter, idx))),
-            IR::Commit => Ok(OpIter::Commit(CommitOp::new(self, iter, idx)?)),
-            IR::CreateIndex {
-                label,
-                attrs,
-                index_type,
-                entity_type,
-                options,
-            } => {
-                if !self.write {
-                    return Err(String::from(
-                        "graph.RO_QUERY is to be executed only on read-only queries",
-                    ));
-                }
-                let index_options = match options {
-                    Some(expr) => {
-                        let val = self.run_expr(expr, expr.root().idx(), &Env::default(), None)?;
-                        match val {
-                            Value::Map(map) => map_to_index_options(index_type, &map)?,
-                            _ => return Err("Index options must be a map".into()),
-                        }
-                    }
-                    None => None,
-                };
-                self.g.borrow_mut().create_index(
-                    index_type,
-                    entity_type,
-                    label,
-                    attrs,
-                    index_options,
-                )?;
-                self.stats.borrow_mut().indexes_created += attrs.len();
-                Ok(OpIter::Empty(EmptyOp))
-            }
-            IR::DropIndex {
-                label,
-                attrs,
-                index_type,
-                entity_type,
-            } => {
-                if !self.write {
-                    return Err(String::from(
-                        "graph.RO_QUERY is to be executed only on read-only queries",
-                    ));
-                }
-
-                let dropped =
-                    self.g
-                        .borrow_mut()
-                        .drop_index(index_type, entity_type, label, attrs)?;
-                self.stats.borrow_mut().indexes_dropped += dropped;
-                Ok(OpIter::Empty(EmptyOp))
-            }
-        }
-    }
-
     pub fn evaluate_id_filter(
         &self,
         filter: &Vec<(QueryExpr<Variable>, ExprIR<Variable>)>,
-        vars: &Env,
+        vars: &Env<'_>,
     ) -> Result<Option<RoaringTreemap>, String> {
         let mut min = 0u64;
         let mut max = self.g.borrow().max_node_id();
@@ -1431,13 +1629,51 @@ impl Runtime {
         self.g.borrow().get_relationship_attribute(id, attr)
     }
 
+    /// Materializes a property column for a batch of node IDs.
+    ///
+    /// Resolves the attribute index once, then fetches the value for each node.
+    /// Checks deleted_nodes and pending mutations (same as `get_node_attribute`).
+    /// Returns a typed Column plus a NullBitmap.
+    pub fn materialize_node_property(
+        &self,
+        node_ids: &[NodeId],
+        attr: &Arc<String>,
+    ) -> (Column, NullBitmap) {
+        let g = self.g.borrow();
+
+        let attr_idx = g.get_node_attribute_id(attr).map(|idx| idx as u16);
+
+        let deleted = self.deleted_nodes.borrow();
+        let pending = self.pending.borrow();
+
+        let mut values = Vec::with_capacity(node_ids.len());
+        for &id in node_ids {
+            let val = deleted.get(&id).map_or_else(
+                || {
+                    pending.get_node_attribute(id, attr).map_or_else(
+                        || {
+                            attr_idx
+                                .and_then(|idx| g.get_node_attribute_by_idx(id, idx))
+                                .unwrap_or(Value::Null)
+                        },
+                        Clone::clone,
+                    )
+                },
+                |dn| dn.attrs.get(attr).cloned().unwrap_or(Value::Null),
+            );
+            values.push(val);
+        }
+
+        classify_column(values)
+    }
+
     /// Checks inline property predicates on a node.
     /// Returns `true` if all properties match (or if there are no predicates).
     fn check_inline_node_attrs(
         &self,
         attrs: &QueryExpr<Variable>,
         node_id: NodeId,
-        env: &Env,
+        env: &Env<'_>,
         agg_group_key: Option<u64>,
     ) -> Result<bool, String> {
         if attrs.root().children().next().is_none() {
@@ -1463,7 +1699,7 @@ impl Runtime {
         &self,
         attrs: &QueryExpr<Variable>,
         rel_id: RelationshipId,
-        env: &Env,
+        env: &Env<'_>,
         agg_group_key: Option<u64>,
     ) -> Result<bool, String> {
         if attrs.root().children().next().is_none() {
@@ -1511,7 +1747,7 @@ impl Runtime {
         &self,
         ir: &DynTree<ExprIR<Variable>>,
         idx: NodeIdx<Dyn<ExprIR<Variable>>>,
-        env: &Env,
+        env: &Env<'_>,
         agg_group_key: Option<u64>,
     ) -> Result<Value, String> {
         let node = ir.node(idx);

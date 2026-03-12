@@ -226,6 +226,13 @@ impl Binder {
                     .iter()
                     .map(|expr| self.bind_expr(expr))
                     .collect::<Result<Vec<_>, _>>()?;
+                for expr in &exprs {
+                    if !Self::expr_may_return_entity(expr.root()) {
+                        return Err(String::from(
+                            "DELETE can only be called on nodes, paths and relationships",
+                        ));
+                    }
+                }
                 Ok(QueryIR::Delete(exprs, detach))
             }
             QueryIR::Set(items) => Ok(QueryIR::Set(self.bind_set_items(items)?)),
@@ -1146,6 +1153,60 @@ impl Binder {
             | ExprIR::Parameter(_)
             | ExprIR::Property(_)
             | ExprIR::Pattern(_) => true,
+        }
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    fn expr_may_return_entity(node: DynNode<ExprIR<Variable>>) -> bool {
+        match node.data() {
+            // Variables – check the resolved type
+            ExprIR::Variable(var) => var.ty.can_return_entity(),
+
+            // Function calls – check the return type
+            ExprIR::FuncInvocation(func) => func.ret_type.can_return_entity(),
+
+            // Transparent wrappers – recurse into the single child
+            ExprIR::Paren | ExprIR::Distinct => {
+                node.get_child(0).is_some_and(Self::expr_may_return_entity)
+            }
+
+            // Subscript and property access could produce entities at runtime
+            ExprIR::GetElement | ExprIR::Property(_) | ExprIR::Parameter(_) | ExprIR::Null => true,
+
+            // Everything else cannot produce a graph entity
+            ExprIR::Integer(_)
+            | ExprIR::Float(_)
+            | ExprIR::String(_)
+            | ExprIR::Bool(_)
+            | ExprIR::List
+            | ExprIR::Map
+            | ExprIR::MapProjection
+            | ExprIR::Negate
+            | ExprIR::Length
+            | ExprIR::GetElements
+            | ExprIR::ListComprehension(_)
+            | ExprIR::PatternComprehension(_)
+            | ExprIR::Or
+            | ExprIR::And
+            | ExprIR::Xor
+            | ExprIR::Not
+            | ExprIR::Eq
+            | ExprIR::Neq
+            | ExprIR::Lt
+            | ExprIR::Gt
+            | ExprIR::Le
+            | ExprIR::Ge
+            | ExprIR::In
+            | ExprIR::Add
+            | ExprIR::Sub
+            | ExprIR::Mul
+            | ExprIR::Div
+            | ExprIR::Pow
+            | ExprIR::Modulo
+            | ExprIR::IsNode
+            | ExprIR::IsRelationship
+            | ExprIR::Quantifier(_, _)
+            | ExprIR::Pattern(_) => false,
         }
     }
 }

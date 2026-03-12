@@ -1,108 +1,138 @@
-//! Label scan operator — iterates all nodes with a given label.
+//! Batch-mode label scan operator — iterates all nodes with a given label.
 //!
-//! Implements the basic `MATCH (n:Label)` scan. For each incoming row,
-//! iterates all nodes carrying the specified label(s) via the graph's
-//! label matrix. When the node pattern includes inline attribute filters
-//! (e.g. `(n:Person {name: "Alice"})`), nodes are filtered in-place
-//! against those property values.
+//! For each parent row, collects up to [`BATCH_SIZE`](super::super::batch::BATCH_SIZE)
+//! matching node IDs into a [`Column::NodeIds`] vector. This avoids cloning the
+//! parent env per node — the parent env columns are copied once per batch.
+//!
+//! ```text
+//!  parent BatchOp ──► parent_batch
+//!                          │
+//!             for each parent row:
+//!               label_matrix.get_nodes(labels) ──► node iterator
+//!                          │
+//!              ┌───────────┴───────────┐
+//!              │  collect ≤ BATCH_SIZE │
+//!              │  node IDs per batch   │
+//!              └───────────┬───────────┘
+//!                          │
+//!          Batch { parent_env + Node(id) per row }
+//!                          │
+//!                    yield Batch ──► parent
+//! ```
 
 use std::sync::Arc;
 
-use super::OpIter;
+use crate::graph::graph::NodeId;
 use crate::parser::ast::{QueryNode, Variable};
 use crate::planner::IR;
-use crate::runtime::{env::Env, runtime::Runtime, value::Value};
-use orx_tree::{Dyn, NodeIdx, NodeRef};
+use crate::runtime::{
+    batch::{BATCH_SIZE, Batch, BatchOp},
+    env::Env,
+    runtime::Runtime,
+    value::Value,
+};
+use orx_tree::{Dyn, NodeIdx};
 
 pub struct NodeByLabelScanOp<'a> {
-    runtime: &'a Runtime,
-    pub iter: Box<OpIter<'a>>,
-    current: Option<Box<dyn Iterator<Item = Result<Env, String>> + 'a>>,
+    pub(crate) runtime: &'a Runtime<'a>,
+    pub(crate) child: Box<BatchOp<'a>>,
+    /// Current parent batch being expanded.
+    parent_batch: Option<Batch<'a>>,
+    /// Index of the current parent row within `parent_batch`.
+    parent_row: usize,
+    /// Cached env for the current parent row.
+    parent_env: Option<Env<'a>>,
+    /// Iterator over node IDs for the current parent row.
+    node_iter: Option<Box<dyn Iterator<Item = NodeId> + 'a>>,
     node_pattern: &'a QueryNode<Arc<String>, Variable>,
-    idx: NodeIdx<Dyn<IR>>,
+    pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
 impl<'a> NodeByLabelScanOp<'a> {
     pub fn new(
-        runtime: &'a Runtime,
-        iter: Box<OpIter<'a>>,
+        runtime: &'a Runtime<'a>,
+        child: Box<BatchOp<'a>>,
         node_pattern: &'a QueryNode<Arc<String>, Variable>,
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
         Self {
             runtime,
-            iter,
-            current: None,
+            child,
+            parent_batch: None,
+            parent_row: 0,
+            parent_env: None,
+            node_iter: None,
             node_pattern,
             idx,
         }
     }
 }
 
-impl Iterator for NodeByLabelScanOp<'_> {
-    type Item = Result<Env, String>;
+impl<'a> Iterator for NodeByLabelScanOp<'a> {
+    type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            if let Some(ref mut current) = self.current {
-                if let Some(item) = current.next() {
-                    self.runtime.inspect_result(self.idx, &item);
-                    return Some(item);
-                }
-                self.current = None;
-            }
-            let vars = match self.iter.next()? {
-                Ok(vars) => vars,
-                Err(e) => {
-                    let result = Err(e);
-                    self.runtime.inspect_result(self.idx, &result);
-                    return Some(result);
-                }
-            };
-            let has_inline_attrs = self.node_pattern.attrs.root().children().next().is_some();
-            let nodes_iter = self
-                .runtime
-                .g
-                .borrow()
-                .get_nodes(&self.node_pattern.labels, 0);
-            let runtime = self.runtime;
-            let node_pattern = self.node_pattern;
+            // If we have an active node iterator, collect up to BATCH_SIZE nodes
+            if let Some(ref mut node_iter) = self.node_iter {
+                let parent_env = self.parent_env.as_ref().unwrap();
+                let mut node_ids: Vec<NodeId> = Vec::with_capacity(BATCH_SIZE);
 
-            if has_inline_attrs {
-                self.current = Some(Box::new(nodes_iter.filter_map(move |v| {
-                    let mut vars = vars.clone();
-                    vars.insert(&node_pattern.alias, Value::Node(v));
-                    let attrs = match runtime.run_expr(
-                        &node_pattern.attrs,
-                        node_pattern.attrs.root().idx(),
-                        &vars,
-                        None,
-                    ) {
-                        Ok(attrs) => attrs,
-                        Err(e) => return Some(Err(e)),
-                    };
-                    if let Value::Map(attrs) = &attrs
-                        && !attrs.is_empty()
-                    {
-                        let g = runtime.g.borrow();
-                        for (attr, avalue) in attrs.iter() {
-                            if let Some(pvalue) = g.get_node_attribute(v, attr) {
-                                if *avalue == pvalue {
-                                    continue;
-                                }
-                                return None;
-                            }
-                            return None;
-                        }
+                for id in node_iter.by_ref() {
+                    node_ids.push(id);
+                    if node_ids.len() >= BATCH_SIZE {
+                        break;
                     }
-                    Some(Ok(vars))
-                })));
-            } else {
-                self.current = Some(Box::new(nodes_iter.map(move |v| {
-                    let mut vars = vars.clone();
-                    vars.insert(&node_pattern.alias, Value::Node(v));
-                    Ok(vars)
-                })));
+                }
+
+                if !node_ids.is_empty() {
+                    let batch_len = node_ids.len();
+                    // Build output batch: clone parent env for each row, set node column
+                    let mut envs = Vec::with_capacity(batch_len);
+                    let alias = &self.node_pattern.alias;
+                    for id in node_ids {
+                        let mut row = parent_env.clone_pooled(self.runtime.env_pool);
+                        row.insert(alias, Value::Node(id));
+                        envs.push(row);
+                    }
+                    return Some(Ok(Batch::from_envs(envs)));
+                }
+
+                // Node iterator exhausted; fall through to get next parent row
+                self.node_iter = None;
+                self.parent_env = None;
+            }
+
+            // Get the next parent row
+            loop {
+                // If we have a parent batch, try the next row
+                if let Some(ref parent_batch) = self.parent_batch {
+                    if self.parent_row < parent_batch.len() {
+                        let env = parent_batch.env_ref(self.parent_row);
+                        self.parent_row += 1;
+                        let nodes_iter = self
+                            .runtime
+                            .g
+                            .borrow()
+                            .get_nodes(&self.node_pattern.labels, 0);
+                        self.parent_env = Some(env.clone_pooled(self.runtime.env_pool));
+                        self.node_iter = Some(nodes_iter);
+                        break;
+                    }
+                    // Parent batch exhausted
+                    self.parent_batch = None;
+                    self.parent_row = 0;
+                }
+
+                // Pull next parent batch from child
+                match self.child.next() {
+                    Some(Ok(batch)) => {
+                        self.parent_batch = Some(batch);
+                        self.parent_row = 0;
+                    }
+                    Some(Err(e)) => return Some(Err(e)),
+                    None => return None,
+                }
             }
         }
     }

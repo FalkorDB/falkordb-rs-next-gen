@@ -57,10 +57,10 @@ class testBoundVariables(FlowTestsBase):
         query = """CALL db.idx.fulltext.queryNodes('L', 'v1') YIELD node MATCH (node)-[]->(b) RETURN b.val"""
         # Verify that execution begins at the procedure call and proceeds into the traversals.
         execution_plan = str(self.graph.explain(query))
-        # For the moment, we'll just verify that ProcedureCall appears later in the plan than
+        # Verify that Node By Fulltext Index Scan appears later in the plan than
         # its parent, Conditional Traverse.
         traverse_idx = execution_plan.index("Conditional Traverse")
-        call_idx = execution_plan.index("ProcedureCall")
+        call_idx = execution_plan.index("Node By Fulltext Index Scan")
         self.env.assertTrue(call_idx > traverse_idx)
 
         # Verify the results

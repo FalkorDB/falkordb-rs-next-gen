@@ -644,6 +644,33 @@ impl Graph {
         NodeId(self.node_count + self.reserved_node_count - 1)
     }
 
+    pub fn reserve_nodes(
+        &mut self,
+        count: usize,
+    ) -> Vec<NodeId> {
+        let count = count as u64;
+        let mut ids = Vec::with_capacity(count as usize);
+        let deleted_len = self.deleted_nodes.len();
+        let available = deleted_len.saturating_sub(self.reserved_node_count);
+        let reclaimed = count.min(available);
+
+        // First reclaim from deleted nodes
+        let base = self.reserved_node_count;
+        self.reserved_node_count += reclaimed;
+        for i in base..base + reclaimed {
+            let id = self.deleted_nodes.select(i).unwrap();
+            ids.push(NodeId(id));
+        }
+
+        // Allocate remaining from the end
+        let remaining = count - reclaimed;
+        let start = self.node_count + self.reserved_node_count;
+        self.reserved_node_count += remaining;
+        ids.extend((start..start + remaining).map(NodeId));
+
+        ids
+    }
+
     pub fn create_nodes(
         &mut self,
         nodes: &RoaringTreemap,
@@ -845,6 +872,18 @@ impl Graph {
         self.node_attrs.get_attr(id.0, attr)
     }
 
+    /// Fetches a node attribute using a pre-resolved attribute index.
+    /// Use `get_node_attribute_id` to resolve the index once, then call
+    /// this method for each node to avoid repeated string lookups.
+    #[must_use]
+    pub fn get_node_attribute_by_idx(
+        &self,
+        id: NodeId,
+        attr_idx: u16,
+    ) -> Option<Value> {
+        self.node_attrs.get_attr_by_idx(id.0, attr_idx)
+    }
+
     pub fn reserve_relationship(&mut self) -> RelationshipId {
         if self.reserved_relationship_count < self.deleted_relationships.len() {
             let id = self
@@ -856,6 +895,33 @@ impl Graph {
         }
         self.reserved_relationship_count += 1;
         RelationshipId(self.relationship_count + self.reserved_relationship_count - 1)
+    }
+
+    pub fn reserve_relationships(
+        &mut self,
+        count: usize,
+    ) -> Vec<RelationshipId> {
+        let count = count as u64;
+        let mut ids = Vec::with_capacity(count as usize);
+        let deleted_len = self.deleted_relationships.len();
+        let available = deleted_len.saturating_sub(self.reserved_relationship_count);
+        let reclaimed = count.min(available);
+
+        // First reclaim from deleted relationships
+        let base = self.reserved_relationship_count;
+        self.reserved_relationship_count += reclaimed;
+        for i in base..base + reclaimed {
+            let id = self.deleted_relationships.select(i).unwrap();
+            ids.push(RelationshipId(id));
+        }
+
+        // Allocate remaining from the end
+        let remaining = count - reclaimed;
+        let start = self.relationship_count + self.reserved_relationship_count;
+        self.reserved_relationship_count += remaining;
+        ids.extend((start..start + remaining).map(RelationshipId));
+
+        ids
     }
 
     pub fn create_relationships(
@@ -923,6 +989,11 @@ impl Graph {
         id: NodeId,
     ) -> bool {
         self.deleted_nodes.contains(id.0)
+    }
+
+    #[must_use]
+    pub const fn deleted_nodes(&self) -> &RoaringTreemap {
+        &self.deleted_nodes
     }
 
     #[must_use]
@@ -1282,8 +1353,9 @@ impl Graph {
         &self,
         label: &Arc<String>,
         field: &Arc<String>,
+        index_type: &IndexType,
     ) -> bool {
-        self.node_indexer.is_attr_indexed(label, field)
+        self.node_indexer.is_label_indexed(label, field, index_type)
     }
 
     pub fn get_indexed_nodes(

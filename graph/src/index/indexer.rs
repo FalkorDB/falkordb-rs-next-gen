@@ -263,11 +263,13 @@ impl Indexer {
     pub fn is_label_indexed(
         &self,
         label: &Arc<String>,
+        field: &Arc<String>,
+        index_type: &IndexType,
     ) -> bool {
         if let Some(index) = self.index.read().get(label)
             && index.is_operational()
         {
-            return true;
+            return index.has_field_with_type(field, index_type);
         }
         false
     }

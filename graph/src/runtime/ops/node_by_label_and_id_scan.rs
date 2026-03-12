@@ -1,96 +1,136 @@
-//! Label-and-ID scan operator — retrieves nodes by label filtered by ID range.
+//! Batch-mode label-and-ID scan operator — retrieves nodes by label filtered by ID range.
 //!
 //! Combines a label scan with an ID range constraint from the optimizer.
-//! Scans nodes with the given label starting from the minimum candidate ID,
-//! and only yields those whose ID falls within the evaluated filter range.
-//! More efficient than a full label scan when the ID range is narrow.
+//! For each active row in each input batch, evaluates the ID filter to
+//! determine the candidate range, scans nodes with the given label starting
+//! from the minimum candidate ID, and yields those whose ID falls within
+//! the evaluated filter range.
 
+use std::collections::VecDeque;
 use std::sync::Arc;
 
-use super::OpIter;
+use roaring::RoaringTreemap;
+
+use crate::graph::graph::NodeId;
 use crate::parser::ast::{ExprIR, QueryExpr, QueryNode, Variable};
 use crate::planner::IR;
-use crate::runtime::{env::Env, runtime::Runtime, value::Value};
+use crate::runtime::{
+    batch::{BATCH_SIZE, Batch, BatchOp},
+    env::Env,
+    runtime::Runtime,
+    value::Value,
+};
 use orx_tree::{Dyn, NodeIdx};
 
 pub struct NodeByLabelAndIdScanOp<'a> {
-    runtime: &'a Runtime,
-    pub iter: Box<OpIter<'a>>,
-    current: Option<Box<dyn Iterator<Item = Result<Env, String>> + 'a>>,
+    pub(crate) runtime: &'a Runtime<'a>,
+    pub(crate) child: Box<BatchOp<'a>>,
+    pending: VecDeque<(Env<'a>, Box<dyn Iterator<Item = NodeId>>, RoaringTreemap)>,
     node_pattern: &'a QueryNode<Arc<String>, Variable>,
     filter: &'a Vec<(QueryExpr<Variable>, ExprIR<Variable>)>,
-    idx: NodeIdx<Dyn<IR>>,
+    pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
 impl<'a> NodeByLabelAndIdScanOp<'a> {
     pub fn new(
-        runtime: &'a Runtime,
-        iter: Box<OpIter<'a>>,
+        runtime: &'a Runtime<'a>,
+        child: Box<BatchOp<'a>>,
         node_pattern: &'a QueryNode<Arc<String>, Variable>,
         filter: &'a Vec<(QueryExpr<Variable>, ExprIR<Variable>)>,
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
         Self {
             runtime,
-            iter,
-            current: None,
+            child,
+            pending: VecDeque::new(),
             node_pattern,
             filter,
             idx,
         }
     }
-}
 
-impl Iterator for NodeByLabelAndIdScanOp<'_> {
-    type Item = Result<Env, String>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            if let Some(ref mut current) = self.current {
-                if let Some(item) = current.next() {
-                    self.runtime.inspect_result(self.idx, &item);
-                    return Some(item);
-                }
-                self.current = None;
-            }
-            let vars = match self.iter.next()? {
-                Ok(vars) => vars,
-                Err(e) => {
-                    let result = Err(e);
-                    self.runtime.inspect_result(self.idx, &result);
-                    return Some(result);
-                }
+    /// Drains rows from `self.pending` into `envs` until `BATCH_SIZE` is reached
+    /// or all pending scans are exhausted.
+    fn drain_pending(
+        &mut self,
+        envs: &mut Vec<Env<'a>>,
+    ) {
+        while envs.len() < BATCH_SIZE {
+            let Some((env, iter, range)) = self.pending.front_mut() else {
+                break;
             };
-            match self.runtime.evaluate_id_filter(self.filter, &vars) {
-                Ok(Some(range)) => {
-                    if let Some(min_id) = range.min() {
-                        let g = self.runtime.g.borrow();
-                        let node_pattern = self.node_pattern;
-                        self.current = Some(Box::new(
-                            g.get_nodes(&node_pattern.labels, min_id)
-                                .filter_map(move |nid| {
-                                    if range.contains(u64::from(nid)) {
-                                        let mut vars = vars.clone();
-                                        vars.insert(&node_pattern.alias, Value::Node(nid));
-                                        Some(Ok(vars))
-                                    } else {
-                                        None
-                                    }
-                                }),
-                        ));
-                    } else {
-                        self.current = Some(Box::new(std::iter::empty()));
+            let Some(max) = range.max() else {
+                self.pending.pop_front();
+                continue;
+            };
+            let mut found = false;
+            for nid in iter.by_ref() {
+                let id = u64::from(nid);
+                if id > max {
+                    break;
+                }
+                if range.contains(id) {
+                    let mut row = env.clone_pooled(self.runtime.env_pool);
+                    row.insert(&self.node_pattern.alias, Value::Node(nid));
+                    envs.push(row);
+                    found = true;
+                    if envs.len() >= BATCH_SIZE {
+                        break;
                     }
                 }
-                Ok(None) => {
-                    self.current = Some(Box::new(std::iter::empty()));
-                }
-                Err(e) => {
-                    let result = Err(e);
-                    self.runtime.inspect_result(self.idx, &result);
-                    return Some(result);
+            }
+            if !found {
+                self.pending.pop_front();
+            }
+        }
+    }
+}
+
+impl<'a> Iterator for NodeByLabelAndIdScanOp<'a> {
+    type Item = Result<Batch<'a>, String>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut envs = Vec::with_capacity(BATCH_SIZE);
+
+        // Drain leftover scans from previous call.
+        self.drain_pending(&mut envs);
+
+        while envs.len() < BATCH_SIZE {
+            let batch = match self.child.next() {
+                Some(Ok(b)) => b,
+                Some(Err(e)) => return Some(Err(e)),
+                None => break,
+            };
+
+            for vars in batch.active_env_iter() {
+                match self.runtime.evaluate_id_filter(self.filter, vars) {
+                    Ok(Some(range)) => {
+                        if range.min().is_some() {
+                            let iter = self
+                                .runtime
+                                .g
+                                .borrow()
+                                .get_nodes(&self.node_pattern.labels, range.min().unwrap());
+
+                            self.pending.push_back((
+                                vars.clone_pooled(self.runtime.env_pool),
+                                iter,
+                                range,
+                            ));
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(e) => return Some(Err(e)),
                 }
             }
+
+            self.drain_pending(&mut envs);
+        }
+
+        if envs.is_empty() {
+            None
+        } else {
+            Some(Ok(Batch::from_envs(envs)))
         }
     }
 }

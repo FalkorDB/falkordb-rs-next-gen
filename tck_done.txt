@@ -50,6 +50,7 @@ clauses/return-orderby/ReturnOrderBy5.feature
 clauses/return-skip-limit/ReturnSkipLimit1.feature
 clauses/return-skip-limit/ReturnSkipLimit3.feature
 clauses/set
+clauses/union
 clauses/unwind
 clauses/with-orderBy/WithOrderBy1.feature
 clauses/with-skip-limit/WithSkipLimit1.feature

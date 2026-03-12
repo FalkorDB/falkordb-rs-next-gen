@@ -1,36 +1,28 @@
-//! Semi-apply operator — existence-based filtering via a sub-plan.
+//! Batch-mode semi-apply operator — existence-based filtering via a sub-plan.
 //!
-//! Implements `WHERE EXISTS { ... }` (semi-join) and
-//! `WHERE NOT EXISTS { ... }` (anti-semi-join). For each incoming row,
-//! runs the right sub-plan; if it produces at least one result the row
-//! is passed through (or filtered out for anti mode).
-//!
-//! ```text
-//!  left iter ──► env ──► right sub-plan(env)
-//!                              │
-//!                   ┌── has result? XOR is_anti ──┐
-//!                   │ pass                         │ fail
-//!                   ▼                              ▼
-//!               yield env                        skip
-//! ```
+//! For each active row in the input batch, runs the right sub-plan. If it
+//! produces at least one result, the row is included (or excluded for
+//! anti mode).
 
-use super::OpIter;
 use crate::planner::IR;
-use crate::runtime::{env::Env, runtime::Runtime};
+use crate::runtime::{
+    batch::{Batch, BatchOp},
+    runtime::Runtime,
+};
 use orx_tree::{Dyn, NodeIdx, NodeRef};
 
 pub struct SemiApplyOp<'a> {
-    runtime: &'a Runtime,
-    pub iter: Box<OpIter<'a>>,
+    pub(crate) runtime: &'a Runtime<'a>,
+    pub(crate) child: Box<BatchOp<'a>>,
     is_anti: bool,
     right_child_idx: NodeIdx<Dyn<IR>>,
-    idx: NodeIdx<Dyn<IR>>,
+    pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
 impl<'a> SemiApplyOp<'a> {
     pub fn new(
-        runtime: &'a Runtime,
-        iter: Box<OpIter<'a>>,
+        runtime: &'a Runtime<'a>,
+        child: Box<BatchOp<'a>>,
         is_anti: bool,
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
@@ -38,7 +30,7 @@ impl<'a> SemiApplyOp<'a> {
 
         Self {
             runtime,
-            iter,
+            child,
             is_anti,
             right_child_idx,
             idx,
@@ -46,42 +38,47 @@ impl<'a> SemiApplyOp<'a> {
     }
 }
 
-impl Iterator for SemiApplyOp<'_> {
-    type Item = Result<Env, String>;
+impl<'a> Iterator for SemiApplyOp<'a> {
+    type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            let env = match self.iter.next()? {
-                Ok(env) => env,
-                Err(e) => {
-                    let result = Err(e);
-                    self.runtime.inspect_result(self.idx, &result);
-                    return Some(result);
-                }
+            let mut batch = match self.child.next()? {
+                Ok(b) => b,
+                Err(e) => return Some(Err(e)),
             };
-            let has_result = match self.runtime.run(self.right_child_idx) {
-                Ok(mut iter) => {
-                    iter.set_argument_env(&env);
-                    match iter.next() {
-                        Some(Ok(_)) => true,
-                        Some(Err(e)) => {
-                            let result = Err(e);
-                            self.runtime.inspect_result(self.idx, &result);
-                            return Some(result);
+
+            let mut passing = Vec::new();
+
+            for row in batch.active_indices() {
+                let env = batch.env_ref(row);
+                let has_result = match self.runtime.run_batch(self.right_child_idx) {
+                    Ok(mut subtree) => {
+                        subtree.set_argument_env(env, self.runtime.env_pool);
+                        let mut found = false;
+                        'outer: for sub_result in subtree.by_ref() {
+                            match sub_result {
+                                Ok(sub_batch) => {
+                                    if sub_batch.active_len() > 0 {
+                                        found = true;
+                                        break 'outer;
+                                    }
+                                }
+                                Err(e) => return Some(Err(e)),
+                            }
                         }
-                        None => false,
+                        found
                     }
+                    Err(e) => return Some(Err(e)),
+                };
+                if has_result ^ self.is_anti {
+                    passing.push(row as u16);
                 }
-                Err(e) => {
-                    let result = Err(e);
-                    self.runtime.inspect_result(self.idx, &result);
-                    return Some(result);
-                }
-            };
-            if has_result ^ self.is_anti {
-                let result = Ok(env);
-                self.runtime.inspect_result(self.idx, &result);
-                return Some(result);
+            }
+
+            if !passing.is_empty() {
+                batch.set_selection(passing);
+                return Some(Ok(batch));
             }
         }
     }

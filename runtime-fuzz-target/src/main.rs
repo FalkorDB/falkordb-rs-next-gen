@@ -8,6 +8,7 @@ use graph::{
     },
     runtime::{
         functions::init_functions,
+        pool::Pool,
         runtime::{Runtime, evaluate_param},
     },
 };
@@ -36,7 +37,16 @@ fn main() {
             else {
                 return;
             };
-            let mut runtime = Runtime::new(g.read(), parameters, true, plan, false, String::new());
+            let pool = Pool::new();
+            let mut runtime = Runtime::new(
+                g.read(),
+                parameters,
+                true,
+                plan,
+                false,
+                String::new(),
+                &pool,
+            );
             let _ = runtime.query();
         }
     });

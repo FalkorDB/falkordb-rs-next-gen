@@ -1,72 +1,70 @@
-//! Distinct operator — deduplicates result rows.
+//! Batch-mode distinct operator — deduplicates result rows across batches.
 //!
-//! Implements Cypher `RETURN DISTINCT ...`. Hashes the projected return
-//! columns of each row and skips rows whose hash has been seen before.
-//!
-//! ```text
-//!  child iter ──► env
-//!                  │
-//!          hash(return columns)
-//!                  │
-//!        ┌─── seen before? ───┐
-//!        │ yes                │ no
-//!        ▼                    ▼
-//!      skip              yield + remember hash
-//! ```
+//! Pulls batches from the child operator and filters out rows whose
+//! projected return columns have been seen before (by hash). Uses
+//! `batch.get()` to read return-name variables and `set_selection`
+//! for zero-copy filtering.
 
-use super::OpIter;
 use crate::planner::IR;
-use crate::runtime::{env::Env, runtime::Runtime, value::ValuesDeduper};
+use crate::runtime::{
+    batch::{Batch, BatchOp},
+    runtime::Runtime,
+    value::ValuesDeduper,
+};
 use orx_tree::{Dyn, NodeIdx};
 use std::hash::{DefaultHasher, Hash, Hasher};
 
 pub struct DistinctOp<'a> {
-    runtime: &'a Runtime,
-    pub iter: Box<OpIter<'a>>,
+    pub(crate) runtime: &'a Runtime<'a>,
+    pub(crate) child: Box<BatchOp<'a>>,
     deduper: ValuesDeduper,
-    idx: NodeIdx<Dyn<IR>>,
+    pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
 impl<'a> DistinctOp<'a> {
     pub fn new(
-        runtime: &'a Runtime,
-        iter: Box<OpIter<'a>>,
+        runtime: &'a Runtime<'a>,
+        child: Box<BatchOp<'a>>,
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
         Self {
             runtime,
-            iter,
+            child,
             deduper: ValuesDeduper::default(),
             idx,
         }
     }
 }
 
-impl Iterator for DistinctOp<'_> {
-    type Item = Result<Env, String>;
+impl<'a> Iterator for DistinctOp<'a> {
+    type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            let vars = match self.iter.next()? {
-                Ok(vars) => vars,
-                Err(e) => {
-                    let result = Err(e);
-                    self.runtime.inspect_result(self.idx, &result);
-                    return Some(result);
-                }
+            let mut batch = match self.child.next()? {
+                Ok(batch) => batch,
+                Err(e) => return Some(Err(e)),
             };
-            let mut hasher = DefaultHasher::new();
-            for name in &self.runtime.return_names {
-                vars.get(name)
-                    .unwrap_or_else(|| unreachable!("Variable {} not found", name.as_str()))
-                    .hash(&mut hasher);
+
+            let mut passing = Vec::new();
+
+            for row in batch.active_indices() {
+                let mut hasher = DefaultHasher::new();
+                for name in &self.runtime.return_names {
+                    batch.get(row, name.id).hash(&mut hasher);
+                }
+                if self.deduper.has_hash(hasher.finish()) {
+                    continue;
+                }
+                passing.push(row as u16);
             }
-            if self.deduper.has_hash(hasher.finish()) {
+
+            if passing.is_empty() {
                 continue;
             }
-            let result = Ok(vars);
-            self.runtime.inspect_result(self.idx, &result);
-            return Some(result);
+
+            batch.set_selection(passing);
+            return Some(Ok(batch));
         }
     }
 }

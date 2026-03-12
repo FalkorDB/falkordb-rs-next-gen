@@ -1,32 +1,31 @@
-//! Commit operator — materializes pending mutations and flushes them to the graph.
+//! Batch-mode commit operator — materializes pending mutations.
 //!
-//! This is a *blocking* operator: it drains the entire child iterator first
-//! (collecting all result environments), then calls `pending.commit()` to
-//! apply batched creates, deletes, and property changes to the underlying
-//! graph. After the commit succeeds, the collected environments are yielded.
-//!
-//! ```text
-//!  child iter ──► collect all rows ──► pending.commit(graph) ──► yield rows
-//! ```
+//! This is a *blocking* operator: it drains all child batches first
+//! (collecting all result environments), then calls `pending.commit()`
+//! to apply batched creates, deletes, and property changes to the
+//! underlying graph. After the commit succeeds, the collected
+//! environments are yielded as batches.
 //!
 //! Only allowed in write queries; returns an error for `GRAPH.RO_QUERY`.
 
-use super::OpIter;
 use crate::planner::IR;
-use crate::runtime::{env::Env, runtime::Runtime};
+use crate::runtime::{
+    batch::{Batch, BatchOp},
+    runtime::Runtime,
+};
 use orx_tree::{Dyn, NodeIdx};
 
 pub struct CommitOp<'a> {
-    runtime: &'a Runtime,
-    iter: Option<Box<OpIter<'a>>>,
-    results: std::vec::IntoIter<Env>,
-    idx: NodeIdx<Dyn<IR>>,
+    pub(crate) runtime: &'a Runtime<'a>,
+    pub(crate) child: Option<Box<BatchOp<'a>>>,
+    results: Vec<Batch<'a>>,
+    pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
 impl<'a> CommitOp<'a> {
     pub fn new(
-        runtime: &'a Runtime,
-        iter: Box<OpIter<'a>>,
+        runtime: &'a Runtime<'a>,
+        child: Box<BatchOp<'a>>,
         idx: NodeIdx<Dyn<IR>>,
     ) -> Result<Self, String> {
         if !runtime.write {
@@ -36,22 +35,28 @@ impl<'a> CommitOp<'a> {
         }
         Ok(Self {
             runtime,
-            iter: Some(iter),
-            results: Vec::new().into_iter(),
+            child: Some(child),
+            results: Vec::new(),
             idx,
         })
     }
 }
 
-impl Iterator for CommitOp<'_> {
-    type Item = Result<Env, String>;
+impl<'a> Iterator for CommitOp<'a> {
+    type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some(iter) = self.iter.take() {
-            let results = match iter.collect::<Result<Vec<_>, String>>() {
-                Ok(results) => results,
-                Err(e) => return Some(Err(e)),
-            };
+        // On first call, drain the entire child and commit.
+        if let Some(mut child) = self.child.take() {
+            loop {
+                match child.next() {
+                    Some(Ok(batch)) => {
+                        self.results.push(batch);
+                    }
+                    Some(Err(e)) => return Some(Err(e)),
+                    None => break,
+                }
+            }
             if let Err(e) = self
                 .runtime
                 .pending
@@ -60,11 +65,11 @@ impl Iterator for CommitOp<'_> {
             {
                 return Some(Err(e));
             }
-            self.results = results.into_iter();
+            // Reverse once so we can pop from the end in O(1) while preserving order.
+            self.results.reverse();
         }
-        let env = self.results.next()?;
-        let result = Ok(env);
-        self.runtime.inspect_result(self.idx, &result);
-        Some(result)
+
+        // Yield collected batches one at a time.
+        self.results.pop().map(Ok)
     }
 }

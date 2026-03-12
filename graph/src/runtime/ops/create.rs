@@ -1,48 +1,37 @@
-//! Create operator — creates new nodes and relationships in the graph.
+//! Batch-mode create operator — creates nodes and relationships.
 //!
-//! Implements Cypher `CREATE (n:Label {props})-[:REL]->(m)`. For each
-//! incoming row, reserves new node/relationship IDs and records the
-//! mutations in the pending batch (applied later by `CommitOp`).
-//!
-//! ```text
-//!  child iter ──► env
-//!                  │
-//!    ┌─────────────┴─────────────┐
-//!    │  for each node in pattern │──► reserve ID, set labels & attrs
-//!    │  for each rel in pattern  │──► reserve ID, set type & attrs
-//!    │  env += new bindings      │
-//!    └─────────────┬─────────────┘
-//!                  │
-//!              yield Env ──► parent
-//! ```
-//!
-//! Label strings are resolved to numeric `LabelId`s lazily on the first
-//! row (cached via `OnceCell`). When the direct parent is a `Commit` node
-//! at the plan root, result rows are suppressed (write-only optimization).
+//! For each active row in each input batch, resolves the create pattern
+//! (lazily on first row) and calls `Runtime::create` to reserve IDs and
+//! record mutations in the pending batch. When the direct parent is a
+//! `Commit` node at the plan root, result rows are suppressed (write-only
+//! optimization).
 
 use std::cell::OnceCell;
 use std::sync::Arc;
 
-use super::OpIter;
 use crate::graph::graph::LabelId;
 use crate::parser::ast::{QueryGraph, QueryNode, QueryRelationship, Variable};
 use crate::planner::IR;
-use crate::runtime::{env::Env, runtime::Runtime, value::Value};
+use crate::runtime::{
+    batch::{Batch, BatchOp},
+    runtime::Runtime,
+    value::Value,
+};
 use orx_tree::{Dyn, NodeIdx, NodeRef};
 
 pub struct CreateOp<'a> {
-    runtime: &'a Runtime,
-    pub iter: Box<OpIter<'a>>,
+    pub(crate) runtime: &'a Runtime<'a>,
+    pub(crate) child: Box<BatchOp<'a>>,
     pattern: QueryGraph<Arc<String>, Arc<String>, Variable>,
     resolved_pattern: OnceCell<QueryGraph<Arc<String>, LabelId, Variable>>,
     parent_commit: bool,
-    idx: NodeIdx<Dyn<IR>>,
+    pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
 impl<'a> CreateOp<'a> {
     pub fn new(
-        runtime: &'a Runtime,
-        iter: Box<OpIter<'a>>,
+        runtime: &'a Runtime<'a>,
+        child: Box<BatchOp<'a>>,
         pattern: &QueryGraph<Arc<String>, Arc<String>, Variable>,
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
@@ -57,7 +46,7 @@ impl<'a> CreateOp<'a> {
 
         Self {
             runtime,
-            iter,
+            child,
             pattern: pattern.clone(),
             resolved_pattern: OnceCell::new(),
             parent_commit,
@@ -66,40 +55,151 @@ impl<'a> CreateOp<'a> {
     }
 }
 
-impl Iterator for CreateOp<'_> {
-    type Item = Result<Env, String>;
+impl<'a> Iterator for CreateOp<'a> {
+    type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            let result = match self.iter.next()? {
-                Ok(mut vars) => {
-                    let resolved_pattern = self.resolved_pattern.get_or_init(|| {
-                        let resolved = self.runtime.resolve_pattern(&self.pattern);
-                        self.runtime.pending.borrow_mut().resize(
-                            self.runtime.g.borrow().node_cap(),
-                            self.runtime.g.borrow().labels_count(),
-                        );
-                        resolved
-                    });
-                    match self.runtime.create(resolved_pattern, &mut vars) {
-                        Ok(()) => {
-                            if self.parent_commit {
-                                continue;
-                            }
-                            Ok(vars)
-                        }
-                        Err(e) => Err(e),
-                    }
-                }
-                Err(e) => Err(e),
+            let mut batch = match self.child.next()? {
+                Ok(b) => b,
+                Err(e) => return Some(Err(e)),
             };
-            self.runtime.inspect_result(self.idx, &result);
-            return Some(result);
+
+            let resolved_pattern = self.resolved_pattern.get_or_init(|| {
+                let resolved = self.runtime.resolve_pattern(&self.pattern);
+                self.runtime.pending.borrow_mut().resize(
+                    self.runtime.g.borrow().node_cap(),
+                    self.runtime.g.borrow().labels_count(),
+                );
+                resolved
+            });
+            if let Err(e) = self.runtime.create_batch(resolved_pattern, &mut batch) {
+                return Some(Err(e));
+            }
+
+            if self.parent_commit {
+                continue;
+            }
+            return Some(Ok(batch));
         }
     }
 }
 
-impl Runtime {
+impl Runtime<'_> {
+    pub fn create_batch(
+        &self,
+        pattern: &QueryGraph<Arc<String>, LabelId, Variable>,
+        batch: &mut Batch<'_>,
+    ) -> Result<(), String> {
+        // Process nodes: reserve IDs, evaluate attrs, write IDs back via write_column
+        for node in pattern.nodes() {
+            let active_len = batch.active_len();
+
+            // Reserve all node IDs at once
+            let node_ids = self.g.borrow_mut().reserve_nodes(active_len);
+
+            // Record creations and set labels in batch
+            {
+                let mut pending = self.pending.borrow_mut();
+                pending.created_nodes(&node_ids);
+                pending.set_nodes_labels(&node_ids, &node.labels);
+            }
+
+            // Evaluate attributes per row (run_expr only reads from env)
+            for (i, row) in batch.active_indices().enumerate() {
+                let env = batch.env_ref(row);
+                let attrs = self.run_expr(&node.attrs, node.attrs.root().idx(), env, None)?;
+                match attrs {
+                    Value::Map(attrs) => {
+                        self.pending
+                            .borrow_mut()
+                            .set_node_attributes(node_ids[i], Arc::unwrap_or_clone(attrs))?;
+                    }
+                    _ => unreachable!(),
+                }
+            }
+
+            // Write node IDs back as a column
+            let values: Vec<Value> = node_ids.into_iter().map(Value::Node).collect();
+            batch.write_column(node.alias.id, values);
+        }
+
+        // Process relationships: read endpoints via read_columns, write back via write_column
+        for rel in pattern.relationships() {
+            // Read endpoint IDs using read_columns
+            let endpoint_rows = batch.read_columns(&[rel.from.alias.id, rel.to.alias.id]);
+
+            // Validate all endpoints first
+            let mut endpoints = Vec::with_capacity(endpoint_rows.len());
+            {
+                let g = self.g.borrow();
+                let pending = self.pending.borrow();
+                for row_vals in &endpoint_rows {
+                    let Value::Node(from_id) = row_vals[0] else {
+                        return Err(String::from("Invalid node id"));
+                    };
+                    let Value::Node(to_id) = row_vals[1] else {
+                        return Err(String::from("Invalid node id"));
+                    };
+
+                    if (g.is_node_deleted(*from_id) && !pending.is_node_created(*from_id))
+                        || pending.is_node_deleted(*from_id)
+                        || (g.is_node_deleted(*to_id) && !pending.is_node_created(*to_id))
+                        || pending.is_node_deleted(*to_id)
+                    {
+                        return Err(String::from(
+                            "Failed to create relationship; endpoint was not found.",
+                        ));
+                    }
+                    endpoints.push((*from_id, *to_id));
+                }
+            }
+
+            // Reserve all relationship IDs at once
+            let ids = self.g.borrow_mut().reserve_relationships(endpoints.len());
+
+            // Record all created relationships in batch
+            let type_name = rel.types.first().unwrap().clone();
+            let rel_ids: Vec<_> = ids
+                .iter()
+                .zip(endpoints.iter())
+                .map(|(id, (from, to))| (*id, *from, *to))
+                .collect();
+            self.pending.borrow_mut().created_relationships(
+                ids.into_iter()
+                    .zip(endpoints)
+                    .map(|(id, (from, to))| (id, from, to, type_name.clone()))
+                    .collect(),
+            );
+
+            // Evaluate relationship attributes per row
+            for (i, row) in batch.active_indices().enumerate() {
+                let env = batch.env_ref(row);
+                let attrs = self.run_expr(&rel.attrs, rel.attrs.root().idx(), env, None)?;
+                match attrs {
+                    Value::Map(attrs) => {
+                        self.pending.borrow_mut().set_relationship_attributes(
+                            rel_ids[i].0,
+                            Arc::unwrap_or_clone(attrs),
+                        )?;
+                    }
+                    _ => {
+                        return Err(String::from("Invalid relationship properties"));
+                    }
+                }
+            }
+
+            // Write relationship values back using write_column
+            let values: Vec<Value> = rel_ids
+                .into_iter()
+                .map(|(id, from, to)| Value::Relationship(Box::new((id, from, to))))
+                .collect();
+            batch.write_column(rel.alias.id, values);
+        }
+
+        Ok(())
+    }
+
     pub fn resolve_pattern(
         &self,
         pattern: &QueryGraph<Arc<String>, Arc<String>, Variable>,
@@ -147,87 +247,5 @@ impl Runtime {
             resolved_pattern.add_path(path.clone());
         }
         resolved_pattern
-    }
-
-    pub fn create(
-        &self,
-        pattern: &QueryGraph<Arc<String>, LabelId, Variable>,
-        vars: &mut Env,
-    ) -> Result<(), String> {
-        for node in pattern.nodes() {
-            let id = self.g.borrow_mut().reserve_node();
-            {
-                let mut pending = self.pending.borrow_mut();
-                pending.created_node(id);
-                pending.set_node_labels(id, &node.labels);
-            }
-
-            let attrs = self.run_expr(&node.attrs, node.attrs.root().idx(), vars, None)?;
-            match attrs {
-                Value::Map(attrs) => {
-                    self.pending
-                        .borrow_mut()
-                        .set_node_attributes(id, Arc::unwrap_or_clone(attrs))?;
-                }
-                _ => unreachable!(),
-            }
-            vars.insert(&node.alias, Value::Node(id));
-        }
-        for rel in pattern.relationships() {
-            let (from_id, to_id) = {
-                let Value::Node(from_id) = vars
-                    .get(&rel.from.alias)
-                    .ok_or_else(|| format!("Variable {} not found", rel.from.alias.as_str()))?
-                    .clone()
-                else {
-                    return Err(String::from("Invalid node id"));
-                };
-                let Value::Node(to_id) = vars
-                    .get(&rel.to.alias)
-                    .ok_or_else(|| format!("Variable {} not found", rel.to.alias.as_str()))?
-                    .clone()
-                else {
-                    return Err(String::from("Invalid node id"));
-                };
-                (from_id, to_id)
-            };
-
-            {
-                let g = self.g.borrow();
-                let pending = self.pending.borrow();
-                if (g.is_node_deleted(from_id) && !pending.is_node_created(from_id))
-                    || pending.is_node_deleted(from_id)
-                    || (g.is_node_deleted(to_id) && !pending.is_node_created(to_id))
-                    || pending.is_node_deleted(to_id)
-                {
-                    return Err(String::from(
-                        "Failed to create relationship; endpoint was not found.",
-                    ));
-                }
-            }
-            let id = self.g.borrow_mut().reserve_relationship();
-            self.pending.borrow_mut().created_relationship(
-                id,
-                from_id,
-                to_id,
-                rel.types.first().unwrap().clone(),
-            );
-            let attrs = self.run_expr(&rel.attrs, rel.attrs.root().idx(), vars, None)?;
-            match attrs {
-                Value::Map(attrs) => {
-                    self.pending
-                        .borrow_mut()
-                        .set_relationship_attributes(id, Arc::unwrap_or_clone(attrs))?;
-                }
-                _ => {
-                    return Err(String::from("Invalid relationship properties"));
-                }
-            }
-            vars.insert(
-                &rel.alias,
-                Value::Relationship(Box::new((id, from_id, to_id))),
-            );
-        }
-        Ok(())
     }
 }

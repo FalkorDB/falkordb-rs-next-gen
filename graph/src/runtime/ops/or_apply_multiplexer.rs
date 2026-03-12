@@ -1,35 +1,30 @@
-//! OR-apply multiplexer operator — evaluates multiple existence-check branches.
+//! Batch-mode OR-apply multiplexer operator — evaluates multiple existence-check branches.
 //!
 //! Implements disjunctive patterns like `WHERE EXISTS {...} OR EXISTS {...}`.
-//! For each incoming row, iterates through branch sub-plans. A row is emitted
-//! when any branch produces a result (or, for `anti` branches, when a branch
-//! produces NO results). The `anti_flags` array controls whether each branch
-//! uses normal or anti-semi-join semantics.
-//!
-//! ```text
-//!  child iter ──► env ──► branch_0(env) ──► has result? XOR anti[0]
-//!                    │         ├── pass ──► yield env
-//!                    │         └── fail ──► try next branch
-//!                    └──► branch_1(env) ──► ...
-//! ```
+//! For each active row in each input batch, iterates through branch sub-plans.
+//! A row is emitted when any branch produces a result (or, for `anti` branches,
+//! when a branch produces NO results). The `anti_flags` array controls whether
+//! each branch uses normal or anti-semi-join semantics.
 
-use super::OpIter;
 use crate::planner::IR;
-use crate::runtime::{env::Env, runtime::Runtime};
+use crate::runtime::{
+    batch::{Batch, BatchOp},
+    runtime::Runtime,
+};
 use orx_tree::{Dyn, NodeIdx, NodeRef};
 
 pub struct OrApplyMultiplexerOp<'a> {
-    runtime: &'a Runtime,
-    pub iter: Box<OpIter<'a>>,
+    pub(crate) runtime: &'a Runtime<'a>,
+    pub(crate) child: Box<BatchOp<'a>>,
     anti_flags: &'a [bool],
     branch_indices: Vec<NodeIdx<Dyn<IR>>>,
-    idx: NodeIdx<Dyn<IR>>,
+    pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
 impl<'a> OrApplyMultiplexerOp<'a> {
     pub fn new(
-        runtime: &'a Runtime,
-        iter: Box<OpIter<'a>>,
+        runtime: &'a Runtime<'a>,
+        child: Box<BatchOp<'a>>,
         anti_flags: &'a [bool],
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
@@ -43,7 +38,7 @@ impl<'a> OrApplyMultiplexerOp<'a> {
 
         Self {
             runtime,
-            iter,
+            child,
             anti_flags,
             branch_indices,
             idx,
@@ -51,47 +46,58 @@ impl<'a> OrApplyMultiplexerOp<'a> {
     }
 }
 
-impl Iterator for OrApplyMultiplexerOp<'_> {
-    type Item = Result<Env, String>;
+impl<'a> Iterator for OrApplyMultiplexerOp<'a> {
+    type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            let env = match self.iter.next()? {
-                Ok(env) => env,
-                Err(e) => {
-                    let result = Err(e);
-                    self.runtime.inspect_result(self.idx, &result);
-                    return Some(result);
-                }
+            let mut batch = match self.child.next()? {
+                Ok(b) => b,
+                Err(e) => return Some(Err(e)),
             };
-            for (branch_num, branch_idx) in self.branch_indices.iter().enumerate() {
-                let has_result = match self.runtime.run(*branch_idx) {
-                    Ok(mut iter) => {
-                        iter.set_argument_env(&env);
-                        match iter.next() {
-                            Some(Ok(_)) => true,
-                            Some(Err(e)) => {
-                                let result = Err(e);
-                                self.runtime.inspect_result(self.idx, &result);
-                                return Some(result);
+
+            let mut passing = Vec::new();
+
+            for row in batch.active_indices() {
+                let env = batch.env_ref(row);
+                let mut matched = false;
+
+                for (branch_num, branch_idx) in self.branch_indices.iter().enumerate() {
+                    let has_result = match self.runtime.run_batch(*branch_idx) {
+                        Ok(mut subtree) => {
+                            subtree.set_argument_env(env, self.runtime.env_pool);
+                            let mut found = false;
+                            'outer: for sub_result in subtree.by_ref() {
+                                match sub_result {
+                                    Ok(sub_batch) => {
+                                        if sub_batch.active_len() > 0 {
+                                            found = true;
+                                            break 'outer;
+                                        }
+                                    }
+                                    Err(e) => return Some(Err(e)),
+                                }
                             }
-                            None => false,
+                            found
                         }
+                        Err(e) => return Some(Err(e)),
+                    };
+                    let is_anti = self.anti_flags[branch_num];
+                    if has_result ^ is_anti {
+                        matched = true;
+                        break;
                     }
-                    Err(e) => {
-                        let result = Err(e);
-                        self.runtime.inspect_result(self.idx, &result);
-                        return Some(result);
-                    }
-                };
-                let is_anti = self.anti_flags[branch_num];
-                if has_result ^ is_anti {
-                    let result = Ok(env);
-                    self.runtime.inspect_result(self.idx, &result);
-                    return Some(result);
+                }
+
+                if matched {
+                    passing.push(row as u16);
                 }
             }
-            // No branch matched for this input, continue to next
+
+            if !passing.is_empty() {
+                batch.set_selection(passing);
+                return Some(Ok(batch));
+            }
         }
     }
 }

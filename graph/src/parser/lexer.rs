@@ -15,7 +15,7 @@ use crate::parser::string_escape::cypher_unescape;
 use std::sync::Arc;
 use std::{num::IntErrorKind, str::Chars};
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Keyword {
     Call,
     Yield,
@@ -232,6 +232,7 @@ pub struct Lexer<'a> {
 }
 
 impl<'a> Lexer<'a> {
+    #[must_use]
     pub fn new(str: &'a str) -> Self {
         Self {
             str,
@@ -247,6 +248,7 @@ impl<'a> Lexer<'a> {
         self.cached_current = Self::get_token(self.str, pos);
     }
 
+    #[must_use]
     pub fn pos(
         &self,
         before_whitespaces: bool,
@@ -326,6 +328,7 @@ impl<'a> Lexer<'a> {
             .map_err(|e| e.0.clone())
     }
 
+    #[must_use]
     pub fn current_str(&self) -> &str {
         let pos = self.pos(false);
         &self.str[pos..pos + self.cached_current.as_ref().map_or(0, |t| t.1)]
@@ -450,11 +453,19 @@ impl<'a> Lexer<'a> {
                     };
                     let id = if first == '`' {
                         len += 1;
+                        let mut end = false;
                         for ch in chars {
                             len += 1;
                             if ch == '`' {
+                                end = true;
                                 break;
                             }
+                        }
+                        if !end {
+                            return Err((
+                                format!("Unterminated backtick-quoted parameter at pos: {pos}"),
+                                len,
+                            ));
                         }
                         &str[pos + 2..pos + len - 1]
                     } else if let 'a'..='z' | 'A'..='Z' | '0'..='9' | '_' = first {
@@ -722,6 +733,7 @@ impl<'a> Lexer<'a> {
         )
     }
 
+    #[must_use]
     pub fn format_error(
         &self,
         err: &str,

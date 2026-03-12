@@ -40,7 +40,7 @@ use thin_vec::{ThinVec, thin_vec};
 
 use crate::{
     graph::graph::{LabelId, NodeId, RelationshipId, TypeId},
-    runtime::{functions::Type, ordermap::OrderMap},
+    runtime::{functions::Type, ordermap::OrderMap, runtime::Runtime},
 };
 
 /// A trait for formatting values as JSON, similar to Display but for JSON output
@@ -48,7 +48,7 @@ pub trait DisplayJson {
     fn fmt_json(
         &self,
         f: &mut fmt::Formatter<'_>,
-        runtime: &crate::runtime::runtime::Runtime,
+        runtime: &Runtime<'_>,
     ) -> fmt::Result;
 }
 
@@ -678,15 +678,39 @@ impl Add for Value {
             (
                 Self::String(a) | Self::InternedString(a),
                 Self::String(b) | Self::InternedString(b),
-            ) => Ok(Self::String(Arc::new(format!("{a}{b}")))),
-            (Self::String(s) | Self::InternedString(s), Self::Int(i)) => {
-                Ok(Self::String(Arc::new(format!("{s}{i}"))))
-            }
+            ) => match Arc::try_unwrap(a) {
+                Ok(mut s) => {
+                    s.push_str(&b);
+                    Ok(Self::String(Arc::new(s)))
+                }
+                Err(arc) => Ok(Self::String(Arc::new(format!("{arc}{b}")))),
+            },
+            (Self::String(s) | Self::InternedString(s), Self::Int(i)) => match Arc::try_unwrap(s) {
+                Ok(mut buf) => {
+                    use std::fmt::Write;
+                    let _ = write!(buf, "{i}");
+                    Ok(Self::String(Arc::new(buf)))
+                }
+                Err(arc) => Ok(Self::String(Arc::new(format!("{arc}{i}")))),
+            },
             (Self::String(s) | Self::InternedString(s), Self::Float(f)) => {
-                Ok(Self::String(Arc::new(format!("{s}{f:.6}"))))
+                match Arc::try_unwrap(s) {
+                    Ok(mut buf) => {
+                        use std::fmt::Write;
+                        let _ = write!(buf, "{f:.6}");
+                        Ok(Self::String(Arc::new(buf)))
+                    }
+                    Err(arc) => Ok(Self::String(Arc::new(format!("{arc}{f:.6}")))),
+                }
             }
             (Self::String(s) | Self::InternedString(s), Self::Bool(b)) => {
-                Ok(Self::String(Arc::new(format!("{s}{b}"))))
+                match Arc::try_unwrap(s) {
+                    Ok(mut buf) => {
+                        buf.push_str(if b { "true" } else { "false" });
+                        Ok(Self::String(Arc::new(buf)))
+                    }
+                    Err(arc) => Ok(Self::String(Arc::new(format!("{arc}{b}")))),
+                }
             }
 
             (Self::Int(i), Self::String(s) | Self::InternedString(s)) => {
@@ -984,38 +1008,38 @@ impl ValueGetType for Value {
 
 impl Value {
     #[must_use]
-    pub fn name(&self) -> String {
+    pub const fn name(&self) -> &'static str {
         match self {
-            Self::Null => String::from("Null"),
-            Self::Bool(_) => String::from("Boolean"),
-            Self::Int(_) => String::from("Integer"),
-            Self::Float(_) => String::from("Float"),
-            Self::String(_) | Self::InternedString(_) => String::from("String"),
-            Self::List(_) => String::from("List"),
-            Self::Map(_) => String::from("Map"),
-            Self::Node(_) => String::from("Node"),
-            Self::Relationship(_) => String::from("Edge"),
-            Self::Path(_) => String::from("Path"),
-            Self::VecF32(_) => String::from("VecF32"),
-            Self::Point(_) => String::from("Point"),
-            Self::Datetime(_) => String::from("Datetime"),
-            Self::Date(_) => String::from("Date"),
-            Self::Time(_) => String::from("Time"),
-            Self::Duration(_) => String::from("Duration"),
+            Self::Null => "Null",
+            Self::Bool(_) => "Boolean",
+            Self::Int(_) => "Integer",
+            Self::Float(_) => "Float",
+            Self::String(_) | Self::InternedString(_) => "String",
+            Self::List(_) => "List",
+            Self::Map(_) => "Map",
+            Self::Node(_) => "Node",
+            Self::Relationship(..) => "Edge",
+            Self::Path(_) => "Path",
+            Self::VecF32(_) => "VecF32",
+            Self::Point(_) => "Point",
+            Self::Datetime(_) => "Datetime",
+            Self::Date(_) => "Date",
+            Self::Time(_) => "Time",
+            Self::Duration(_) => "Duration",
         }
     }
 
     /// Convert Value to JSON string representation
     pub fn to_json_string(
         &self,
-        runtime: &crate::runtime::runtime::Runtime,
+        runtime: &Runtime<'_>,
     ) -> String {
-        struct JsonWrapper<'a> {
+        struct JsonWrapper<'a, 'b> {
             value: &'a Value,
-            runtime: &'a crate::runtime::runtime::Runtime,
+            runtime: &'a Runtime<'b>,
         }
 
-        impl fmt::Display for JsonWrapper<'_> {
+        impl fmt::Display for JsonWrapper<'_, '_> {
             fn fmt(
                 &self,
                 f: &mut fmt::Formatter<'_>,
@@ -1127,7 +1151,7 @@ impl DisplayJson for Value {
     fn fmt_json(
         &self,
         f: &mut fmt::Formatter<'_>,
-        runtime: &crate::runtime::runtime::Runtime,
+        runtime: &Runtime<'_>,
     ) -> fmt::Result {
         match self {
             Self::Null => write!(f, "null"),
@@ -1165,11 +1189,10 @@ impl DisplayJson for Value {
             }
             Self::Node(id) => write_node_json(f, runtime, *id, true),
             Self::Relationship(rel) => {
-                let (rel_id, start_id, end_id) = **rel;
-                let rel_id_u64 = u64::from(rel_id);
-                let properties = runtime.get_relationship_attrs(rel_id);
+                let rel_id_u64 = u64::from(rel.0);
+                let properties = runtime.get_relationship_attrs(rel.0);
                 let type_name = runtime
-                    .get_relationship_type(rel_id)
+                    .get_relationship_type(rel.0)
                     .unwrap_or_else(|| Arc::new(String::new()));
 
                 write!(
@@ -1189,9 +1212,9 @@ impl DisplayJson for Value {
                 }
 
                 write!(f, r#"}},"start":"#)?;
-                write_node_json(f, runtime, start_id, false)?;
+                write_node_json(f, runtime, rel.1, false)?;
                 write!(f, r#","end":"#)?;
-                write_node_json(f, runtime, end_id, false)?;
+                write_node_json(f, runtime, rel.2, false)?;
                 write!(f, "}}")
             }
             Self::Path(values) => {
@@ -1260,7 +1283,7 @@ fn write_json_string(
 /// Write a node in JSON format with or without the "type" field
 fn write_node_json(
     f: &mut fmt::Formatter<'_>,
-    runtime: &crate::runtime::runtime::Runtime,
+    runtime: &Runtime,
     id: NodeId,
     include_type: bool,
 ) -> fmt::Result {

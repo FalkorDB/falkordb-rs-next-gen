@@ -1,27 +1,30 @@
-//! Remove operator — removes properties and labels from nodes/relationships.
+//! Batch-mode remove operator — removes properties and labels from nodes/relationships.
 //!
-//! Implements Cypher `REMOVE n.prop` and `REMOVE n:Label`. For properties,
-//! sets the attribute value to `NULL` in the pending batch. For labels,
-//! computes the set difference between current and removed labels and
-//! records the removal.
+//! For each active row in each input batch, evaluates the remove items and
+//! records property nullifications or label removals in the pending batch.
 
-use super::OpIter;
 use crate::parser::ast::{ExprIR, QueryExpr, Variable};
 use crate::planner::IR;
-use crate::runtime::{env::Env, orderset::OrderSet, runtime::Runtime, value::Value};
+use crate::runtime::{
+    batch::{Batch, BatchOp},
+    env::Env,
+    orderset::OrderSet,
+    runtime::Runtime,
+    value::Value,
+};
 use orx_tree::{Dyn, NodeIdx, NodeRef};
 
 pub struct RemoveOp<'a> {
-    runtime: &'a Runtime,
-    pub iter: Box<OpIter<'a>>,
+    pub(crate) runtime: &'a Runtime<'a>,
+    pub(crate) child: Box<BatchOp<'a>>,
     items: &'a Vec<QueryExpr<Variable>>,
-    idx: NodeIdx<Dyn<IR>>,
+    pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
 impl<'a> RemoveOp<'a> {
     pub fn new(
-        runtime: &'a Runtime,
-        iter: Box<OpIter<'a>>,
+        runtime: &'a Runtime<'a>,
+        child: Box<BatchOp<'a>>,
         items: &'a Vec<QueryExpr<Variable>>,
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
@@ -31,31 +34,46 @@ impl<'a> RemoveOp<'a> {
         );
         Self {
             runtime,
-            iter,
+            child,
             items,
             idx,
         }
     }
 }
 
-impl Iterator for RemoveOp<'_> {
-    type Item = Result<Env, String>;
+impl<'a> Iterator for RemoveOp<'a> {
+    type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let result = match self.iter.next()? {
-            Ok(vars) => self.runtime.remove(self.items, &vars).map(|()| vars),
-            Err(e) => Err(e),
+        let batch = match self.child.next()? {
+            Ok(b) => b,
+            Err(e) => return Some(Err(e)),
         };
-        self.runtime.inspect_result(self.idx, &result);
-        Some(result)
+
+        if let Err(e) = self.runtime.remove_batch(self.items, &batch) {
+            return Some(Err(e));
+        }
+
+        Some(Ok(batch))
     }
 }
+impl Runtime<'_> {
+    pub fn remove_batch(
+        &self,
+        items: &Vec<QueryExpr<Variable>>,
+        batch: &Batch<'_>,
+    ) -> Result<(), String> {
+        for row in batch.active_indices() {
+            let env = batch.env_ref(row);
+            self.remove(items, env)?;
+        }
+        Ok(())
+    }
 
-impl Runtime {
     pub fn remove(
         &self,
         items: &Vec<QueryExpr<Variable>>,
-        vars: &Env,
+        vars: &Env<'_>,
     ) -> Result<(), String> {
         for item in items {
             let (entity, property, labels) = match item.root().data() {

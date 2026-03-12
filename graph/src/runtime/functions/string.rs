@@ -133,7 +133,8 @@ pub fn register(funcs: &mut Functions) {
                     if s.contains('\u{FFFD}') {
                         return Err(String::from("Invalid UTF8 string"));
                     }
-                    Ok(Value::String(Arc::new(s.to_lowercase())))
+                    let lower = s.to_lowercase();
+                    Ok(Value::String(Arc::new(lower)))
                 }
                 Some(Value::Null) => Ok(Value::Null),
 
@@ -154,7 +155,8 @@ pub fn register(funcs: &mut Functions) {
                     if s.contains('\u{FFFD}') {
                         return Err(String::from("Invalid UTF8 string"));
                     }
-                    Ok(Value::String(Arc::new(s.to_uppercase())))
+                    let upper = s.to_uppercase();
+                    Ok(Value::String(Arc::new(upper)))
                 }
                 Some(Value::Null) => Ok(Value::Null),
 

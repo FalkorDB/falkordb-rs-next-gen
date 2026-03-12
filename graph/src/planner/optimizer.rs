@@ -36,7 +36,7 @@ use orx_tree::{Bfs, Dyn, DynNode, DynTree, NodeIdx, NodeRef};
 
 use crate::{
     graph::graph::Graph,
-    index::indexer::IndexQuery,
+    index::indexer::{IndexQuery, IndexType},
     parser::ast::{ExprIR, QueryExpr, QueryNode, Variable},
     runtime::runtime::GetVariables,
     tree,
@@ -201,7 +201,7 @@ fn utilize_index(
             // If we managed to extract the attribute and expression from the filter
             && let Some((attr, attr_side, constant_side)) = extract_attribute_and_expression_from_filter(filter)
             // If the attribute is indexed
-            && graph.is_indexed(&node.labels[0], &attr)
+            && graph.is_indexed(&node.labels[0], &attr, &IndexType::Range)
         {
             // Check if the attribute side is a propetry function or more complexed function
             // If it is a property function, we can handle it right away since we know everything: Attribute, expression and operation
@@ -340,6 +340,38 @@ fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
             let IR::Filter(filter) = optimized_plan.node(idx).data() else {
                 continue;
             };
+
+            // Merge stacked filters: if this filter's child is also a filter,
+            // combine their conjuncts into a single AND filter.
+            if let Some(child) = optimized_plan.node(idx).get_child(0)
+                && let IR::Filter(child_filter) = child.data()
+            {
+                let child_filter = child_filter.clone();
+                let filter = filter.clone();
+                let child_idx = child.idx();
+
+                // Flatten conjuncts from both filters
+                let mut conjuncts: Vec<DynTree<ExprIR<Variable>>> = vec![];
+                for f in [&filter, &child_filter] {
+                    if matches!(f.root().data(), ExprIR::And) {
+                        conjuncts.extend(f.root().children().map(|c| c.clone_as_tree()));
+                    } else {
+                        conjuncts.push((**f).clone());
+                    }
+                }
+
+                let merged = if conjuncts.len() == 1 {
+                    Arc::new(conjuncts.into_iter().next().unwrap())
+                } else {
+                    Arc::new(tree!(ExprIR::And; conjuncts))
+                };
+                *optimized_plan.node_mut(idx).data_mut() = IR::Filter(merged);
+                optimized_plan.node_mut(child_idx).take_out();
+
+                changed = true;
+                break;
+            }
+
             if !optimized_plan
                 .node(idx)
                 .children()
@@ -371,6 +403,7 @@ fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                             c.data(),
                             IR::Project(..)
                                 | IR::Aggregate(..)
+                                | IR::Argument
                                 | IR::SemiApply
                                 | IR::AntiSemiApply
                                 | IR::OrApplyMultiplexer(_)
@@ -526,7 +559,7 @@ fn get_index(
     for label in node.labels.iter() {
         for attr in node.attrs.root().children() {
             if let ExprIR::String(attr_str) = attr.data()
-                && graph.is_indexed(label, attr_str)
+                && graph.is_indexed(label, attr_str, &IndexType::Range)
             {
                 return Some((
                     node.clone(),

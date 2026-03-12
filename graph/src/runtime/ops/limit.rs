@@ -1,47 +1,80 @@
-//! Limit operator — caps the number of rows yielded.
+//! Batch-mode limit operator — caps the number of rows yielded across batches.
 //!
-//! Implements Cypher `LIMIT n`. Passes through at most `n` rows from
-//! the child iterator, then returns `None` for all subsequent calls.
-//! Enables early termination of the upstream pipeline.
+//! Pulls batches from the child operator, passing through at most `remaining`
+//! active rows total. Entire batches are passed through when they fall within
+//! the limit window. A partial batch is trimmed by rebuilding the selection
+//! vector to include only the first `remaining` active entries. Once the
+//! limit count is exhausted, subsequent calls return `None`.
 
-use super::OpIter;
 use crate::planner::IR;
-use crate::runtime::{env::Env, runtime::Runtime};
+use crate::runtime::{
+    batch::{Batch, BatchOp},
+    runtime::Runtime,
+};
 use orx_tree::{Dyn, NodeIdx};
 
 pub struct LimitOp<'a> {
-    runtime: &'a Runtime,
-    pub iter: Box<OpIter<'a>>,
+    pub(crate) runtime: &'a Runtime<'a>,
+    pub(crate) child: Box<BatchOp<'a>>,
     remaining: usize,
-    idx: NodeIdx<Dyn<IR>>,
+    pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
 impl<'a> LimitOp<'a> {
     pub const fn new(
-        runtime: &'a Runtime,
-        iter: Box<OpIter<'a>>,
+        runtime: &'a Runtime<'a>,
+        child: Box<BatchOp<'a>>,
         limit: usize,
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
         Self {
             runtime,
-            iter,
+            child,
             remaining: limit,
             idx,
         }
     }
 }
 
-impl Iterator for LimitOp<'_> {
-    type Item = Result<Env, String>;
+// TODO: implement size_hint for all operators
+
+impl<'a> Iterator for LimitOp<'a> {
+    type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.remaining == 0 {
-            return None;
+        loop {
+            if self.remaining == 0 {
+                return None;
+            }
+
+            let mut batch = match self.child.next()? {
+                Ok(batch) => batch,
+                Err(e) => return Some(Err(e)),
+            };
+
+            let active = batch.active_len();
+
+            if active == 0 {
+                // Skip empty batches.
+                continue;
+            }
+
+            if self.remaining >= active {
+                // Entire batch fits within the limit window — pass through.
+                self.remaining -= active;
+                return Some(Ok(batch));
+            }
+
+            // Partial limit: collect active indices, keep only the first
+            // `remaining` entries, and build a new selection vector.
+            let new_sel: Vec<u16> = batch
+                .active_indices()
+                .take(self.remaining)
+                .map(|i| i as u16)
+                .collect();
+            self.remaining = 0;
+            batch.set_selection(new_sel);
+            return Some(Ok(batch));
         }
-        self.remaining -= 1;
-        let result = self.iter.next()?;
-        self.runtime.inspect_result(self.idx, &result);
-        Some(result)
     }
 }

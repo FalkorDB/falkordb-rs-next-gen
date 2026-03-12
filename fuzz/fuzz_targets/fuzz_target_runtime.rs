@@ -24,6 +24,7 @@ use graph::{
     // },
     runtime::{
         functions::init_functions,
+        pool::Pool,
         runtime::{Runtime, evaluate_param},
     },
 };
@@ -128,7 +129,8 @@ fuzz_target!(init: {
         else {
             return Corpus::Reject;
         };
-        let mut runtime = Runtime::new(g.read(), parameters, true, plan, false, String::new());
+        let pool = Pool::new();
+        let runtime = Runtime::new(g.read(), parameters, true, plan, false, String::new(), &pool);
         match runtime.query() {
             Ok(_) => Corpus::Keep,
             _ => Corpus::Reject,

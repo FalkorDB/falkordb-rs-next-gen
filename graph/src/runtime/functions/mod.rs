@@ -355,6 +355,16 @@ impl Type {
             _ => false,
         }
     }
+
+    #[must_use]
+    pub fn can_return_entity(&self) -> bool {
+        match self {
+            Self::Node | Self::Relationship | Self::Path | Self::Any => true,
+            Self::Union(types) => types.iter().any(Self::can_return_entity),
+            Self::Optional(inner) => inner.can_return_entity(),
+            _ => false,
+        }
+    }
 }
 
 #[cfg_attr(tarpaulin, skip)]

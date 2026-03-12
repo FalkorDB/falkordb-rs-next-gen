@@ -1,35 +1,57 @@
-//! Index scan operator — retrieves nodes using a secondary index.
+//! Batch-mode index scan operator — retrieves nodes using a secondary index.
 //!
-//! Implements optimized lookups via equality, range, or point-distance
-//! index queries. The index query parameters are evaluated at runtime
-//! from the current environment. When the node pattern has inline
-//! attribute filters, matching nodes are further filtered against those
-//! property constraints.
+//! For each active row in the input batch, evaluates the index query
+//! parameters and collects matching nodes.
 
+use std::collections::VecDeque;
 use std::sync::Arc;
 
-use super::OpIter;
+use crate::graph::graph::NodeId;
 use crate::index::indexer::IndexQuery;
 use crate::parser::ast::{QueryExpr, QueryNode, Variable};
 use crate::planner::IR;
-use crate::runtime::{env::Env, runtime::Runtime, value::Value};
+use crate::runtime::{
+    batch::{BATCH_SIZE, Batch, BatchOp},
+    env::Env,
+    runtime::Runtime,
+    value::Value,
+};
 use orx_tree::{Dyn, NodeIdx, NodeRef};
 
 pub struct NodeByIndexScanOp<'a> {
-    runtime: &'a Runtime,
-    pub iter: Box<OpIter<'a>>,
-    current: Option<Box<dyn Iterator<Item = Result<Env, String>> + 'a>>,
+    pub(crate) runtime: &'a Runtime<'a>,
+    pub(crate) child: Box<BatchOp<'a>>,
     node_pattern: &'a QueryNode<Arc<String>, Variable>,
     index: &'a Arc<String>,
     query: &'a IndexQuery<QueryExpr<Variable>>,
-    idx: NodeIdx<Dyn<IR>>,
+    pending: VecDeque<(Env<'a>, Box<dyn Iterator<Item = NodeId>>)>,
+    pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
 impl<'a> NodeByIndexScanOp<'a> {
+    pub fn new(
+        runtime: &'a Runtime<'a>,
+        child: Box<BatchOp<'a>>,
+        node_pattern: &'a QueryNode<Arc<String>, Variable>,
+        index: &'a Arc<String>,
+        query: &'a IndexQuery<QueryExpr<Variable>>,
+        idx: NodeIdx<Dyn<IR>>,
+    ) -> Self {
+        Self {
+            runtime,
+            child,
+            node_pattern,
+            index,
+            query,
+            pending: VecDeque::new(),
+            idx,
+        }
+    }
+
     fn evaluate_index_query(
         runtime: &Runtime,
         query: &IndexQuery<QueryExpr<Variable>>,
-        vars: &Env,
+        vars: &Env<'_>,
     ) -> Result<IndexQuery<Value>, String> {
         match query {
             IndexQuery::Equal(key, value) => {
@@ -68,106 +90,61 @@ impl<'a> NodeByIndexScanOp<'a> {
         }
     }
 
-    pub fn new(
-        runtime: &'a Runtime,
-        iter: Box<OpIter<'a>>,
-        node_pattern: &'a QueryNode<Arc<String>, Variable>,
-        index: &'a Arc<String>,
-        query: &'a IndexQuery<QueryExpr<Variable>>,
-        idx: NodeIdx<Dyn<IR>>,
-    ) -> Self {
-        Self {
-            runtime,
-            iter,
-            current: None,
-            node_pattern,
-            index,
-            query,
-            idx,
+    /// Drains rows from `self.pending` into `envs` until `BATCH_SIZE` is reached
+    /// or all pending scans are exhausted.
+    fn drain_pending(
+        &mut self,
+        envs: &mut Vec<Env<'a>>,
+    ) {
+        while envs.len() < BATCH_SIZE {
+            let Some((env, iter)) = self.pending.front_mut() else {
+                break;
+            };
+            if let Some(nid) = iter.next() {
+                let mut row = env.clone_pooled(self.runtime.env_pool);
+                row.insert(&self.node_pattern.alias, Value::Node(nid));
+                envs.push(row);
+            } else {
+                self.pending.pop_front();
+            }
         }
     }
 }
 
-impl Iterator for NodeByIndexScanOp<'_> {
-    type Item = Result<Env, String>;
+impl<'a> Iterator for NodeByIndexScanOp<'a> {
+    type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            if let Some(ref mut current) = self.current {
-                if let Some(item) = current.next() {
-                    self.runtime.inspect_result(self.idx, &item);
-                    return Some(item);
-                }
-                self.current = None;
-            }
-            let vars = match self.iter.next()? {
-                Ok(vars) => vars,
-                Err(e) => {
-                    let result = Err(e);
-                    self.runtime.inspect_result(self.idx, &result);
-                    return Some(result);
-                }
-            };
-            let q = match Self::evaluate_index_query(self.runtime, self.query, &vars) {
-                Ok(q) => q,
-                Err(e) => {
-                    let result = Err(e);
-                    self.runtime.inspect_result(self.idx, &result);
-                    return Some(result);
-                }
-            };
-            let has_inline_attrs = self.node_pattern.attrs.root().children().next().is_some();
-            let runtime = self.runtime;
-            let node_pattern = self.node_pattern;
+        let mut envs = Vec::with_capacity(BATCH_SIZE);
 
-            if has_inline_attrs {
-                self.current = Some(Box::new(
-                    runtime
-                        .g
-                        .borrow()
-                        .get_indexed_nodes(self.index, q)
-                        .filter_map(move |v| {
-                            let mut vars = vars.clone();
-                            vars.insert(&node_pattern.alias, Value::Node(v));
-                            let attrs = match runtime.run_expr(
-                                &node_pattern.attrs,
-                                node_pattern.attrs.root().idx(),
-                                &vars,
-                                None,
-                            ) {
-                                Ok(attrs) => attrs,
-                                Err(e) => return Some(Err(e)),
-                            };
-                            if let Value::Map(attrs) = &attrs
-                                && !attrs.is_empty()
-                            {
-                                let g = runtime.g.borrow();
-                                for (attr, avalue) in attrs.iter() {
-                                    if let Some(pvalue) = g.get_node_attribute(v, attr) {
-                                        if *avalue == pvalue {
-                                            continue;
-                                        }
-                                        return None;
-                                    }
-                                    return None;
-                                }
-                            }
-                            Some(Ok(vars))
-                        }),
-                ));
-            } else {
-                self.current = Some(Box::new(
-                    runtime
-                        .g
-                        .borrow()
-                        .get_indexed_nodes(self.index, q)
-                        .map(move |v| {
-                            let mut vars = vars.clone();
-                            vars.insert(&node_pattern.alias, Value::Node(v));
-                            Ok(vars)
-                        }),
-                ));
+        // Drain leftover scans from previous call.
+        self.drain_pending(&mut envs);
+
+        while envs.len() < BATCH_SIZE {
+            let batch = match self.child.next() {
+                Some(Ok(b)) => b,
+                Some(Err(e)) => return Some(Err(e)),
+                None => break,
+            };
+
+            for vars in batch.active_env_iter() {
+                let q = match Self::evaluate_index_query(self.runtime, self.query, vars) {
+                    Ok(q) => q,
+                    Err(e) => return Some(Err(e)),
+                };
+
+                let iter = Box::new(self.runtime.g.borrow().get_indexed_nodes(self.index, q));
+                self.pending
+                    .push_back((vars.clone_pooled(self.runtime.env_pool), iter));
             }
+
+            self.drain_pending(&mut envs);
+        }
+
+        if envs.is_empty() {
+            None
+        } else {
+            Some(Ok(Batch::from_envs(envs)))
         }
     }
 }
