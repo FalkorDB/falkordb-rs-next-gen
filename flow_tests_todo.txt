@@ -8,6 +8,8 @@ test_imdb
 test_index_delete
 test_index_scans
 test_index_updates
+test_intern_string_persistence
+test_intern_string_replication
 test_load_csv
 test_maintain_record_order
 test_multi_label

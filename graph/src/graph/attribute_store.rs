@@ -26,6 +26,13 @@ use crate::runtime::{
     object_pool::get_object_pool, ordermap::OrderMap, orderset::OrderSet, value::Value,
 };
 
+/// A deferred pool operation: acquire or release an interned string ref.
+#[derive(Clone)]
+enum PoolOp {
+    Acquire(Value),
+    Release(Value),
+}
+
 /// Columnar attribute storage for graph entities backed by fjall.
 ///
 /// Uses composite keys (entity_id + attr_idx) to store each attribute
@@ -37,6 +44,8 @@ pub struct AttributeStore {
     keyspace: Keyspace,
     /// Attribute names in insertion order (name → column index)
     pub attrs_name: OrderSet<Arc<String>>,
+    /// Deferred pool operations, applied only on graph version commit.
+    pool_ops: Vec<PoolOp>,
 }
 
 /// Create a composite key from entity ID and attribute index.
@@ -118,6 +127,7 @@ impl AttributeStore {
             database,
             keyspace,
             attrs_name: OrderSet::default(),
+            pool_ops: Vec::new(),
         }
     }
 
@@ -128,6 +138,7 @@ impl AttributeStore {
             snapshot: self.database.snapshot(),
             keyspace: self.keyspace.clone(),
             attrs_name: self.attrs_name.clone(),
+            pool_ops: Vec::new(),
         }
     }
 
@@ -135,14 +146,13 @@ impl AttributeStore {
         &mut self,
         key: u64,
     ) -> Result<(), String> {
-        // Collect values to release after successful commit
+        // Collect values to release (deferred until graph version commit)
         let prefix = key.to_be_bytes();
-        let mut to_release: Vec<Value> = Vec::new();
         for entry in self.snapshot.prefix(&self.keyspace, prefix) {
             if let Ok((_, data)) = entry.into_inner()
                 && let Some((value, _)) = Value::from_bytes(&data)
             {
-                to_release.push(value);
+                self.pool_ops.push(PoolOp::Release(value));
             }
         }
 
@@ -154,11 +164,6 @@ impl AttributeStore {
             }
         }
         batch.durability(None).commit().map_err(|e| e.to_string())?;
-
-        // Release interned string refs only after successful commit
-        for value in &to_release {
-            release_interned_refs(value);
-        }
         Ok(())
     }
 
@@ -249,21 +254,15 @@ impl AttributeStore {
     ) -> Result<bool, String> {
         if let Some(idx) = self.attrs_name.get_index_of(attr) {
             let composite_key = make_key(key, idx as u16);
-            // Collect value to release after successful removal
-            let old_value = if let Ok(Some(data)) = self.snapshot.get(&self.keyspace, composite_key)
+            // Defer release until graph version commit
+            if let Ok(Some(data)) = self.snapshot.get(&self.keyspace, composite_key)
                 && let Some((value, _)) = Value::from_bytes(&data)
             {
-                Some(value)
-            } else {
-                None
-            };
+                self.pool_ops.push(PoolOp::Release(value));
+            }
             self.keyspace
                 .remove(composite_key)
                 .map_err(|e| e.to_string())?;
-            // Release interned string refs only after successful removal
-            if let Some(value) = &old_value {
-                release_interned_refs(value);
-            }
             return Ok(true);
         }
         Ok(false)
@@ -273,15 +272,14 @@ impl AttributeStore {
         &mut self,
         keys: &RoaringTreemap,
     ) -> Result<(), String> {
-        // Collect values to release after successful commit
-        let mut to_release: Vec<Value> = Vec::new();
+        // Defer release until graph version commit
         for key in keys {
             let prefix = key.to_be_bytes();
             for entry in self.snapshot.prefix(&self.keyspace, prefix) {
                 if let Ok((_, data)) = entry.into_inner()
                     && let Some((value, _)) = Value::from_bytes(&data)
                 {
-                    to_release.push(value);
+                    self.pool_ops.push(PoolOp::Release(value));
                 }
             }
         }
@@ -296,11 +294,6 @@ impl AttributeStore {
             }
         }
         batch.durability(None).commit().map_err(|e| e.to_string())?;
-
-        // Release interned string refs only after successful commit
-        for value in &to_release {
-            release_interned_refs(value);
-        }
         Ok(())
     }
 
@@ -312,9 +305,6 @@ impl AttributeStore {
     ) -> Result<usize, String> {
         let mut nremoved = 0;
         let mut batch = self.database.batch();
-        // Collect ref adjustments to apply only after successful commit
-        let mut to_release: Vec<Value> = Vec::new();
-        let mut to_acquire: Vec<Value> = Vec::new();
 
         for (key, attrs) in attrs {
             for (attr, value) in attrs.iter() {
@@ -329,7 +319,7 @@ impl AttributeStore {
                     // Check snapshot for existence
                     if let Ok(Some(data)) = self.snapshot.get(&self.keyspace, composite_key) {
                         if let Some((old_value, _)) = Value::from_bytes(&data) {
-                            to_release.push(old_value);
+                            self.pool_ops.push(PoolOp::Release(old_value));
                         }
                         batch.remove(&self.keyspace, composite_key);
                         nremoved += 1;
@@ -338,26 +328,17 @@ impl AttributeStore {
                     // Check if overwriting
                     if let Ok(Some(data)) = self.snapshot.get(&self.keyspace, composite_key) {
                         if let Some((old_value, _)) = Value::from_bytes(&data) {
-                            to_release.push(old_value);
+                            self.pool_ops.push(PoolOp::Release(old_value));
                         }
                         nremoved += 1;
                     }
-                    to_acquire.push(value.clone());
+                    self.pool_ops.push(PoolOp::Acquire(value.clone()));
                     batch.insert(&self.keyspace, composite_key, value.to_bytes());
                 }
             }
         }
 
         batch.durability(None).commit().map_err(|e| e.to_string())?;
-
-        // Apply ref adjustments only after successful commit
-        for value in &to_release {
-            release_interned_refs(value);
-        }
-        for value in &to_acquire {
-            acquire_interned_refs(value);
-        }
-
         Ok(nremoved)
     }
 
@@ -376,6 +357,28 @@ impl AttributeStore {
 
     pub fn commit(&mut self) {
         self.snapshot = self.database.snapshot();
+    }
+
+    /// Apply all deferred pool operations. Called when the graph version is committed.
+    pub fn apply_pool_ops(&mut self) {
+        for op in self.pool_ops.drain(..) {
+            match op {
+                PoolOp::Acquire(ref value) => acquire_interned_refs(value),
+                PoolOp::Release(ref value) => release_interned_refs(value),
+            }
+        }
+    }
+
+    /// Release interned refs for all values in this attribute store.
+    /// Called when the graph is being destroyed (GRAPH.DELETE).
+    pub fn release_all_interned_refs(&self) {
+        for entry in self.snapshot.prefix(&self.keyspace, []) {
+            if let Ok((_, data)) = entry.into_inner()
+                && let Some((value, _)) = Value::from_bytes(&data)
+            {
+                release_interned_refs(&value);
+            }
+        }
     }
 }
 

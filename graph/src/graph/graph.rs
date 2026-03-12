@@ -1196,6 +1196,20 @@ impl Graph {
         self.relationship_attrs.commit();
     }
 
+    /// Apply all deferred pool operations from attribute stores.
+    /// Called when the graph version is promoted via MvccGraph::commit.
+    pub fn apply_pool_ops(&mut self) {
+        self.node_attrs.apply_pool_ops();
+        self.relationship_attrs.apply_pool_ops();
+    }
+
+    /// Release all interned string refs held by this graph's attribute stores.
+    /// Called when the graph is being destroyed.
+    pub fn release_all_interned_refs(&self) {
+        self.node_attrs.release_all_interned_refs();
+        self.relationship_attrs.release_all_interned_refs();
+    }
+
     pub fn commit_index(
         &mut self,
         index_add_docs: &mut HashMap<u64, RoaringTreemap>,

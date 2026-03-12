@@ -87,7 +87,11 @@ impl MvccGraph {
         new_graph: Arc<AtomicRefCell<Graph>>,
     ) {
         debug_assert_eq!(self.graph.borrow().version + 1, new_graph.borrow().version);
-        new_graph.borrow_mut().set_indexer_graph(new_graph.clone());
+        {
+            let mut g = new_graph.borrow_mut();
+            g.set_indexer_graph(new_graph.clone());
+            g.apply_pool_ops();
+        }
         self.graph = new_graph;
         self.write.store(false, Ordering::Release);
     }
@@ -100,5 +104,7 @@ impl MvccGraph {
 impl Drop for MvccGraph {
     fn drop(&mut self) {
         self.graph.borrow().cancel_indexing();
+        // Release all interned string refs when the graph is destroyed
+        self.graph.borrow().release_all_interned_refs();
     }
 }
