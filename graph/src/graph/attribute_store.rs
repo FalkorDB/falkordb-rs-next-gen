@@ -146,20 +146,17 @@ impl AttributeStore {
         &mut self,
         key: u64,
     ) -> Result<(), String> {
-        // Collect values to release (deferred until graph version commit)
+        // Collect values to release and keys to remove in one pass over the
+        // current keyspace state (not the frozen snapshot) so that values
+        // written by earlier mutations in this transaction are correctly
+        // accounted for, avoiding double-release of stale snapshot values.
         let prefix = key.to_be_bytes();
-        for entry in self.snapshot.prefix(&self.keyspace, prefix) {
-            if let Ok((_, data)) = entry.into_inner()
-                && let Some((value, _)) = Value::from_bytes(&data)
-            {
-                self.pool_ops.push(PoolOp::Release(value));
-            }
-        }
-
-        // Remove all attributes for this entity using a batch
         let mut batch = self.database.batch();
         for entry in self.keyspace.prefix(prefix) {
-            if let Ok(k) = entry.key() {
+            if let Ok((k, data)) = entry.into_inner() {
+                if let Some((value, _)) = Value::from_bytes(&data) {
+                    self.pool_ops.push(PoolOp::Release(value));
+                }
                 batch.remove(&self.keyspace, k);
             }
         }
@@ -266,8 +263,9 @@ impl AttributeStore {
     ) -> Result<bool, String> {
         if let Some(idx) = self.attrs_name.get_index_of(attr) {
             let composite_key = make_key(key, idx as u16);
-            // Defer release until graph version commit
-            if let Ok(Some(data)) = self.snapshot.get(&self.keyspace, composite_key)
+            // Read from keyspace (not snapshot) so we release the current
+            // in-transaction value, not a stale pre-transaction one.
+            if let Ok(Some(data)) = self.keyspace.get(composite_key)
                 && let Some((value, _)) = Value::from_bytes(&data)
             {
                 self.pool_ops.push(PoolOp::Release(value));
@@ -284,23 +282,18 @@ impl AttributeStore {
         &mut self,
         keys: &RoaringTreemap,
     ) -> Result<(), String> {
-        // Defer release until graph version commit
-        for key in keys {
-            let prefix = key.to_be_bytes();
-            for entry in self.snapshot.prefix(&self.keyspace, prefix) {
-                if let Ok((_, data)) = entry.into_inner()
-                    && let Some((value, _)) = Value::from_bytes(&data)
-                {
-                    self.pool_ops.push(PoolOp::Release(value));
-                }
-            }
-        }
-
+        // Single pass over the current keyspace state to collect values for
+        // deferred release and keys for batch removal.  Reading from keyspace
+        // (not the frozen snapshot) ensures we release the correct
+        // in-transaction values when earlier mutations have modified them.
         let mut batch = self.database.batch();
         for key in keys {
             let prefix = key.to_be_bytes();
             for entry in self.keyspace.prefix(prefix) {
-                if let Ok(k) = entry.key() {
+                if let Ok((k, data)) = entry.into_inner() {
+                    if let Some((value, _)) = Value::from_bytes(&data) {
+                        self.pool_ops.push(PoolOp::Release(value));
+                    }
                     batch.remove(&self.keyspace, k);
                 }
             }
@@ -328,8 +321,9 @@ impl AttributeStore {
                 let composite_key = make_key(*key, idx);
 
                 if *value == Value::Null {
-                    // Check snapshot for existence
-                    if let Ok(Some(data)) = self.snapshot.get(&self.keyspace, composite_key) {
+                    // Read from keyspace (not snapshot) so we see values
+                    // written by earlier mutations in this transaction.
+                    if let Ok(Some(data)) = self.keyspace.get(composite_key) {
                         if let Some((old_value, _)) = Value::from_bytes(&data) {
                             self.pool_ops.push(PoolOp::Release(old_value));
                         }
@@ -337,8 +331,9 @@ impl AttributeStore {
                         nremoved += 1;
                     }
                 } else {
-                    // Check if overwriting
-                    if let Ok(Some(data)) = self.snapshot.get(&self.keyspace, composite_key) {
+                    // Check if overwriting — read from keyspace for correct
+                    // in-transaction value.
+                    if let Ok(Some(data)) = self.keyspace.get(composite_key) {
                         if let Some((old_value, _)) = Value::from_bytes(&data) {
                             self.pool_ops.push(PoolOp::Release(old_value));
                         }

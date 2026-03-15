@@ -93,7 +93,7 @@ class testInternStringReplication():
         assertStringPoolStats(self.source_con, 1, 1)
         assertStringPoolStats(self.replica_con, 1, 1)
 
-        # replicate deletion if a node
+        # replicate deletion of a node
         q = "MATCH (n) DELETE n"
         self.query_and_wait(q)
 
