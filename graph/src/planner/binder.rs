@@ -794,14 +794,22 @@ impl Binder {
             ExprIR::Quantifier(qt, name) => {
                 let bound_var: Variable = self.fresh_var(Some(name.clone()), Type::Any, 0);
 
+                // Bind child[0] (the iterable) BEFORE introducing the
+                // quantifier variable so it resolves in the outer scope.
+                let mut children_iter = node_ref.children();
+                let iterable_child = children_iter.next().unwrap();
+                let bound_iterable = self.bind_expr_node(expr, &iterable_child, locals)?;
+
                 let mut local = HashMap::new();
                 local.insert(name.clone(), bound_var.clone());
                 locals.push(local);
-                let children = node_ref
-                    .children()
+                let rest_children = children_iter
                     .map(|child| self.bind_expr_node(expr, &child, locals))
                     .collect::<Result<Vec<_>, _>>()?;
                 locals.pop();
+
+                let mut children = vec![bound_iterable];
+                children.extend(rest_children);
 
                 let mut new_tree = DynTree::new(ExprIR::Quantifier(qt.clone(), bound_var));
                 let mut root = new_tree.root_mut();
@@ -813,14 +821,24 @@ impl Binder {
             ExprIR::ListComprehension(name) => {
                 let bound_var: Variable = self.fresh_var(Some(name.clone()), Type::Any, 0);
 
+                // Bind child[0] (the iterable) BEFORE introducing the
+                // comprehension variable so that e.g. `[x IN nodes(x) | ...]`
+                // resolves the iterable's `x` to the outer-scope path, not
+                // to the comprehension variable.
+                let mut children_iter = node_ref.children();
+                let iterable_child = children_iter.next().unwrap();
+                let bound_iterable = self.bind_expr_node(expr, &iterable_child, locals)?;
+
                 let mut local = HashMap::new();
                 local.insert(name.clone(), bound_var.clone());
                 locals.push(local);
-                let children = node_ref
-                    .children()
+                let rest_children = children_iter
                     .map(|child| self.bind_expr_node(expr, &child, locals))
                     .collect::<Result<Vec<_>, _>>()?;
                 locals.pop();
+
+                let mut children = vec![bound_iterable];
+                children.extend(rest_children);
 
                 // Child 1 is the WHERE condition — validate it returns boolean
                 if children.len() > 1 && !Self::expr_may_return_boolean(children[1].root()) {
@@ -840,6 +858,15 @@ impl Binder {
                 let outer_scope_names: HashSet<Arc<String>> =
                     self.current_env().keys().cloned().collect();
 
+                // Temporarily inject local comprehension variables into
+                // the current env so bind_graph can resolve them (e.g.
+                // a list comprehension variable used in the pattern).
+                for scope in locals.iter() {
+                    for (name, var) in scope {
+                        self.current_env_mut().insert(name.clone(), var.clone());
+                    }
+                }
+
                 // bind_graph uses define_name_in_scope which reuses
                 // outer-scope variables (e.g. 'n' from MATCH) and creates
                 // fresh variables only for new aliases (anonymous nodes/rels).
@@ -851,8 +878,12 @@ impl Binder {
                     .collect::<Result<Vec<_>, _>>()?;
 
                 // Remove pattern-local aliases so they don't leak into outer scope.
-                self.current_env_mut()
-                    .retain(|name, _| outer_scope_names.contains(name));
+                // Keep anonymous variables (_anon_*) since they are always created
+                // fresh and their IDs must be visible to scope_vars so the planner
+                // can avoid ID collisions.
+                self.current_env_mut().retain(|name, _| {
+                    outer_scope_names.contains(name) || name.starts_with("_anon")
+                });
 
                 let mut new_tree = DynTree::new(ExprIR::PatternComprehension(bound_graph));
                 let mut root = new_tree.root_mut();
@@ -926,7 +957,30 @@ impl Binder {
                     | ExprIR::Quantifier(_, _)
                     | ExprIR::ListComprehension(_)
                     | ExprIR::PatternComprehension(_) => unreachable!("handled above"),
-                    ExprIR::Pattern(pattern) => ExprIR::Pattern(self.bind_graph(&pattern, false)?),
+                    ExprIR::Pattern(pattern) => {
+                        // Snapshot outer scope so pattern-local aliases can be
+                        // cleaned up after binding (they must not leak outward).
+                        let outer_scope_names: HashSet<Arc<String>> =
+                            self.current_env().keys().cloned().collect();
+
+                        // Temporarily inject local comprehension variables into
+                        // the current env so bind_graph can resolve them.
+                        for scope in locals.iter() {
+                            for (name, var) in scope {
+                                self.current_env_mut().insert(name.clone(), var.clone());
+                            }
+                        }
+                        let result = self.bind_graph(&pattern, false);
+
+                        // Remove pattern-local aliases so they don't leak into
+                        // the outer scope.  Keep anonymous variables (_anon_*)
+                        // since their IDs must remain visible in scope_vars.
+                        self.current_env_mut().retain(|name, _| {
+                            outer_scope_names.contains(name) || name.starts_with("_anon")
+                        });
+
+                        ExprIR::Pattern(result?)
+                    }
                 };
                 let mut new_tree = DynTree::new(new_data);
                 let mut root = new_tree.root_mut();

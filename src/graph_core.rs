@@ -66,8 +66,8 @@ use crate::allocator::{current_thread_usage, disable_tracking, enable_tracking, 
 
 pub struct ThreadedGraph {
     pub graph: MvccGraph,
-    pub sender: Tx<Array<(BlockedClient, Arc<String>, bool)>>,
-    pub receiver: Rx<Array<(BlockedClient, Arc<String>, bool)>>,
+    pub sender: Tx<Array<(BlockedClient, Arc<String>, bool, bool)>>,
+    pub receiver: Rx<Array<(BlockedClient, Arc<String>, bool, bool)>>,
     pub write_loop: AtomicBool,
 }
 
@@ -94,7 +94,7 @@ impl ThreadedGraph {
         query: &str,
         compact: bool,
         write: bool,
-    ) -> Result<bool, String> {
+    ) -> Result<(bool, bool), String> {
         let Plan {
             plan,
             cached,
@@ -117,7 +117,7 @@ impl ThreadedGraph {
                     "graph.RO_QUERY is to be executed only on read-only queries",
                 ));
             }
-            return Ok(is_write);
+            return Ok((is_write, cached));
         } else {
             self.graph.read()
         };
@@ -138,7 +138,7 @@ impl ThreadedGraph {
         } else {
             reply_verbose(ctx, &runtime, result);
         }
-        Ok(is_write)
+        Ok((is_write, cached))
     }
 
     pub fn execute_query_write(
@@ -146,13 +146,12 @@ impl ThreadedGraph {
         ctx: &Context,
         query: &str,
         compact: bool,
+        first_cached: bool,
     ) -> Result<Arc<AtomicRefCell<Graph>>, String> {
         let Plan {
-            plan,
-            cached,
-            parameters,
-            ..
+            plan, parameters, ..
         } = self.graph.read().borrow().get_plan(query)?;
+        let cached = first_cached;
         let parameters = parameters
             .into_iter()
             .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
@@ -225,9 +224,9 @@ pub fn query_mut(
 
             let res = graph.execute_query(&ctx, &query, compact, write);
             match res {
-                Ok(is_write) => {
+                Ok((is_write, cached)) => {
                     if is_write {
-                        graph.sender.send((bc, query, compact)).unwrap();
+                        graph.sender.send((bc, query, compact, cached)).unwrap();
                         drop(graph);
                         process_write_queued_query(&g);
                     } else {
@@ -266,10 +265,10 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
     {
         drop(g);
         let mut graph = graph.write();
-        while let Ok((bc, query, compact)) = { graph.receiver.try_recv() } {
+        while let Ok((bc, query, compact, cached)) = { graph.receiver.try_recv() } {
             let ctx = unsafe { raw::RedisModule_GetThreadSafeContext.unwrap()(bc.inner) };
             let ctx = Context::new(ctx);
-            let res = graph.execute_query_write(&ctx, &query, compact);
+            let res = graph.execute_query_write(&ctx, &query, compact, cached);
             match res {
                 Ok(g) => {
                     drop(bc);

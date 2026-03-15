@@ -309,7 +309,7 @@ pub struct Planner {
     /// Used to decide between scanning (new variable) vs referencing (already bound).
     visited: HashSet<u32>,
     /// Binder-assigned variables grouped by scope ID.
-    /// Used to derive fresh variable IDs above all binder-assigned IDs.
+    /// Used to derive fresh variable IDs within each scope.
     scope_vars: Vec<Vec<Variable>>,
 }
 
@@ -320,6 +320,23 @@ impl Planner {
             visited: HashSet::new(),
             scope_vars,
         }
+    }
+
+    /// Mint a fresh variable with an ID unique within the given scope.
+    fn fresh_var(
+        &mut self,
+        scope_id: u32,
+        ty: Type,
+    ) -> Variable {
+        let id = self.scope_vars[scope_id as usize].len() as u32;
+        let var = Variable {
+            name: None,
+            id,
+            scope_id,
+            ty,
+        };
+        self.scope_vars[scope_id as usize].push(var.clone());
+        var
     }
 
     /// Attach `Argument` nodes to every leaf in the plan tree.
@@ -364,6 +381,117 @@ impl Planner {
         self.visited = saved;
         Self::add_argument_to_leaves(&mut sub_plan);
         sub_plan
+    }
+
+    /// Walk an expression tree and replace `PatternComprehension` / `Pattern`
+    /// nodes with fresh variable references.  Returns the rebuilt expression
+    /// and a list of extracted comprehensions ready for plan building.
+    fn extract_pattern_comprehensions(
+        &mut self,
+        node: DynNode<ExprIR<Variable>>,
+        scope_id: u32,
+        extracted: &mut Vec<(
+            Variable,
+            QueryGraph<Arc<String>, Arc<String>, Variable>,
+            Option<Arc<DynTree<ExprIR<Variable>>>>,
+            Arc<DynTree<ExprIR<Variable>>>,
+        )>,
+    ) -> DynTree<ExprIR<Variable>> {
+        match node.data() {
+            ExprIR::PatternComprehension(graph) => {
+                let var = self.fresh_var(scope_id, Type::List(Box::new(Type::Any)));
+
+                let where_tree = {
+                    let t = self.extract_pattern_comprehensions(node.child(0), scope_id, extracted);
+                    if matches!(t.root().data(), ExprIR::Bool(true)) {
+                        None
+                    } else {
+                        Some(Arc::new(t))
+                    }
+                };
+                let result_tree = Arc::new(self.extract_pattern_comprehensions(
+                    node.child(1),
+                    scope_id,
+                    extracted,
+                ));
+
+                extracted.push((var.clone(), graph.clone(), where_tree, result_tree));
+                DynTree::new(ExprIR::Variable(var))
+            }
+            ExprIR::Pattern(graph) => {
+                let var = self.fresh_var(scope_id, Type::List(Box::new(Type::Any)));
+
+                extracted.push((
+                    var.clone(),
+                    graph.clone(),
+                    None,
+                    Arc::new(DynTree::new(ExprIR::Integer(1))),
+                ));
+                DynTree::new(ExprIR::Variable(var))
+            }
+            _ => {
+                let mut new_tree = DynTree::new(node.data().clone());
+                for child in node.children() {
+                    let child_tree =
+                        self.extract_pattern_comprehensions(child, scope_id, extracted);
+                    new_tree.root_mut().push_child_tree(child_tree);
+                }
+                new_tree
+            }
+        }
+    }
+
+    /// Build the Apply + Aggregate sub-plan for a single pattern comprehension.
+    ///
+    /// Returns a plan tree:  `Aggregate(collect(result_expr)) -> traversal -> Argument`
+    fn build_pattern_comprehension_plan(
+        &mut self,
+        var: &Variable,
+        graph: &QueryGraph<Arc<String>, Arc<String>, Variable>,
+        where_filter: Option<&Arc<DynTree<ExprIR<Variable>>>>,
+        result_expr: &Arc<DynTree<ExprIR<Variable>>>,
+    ) -> DynTree<IR> {
+        let saved = self.visited.clone();
+        let mut sub_plan = self.plan_match(graph, None);
+        self.visited = saved;
+
+        // Add WHERE filter if present
+        if let Some(filter) = where_filter {
+            sub_plan = tree!(IR::Filter(filter.clone()), sub_plan);
+        }
+
+        Self::add_argument_to_leaves(&mut sub_plan);
+
+        // Build collect(result_expr) aggregation expression
+        use crate::runtime::functions::{FnType, get_functions};
+        use crate::runtime::value::Value;
+        let collect_fn = get_functions()
+            .get("collect", &FnType::Aggregation(Value::Null, None))
+            .expect("collect function not registered");
+
+        // Mint a fresh variable for the aggregation accumulator slot.
+        // The aggregate runtime expects the last child of a FuncInvocation
+        // (for aggregate functions) to be a Variable node that stores the
+        // running accumulator value.
+        let scope_id = var.scope_id;
+        let agg_acc_var = self.fresh_var(scope_id, Type::Any);
+
+        let mut collect_expr = DynTree::new(ExprIR::FuncInvocation(collect_fn));
+        collect_expr
+            .root_mut()
+            .push_child_tree(result_expr.as_ref().clone());
+        collect_expr
+            .root_mut()
+            .push_child_tree(DynTree::new(ExprIR::Variable(agg_acc_var)));
+        let collect_expr = Arc::new(collect_expr);
+
+        // Create Aggregate node: names=[var], group_by_keys=[], aggregations=[(var, collect(expr))]
+        let aggregate = tree!(
+            IR::Aggregate(vec![var.clone()], vec![], vec![(var.clone(), collect_expr)]),
+            sub_plan
+        );
+
+        aggregate
     }
 
     /// Recursively decompose an expression (that may contain inline-pattern
@@ -762,6 +890,14 @@ impl Planner {
             } else {
                 tree!(IR::CondTraverse(relationship.clone()))
             };
+            // Check destination node for inline attributes (e.g., (b {val: 'v2'}))
+            // and add a Filter if present.
+            if !self.visited.contains(&relationship.to.alias.id) {
+                let (_, to_attr_filter) = inline_node_attrs_to_filter(&relationship.to);
+                if let Some(filter_expr) = to_attr_filter {
+                    res = tree!(IR::Filter(Arc::new(filter_expr)), res);
+                }
+            }
             self.visited.insert(relationship.from.alias.id);
             self.visited.insert(relationship.to.alias.id);
             self.visited.insert(relationship.alias.id);
@@ -788,6 +924,14 @@ impl Planner {
                 } else {
                     tree!(IR::CondTraverse(relationship.clone()), res)
                 };
+                // Check destination node for inline attributes (e.g., (b {val: 'v2'}))
+                // and add a Filter if present.
+                if !self.visited.contains(&relationship.to.alias.id) {
+                    let (_, to_attr_filter) = inline_node_attrs_to_filter(&relationship.to);
+                    if let Some(filter_expr) = to_attr_filter {
+                        res = tree!(IR::Filter(Arc::new(filter_expr)), res);
+                    }
+                }
                 self.visited.insert(relationship.from.alias.id);
                 self.visited.insert(relationship.to.alias.id);
                 self.visited.insert(relationship.alias.id);
@@ -877,9 +1021,74 @@ impl Planner {
         distinct: bool,
         write: bool,
     ) -> DynTree<IR> {
-        // Clear visited set for the new scope — after WITH/RETURN, only the
-        // projected (and copied) variables are in scope.  Previous-scope IDs
-        // must not leak into pattern-predicate sub-plans.
+        // Check if any expressions contain pattern comprehensions or patterns.
+        // Only rebuild expressions if patterns need to be extracted.
+        fn has_patterns(node: DynNode<ExprIR<Variable>>) -> bool {
+            match node.data() {
+                ExprIR::PatternComprehension(_) | ExprIR::Pattern(_) => true,
+                _ => node.children().any(has_patterns),
+            }
+        }
+        let needs_extraction = exprs.iter().any(|(_, e)| has_patterns(e.root()))
+            || orderby.iter().any(|(e, _)| has_patterns(e.root()));
+
+        // Extract pattern comprehensions from all projection expressions BEFORE
+        // clearing visited — the sub-plans need to know which variables are
+        // already bound by preceding clauses (e.g., MATCH).
+        let scope_id = exprs.first().map_or(0, |e| e.0.scope_id);
+        // Pattern comprehension variables live in the pre-projection scope
+        // because the Apply sub-plans execute and merge results into that
+        // scope's Env (before the projection creates a new Env).
+        let pre_scope_id = scope_id.saturating_sub(1);
+        let mut all_extracted = Vec::new();
+        let exprs: Vec<_> = if needs_extraction {
+            exprs
+                .into_iter()
+                .map(|(var, expr)| {
+                    let rebuilt = self.extract_pattern_comprehensions(
+                        expr.root(),
+                        pre_scope_id,
+                        &mut all_extracted,
+                    );
+                    (var, Arc::new(rebuilt) as QueryExpr<Variable>)
+                })
+                .collect()
+        } else {
+            exprs
+        };
+        // Also extract from orderby expressions
+        let orderby: Vec<_> = if needs_extraction {
+            orderby
+                .into_iter()
+                .map(|(expr, desc)| {
+                    let rebuilt = self.extract_pattern_comprehensions(
+                        expr.root(),
+                        pre_scope_id,
+                        &mut all_extracted,
+                    );
+                    (Arc::new(rebuilt) as QueryExpr<Variable>, desc)
+                })
+                .collect()
+        } else {
+            orderby
+        };
+
+        // Build Apply + Aggregate sub-plans for each extracted pattern comprehension.
+        // This uses the CURRENT (pre-clear) visited set so plan_match knows which
+        // variables are already bound by the outer stream.
+        let mut apply_plans = Vec::new();
+        for (var, graph, where_filter, result_expr) in &all_extracted {
+            let sub_plan = self.build_pattern_comprehension_plan(
+                var,
+                graph,
+                where_filter.as_ref(),
+                result_expr,
+            );
+            apply_plans.push((var.clone(), sub_plan));
+        }
+
+        // Now clear visited set for the new scope — after WITH/RETURN, only the
+        // projected (and copied) variables are in scope.
         self.visited.clear();
         for expr in &exprs {
             self.visited.insert(expr.0.id);
@@ -887,6 +1096,10 @@ impl Planner {
         for (new_var, _) in &copy_from_parent {
             self.visited.insert(new_var.id);
         }
+        for (var, _) in &apply_plans {
+            self.visited.insert(var.id);
+        }
+
         // If any expression uses an aggregation function, produce an
         // Aggregate node that separates group-by keys from aggregations.
         // Otherwise, produce a simple Project node.
@@ -911,7 +1124,38 @@ impl Planner {
         if write {
             res.root_mut().push_child(IR::Commit);
         }
-        if distinct {
+
+        // Insert Apply + Aggregate sub-plans below the Project/Aggregate.
+        // Each Apply wraps the input stream with one sub-plan: Apply(input, sub_plan).
+        // Multiple pattern comprehensions chain:
+        //   Project -> Apply_outer(Apply_inner(input, sub2), sub1)
+        // Build bottom-up: last sub-plan is innermost (closest to input).
+        if !apply_plans.is_empty() {
+            // Find the deepest child slot: if res has a Commit child, go below it.
+            let mut insert_idx = res.root().idx();
+            if res.node(insert_idx).num_children() > 0
+                && matches!(res.node(insert_idx).child(0).data(), IR::Commit)
+            {
+                insert_idx = res.node(insert_idx).child(0).idx();
+            }
+            // Build the innermost Apply first (last sub_plan), then wrap outward.
+            // The innermost Apply starts with sub_plan as its sole child;
+            // plan_query stitching inserts the preceding clause as child(0),
+            // giving the standard 2-child layout: Apply(input, sub_plan).
+            let mut apply_chain: Option<DynTree<IR>> = None;
+            for (_var, sub_plan) in apply_plans.into_iter().rev() {
+                let apply = if let Some(inner) = apply_chain {
+                    tree!(IR::Apply, inner, sub_plan)
+                } else {
+                    tree!(IR::Apply, sub_plan)
+                };
+                apply_chain = Some(apply);
+            }
+            if let Some(chain) = apply_chain {
+                res.node_mut(insert_idx).push_child_tree(chain);
+            }
+        }
+        if distinct && !matches!(res.root().data(), IR::Aggregate(..)) {
             res = tree!(IR::Distinct, res);
         }
         if !orderby.is_empty() {
@@ -995,16 +1239,22 @@ impl Planner {
         {
             idx = res.node(idx).child(0).idx();
         }
-        // If we landed on a Project/Aggregate with a Commit child, step past
-        // the Commit too — the preceding clause feeds below it.
+        // If we landed on a Project/Aggregate, walk past Commit and Apply
+        // children — the preceding clause feeds below them.
         if matches!(res.node(idx).data(), |IR::Project(_, _)| IR::Aggregate(
             _,
             _,
             _
         )) && res.node(idx).num_children() > 0
-            && matches!(res.node(idx).child(0).data(), IR::Commit)
         {
-            idx = res.node(idx).child(0).idx();
+            if matches!(res.node(idx).child(0).data(), IR::Commit) {
+                idx = res.node(idx).child(0).idx();
+            }
+            while res.node(idx).num_children() > 0
+                && matches!(res.node(idx).child(0).data(), IR::Apply)
+            {
+                idx = res.node(idx).child(0).idx();
+            }
         }
         // Insert each remaining clause plan (in reverse order) at the
         // current insertion point, then walk down again to find the next
@@ -1033,9 +1283,15 @@ impl Planner {
                 _,
                 _
             )) && res.node(idx).num_children() > 0
-                && matches!(res.node(idx).child(0).data(), IR::Commit)
             {
-                idx = res.node(idx).child(0).idx();
+                if matches!(res.node(idx).child(0).data(), IR::Commit) {
+                    idx = res.node(idx).child(0).idx();
+                }
+                while res.node(idx).num_children() > 0
+                    && matches!(res.node(idx).child(0).data(), IR::Apply)
+                {
+                    idx = res.node(idx).child(0).idx();
+                }
             }
         }
         // For write queries without an explicit WITH/RETURN commit, wrap
@@ -1043,7 +1299,33 @@ impl Planner {
         if write {
             res = tree!(IR::Commit, res);
         }
+
+        // Ensure every Apply node has exactly 2 children.  The innermost Apply
+        // in a pattern-comprehension chain starts with only the sub-plan
+        // (1 child) and relies on stitching to insert the preceding clause
+        // as child(0).  When there is no preceding clause (bare RETURN), the
+        // Apply stays single-child; add an Argument to supply one empty row.
+        Self::ensure_apply_has_input(&mut res);
+
         res
+    }
+
+    /// Walk the plan tree and insert an `Argument` node as child(0) of any
+    /// `Apply` that only has one child (the sub-plan).
+    fn ensure_apply_has_input(tree: &mut DynTree<IR>) {
+        let apply_idxs: Vec<_> = {
+            let mut tr = orx_tree::Traversal.bfs().over_nodes();
+            tree.root()
+                .walk_with(&mut tr)
+                .filter(|n| matches!(n.data(), IR::Apply) && n.num_children() == 1)
+                .map(|n| n.idx())
+                .collect()
+        };
+        for idx in apply_idxs {
+            let sub_plan_idx = tree.node(idx).child(0).idx();
+            tree.node_mut(sub_plan_idx)
+                .push_sibling_tree(Side::Left, DynTree::new(IR::Argument));
+        }
     }
 
     /// Main entry point: convert a single bound query IR node into an execution plan.

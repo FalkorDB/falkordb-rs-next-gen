@@ -20,6 +20,7 @@ use crate::runtime::{
     value::Value,
 };
 use orx_tree::{Dyn, NodeIdx};
+use thin_vec::ThinVec;
 
 pub struct CondVarLenTraverseOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
@@ -87,21 +88,34 @@ impl<'a> CondVarLenTraverseOp<'a> {
             |id| vec![*id],
         );
 
+        // Each frontier entry tracks: (current_node, path_of_edges)
+        // where path_of_edges is a list of Value::Relationship for path building.
         for start_node in start_nodes {
-            // BFS with visited tracking to avoid cycles
-            let mut frontier: Vec<NodeId> = vec![start_node];
+            // Handle 0-hop case: start node itself is a valid result.
+            if min_hops == 0 && (to_id.is_none() || to_id == Some(start_node)) {
+                let mut env = vars.clone_pooled(self.runtime.env_pool);
+                env.insert(&relationship_pattern.from.alias, Value::Node(start_node));
+                env.insert(&relationship_pattern.to.alias, Value::Node(start_node));
+                env.insert(
+                    &relationship_pattern.alias,
+                    Value::List(Arc::new(ThinVec::new())),
+                );
+                out.push(env);
+            }
+
+            let mut frontier: Vec<(NodeId, ThinVec<Value>)> = vec![(start_node, ThinVec::new())];
             let mut visited: HashSet<NodeId> = HashSet::new();
             visited.insert(start_node);
 
             for hop in 1..=max_hops {
                 let mut next_frontier_set: HashSet<NodeId> = HashSet::new();
-                let mut next_frontier: Vec<NodeId> = Vec::new();
-                for &current in &frontier {
+                let mut next_frontier: Vec<(NodeId, ThinVec<Value>)> = Vec::new();
+                for (current, path) in &frontier {
                     let g = self.runtime.g.borrow();
-                    for (edge_src, edge_dst, _) in g.get_node_relationships(current) {
-                        let neighbor = if edge_src == current {
+                    for (edge_src, edge_dst, edge_id) in g.get_node_relationships(*current) {
+                        let neighbor = if edge_src == *current {
                             Some(edge_dst)
-                        } else if bidirectional && edge_dst == current {
+                        } else if bidirectional && edge_dst == *current {
                             Some(edge_src)
                         } else {
                             None
@@ -109,6 +123,10 @@ impl<'a> CondVarLenTraverseOp<'a> {
                         if let Some(dest) = neighbor
                             && !visited.contains(&dest)
                         {
+                            let mut new_path = path.clone();
+                            new_path
+                                .push(Value::Relationship(Box::new((edge_id, edge_src, edge_dst))));
+
                             if hop >= min_hops && (to_id.is_none() || to_id == Some(dest)) {
                                 let mut env = vars.clone_pooled(self.runtime.env_pool);
                                 env.insert(
@@ -116,10 +134,14 @@ impl<'a> CondVarLenTraverseOp<'a> {
                                     Value::Node(start_node),
                                 );
                                 env.insert(&relationship_pattern.to.alias, Value::Node(dest));
+                                env.insert(
+                                    &relationship_pattern.alias,
+                                    Value::List(Arc::new(new_path.clone())),
+                                );
                                 out.push(env);
                             }
                             if next_frontier_set.insert(dest) {
-                                next_frontier.push(dest);
+                                next_frontier.push((dest, new_path));
                             }
                         }
                     }
@@ -127,8 +149,8 @@ impl<'a> CondVarLenTraverseOp<'a> {
                 if next_frontier.is_empty() {
                     break;
                 }
-                for &node in &next_frontier {
-                    visited.insert(node);
+                for (node, _) in &next_frontier {
+                    visited.insert(*node);
                 }
                 frontier = next_frontier;
             }

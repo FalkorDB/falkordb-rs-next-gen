@@ -568,7 +568,7 @@ impl<'a> Parser<'a> {
         let func = get_functions().get(function_name.as_str(), &FnType::Procedure(vec![]))?;
         match_token!(self.lexer, LParen);
         let args = self
-            .parse_expression_list(ExpressionListType::ZeroOrMoreClosedBy(RParen))?
+            .parse_expression_list(ExpressionListType::ZeroOrMoreClosedBy(RParen), false)?
             .into_iter()
             .map(Arc::new)
             .collect();
@@ -653,7 +653,7 @@ impl<'a> Parser<'a> {
         is_detach: bool,
     ) -> Result<RawQueryIR, String> {
         Ok(QueryIR::Delete(
-            self.parse_expression_list(ExpressionListType::OneOrMore)?
+            self.parse_expression_list(ExpressionListType::OneOrMore, false)?
                 .into_iter()
                 .map(Arc::new)
                 .collect(),
@@ -928,7 +928,10 @@ impl<'a> Parser<'a> {
         ))
     }
 
-    fn parse_quantifier_expr(&mut self) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
+    fn parse_quantifier_expr(
+        &mut self,
+        allow_pattern_predicate: bool,
+    ) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
         let quantifier_type = match self.lexer.current()? {
             Token::Keyword(Keyword::All, _) => {
                 self.lexer.next();
@@ -952,9 +955,13 @@ impl<'a> Parser<'a> {
         match_token!(self.lexer, LParen);
         let var = self.parse_ident()?;
         match_token!(self.lexer => In);
-        let expr = self.parse_expr(false)?;
-        match_token!(self.lexer => Where);
-        let condition = self.parse_expr(false)?;
+        let expr = self.parse_expr(allow_pattern_predicate)?;
+        if !optional_match_token!(self.lexer => Where) {
+            return Err(self.lexer.format_error(&format!(
+                "'{quantifier_type:?}' function requires a WHERE predicate"
+            )));
+        }
+        let condition = self.parse_expr(allow_pattern_predicate)?;
         match_token!(self.lexer, RParen);
         Ok(tree!(
             ExprIR::Quantifier(quantifier_type, var),
@@ -1010,6 +1017,7 @@ impl<'a> Parser<'a> {
 
                         let mut args = self.parse_expression_list(
                             ExpressionListType::ZeroOrMoreClosedBy(RParen),
+                            allow_pattern_predicate,
                         )?;
                         func.validate(args.len())?;
 
@@ -1031,8 +1039,10 @@ impl<'a> Parser<'a> {
                         return Ok((tree!(ExprIR::FuncInvocation(func); args), false));
                     }
 
-                    let args =
-                        self.parse_expression_list(ExpressionListType::ZeroOrMoreClosedBy(RParen))?;
+                    let args = self.parse_expression_list(
+                        ExpressionListType::ZeroOrMoreClosedBy(RParen),
+                        allow_pattern_predicate,
+                    )?;
                     func.validate(args.len())?;
                     if distinct && args.is_empty() {
                         return Err(self.lexer.format_error(
@@ -1051,7 +1061,7 @@ impl<'a> Parser<'a> {
             }
             Token::Keyword(Keyword::Case, _) => Ok((self.parse_case_expression()?, false)),
             Token::Keyword(Keyword::All | Keyword::Any | Keyword::None | Keyword::Single, _) => {
-                Ok((self.parse_quantifier_expr()?, false))
+                Ok((self.parse_quantifier_expr(allow_pattern_predicate)?, false))
             }
 
             Token::Keyword(Keyword::Null, _) => {
@@ -1080,7 +1090,7 @@ impl<'a> Parser<'a> {
             }
             Token::LBrace => {
                 self.lexer.next();
-                self.parse_list_literal_or_comprehension()
+                self.parse_list_literal_or_comprehension(allow_pattern_predicate)
             }
             Token::LBracket => Ok((self.parse_map()?, false)),
             Token::LParen => {
@@ -1489,7 +1499,7 @@ impl<'a> Parser<'a> {
         let mut named_exprs = Vec::new();
         loop {
             let pos = self.lexer.pos(false);
-            let expr = Arc::new(self.parse_expr(false)?);
+            let expr = Arc::new(self.parse_expr(true)?);
             if let Token::Keyword(Keyword::As, _) = self.lexer.current()? {
                 self.lexer.next();
                 let ident = self.parse_ident()?;
@@ -1517,10 +1527,11 @@ impl<'a> Parser<'a> {
     fn parse_expression_list(
         &mut self,
         expression_list_type: ExpressionListType,
+        allow_pattern_predicate: bool,
     ) -> Result<Vec<DynTree<ExprIR<Arc<String>>>>, String> {
         let mut exprs = Vec::new();
         while !expression_list_type.is_end_token(&self.lexer.current()?) {
-            exprs.push(self.parse_expr(false)?);
+            exprs.push(self.parse_expr(allow_pattern_predicate)?);
             match self.lexer.current()? {
                 Token::Comma => self.lexer.next(),
                 _ => break,
@@ -1548,7 +1559,8 @@ impl<'a> Parser<'a> {
     /// Returns `(tree, recurse)` where `recurse` indicates the caller must
     /// continue parsing comma-separated elements for a list literal.
     fn parse_list_literal_or_comprehension(
-        &mut self
+        &mut self,
+        allow_pattern_predicate: bool,
     ) -> Result<(DynTree<ExprIR<Arc<String>>>, bool), String> {
         let saved = self.save_state();
 
@@ -1556,7 +1568,10 @@ impl<'a> Parser<'a> {
         if let Ok(var) = self.parse_ident()
             && optional_match_token!(self.lexer => In)
         {
-            return Ok((self.parse_list_comprehension(var)?, false));
+            return Ok((
+                self.parse_list_comprehension(var, allow_pattern_predicate)?,
+                false,
+            ));
         }
         self.restore_state(saved);
 
@@ -1564,7 +1579,7 @@ impl<'a> Parser<'a> {
         if let Ok(var) = self.parse_ident()
             && optional_match_token!(self.lexer, Equal)
             && self.lexer.current()? == Token::LParen
-            && let Ok(result) = self.parse_pattern_comprehension(Some(var))
+            && let Ok(result) = self.parse_pattern_comprehension(Some(var), allow_pattern_predicate)
         {
             return Ok((result, false));
         }
@@ -1572,7 +1587,7 @@ impl<'a> Parser<'a> {
 
         // 3) Try unnamed pattern comprehension: [(pattern) ... | expr]
         if self.lexer.current()? == Token::LParen {
-            if let Ok(result) = self.parse_pattern_comprehension(None) {
+            if let Ok(result) = self.parse_pattern_comprehension(None, allow_pattern_predicate) {
                 return Ok((result, false));
             }
             self.restore_state(saved);
@@ -1588,18 +1603,19 @@ impl<'a> Parser<'a> {
     fn parse_list_comprehension(
         &mut self,
         var: Arc<String>,
+        allow_pattern_predicate: bool,
     ) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
         // var and 'IN' already parsed
-        let list_expr = self.parse_expr(false)?;
+        let list_expr = self.parse_expr(allow_pattern_predicate)?;
 
         let condition = if optional_match_token!(self.lexer => Where) {
-            Some(self.parse_expr(false)?)
+            Some(self.parse_expr(allow_pattern_predicate)?)
         } else {
             None
         };
 
         let expression = if optional_match_token!(self.lexer, Pipe) {
-            Some(self.parse_expr(false)?)
+            Some(self.parse_expr(allow_pattern_predicate)?)
         } else {
             None
         };
@@ -1623,6 +1639,7 @@ impl<'a> Parser<'a> {
     fn parse_pattern_comprehension(
         &mut self,
         path_var: Option<Arc<String>>,
+        allow_pattern_predicate: bool,
     ) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
         let first_node = self.parse_node_pattern()?;
 
@@ -1648,14 +1665,14 @@ impl<'a> Parser<'a> {
 
         // Optional WHERE
         let condition = if optional_match_token!(self.lexer => Where) {
-            self.parse_expr(false)?
+            self.parse_expr(allow_pattern_predicate)?
         } else {
             tree!(ExprIR::Bool(true))
         };
 
         // Pipe + result expression
         match_token!(self.lexer, Pipe);
-        let result_expr = self.parse_expr(false)?;
+        let result_expr = self.parse_expr(allow_pattern_predicate)?;
         match_token!(self.lexer, RBrace);
 
         Ok(tree!(

@@ -81,7 +81,9 @@ impl<'a> ApplyOp<'a> {
                 while *pos < active.len() && envs.len() < BATCH_SIZE {
                     let row = batch.env_ref(active[*pos]);
                     p.had_result = true;
-                    envs.push(row.clone_pooled(self.runtime.env_pool));
+                    let mut merged = p.env.clone_pooled(self.runtime.env_pool);
+                    merged.merge(row);
+                    envs.push(merged);
                     *pos += 1;
                 }
                 if *pos >= active.len() {

@@ -1,6 +1,3 @@
-test_cache
-test_comprehension_functions
-test_distinct
 test_expand_into
 test_foreach
 test_imdb
