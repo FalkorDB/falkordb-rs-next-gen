@@ -7,6 +7,7 @@ tests/flow/test_comprehension_functions
 tests/flow/test_distinct
 tests/flow/test_empty_query
 tests/flow/test_entity_update
+tests/flow/test_expand_into
 tests/flow/test_filters
 tests/flow/test_function_calls
 tests/flow/test_graph_create

@@ -109,12 +109,21 @@ pub enum IR {
         node: Arc<QueryNode<Arc<String>, Variable>>,
         filter: Vec<(QueryExpr<Variable>, ExprIR<Variable>)>,
     },
-    /// Traverse relationships from known nodes
-    CondTraverse(Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>),
+    /// Traverse relationships from known nodes.
+    /// `emit_relationship`: when false, anonymous edge optimization applies —
+    /// only one row per (src, dst) pair is emitted instead of one per edge.
+    CondTraverse(
+        Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>,
+        bool,
+    ),
     /// Variable-length traversal (BFS) from known nodes
     CondVarLenTraverse(Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>),
-    /// Check relationship between two known nodes
-    ExpandInto(Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>),
+    /// Check relationship between two known nodes.
+    /// `emit_relationship`: when false, anonymous edge optimization applies.
+    ExpandInto(
+        Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>,
+        bool,
+    ),
     /// Build path objects from matched patterns
     PathBuilder(Vec<Arc<QueryPath<Variable>>>),
     /// Apply filter predicate
@@ -216,9 +225,9 @@ impl Display for IR {
                 write!(f, "Node By Label and ID Scan | {node}")
             }
             Self::NodeByIdSeek { .. } => write!(f, "NodeByIdSeek"),
-            Self::CondTraverse(rel) => write!(f, "Conditional Traverse | {rel}"),
+            Self::CondTraverse(rel, _) => write!(f, "Conditional Traverse | {rel}"),
             Self::CondVarLenTraverse(rel) => write!(f, "Variable Length Traverse | {rel}"),
-            Self::ExpandInto(rel) => write!(f, "Expand Into | {rel}"),
+            Self::ExpandInto(rel, _) => write!(f, "Expand Into | {rel}"),
             Self::PathBuilder(_) => write!(f, "PathBuilder"),
             Self::Filter(_) => write!(f, "Filter"),
             Self::CartesianProduct => write!(f, "Cartesian Product"),
@@ -849,8 +858,54 @@ impl Planner {
                     let (clean_node, attr_filter) = inline_node_attrs_to_filter(&node);
                     let mut res = if clean_node.labels.is_empty() {
                         tree!(IR::AllNodeScan(clean_node))
-                    } else {
+                    } else if clean_node.labels.len() == 1 {
                         tree!(IR::NodeByLabelScan(clean_node))
+                    } else {
+                        // Multi-label node: scan by first label, then use
+                        // ExpandInto (self-loop) to verify remaining labels.
+                        use crate::runtime::orderset::OrderSet;
+                        let mut label_iter = clean_node.labels.iter();
+                        let first_label = label_iter.next().unwrap().clone();
+                        let remaining_labels: OrderSet<Arc<String>> = label_iter.cloned().collect();
+                        let scan_node = Arc::new(QueryNode::new(
+                            clean_node.alias.clone(),
+                            OrderSet::from_iter([first_label]),
+                            clean_node.attrs.clone(),
+                        ));
+                        // Build a synthetic self-loop ExpandInto for label
+                        // verification.  Both endpoints share the same alias.
+                        let from_node = Arc::new(QueryNode::new(
+                            clean_node.alias.clone(),
+                            OrderSet::default(),
+                            Arc::new(tree!(ExprIR::Map)),
+                        ));
+                        let to_node = Arc::new(QueryNode::new(
+                            clean_node.alias.clone(),
+                            remaining_labels,
+                            Arc::new(tree!(ExprIR::Map)),
+                        ));
+                        // Synthetic edge variable for the self-loop ExpandInto.
+                        // Uses a high ID derived from the node alias to avoid
+                        // conflicts, without requiring scope_vars (which may
+                        // be empty in UNION sub-plans).
+                        let edge_alias = Variable {
+                            name: None,
+                            id: u32::MAX - clean_node.alias.id,
+                            scope_id: clean_node.alias.scope_id,
+                            ty: Type::Relationship,
+                        };
+                        let rel = Arc::new(QueryRelationship::new(
+                            edge_alias,
+                            vec![],
+                            Arc::new(tree!(ExprIR::Map)),
+                            from_node,
+                            to_node,
+                            false,
+                            None,
+                            None,
+                        ));
+                        let scan = tree!(IR::NodeByLabelScan(scan_node));
+                        tree!(IR::ExpandInto(rel, false), scan)
                     };
                     if let Some(filter_expr) = attr_filter {
                         res = tree!(IR::Filter(Arc::new(filter_expr)), res);
@@ -870,6 +925,20 @@ impl Planner {
             //   - Both endpoints bound: ExpandInto (just check the edge exists)
             //   - Variable-length path: CondVarLenTraverse (BFS)
             //   - Otherwise: CondTraverse (fixed-length traversal)
+            //
+            // emit_relationship: true when the edge must be bound per-edge
+            // (named edge or edge referenced in a named path). When false,
+            // the runtime may collapse multi-edges into one row per (src, dst).
+            let emit_rel = |rel: &QueryRelationship<Arc<String>, Arc<String>, Variable>| -> bool {
+                !rel.alias
+                    .name
+                    .as_ref()
+                    .is_some_and(|n| n.starts_with("_anon"))
+                    || component
+                        .paths()
+                        .iter()
+                        .any(|p| p.vars.iter().any(|v| v.id == rel.alias.id))
+            };
             let mut res = if relationship.from.alias.id == relationship.to.alias.id {
                 let (clean_node, attr_filter) = inline_node_attrs_to_filter(&relationship.from);
                 let mut scan = if clean_node.labels.is_empty() {
@@ -880,15 +949,24 @@ impl Planner {
                 if let Some(filter_expr) = attr_filter {
                     scan = tree!(IR::Filter(Arc::new(filter_expr)), scan);
                 }
-                tree!(IR::ExpandInto(relationship.clone()), scan)
+                tree!(
+                    IR::ExpandInto(relationship.clone(), emit_rel(&relationship)),
+                    scan
+                )
             } else if self.visited.contains(&relationship.from.alias.id)
                 && self.visited.contains(&relationship.to.alias.id)
             {
-                tree!(IR::ExpandInto(relationship.clone()))
+                tree!(IR::ExpandInto(
+                    relationship.clone(),
+                    emit_rel(&relationship)
+                ))
             } else if relationship.min_hops.is_some() {
                 tree!(IR::CondVarLenTraverse(relationship.clone()))
             } else {
-                tree!(IR::CondTraverse(relationship.clone()))
+                tree!(IR::CondTraverse(
+                    relationship.clone(),
+                    emit_rel(&relationship)
+                ))
             };
             // Check destination node for inline attributes (e.g., (b {val: 'v2'}))
             // and add a Filter if present.
@@ -914,15 +992,25 @@ impl Planner {
                     if let Some(filter_expr) = attr_filter {
                         scan = tree!(IR::Filter(Arc::new(filter_expr)), scan);
                     }
-                    tree!(IR::ExpandInto(relationship.clone()), scan, res)
+                    tree!(
+                        IR::ExpandInto(relationship.clone(), emit_rel(&relationship)),
+                        scan,
+                        res
+                    )
                 } else if self.visited.contains(&relationship.from.alias.id)
                     && self.visited.contains(&relationship.to.alias.id)
                 {
-                    tree!(IR::ExpandInto(relationship.clone()), res)
+                    tree!(
+                        IR::ExpandInto(relationship.clone(), emit_rel(&relationship)),
+                        res
+                    )
                 } else if relationship.min_hops.is_some() {
                     tree!(IR::CondVarLenTraverse(relationship.clone()), res)
                 } else {
-                    tree!(IR::CondTraverse(relationship.clone()), res)
+                    tree!(
+                        IR::CondTraverse(relationship.clone(), emit_rel(&relationship)),
+                        res
+                    )
                 };
                 // Check destination node for inline attributes (e.g., (b {val: 'v2'}))
                 // and add a Filter if present.
@@ -1268,13 +1356,17 @@ impl Planner {
             } else {
                 idx = res.node_mut(idx).push_child_tree(n);
             }
-            while matches!(res.node(idx).data(), |IR::Sort(_)| IR::Skip(_)
-                | IR::Limit(_)
-                | IR::Distinct
-                | IR::Filter(_)
-                | IR::SemiApply
-                | IR::AntiSemiApply
-                | IR::OrApplyMultiplexer(_))
+            while res.node(idx).num_children() > 0
+                && matches!(res.node(idx).data(), |IR::Sort(_)| IR::Skip(_)
+                    | IR::Limit(_)
+                    | IR::Distinct
+                    | IR::Filter(_)
+                    | IR::SemiApply
+                    | IR::AntiSemiApply
+                    | IR::OrApplyMultiplexer(_)
+                    | IR::CondTraverse(_, _)
+                    | IR::CondVarLenTraverse(_)
+                    | IR::ExpandInto(_, _))
             {
                 idx = res.node(idx).child(0).idx();
             }

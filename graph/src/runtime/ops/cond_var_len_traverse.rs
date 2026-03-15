@@ -107,11 +107,13 @@ impl<'a> CondVarLenTraverseOp<'a> {
             let mut visited: HashSet<NodeId> = HashSet::new();
             visited.insert(start_node);
 
+            let g = self.runtime.g.borrow();
+            let to_labels = &relationship_pattern.to.labels;
+
             for hop in 1..=max_hops {
                 let mut next_frontier_set: HashSet<NodeId> = HashSet::new();
                 let mut next_frontier: Vec<(NodeId, ThinVec<Value>)> = Vec::new();
                 for (current, path) in &frontier {
-                    let g = self.runtime.g.borrow();
                     for (edge_src, edge_dst, edge_id) in g.get_node_relationships(*current) {
                         let neighbor = if edge_src == *current {
                             Some(edge_dst)
@@ -127,7 +129,13 @@ impl<'a> CondVarLenTraverseOp<'a> {
                             new_path
                                 .push(Value::Relationship(Box::new((edge_id, edge_src, edge_dst))));
 
-                            if hop >= min_hops && (to_id.is_none() || to_id == Some(dest)) {
+                            if hop >= min_hops
+                                && (to_id.is_none() || to_id == Some(dest))
+                                && (to_labels.is_empty()
+                                    || to_labels
+                                        .iter()
+                                        .all(|l| g.get_node_labels(dest).any(|nl| nl == *l)))
+                            {
                                 let mut env = vars.clone_pooled(self.runtime.env_pool);
                                 env.insert(
                                     &relationship_pattern.from.alias,

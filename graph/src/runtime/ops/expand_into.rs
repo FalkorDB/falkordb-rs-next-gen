@@ -35,6 +35,9 @@ pub struct ExpandIntoOp<'a> {
     pending: VecDeque<Env<'a>>,
     current_batch: Option<Batch<'a>>,
     current_pos: usize,
+    /// Whether to emit one row per edge (true) or collapse multi-edges into
+    /// one row per (src, dst) pair (false). Set by the planner.
+    emit_relationship: bool,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
@@ -43,6 +46,7 @@ impl<'a> ExpandIntoOp<'a> {
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
         relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
+        emit_relationship: bool,
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
         Self {
@@ -52,6 +56,7 @@ impl<'a> ExpandIntoOp<'a> {
             pending: VecDeque::new(),
             current_batch: None,
             current_pos: 0,
+            emit_relationship,
             idx,
         }
     }
@@ -85,14 +90,59 @@ impl<'a> ExpandIntoOp<'a> {
 
         let filter_attrs = runtime.run_expr(&rp.attrs, rp.attrs.root().idx(), env, None)?;
 
+        // Synthetic multi-label check: the planner splits MATCH (a:A:B:C) into
+        // LabelScan(:A) + ExpandInto(self-loop) to verify remaining labels.
+        // In that synthetic case from.labels is empty and to.labels holds the
+        // remaining labels.  We must NOT take this shortcut for real self-loop
+        // relationship patterns like MATCH (a:A)-[r]->(a) where from.labels
+        // is non-empty, because those need actual edge matching.
+        if rp.from.alias.id == rp.to.alias.id
+            && rp.from.labels.is_empty()
+            && !rp.to.labels.is_empty()
+        {
+            let g = runtime.g.borrow();
+            let has_all_labels = rp
+                .to
+                .labels
+                .iter()
+                .all(|label| g.get_node_labels(src).any(|nl| nl == *label));
+            if has_all_labels {
+                let mut row = env.clone_pooled(runtime.env_pool);
+                row.insert(&rp.from.alias, Value::Node(src));
+                out.push(row);
+            }
+            return Ok(());
+        }
+
         let mut edge_pairs = vec![(src, dst)];
         if rp.bidirectional && src != dst {
             edge_pairs.push((dst, src));
         }
 
+        // When emit_relationship is false (anonymous edge not in a named
+        // path) and there are no type or attribute filters, emit one row per
+        // (src, dst) pair with the first matching edge.
+        let has_edge_filter = matches!(filter_attrs, Value::Map(ref m) if !m.is_empty());
+
         let g = runtime.g.borrow();
         let pending = runtime.pending.borrow();
         for (edge_src, edge_dst) in &edge_pairs {
+            if !self.emit_relationship && rp.types.is_empty() && !has_edge_filter {
+                if let Some(id) = g
+                    .get_src_dest_relationships(*edge_src, *edge_dst, &rp.types)
+                    .find(|id| !pending.is_relationship_deleted(*id, *edge_src, *edge_dst))
+                {
+                    let mut row = env.clone_pooled(runtime.env_pool);
+                    row.insert(
+                        &rp.alias,
+                        Value::Relationship(Box::new((id, *edge_src, *edge_dst))),
+                    );
+                    row.insert(&rp.from.alias, Value::Node(src));
+                    row.insert(&rp.to.alias, Value::Node(dst));
+                    out.push(row);
+                }
+                continue;
+            }
             for id in g.get_src_dest_relationships(*edge_src, *edge_dst, &rp.types) {
                 if pending.is_relationship_deleted(id, *edge_src, *edge_dst) {
                     continue;

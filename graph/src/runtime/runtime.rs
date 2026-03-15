@@ -241,11 +241,13 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                         vars.push(score.clone());
                     }
                 }
-                IR::CondTraverse(query_relationship)
+                IR::CondTraverse(query_relationship, _)
                 | IR::CondVarLenTraverse(query_relationship) => {
                     vars.push(query_relationship.alias.clone());
                 }
-                IR::ExpandInto(query_relationship) => vars.push(query_relationship.alias.clone()),
+                IR::ExpandInto(query_relationship, _) => {
+                    vars.push(query_relationship.alias.clone())
+                }
                 IR::PathBuilder(query_paths) => {
                     for path in query_paths {
                         vars.push(path.var.clone());
@@ -507,21 +509,23 @@ impl<'a> Runtime<'a> {
                     idx,
                 )))
             }
-            IR::CondTraverse(relationship_pattern) => {
+            IR::CondTraverse(relationship_pattern, emit_relationship) => {
                 let child = self.child_batch_op(idx)?;
                 Ok(BatchOp::CondTraverse(CondTraverseOp::new(
                     self,
                     Box::new(child),
                     relationship_pattern,
+                    *emit_relationship,
                     idx,
                 )))
             }
-            IR::ExpandInto(relationship_pattern) => {
+            IR::ExpandInto(relationship_pattern, emit_relationship) => {
                 let child = self.child_batch_op(idx)?;
                 Ok(BatchOp::ExpandInto(ExpandIntoOp::new(
                     self,
                     Box::new(child),
                     relationship_pattern,
+                    *emit_relationship,
                     idx,
                 )))
             }

@@ -47,6 +47,10 @@ pub struct CondTraverseOp<'a> {
     current_batch: Option<Batch<'a>>,
     /// Index into active rows of the current batch.
     current_pos: usize,
+    /// Whether to emit one row per edge (true) or collapse multi-edges into
+    /// one row per (src, dst) pair (false). Set by the planner based on
+    /// whether the edge is named or referenced in a named path.
+    emit_relationship: bool,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
@@ -55,6 +59,7 @@ impl<'a> CondTraverseOp<'a> {
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
         relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
+        emit_relationship: bool,
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
         Self {
@@ -64,6 +69,7 @@ impl<'a> CondTraverseOp<'a> {
             pending: VecDeque::new(),
             current_batch: None,
             current_pos: 0,
+            emit_relationship,
             idx,
         }
     }
@@ -112,6 +118,7 @@ impl<'a> CondTraverseOp<'a> {
             env,
             runtime,
             out,
+            self.emit_relationship,
         );
 
         // Process reverse relationships for bidirectional patterns.
@@ -130,6 +137,7 @@ impl<'a> CondTraverseOp<'a> {
                 env,
                 runtime,
                 out,
+                self.emit_relationship,
             );
         }
 
@@ -151,6 +159,7 @@ impl<'a> CondTraverseOp<'a> {
         env: &Env<'a>,
         runtime: &'a Runtime<'a>,
         out: &mut Vec<Env<'a>>,
+        emit_relationship: bool,
     ) {
         for (src, dst) in pairs {
             let (from_node, to_node) = if is_reverse { (dst, src) } else { (src, dst) };
@@ -196,6 +205,21 @@ impl<'a> CondTraverseOp<'a> {
                     continue;
                 }
             }
+            // When emit_relationship is false (anonymous edge not in a named
+            // path) and there are no type or attribute filters, skip per-edge
+            // iteration and emit one row per (src, dst) pair.
+            let has_edge_filter = matches!(filter_attrs, Value::Map(m) if !m.is_empty());
+            if !emit_relationship && rp.types.is_empty() && !has_edge_filter {
+                if let Some(id) = g.get_src_dest_relationships(src, dst, &rp.types).next() {
+                    let mut row = env.clone_pooled(runtime.env_pool);
+                    row.insert(&rp.alias, Value::Relationship(Box::new((id, src, dst))));
+                    row.insert(&rp.from.alias, Value::Node(from_node));
+                    row.insert(&rp.to.alias, Value::Node(to_node));
+                    out.push(row);
+                }
+                continue;
+            }
+
             // Scan edges
             for id in g.get_src_dest_relationships(src, dst, &rp.types) {
                 if let Value::Map(filter_map) = filter_attrs
