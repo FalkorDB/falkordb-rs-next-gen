@@ -498,7 +498,7 @@ dependencies = [
  "lazy_static",
  "orx-tree",
  "parking_lot",
- "pyroscope 1.0.2",
+ "pyroscope 2.0.0",
  "pyroscope_pprofrs",
  "redis-module",
  "redis-module-macros",
@@ -1789,9 +1789,9 @@ dependencies = [
 
 [[package]]
 name = "pyroscope"
-version = "1.0.2"
+version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9a34d9b74a7a13140e626ed568fc984f520747ed6cf9e83bb532bb2f311ec75"
+checksum = "85eebd4bcbf45db75f67d2ba20ea0207bd111d2029c07a7db3229289173d4387"
 dependencies = [
  "lazy_static",
  "libc",
