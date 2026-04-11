@@ -1865,3 +1865,18 @@ def test_optional_match_null_merge():
         [10, [1]],
         [None, [2]],
     ]
+
+
+def test_nul_byte_in_query():
+    """Queries containing NUL bytes must return an error, not crash the server."""
+
+    # A query with an embedded NUL byte should produce a parse error,
+    # not panic the worker thread via CString::new().unwrap().
+    try:
+        common.g.query("RETURN \"\x00\"")
+    except ResponseError:
+        pass
+
+    # Verify the server is still responsive after the NUL-byte query.
+    res = common.g.query("RETURN 1")
+    assert res.result_set == [[1]]

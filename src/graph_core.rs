@@ -287,7 +287,9 @@ pub fn query_mut(
                     }
                 }
                 Err(err) => {
-                    let cerr = CString::new(err).unwrap();
+                    let sanitized = err.replace('\0', "");
+                    let cerr = CString::new(sanitized)
+                        .unwrap_or_else(|_| CString::new("query error").unwrap());
                     raw::reply_with_error(ctx.ctx, cerr.as_ptr());
                     drop(bc);
                     unsafe { raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx) };
@@ -383,7 +385,9 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
                     }
                 }
                 Err(err) => {
-                    let cerr = CString::new(err).unwrap();
+                    let sanitized = err.replace('\0', "");
+                    let cerr = CString::new(sanitized)
+                        .unwrap_or_else(|_| CString::new("query error").unwrap());
                     raw::reply_with_error(ctx.ctx, cerr.as_ptr());
                     drop(bc);
                     unsafe { raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx) };
