@@ -350,48 +350,89 @@ fn query_sync(
 pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
     let g = graph.read();
     if g.write_loop
-        .compare_exchange(false, true, Ordering::Acquire, Ordering::Acquire)
+        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
         .is_ok()
     {
         drop(g);
         let mut graph = graph.write();
-        while let Ok((bc, query, compact, cached, key_name)) = { graph.receiver.try_recv() } {
-            let ctx = unsafe { raw::RedisModule_GetThreadSafeContext.unwrap()(bc.inner) };
-            let ctx = Context::new(ctx);
-            let res = graph.execute_query_write(&ctx, &query, compact, cached);
-            match res {
-                Ok(g) => {
-                    // Signal the key as modified so WATCH gets triggered.
-                    unsafe {
-                        raw::RedisModule_ThreadSafeContextLock.unwrap()(ctx.ctx);
-                        let rstr = raw::RedisModule_CreateString.unwrap()(
-                            ctx.ctx,
-                            key_name.as_ptr().cast(),
-                            key_name.len(),
-                        );
-                        raw::RedisModule_SignalModifiedKey.unwrap()(ctx.ctx, rstr);
-                        raw::RedisModule_FreeString.unwrap()(ctx.ctx, rstr);
-                        raw::RedisModule_ThreadSafeContextUnlock.unwrap()(ctx.ctx);
-                        raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx);
-                    };
-                    drop(bc);
-                    graph.graph.commit(g);
-                    // Flush dirty cache entries to fjall if over budget.
-                    let value = graph.graph.read().borrow().maybe_flush_caches();
-                    if let Err(e) = value {
-                        eprintln!("FalkorDB: cache flush failed: {e}");
+        loop {
+            while let Ok((bc, query, compact, cached, key_name)) = { graph.receiver.try_recv() } {
+                execute_and_commit_write(&mut graph, bc, query, compact, cached, key_name);
+            }
+            // Tentatively mark the write loop as idle.
+            graph.write_loop.store(false, Ordering::Release);
+            // Re-check: a message may have been enqueued between the last
+            // try_recv (which saw nothing) and the store(false) above.
+            // Without this, the sender's CAS would fail and the message
+            // would be stranded until another write arrives.
+            match graph.receiver.try_recv() {
+                Ok((bc, query, compact, cached, key_name)) => {
+                    // Reclaim the write loop via CAS so we don't race with
+                    // another thread that may have already acquired it.
+                    if graph
+                        .write_loop
+                        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+                        .is_err()
+                    {
+                        // Another thread won the CAS — it will process this
+                        // message (it's back in the channel... except we
+                        // consumed it). We must still handle it ourselves
+                        // since try_recv already dequeued it.
+                        execute_and_commit_write(&mut graph, bc, query, compact, cached, key_name);
+                        break;
                     }
+                    execute_and_commit_write(&mut graph, bc, query, compact, cached, key_name);
+                    // Continue the loop to drain any further messages.
                 }
-                Err(err) => {
-                    let cerr = CString::new(err).unwrap();
-                    raw::reply_with_error(ctx.ctx, cerr.as_ptr());
-                    drop(bc);
-                    unsafe { raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx) };
-                    graph.graph.rollback();
-                }
+                Err(_) => break,
             }
         }
-        graph.write_loop.store(false, Ordering::Release);
+    }
+}
+
+/// Process a single dequeued write message: execute the query, commit or
+/// rollback, signal the key as modified, and free the thread-safe context.
+fn execute_and_commit_write(
+    graph: &mut ThreadedGraph,
+    bc: BlockedClient,
+    query: Arc<String>,
+    compact: bool,
+    cached: bool,
+    key_name: Arc<String>,
+) {
+    let ctx = unsafe { raw::RedisModule_GetThreadSafeContext.unwrap()(bc.inner) };
+    let ctx = Context::new(ctx);
+    let res = graph.execute_query_write(&ctx, &query, compact, cached);
+    match res {
+        Ok(g) => {
+            // Signal the key as modified so WATCH gets triggered.
+            unsafe {
+                raw::RedisModule_ThreadSafeContextLock.unwrap()(ctx.ctx);
+                let rstr = raw::RedisModule_CreateString.unwrap()(
+                    ctx.ctx,
+                    key_name.as_ptr().cast(),
+                    key_name.len(),
+                );
+                raw::RedisModule_SignalModifiedKey.unwrap()(ctx.ctx, rstr);
+                raw::RedisModule_FreeString.unwrap()(ctx.ctx, rstr);
+                raw::RedisModule_ThreadSafeContextUnlock.unwrap()(ctx.ctx);
+                raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx);
+            };
+            drop(bc);
+            graph.graph.commit(g);
+            // Flush dirty cache entries to fjall if over budget.
+            let value = graph.graph.read().borrow().maybe_flush_caches();
+            if let Err(e) = value {
+                eprintln!("FalkorDB: cache flush failed: {e}");
+            }
+        }
+        Err(err) => {
+            let cerr = CString::new(err).unwrap();
+            raw::reply_with_error(ctx.ctx, cerr.as_ptr());
+            drop(bc);
+            unsafe { raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx) };
+            graph.graph.rollback();
+        }
     }
 }
 
