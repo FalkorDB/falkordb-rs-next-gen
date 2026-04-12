@@ -73,7 +73,11 @@ fn is_valid_property(
         | Value::Float(_)
         | Value::String(_)
         | Value::Point(_)
-        | Value::VecF32(_) => true,
+        | Value::VecF32(_)
+        | Value::Datetime(_)
+        | Value::Date(_)
+        | Value::Time(_)
+        | Value::Duration(_) => true,
         Value::List(items) => items.iter().all(|v| is_valid_property(v, false)),
         _ => false,
     }
@@ -150,9 +154,10 @@ impl Pending {
         node_cap: u64,
         labels_count: usize,
     ) {
-        self.set_node_labels.resize(node_cap, labels_count as u64);
-        self.remove_node_labels
-            .resize(node_cap, labels_count as u64);
+        let new_nrows = node_cap.max(self.set_node_labels.nrows());
+        let new_ncols = (labels_count as u64).max(self.set_node_labels.ncols());
+        self.set_node_labels.resize(new_nrows, new_ncols);
+        self.remove_node_labels.resize(new_nrows, new_ncols);
     }
 
     pub fn created_nodes(

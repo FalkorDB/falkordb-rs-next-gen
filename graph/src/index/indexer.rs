@@ -439,6 +439,18 @@ impl Indexer {
             .unwrap_or_default()
     }
 
+    /// Get fields for all labels (for synchronous index population during RDB load).
+    #[must_use]
+    pub fn get_all_pending_fields(
+        &self
+    ) -> Vec<(Arc<String>, HashMap<Arc<String>, Vec<Arc<Field>>>)> {
+        self.index
+            .read()
+            .iter()
+            .map(|(label, index)| (label.clone(), index.fields().clone()))
+            .collect()
+    }
+
     #[must_use]
     pub fn index_info(&self) -> Vec<IndexInfo> {
         self.index

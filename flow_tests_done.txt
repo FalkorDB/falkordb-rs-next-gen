@@ -15,6 +15,7 @@ tests/flow/test_config.py
 tests/flow/test_create_clause
 tests/flow/test_distinct
 tests/flow/test_empty_query
+tests/flow/test_encode_decode.py
 tests/flow/test_entity_update
 tests/flow/test_execution_plan_print.py
 tests/flow/test_expand_into
@@ -52,6 +53,7 @@ tests/flow/test_path_algorithms.py
 tests/flow/test_path_filter
 tests/flow/test_path_projections.py
 tests/flow/test_pending_queries_limit.py
+tests/flow/test_persistency.py
 tests/flow/test_point
 tests/flow/test_query_validation
 tests/flow/test_reduce.py

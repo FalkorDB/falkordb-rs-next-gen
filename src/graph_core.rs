@@ -87,6 +87,18 @@ impl ThreadedGraph {
         }
     }
 
+    /// Create a `ThreadedGraph` from an existing `MvccGraph`.
+    /// Used by the RDB load path.
+    pub fn from_mvcc(graph: MvccGraph) -> Self {
+        let (sender, receiver) = bounded_blocking(1024);
+        Self {
+            graph,
+            sender,
+            receiver,
+            write_loop: AtomicBool::new(false),
+        }
+    }
+
     pub fn execute_query(
         &self,
         ctx: &Context,

@@ -54,12 +54,24 @@
 
 #![allow(clippy::doc_markdown)]
 
-use std::{mem::MaybeUninit, os::raw::c_void, ptr::null_mut, sync::Arc};
+use std::{
+    mem::{ManuallyDrop, MaybeUninit},
+    os::raw::c_void,
+    ptr::null_mut,
+    sync::Arc,
+};
 
 use parking_lot::Mutex;
 
-use crate::graph::graphblas::lagraph_bindings::{LAGraph_Finalize, LAGraph_Init};
+use crate::graph::graphblas::{
+    lagraph_bindings::{LAGraph_Finalize, LAGraph_Init},
+    serialization::{Decode, Encode, Reader, Writer},
+};
 
+/// Size of the `GxB_Container_struct` in bytes.
+const CONTAINER_STRUCT_SIZE: usize = std::mem::size_of::<super::GxB_Container_struct>();
+
+use super::vector::Vector;
 use super::{
     GrB_BOOL, GrB_DESC_C, GrB_DESC_CT0, GrB_DESC_CT0T1, GrB_DESC_CT1, GrB_DESC_R, GrB_DESC_RC,
     GrB_DESC_RCT0, GrB_DESC_RCT0T1, GrB_DESC_RCT1, GrB_DESC_RS, GrB_DESC_RSC, GrB_DESC_RSCT0,
@@ -71,11 +83,12 @@ use super::{
     GrB_Matrix_extractElement_BOOL, GrB_Matrix_free, GrB_Matrix_get_INT32, GrB_Matrix_ncols,
     GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals, GrB_Matrix_removeElement,
     GrB_Matrix_resize, GrB_Matrix_setElement_BOOL, GrB_Matrix_wait, GrB_Mode, GrB_WaitMode,
-    GrB_finalize, GrB_mxm, GrB_transpose, GxB_ANY_BOOL, GxB_ANY_PAIR_BOOL, GxB_Iterator,
-    GxB_Iterator_free, GxB_Iterator_new, GxB_Matrix_fprint, GxB_Matrix_memoryUsage,
-    GxB_Option_Field, GxB_Print_Level, GxB_init, GxB_rowIterator_attach,
-    GxB_rowIterator_getColIndex, GxB_rowIterator_getRowIndex, GxB_rowIterator_nextCol,
-    GxB_rowIterator_nextRow, GxB_rowIterator_seekRow,
+    GrB_finalize, GrB_mxm, GrB_transpose, GxB_ANY_BOOL, GxB_ANY_PAIR_BOOL, GxB_Container_free,
+    GxB_Container_new, GxB_Iterator, GxB_Iterator_free, GxB_Iterator_new, GxB_Matrix_fprint,
+    GxB_Matrix_memoryUsage, GxB_Option_Field, GxB_Print_Level, GxB_init,
+    GxB_load_Matrix_from_Container, GxB_rowIterator_attach, GxB_rowIterator_getColIndex,
+    GxB_rowIterator_getRowIndex, GxB_rowIterator_nextCol, GxB_rowIterator_nextRow,
+    GxB_rowIterator_seekRow, GxB_unload_Matrix_into_Container,
 };
 
 /// Initializes the GraphBLAS library in non-blocking mode.
@@ -419,6 +432,94 @@ impl Drop for Matrix {
     }
 }
 
+impl Decode<19> for Matrix {
+    fn decode(r: &mut dyn Reader) -> Result<Self, String> {
+        let container_bytes = r.read_buffer()?;
+        unsafe {
+            let mut container: MaybeUninit<super::GxB_Container> = MaybeUninit::uninit();
+            let info = GxB_Container_new(container.as_mut_ptr());
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            let container = container.assume_init();
+
+            // Copy struct data into the allocated container
+            std::ptr::copy_nonoverlapping(
+                container_bytes.as_ptr(),
+                container.cast::<u8>(),
+                CONTAINER_STRUCT_SIZE,
+            );
+
+            // Nullify vector/matrix pointers (will be populated below)
+            (*container).x = null_mut();
+            (*container).h = null_mut();
+            (*container).b = null_mut();
+            (*container).i = null_mut();
+            (*container).p = null_mut();
+            (*container).Y = null_mut();
+
+            // Read and load 5 vectors: x, h, p, i, b
+            (*container).x = ManuallyDrop::new(Vector::<bool>::decode(r)?).ptr();
+            (*container).h = ManuallyDrop::new(Vector::<bool>::decode(r)?).ptr();
+            (*container).p = ManuallyDrop::new(Vector::<bool>::decode(r)?).ptr();
+            (*container).i = ManuallyDrop::new(Vector::<bool>::decode(r)?).ptr();
+            (*container).b = ManuallyDrop::new(Vector::<bool>::decode(r)?).ptr();
+
+            // Create matrix and load from container
+            let mut m: MaybeUninit<GrB_Matrix> = MaybeUninit::uninit();
+            let info = GrB_Matrix_new(m.as_mut_ptr(), GrB_BOOL, 0, 0);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            let m = m.assume_init();
+
+            let info = GxB_load_Matrix_from_Container(m, container, null_mut());
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+
+            let mut c = container;
+            let info = GxB_Container_free(&raw mut c);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+
+            Ok(Self {
+                m: Arc::new(m),
+                lock: Arc::new(Mutex::new(())),
+            })
+        }
+    }
+}
+
+impl Encode<19> for Matrix {
+    fn encode(
+        &self,
+        w: &mut dyn Writer,
+    ) {
+        unsafe {
+            let mut container: MaybeUninit<super::GxB_Container> = MaybeUninit::uninit();
+            let info = GxB_Container_new(container.as_mut_ptr());
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            let container = container.assume_init();
+
+            let info = GxB_unload_Matrix_into_Container(self.inner(), container, null_mut());
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+
+            // Write container struct bytes
+            let container_bytes =
+                std::slice::from_raw_parts(container.cast::<u8>(), CONTAINER_STRUCT_SIZE);
+            w.write_buffer(container_bytes);
+
+            // Write 5 vectors: x, h, p, i, b
+            ManuallyDrop::new(Vector::<bool>::from((*container).x)).encode(w);
+            ManuallyDrop::new(Vector::<bool>::from((*container).h)).encode(w);
+            ManuallyDrop::new(Vector::<bool>::from((*container).p)).encode(w);
+            ManuallyDrop::new(Vector::<bool>::from((*container).i)).encode(w);
+            ManuallyDrop::new(Vector::<bool>::from((*container).b)).encode(w);
+
+            let info = GxB_load_Matrix_from_Container(self.inner(), container, null_mut());
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+
+            let mut c = container;
+            let info = GxB_Container_free(&raw mut c);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+    }
+}
+
 impl Matrix {
     /// Returns the raw GrB_Matrix handle for FFI calls (e.g. LAGraph).
     /// The caller must NOT free the returned handle.
@@ -473,6 +574,17 @@ impl Matrix {
     ) {
         unsafe {
             let info = GrB_transpose(*self.m, *b.m, null_mut(), *self.m, GrB_DESC_RCT0);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+    }
+
+    pub fn select(
+        &mut self,
+        mask: &Matrix,
+        a: &Matrix,
+    ) {
+        unsafe {
+            let info = GrB_transpose(*self.m, *mask.m, null_mut(), *a.m, GrB_DESC_RCT0);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }

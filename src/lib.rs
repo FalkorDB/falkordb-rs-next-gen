@@ -42,6 +42,7 @@ mod graph_core;
 mod module_init;
 mod redis_type;
 mod reply;
+mod serializers;
 
 use allocator::ThreadCountingAllocator;
 use commands::{
@@ -56,13 +57,13 @@ use config::{
 };
 use module_init::graph_init;
 use redis_module::{configuration::ConfigurationFlags, redis_module};
-use redis_type::GRAPH_TYPE;
+use redis_type::{GRAPH_TYPE, GRAPHMETA_TYPE};
 
 redis_module! {
     name: "graph",
     version: 1,
     allocator: (ThreadCountingAllocator, ThreadCountingAllocator),
-    data_types: [GRAPH_TYPE],
+    data_types: [GRAPH_TYPE, GRAPHMETA_TYPE],
     init: graph_init,
     commands: [
         ["graph.DELETE", graph_delete, "write deny-script", 1, 1, 1, ""],

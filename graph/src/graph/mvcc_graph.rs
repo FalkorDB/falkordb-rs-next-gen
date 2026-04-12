@@ -89,6 +89,16 @@ impl MvccGraph {
         }
     }
 
+    /// Create an `MvccGraph` from an already-constructed `Graph`.
+    /// Used by the RDB load path.
+    #[must_use]
+    pub fn from_graph(graph: Graph) -> Self {
+        Self {
+            graph: Arc::new(AtomicRefCell::new(graph)),
+            write: AtomicBool::new(false),
+        }
+    }
+
     #[must_use]
     pub fn read(&self) -> Arc<AtomicRefCell<Graph>> {
         self.graph.clone()
