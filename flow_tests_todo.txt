@@ -23,7 +23,6 @@ tests/flow/test_stress.py
 tests/flow/test_prev_rdb_decode.py
 tests/flow/test_replication.py
 tests/flow/test_replication_states.py
-tests/flow/test_graph_versioning.py
 
 ## Redis Integration & Server Features
 tests/flow/test_acl.py

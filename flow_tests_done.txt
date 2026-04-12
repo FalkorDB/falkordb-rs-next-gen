@@ -25,6 +25,7 @@ tests/flow/test_function_calls
 tests/flow/test_graph_create
 tests/flow/test_graph_deletion
 tests/flow/test_graph_merge
+tests/flow/test_graph_versioning.py
 tests/flow/test_hashjoin.py
 tests/flow/test_imdb
 tests/flow/test_index_create
