@@ -83,7 +83,13 @@
 //! Each attribute is stored as a separate fjall entry:
 //! `entity_id (8 bytes big-endian) + attr_idx (2 bytes big-endian)`
 
-use std::{collections::HashMap, sync::{Arc, Mutex, atomic::{AtomicU64, Ordering}}};
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 
 use fjall::{
     Database, Keyspace, KeyspaceCreateOptions, Readable, Snapshot, config::HashRatioPolicy,

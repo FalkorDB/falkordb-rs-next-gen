@@ -149,7 +149,8 @@ unsafe extern "C" fn graphmeta_rdb_save(
         }
         let mut len: usize = 0;
         let ptr = raw::RedisModule_StringPtrLen.unwrap()(rm_key_name, &raw mut len);
-        let key_name = String::from_utf8_lossy(std::slice::from_raw_parts(ptr.cast(), len)).to_string();
+        let key_name =
+            String::from_utf8_lossy(std::slice::from_raw_parts(ptr.cast(), len)).to_string();
 
         let vkey_state = VKEY_STATE.lock().unwrap();
         let Some((graph_name, payloads)) = vkey_state.get_vkey_payloads(&key_name) else {

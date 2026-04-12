@@ -1,4 +1,6 @@
-use crate::redis_type::{create_virtual_keys, delete_stale_graphmeta_keys, finalize_pending_graphs};
+use crate::redis_type::{
+    create_virtual_keys, delete_stale_graphmeta_keys, finalize_pending_graphs,
+};
 use crate::serializers::DECODE_STATE;
 use redis_module::{Context, NextArg, RedisError, RedisResult, RedisString, RedisValue};
 
