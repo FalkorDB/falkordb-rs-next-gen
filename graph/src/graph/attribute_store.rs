@@ -145,6 +145,8 @@ pub struct AttributeStore {
     encode_deleted: Mutex<Option<RoaringTreemap>>,
     /// Encoding context: maximum entity ID (set before serialization).
     encode_max_id: AtomicU64,
+    /// Encoding context: mapping from local attr IDs to global attr IDs (set before serialization).
+    encode_attr_remap: Mutex<Option<Vec<u16>>>,
 }
 
 impl Clone for AttributeStore {
@@ -161,6 +163,7 @@ impl Clone for AttributeStore {
             pending_deletes: self.pending_deletes.clone(),
             encode_deleted: Mutex::new(None),
             encode_max_id: AtomicU64::new(0),
+            encode_attr_remap: Mutex::new(None),
         }
     }
 }
@@ -187,6 +190,7 @@ impl AttributeStore {
             pending_deletes: RoaringTreemap::new(),
             encode_deleted: Mutex::new(None),
             encode_max_id: AtomicU64::new(0),
+            encode_attr_remap: Mutex::new(None),
         }
     }
 
@@ -252,6 +256,7 @@ impl AttributeStore {
             pending_deletes: RoaringTreemap::new(),
             encode_deleted: Mutex::new(None),
             encode_max_id: AtomicU64::new(0),
+            encode_attr_remap: Mutex::new(None),
         }
     }
 
@@ -639,16 +644,25 @@ impl AttributeStore {
 
     /// Set encoding context needed by `Encode::encode_with_range`.
     ///
-    /// `node_attrs` and `rel_attrs` are the attribute name sets from the node and
-    /// relationship stores respectively, used to build the canonical global
-    /// attribute ordering (nodes first, then relationships, deduplicated).
+    /// Builds a mapping from local attribute IDs (indices in this store's attrs_name)
+    /// to global attribute IDs (indices in the provided global_attrs list).
     pub fn set_encode_context(
         &self,
         deleted: &RoaringTreemap,
         max_id: u64,
+        global_attrs: &[Arc<String>],
     ) {
         *self.encode_deleted.lock().unwrap() = Some(deleted.clone());
         self.encode_max_id.store(max_id, Ordering::Relaxed);
+
+        // Build mapping from local attr ID to global attr ID
+        let mut remap = vec![u16::MAX; self.attrs_name.len()];
+        for (local_id, local_name) in self.attrs_name.iter().enumerate() {
+            if let Some(global_id) = global_attrs.iter().position(|n| n == local_name) {
+                remap[local_id] = global_id as u16;
+            }
+        }
+        *self.encode_attr_remap.lock().unwrap() = Some(remap);
     }
 }
 
@@ -678,6 +692,9 @@ impl Encode<19> for AttributeStore {
         let deleted = binding.as_ref().expect("encode context not set");
         let max_id = self.encode_max_id.load(Ordering::Relaxed);
 
+        let remap_binding = self.encode_attr_remap.lock().unwrap();
+        let remap = remap_binding.as_ref().expect("encode attr remap not set");
+
         let mut skipped = 0u64;
         let mut encoded = 0u64;
 
@@ -695,8 +712,14 @@ impl Encode<19> for AttributeStore {
             let props: Vec<(u16, Value)> = self.get_all_attrs_by_id(id);
             w.write_unsigned(props.len() as u64);
 
-            for (attr_id, value) in props {
-                w.write_unsigned(attr_id as u64);
+            for (local_attr_id, value) in props {
+                // Remap local attribute ID to global attribute ID
+                let global_attr_id = if (local_attr_id as usize) < remap.len() {
+                    remap[local_attr_id as usize]
+                } else {
+                    local_attr_id
+                };
+                w.write_unsigned(global_attr_id as u64);
                 value.encode(w);
             }
 

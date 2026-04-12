@@ -2077,13 +2077,14 @@ impl Graph {
         w: &mut dyn Writer,
         p: &PayloadEntry,
     ) {
+        let global_attrs = self.build_global_attrs();
         match p.state {
             EncodeState::Nodes => {
                 let this = &self;
                 let count = p.count;
                 let offset = p.offset;
                 this.node_attrs
-                    .set_encode_context(&this.deleted_nodes, this.max_node_id());
+                    .set_encode_context(&this.deleted_nodes, this.max_node_id(), &global_attrs);
                 this.node_attrs.encode_with_range(w, count, offset);
             }
             EncodeState::DeletedNodes => {
@@ -2094,7 +2095,7 @@ impl Graph {
                 let count = p.count;
                 let offset = p.offset;
                 this.relationship_attrs
-                    .set_encode_context(&this.deleted_relationships, this.max_relationship_id());
+                    .set_encode_context(&this.deleted_relationships, this.max_relationship_id(), &global_attrs);
                 this.relationship_attrs.encode_with_range(w, count, offset);
             }
             EncodeState::DeletedEdges => {
@@ -2120,6 +2121,16 @@ impl Graph {
             EncodeState::LblsMatrix => self.node_labels_matrix.encode(w),
             _ => {}
         }
+    }
+
+    /// Get node attribute names.
+    pub fn get_node_attribute_names(&self) -> Vec<Arc<String>> {
+        self.node_attrs.attrs_name.iter().cloned().collect()
+    }
+
+    /// Get relationship attribute names.
+    pub fn get_relationship_attribute_names(&self) -> Vec<Arc<String>> {
+        self.relationship_attrs.attrs_name.iter().cloned().collect()
     }
 
     /// Build the unified global attribute list (node attrs ∪ relationship attrs, in order).
