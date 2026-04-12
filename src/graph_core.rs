@@ -418,20 +418,24 @@ fn execute_and_commit_write(
                 raw::RedisModule_ThreadSafeContextUnlock.unwrap()(ctx.ctx);
                 raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx);
             };
-            drop(bc);
             graph.graph.commit(g);
             // Flush dirty cache entries to fjall if over budget.
             let value = graph.graph.read().borrow().maybe_flush_caches();
             if let Err(e) = value {
                 eprintln!("FalkorDB: cache flush failed: {e}");
             }
+            // Unblock the client only after the write is fully committed
+            // so it cannot observe "query complete" before the mutation
+            // is durable.
+            drop(bc);
         }
         Err(err) => {
             let cerr = CString::new(err).unwrap();
             raw::reply_with_error(ctx.ctx, cerr.as_ptr());
-            drop(bc);
             unsafe { raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx) };
             graph.graph.rollback();
+            // Unblock the client only after rollback completes.
+            drop(bc);
         }
     }
 }
