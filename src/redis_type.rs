@@ -337,7 +337,7 @@ pub unsafe extern "C" fn on_persistence(
 // Virtual key management helpers
 // ---------------------------------------------------------------------------
 
-unsafe fn create_virtual_keys(ctx: *mut RedisModuleCtx) {
+pub(crate) unsafe fn create_virtual_keys(ctx: *mut RedisModuleCtx) {
     unsafe {
         // First, delete any leftover graphmeta keys from a previous RDB load.
         // These persist in the keyspace after loading and must be cleaned up
@@ -548,7 +548,7 @@ unsafe fn scan_graphdata_keys(
 
 /// Delete any graphmeta keys left in the keyspace from a previous RDB load.
 /// Called before creating new virtual keys during the persistence event.
-unsafe fn delete_stale_graphmeta_keys(ctx: *mut RedisModuleCtx) {
+pub(crate) unsafe fn delete_stale_graphmeta_keys(ctx: *mut RedisModuleCtx) {
     unsafe {
         let scan_cmd = CString::new("SCAN").unwrap();
         let type_arg = CString::new("TYPE").unwrap();
@@ -645,7 +645,7 @@ unsafe fn delete_stale_graphmeta_keys(ctx: *mut RedisModuleCtx) {
 ///
 /// In both cases, the placeholder ThreadedGraph's inner MvccGraph is replaced
 /// using the raw pointer stored during graph_rdb_load.
-fn finalize_pending_graphs() {
+pub(crate) fn finalize_pending_graphs() {
     let mut decode_state = DECODE_STATE.lock().unwrap();
 
     // First, handle graphs that were already finalized inline during rdb_load_graph.

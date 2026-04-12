@@ -56,6 +56,7 @@ tests/flow/test_pending_queries_limit.py
 tests/flow/test_persistency.py
 tests/flow/test_point
 tests/flow/test_query_validation
+tests/flow/test_rdb_load.py
 tests/flow/test_reduce.py
 tests/flow/test_results.py
 tests/flow/test_reversed_patterns

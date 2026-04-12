@@ -20,7 +20,6 @@ tests/flow/test_profile.py
 tests/flow/test_stress.py
 
 ## Persistence & Replication
-tests/flow/test_rdb_load.py
 tests/flow/test_prev_rdb_decode.py
 tests/flow/test_replication.py
 tests/flow/test_replication_states.py
