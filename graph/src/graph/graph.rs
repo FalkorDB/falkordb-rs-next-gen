@@ -266,6 +266,8 @@ pub struct Graph {
     cache: Arc<Mutex<LruCache<String, PlanTree>>>,
     /// Version counter (incremented on each write transaction)
     pub version: u64,
+    /// Schema version (incremented only on schema changes: new labels, relationship types, or attributes)
+    pub schema_version: u64,
 }
 
 /// Wrapper for plan trees to implement Send+Sync.
@@ -447,6 +449,7 @@ impl Graph {
                 NonZeroUsize::new(cache_size.max(1)).expect("cache_size.max(1) is always >= 1"),
             ))),
             version,
+            schema_version: 0,
         }
     }
 
@@ -476,6 +479,7 @@ impl Graph {
     ) -> Self {
         let node_cap = node_count + deleted_nodes.len();
         let relationship_cap = relationship_count + deleted_relationships.len();
+        let schema_version = (node_labels.len() + relationship_types.len()) as u64;
         Self {
             name: name.to_string(),
             node_cap: node_cap.next_power_of_two().max(64),
@@ -502,6 +506,7 @@ impl Graph {
                 NonZeroUsize::new(cache_size.max(1)).expect("cache_size.max(1) is always >= 1"),
             ))),
             version: 0,
+            schema_version,
         }
     }
 
@@ -575,6 +580,7 @@ impl Graph {
             relationship_types: self.relationship_types.clone(),
             cache: self.cache.clone(),
             version: self.version + 1,
+            schema_version: self.schema_version,
         }
     }
 
@@ -2083,8 +2089,11 @@ impl Graph {
                 let this = &self;
                 let count = p.count;
                 let offset = p.offset;
-                this.node_attrs
-                    .set_encode_context(&this.deleted_nodes, this.max_node_id(), &global_attrs);
+                this.node_attrs.set_encode_context(
+                    &this.deleted_nodes,
+                    this.max_node_id(),
+                    &global_attrs,
+                );
                 this.node_attrs.encode_with_range(w, count, offset);
             }
             EncodeState::DeletedNodes => {
@@ -2094,8 +2103,11 @@ impl Graph {
                 let this = &self;
                 let count = p.count;
                 let offset = p.offset;
-                this.relationship_attrs
-                    .set_encode_context(&this.deleted_relationships, this.max_relationship_id(), &global_attrs);
+                this.relationship_attrs.set_encode_context(
+                    &this.deleted_relationships,
+                    this.max_relationship_id(),
+                    &global_attrs,
+                );
                 this.relationship_attrs.encode_with_range(w, count, offset);
             }
             EncodeState::DeletedEdges => {
