@@ -1829,7 +1829,11 @@ impl Encode<19> for Value {
                 w.write_signed(*ts);
             }
             // Map, Node, Relationship, Path are not stored as properties
-            Self::Null | Self::Map(_) | Self::Node(_) | Self::Relationship(_) | Self::Path(_) => {
+            Self::Null => {
+                w.write_unsigned(si_type::T_NULL);
+            }
+            Self::Map(_) | Self::Node(_) | Self::Relationship(_) | Self::Path(_) => {
+                debug_assert!(false, "unsupported value type in property storage: graphs/nodes/relationships/paths cannot be persisted as attribute values");
                 w.write_unsigned(si_type::T_NULL);
             }
         }

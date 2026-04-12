@@ -173,6 +173,12 @@ impl Encode<19> for RoaringTreemap {
 impl Decode<19> for RoaringTreemap {
     fn decode(r: &mut dyn Reader) -> Result<Self, String> {
         let bytes = r.read_buffer()?;
+        if bytes.len() % 8 != 0 {
+            return Err(format!(
+                "misaligned deleted entities buffer: {} bytes is not a multiple of 8",
+                bytes.len()
+            ));
+        }
         let count = bytes.len() / 8;
         let mut bitmap = Self::new();
         for i in 0..count {
@@ -193,9 +199,9 @@ impl Decode<19> for RoaringTreemap {
     ) -> Result<(), String> {
         let bytes = r.read_buffer()?;
         let expected_len = count as usize * 8;
-        if bytes.len() < expected_len {
+        if bytes.len() != expected_len {
             return Err(format!(
-                "deleted entities buffer too short: {} < {}",
+                "deleted entities buffer length mismatch: got {} bytes, expected {} bytes",
                 bytes.len(),
                 expected_len
             ));

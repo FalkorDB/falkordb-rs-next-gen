@@ -84,7 +84,10 @@ pub fn graph_init(
             RedisModuleEvent_Persistence,
             Some(on_persistence),
         );
-        debug_assert_eq!(res, REDISMODULE_OK as c_int);
+        if res != REDISMODULE_OK as c_int {
+            eprintln!("FalkorDB: failed to subscribe to persistence events: code {res}");
+            return Status::Err;
+        }
     }
     match init_functions() {
         Ok(()) => {}

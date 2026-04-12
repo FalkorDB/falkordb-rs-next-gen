@@ -71,7 +71,7 @@ impl BufferedWriter {
     ) {
         self.accommodate(1 + 8);
         self.buf.push(TYPE_UNSIGNED);
-        self.buf.extend_from_slice(&val.to_ne_bytes());
+        self.buf.extend_from_slice(&val.to_le_bytes());
     }
 
     pub fn write_signed(
@@ -80,7 +80,7 @@ impl BufferedWriter {
     ) {
         self.accommodate(1 + 8);
         self.buf.push(TYPE_SIGNED);
-        self.buf.extend_from_slice(&val.to_ne_bytes());
+        self.buf.extend_from_slice(&val.to_le_bytes());
     }
 
     pub fn write_double(
@@ -89,7 +89,7 @@ impl BufferedWriter {
     ) {
         self.accommodate(1 + 8);
         self.buf.push(TYPE_DOUBLE);
-        self.buf.extend_from_slice(&val.to_ne_bytes());
+        self.buf.extend_from_slice(&val.to_le_bytes());
     }
 
     #[allow(dead_code)]
@@ -99,7 +99,7 @@ impl BufferedWriter {
     ) {
         self.accommodate(1 + 4);
         self.buf.push(TYPE_FLOAT);
-        self.buf.extend_from_slice(&val.to_ne_bytes());
+        self.buf.extend_from_slice(&val.to_le_bytes());
     }
 
     /// Write a byte buffer. Small buffers are inlined; large ones use
@@ -114,7 +114,7 @@ impl BufferedWriter {
             self.accommodate(inline_size);
             self.buf.push(TYPE_BYTES);
             self.buf
-                .extend_from_slice(&(data.len() as u64).to_ne_bytes());
+                .extend_from_slice(&(data.len() as u64).to_le_bytes());
             self.buf.extend_from_slice(data);
         } else {
             // Blob: write sentinel, flush, then write standalone
@@ -254,26 +254,26 @@ impl BufferedReader {
     pub fn read_unsigned(&mut self) -> Result<u64, String> {
         self.read_tag(TYPE_UNSIGNED)?;
         let bytes = self.read_bytes(8)?;
-        Ok(u64::from_ne_bytes(bytes.try_into().unwrap()))
+        Ok(u64::from_le_bytes(bytes.try_into().unwrap()))
     }
 
     pub fn read_signed(&mut self) -> Result<i64, String> {
         self.read_tag(TYPE_SIGNED)?;
         let bytes = self.read_bytes(8)?;
-        Ok(i64::from_ne_bytes(bytes.try_into().unwrap()))
+        Ok(i64::from_le_bytes(bytes.try_into().unwrap()))
     }
 
     pub fn read_double(&mut self) -> Result<f64, String> {
         self.read_tag(TYPE_DOUBLE)?;
         let bytes = self.read_bytes(8)?;
-        Ok(f64::from_ne_bytes(bytes.try_into().unwrap()))
+        Ok(f64::from_le_bytes(bytes.try_into().unwrap()))
     }
 
     #[allow(dead_code)]
     pub fn read_float(&mut self) -> Result<f32, String> {
         self.read_tag(TYPE_FLOAT)?;
         let bytes = self.read_bytes(4)?;
-        Ok(f32::from_ne_bytes(bytes.try_into().unwrap()))
+        Ok(f32::from_le_bytes(bytes.try_into().unwrap()))
     }
 
     /// Read a byte buffer. Handles both inline (TYPE_BYTES) and blob (TYPE_BLOB).
@@ -286,7 +286,7 @@ impl BufferedReader {
             TYPE_BYTES => {
                 // Inline: length then data
                 let len_bytes = self.read_bytes(8)?;
-                let len = u64::from_ne_bytes(len_bytes.try_into().unwrap()) as usize;
+                let len = u64::from_le_bytes(len_bytes.try_into().unwrap()) as usize;
                 let data = self.read_bytes(len)?;
                 Ok(data.to_vec())
             }

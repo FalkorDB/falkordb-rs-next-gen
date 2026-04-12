@@ -83,8 +83,7 @@
 //! Each attribute is stored as a separate fjall entry:
 //! `entity_id (8 bytes big-endian) + attr_idx (2 bytes big-endian)`
 
-use std::cell::RefCell;
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::{Arc, Mutex, atomic::{AtomicU64, Ordering}}};
 
 use fjall::{
     Database, Keyspace, KeyspaceCreateOptions, Readable, Snapshot, config::HashRatioPolicy,
@@ -137,9 +136,9 @@ pub struct AttributeStore {
     /// Entity IDs pending full deletion (all attributes) — applied on commit, cleared on rollback.
     pending_deletes: RoaringTreemap,
     /// Encoding context: deleted entity IDs (set before serialization).
-    encode_deleted: RefCell<Option<RoaringTreemap>>,
+    encode_deleted: Mutex<Option<RoaringTreemap>>,
     /// Encoding context: maximum entity ID (set before serialization).
-    encode_max_id: RefCell<u64>,
+    encode_max_id: AtomicU64,
 }
 
 impl Clone for AttributeStore {
@@ -154,8 +153,8 @@ impl Clone for AttributeStore {
             version: self.version,
             dirty_entities: self.dirty_entities.clone(),
             pending_deletes: self.pending_deletes.clone(),
-            encode_deleted: RefCell::new(None),
-            encode_max_id: RefCell::new(0),
+            encode_deleted: Mutex::new(None),
+            encode_max_id: AtomicU64::new(0),
         }
     }
 }
@@ -180,8 +179,8 @@ impl AttributeStore {
             version,
             dirty_entities: RoaringTreemap::new(),
             pending_deletes: RoaringTreemap::new(),
-            encode_deleted: RefCell::new(None),
-            encode_max_id: RefCell::new(0),
+            encode_deleted: Mutex::new(None),
+            encode_max_id: AtomicU64::new(0),
         }
     }
 
@@ -245,8 +244,8 @@ impl AttributeStore {
             version,
             dirty_entities: RoaringTreemap::new(),
             pending_deletes: RoaringTreemap::new(),
-            encode_deleted: RefCell::new(None),
-            encode_max_id: RefCell::new(0),
+            encode_deleted: Mutex::new(None),
+            encode_max_id: AtomicU64::new(0),
         }
     }
 
@@ -642,8 +641,8 @@ impl AttributeStore {
         deleted: &RoaringTreemap,
         max_id: u64,
     ) {
-        *self.encode_deleted.borrow_mut() = Some(deleted.clone());
-        *self.encode_max_id.borrow_mut() = max_id;
+        *self.encode_deleted.lock().unwrap() = Some(deleted.clone());
+        self.encode_max_id.store(max_id, Ordering::Relaxed);
     }
 }
 
@@ -669,9 +668,9 @@ impl Encode<19> for AttributeStore {
         count: u64,
         offset: u64,
     ) {
-        let binding = self.encode_deleted.borrow();
+        let binding = self.encode_deleted.lock().unwrap();
         let deleted = binding.as_ref().expect("encode context not set");
-        let max_id = *self.encode_max_id.borrow();
+        let max_id = self.encode_max_id.load(Ordering::Relaxed);
 
         let mut skipped = 0u64;
         let mut encoded = 0u64;

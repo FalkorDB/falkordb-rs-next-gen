@@ -87,7 +87,12 @@ pub fn build_multi_key_payloads(
 
     for key_idx in 0..key_count {
         let mut key_payloads = Vec::new();
-        let mut remaining_capacity = vkey_max;
+        // When vkey_max == 0, store everything in first key (unlimited capacity)
+        let mut remaining_capacity = if vkey_max == 0 {
+            u64::MAX
+        } else {
+            vkey_max
+        };
 
         // Fill this key with entities from the current position
         while remaining_capacity > 0 && type_idx < entity_types.len() {

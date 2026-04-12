@@ -154,8 +154,13 @@ impl Pending {
         node_cap: u64,
         labels_count: usize,
     ) {
-        let new_nrows = node_cap.max(self.set_node_labels.nrows());
-        let new_ncols = (labels_count as u64).max(self.set_node_labels.ncols());
+        // Use max dimensions from both set and remove matrices to avoid shrinking either
+        let new_nrows = node_cap
+            .max(self.set_node_labels.nrows())
+            .max(self.remove_node_labels.nrows());
+        let new_ncols = (labels_count as u64)
+            .max(self.set_node_labels.ncols())
+            .max(self.remove_node_labels.ncols());
         self.set_node_labels.resize(new_nrows, new_ncols);
         self.remove_node_labels.resize(new_nrows, new_ncols);
     }

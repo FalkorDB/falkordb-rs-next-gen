@@ -435,6 +435,16 @@ impl Drop for Matrix {
 impl Decode<19> for Matrix {
     fn decode(r: &mut dyn Reader) -> Result<Self, String> {
         let container_bytes = r.read_buffer()?;
+
+        // Validate container size before copying
+        if container_bytes.len() < CONTAINER_STRUCT_SIZE {
+            return Err(format!(
+                "container buffer too small: {} bytes < {} bytes required",
+                container_bytes.len(),
+                CONTAINER_STRUCT_SIZE
+            ));
+        }
+
         unsafe {
             let mut container: MaybeUninit<super::GxB_Container> = MaybeUninit::uninit();
             let info = GxB_Container_new(container.as_mut_ptr());

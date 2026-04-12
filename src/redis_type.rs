@@ -47,7 +47,7 @@ unsafe extern "C" fn graph_rdb_load(
         } else {
             let mut len: usize = 0;
             let ptr = raw::RedisModule_StringPtrLen.unwrap()(rm_key_name, &raw mut len);
-            std::str::from_utf8_unchecked(std::slice::from_raw_parts(ptr.cast(), len)).to_string()
+            String::from_utf8_lossy(std::slice::from_raw_parts(ptr.cast(), len)).to_string()
         }
     };
 
@@ -149,10 +149,10 @@ unsafe extern "C" fn graphmeta_rdb_save(
         }
         let mut len: usize = 0;
         let ptr = raw::RedisModule_StringPtrLen.unwrap()(rm_key_name, &raw mut len);
-        let key_name = std::str::from_utf8_unchecked(std::slice::from_raw_parts(ptr.cast(), len));
+        let key_name = String::from_utf8_lossy(std::slice::from_raw_parts(ptr.cast(), len)).to_string();
 
         let vkey_state = VKEY_STATE.lock().unwrap();
-        let Some((graph_name, payloads)) = vkey_state.get_vkey_payloads(key_name) else {
+        let Some((graph_name, payloads)) = vkey_state.get_vkey_payloads(&key_name) else {
             return;
         };
         let graph_name = graph_name.to_string();
@@ -698,7 +698,9 @@ fn install_graph(
 
     if let Some(ph) = placeholder {
         let mut placeholder_tg = ph.write();
-        placeholder_tg.graph = tg.graph;
+        // Replace entire ThreadedGraph (graph, sender, receiver, write_loop)
+        // to ensure the write queue is properly bound to the new graph
+        *placeholder_tg = tg;
     } else {
         eprintln!(
             "FalkorDB: WARNING - no placeholder pointer for graph '{graph_name}', graph data will be lost"
