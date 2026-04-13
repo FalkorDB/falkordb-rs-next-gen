@@ -115,7 +115,7 @@ fn apply_effects(
     while offset < buf.len() {
         let effect_type = buf[offset];
         offset += 1;
-        
+
         match effect_type {
             EFFECT_CREATE_NODE => {
                 let node_id_raw = read_u64(buf, &mut offset)?;
