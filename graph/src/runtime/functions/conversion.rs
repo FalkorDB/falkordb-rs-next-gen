@@ -84,6 +84,7 @@ pub fn register(funcs: &mut Functions) {
         "toIntegerOrNull",
         value_to_integer,
         false,
+        false,
         vec![Type::Any],
         FnType::Function,
         Type::Union(vec![Type::Int, Type::Null]),
@@ -104,6 +105,7 @@ pub fn register(funcs: &mut Functions) {
     funcs.add(
         "toFloatOrNull",
         value_to_float,
+        false,
         false,
         vec![Type::Any],
         FnType::Function,
@@ -139,6 +141,7 @@ pub fn register(funcs: &mut Functions) {
     funcs.add(
         "tostringornull",
         value_to_string,
+        false,
         false,
         vec![Type::Any],
         FnType::Function,
@@ -196,6 +199,7 @@ pub fn register(funcs: &mut Functions) {
     funcs.add(
         "toBooleanOrNull",
         to_boolean,
+        false,
         false,
         vec![Type::Any],
         FnType::Function,

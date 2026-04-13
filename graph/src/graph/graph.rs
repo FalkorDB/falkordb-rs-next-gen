@@ -720,6 +720,29 @@ impl Graph {
             .map(TypeId)
     }
 
+    /// Get-or-create a relationship type by name, returning its `TypeId`.
+    pub fn get_type_id_mut(
+        &mut self,
+        relationship_type: &str,
+    ) -> TypeId {
+        if let Some(pos) = self
+            .relationship_types
+            .iter()
+            .position(|t| t.as_str() == relationship_type)
+            .map(TypeId)
+        {
+            return pos;
+        }
+
+        self.relationship_types
+            .push(Arc::new(relationship_type.to_string()));
+        self.relationship_matrices.insert(
+            self.relationship_types.len() - 1,
+            Tensor::new(self.node_cap, self.node_cap),
+        );
+        TypeId(self.relationship_types.len() - 1)
+    }
+
     pub fn get_plan(
         &self,
         query: &str,
@@ -2143,6 +2166,35 @@ impl Graph {
     /// Get relationship attribute names.
     pub fn get_relationship_attribute_names(&self) -> Vec<Arc<String>> {
         self.relationship_attrs.attrs_name.iter().cloned().collect()
+    }
+
+    /// Register a node attribute name (get-or-create). Used by effect
+    /// replication to pre-register attribute names on the replica.
+    pub fn add_node_attribute_name(
+        &mut self,
+        name: &str,
+    ) {
+        let arc = Arc::new(name.to_string());
+        if self.node_attrs.attrs_name.get_index_of(&arc).is_none() {
+            self.node_attrs.attrs_name.insert(arc);
+        }
+    }
+
+    /// Register a relationship attribute name (get-or-create). Used by effect
+    /// replication to pre-register attribute names on the replica.
+    pub fn add_rel_attribute_name(
+        &mut self,
+        name: &str,
+    ) {
+        let arc = Arc::new(name.to_string());
+        if self
+            .relationship_attrs
+            .attrs_name
+            .get_index_of(&arc)
+            .is_none()
+        {
+            self.relationship_attrs.attrs_name.insert(arc);
+        }
     }
 
     /// Build the unified global attribute list (node attrs ∪ relationship attrs, in order).
