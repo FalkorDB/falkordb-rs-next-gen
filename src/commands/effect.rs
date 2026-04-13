@@ -78,6 +78,7 @@ pub fn graph_effect(
     match result {
         Ok(()) => {
             tg.graph.commit(g_arc);
+            ctx.replicate_verbatim();
             let value = tg.graph.read().borrow().maybe_flush_caches();
             if let Err(e) = value {
                 eprintln!("FalkorDB: cache flush failed: {e}");
