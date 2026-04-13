@@ -523,11 +523,12 @@ impl Graph {
         self.relationship_type_matrix
             .resize(rc, self.relationship_types.len() as u64);
 
-        // Rebuild all_nodes_matrix from node count + deleted nodes
-        let max_id = self.node_count + self.deleted_nodes.len();
-        for id in 0..max_id {
-            if !self.deleted_nodes.contains(id) {
-                self.all_nodes_matrix.set(id, id, true);
+        // Rebuild all_nodes_matrix from per-label matrices
+        // Each label matrix is diagonal (node_id, node_id), so we just need
+        // to collect all live node IDs across all labels
+        for lm in &self.labels_matices {
+            for (node_id, _) in lm.iter(0, u64::MAX) {
+                self.all_nodes_matrix.set(node_id, node_id, true);
             }
         }
 
@@ -1010,6 +1011,34 @@ impl Graph {
             }
         }
         Ok(nremoved)
+    }
+
+    pub fn import_node_attrs(
+        &mut self,
+        attrs: &HashMap<u64, OrderMap<Arc<String>, Value>>,
+        index_add_docs: &mut HashMap<u64, RoaringTreemap>,
+    ) {
+        self.node_attrs.import_attrs(attrs);
+
+        if self.node_indexer.has_indices() {
+            for (id, attrs) in attrs {
+                for (_, label_id) in self.node_labels_matrix.iter(*id, *id) {
+                    let label = &self.node_labels[label_id as usize];
+                    for key in attrs.keys() {
+                        if self.node_indexer.has_indexed_attr(label, key) {
+                            index_add_docs.entry(label_id).or_default().insert(*id);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn import_relationship_attrs(
+        &mut self,
+        attrs: &HashMap<u64, OrderMap<Arc<String>, Value>>,
+    ) {
+        self.relationship_attrs.import_attrs(attrs);
     }
 
     pub fn set_nodes_labels(
@@ -1741,12 +1770,21 @@ impl Graph {
         let fields_by_label = self.node_indexer.get_all_pending_fields();
         for (label, attrs) in fields_by_label {
             if let Some(lm) = self.get_label_matrix(&label) {
+                // Pre-resolve attribute indices to avoid string lookups per node
+                let resolved_attrs: Vec<(u16, Vec<_>)> = attrs
+                    .iter()
+                    .filter_map(|(attr, fields)| {
+                        self.get_node_attribute_id(attr)
+                            .map(|idx| (idx as u16, fields.clone()))
+                    })
+                    .collect();
+
                 let mut batch = Vec::new();
                 for (n, _) in lm.iter(0, u64::MAX) {
                     let mut doc = Document::new(n);
                     let mut has_fields = false;
-                    for (attr, fields) in &attrs {
-                        let value = self.get_node_attribute(NodeId(n), attr);
+                    for (attr_idx, fields) in &resolved_attrs {
+                        let value = self.get_node_attribute_by_idx(NodeId(n), *attr_idx);
                         if let Some(value) = value {
                             for field in fields {
                                 doc.set(field, &value);
@@ -2150,9 +2188,9 @@ impl Graph {
         w: &mut dyn Writer,
         p: &PayloadEntry,
     ) {
-        let global_attrs = self.build_global_attrs();
         match p.state {
             EncodeState::Nodes => {
+                let global_attrs = self.build_global_attrs();
                 let this = &self;
                 let count = p.count;
                 let offset = p.offset;
@@ -2167,6 +2205,7 @@ impl Graph {
                 self.deleted_nodes.encode_with_range(w, p.count, p.offset);
             }
             EncodeState::Edges => {
+                let global_attrs = self.build_global_attrs();
                 let this = &self;
                 let count = p.count;
                 let offset = p.offset;

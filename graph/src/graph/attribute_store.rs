@@ -516,6 +516,34 @@ impl AttributeStore {
         Ok(nremoved)
     }
 
+    /// Bulk import attributes for entities known to be new (no prior state).
+    ///
+    /// Optimized for RDB decode: skips cache/fjall lookups since entities
+    /// don't exist yet. Attributes are written directly to cache.
+    pub fn import_attrs(
+        &mut self,
+        attrs: &HashMap<u64, OrderMap<Arc<String>, Value>>,
+    ) {
+        for (key, entity_attrs) in attrs {
+            let mut entries: Vec<(u16, Value)> = Vec::with_capacity(entity_attrs.len());
+
+            for (attr, value) in entity_attrs.iter() {
+                if matches!(value, Value::Null) {
+                    continue;
+                }
+                let idx = self.attrs_name.get_index_of(attr).unwrap_or_else(|| {
+                    self.attrs_name.insert(attr.clone());
+                    self.attrs_name.len() - 1
+                }) as u16;
+                entries.push((idx, value.clone()));
+            }
+
+            entries.sort_by_key(|(idx, _)| *idx);
+            self.cache.insert_entity(*key, entries, self.version, true);
+            self.dirty_entities.insert(*key);
+        }
+    }
+
     #[must_use]
     pub fn get_attr_id(
         &self,
@@ -655,10 +683,17 @@ impl AttributeStore {
         *self.encode_deleted.lock().unwrap() = Some(deleted.clone());
         self.encode_max_id.store(max_id, Ordering::Relaxed);
 
+        // Build a reverse index from global attr name to global ID for O(1) lookup
+        let global_index: std::collections::HashMap<&Arc<String>, usize> = global_attrs
+            .iter()
+            .enumerate()
+            .map(|(i, n)| (n, i))
+            .collect();
+
         // Build mapping from local attr ID to global attr ID
         let mut remap = vec![u16::MAX; self.attrs_name.len()];
         for (local_id, local_name) in self.attrs_name.iter().enumerate() {
-            if let Some(global_id) = global_attrs.iter().position(|n| n == local_name) {
+            if let Some(&global_id) = global_index.get(local_name) {
                 remap[local_id] = global_id as u16;
             }
         }
@@ -745,21 +780,21 @@ impl Decode<19> for AttributeStore {
             let entity_id = r.read_unsigned()?;
             let attr_count = r.read_unsigned()?;
 
-            let mut entity_attrs = OrderMap::default();
+            let mut entries: Vec<(u16, Value)> = Vec::with_capacity(attr_count as usize);
             for _ in 0..attr_count {
                 let attr_id = r.read_unsigned()? as u16;
                 let value = Value::decode(r)?;
 
-                if (attr_id as usize) < self.attrs_name.len() {
-                    let attr_name = self.attrs_name[attr_id as usize].clone();
-                    entity_attrs.insert(attr_name, value);
+                if (attr_id as usize) < self.attrs_name.len() && !matches!(value, Value::Null) {
+                    entries.push((attr_id, value));
                 }
             }
 
-            if !entity_attrs.is_empty() {
-                let mut batch = HashMap::new();
-                batch.insert(entity_id, entity_attrs);
-                self.insert_attrs(&batch)?;
+            if !entries.is_empty() {
+                entries.sort_by_key(|(idx, _)| *idx);
+                self.cache
+                    .insert_entity(entity_id, entries, self.version, true);
+                self.dirty_entities.insert(entity_id);
             }
         }
         Ok(())

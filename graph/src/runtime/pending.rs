@@ -112,10 +112,14 @@ pub struct Pending {
     deleted_nodes: RoaringTreemap,
     /// Relationships to be deleted (edge_id, src, dst)
     deleted_relationships: HashMap<RelationshipId, (NodeId, NodeId)>,
-    /// Property updates for nodes
-    set_nodes_attrs: HashMap<u64, OrderMap<Arc<String>, Value>>,
-    /// Property updates for relationships
-    set_relationships_attrs: HashMap<u64, OrderMap<Arc<String>, Value>>,
+    /// Property updates for newly created nodes (fast path: skip fjall)
+    new_nodes_attrs: HashMap<u64, OrderMap<Arc<String>, Value>>,
+    /// Property updates for existing nodes (full merge path)
+    existing_nodes_attrs: HashMap<u64, OrderMap<Arc<String>, Value>>,
+    /// Property updates for newly created relationships (fast path: skip fjall)
+    new_relationships_attrs: HashMap<u64, OrderMap<Arc<String>, Value>>,
+    /// Property updates for existing relationships (full merge path)
+    existing_relationships_attrs: HashMap<u64, OrderMap<Arc<String>, Value>>,
     /// Labels to add (node_id × label_id matrix)
     set_node_labels: Matrix,
     /// Labels to remove
@@ -148,8 +152,10 @@ impl Pending {
             created_relationships: HashMap::new(),
             deleted_nodes: RoaringTreemap::new(),
             deleted_relationships: HashMap::new(),
-            set_nodes_attrs: HashMap::new(),
-            set_relationships_attrs: HashMap::new(),
+            new_nodes_attrs: HashMap::new(),
+            existing_nodes_attrs: HashMap::new(),
+            new_relationships_attrs: HashMap::new(),
+            existing_relationships_attrs: HashMap::new(),
             set_node_labels: Matrix::new(0, 0),
             remove_node_labels: Matrix::new(0, 0),
             index_add_docs: HashMap::new(),
@@ -221,7 +227,12 @@ impl Pending {
         for value in attrs.values() {
             validate_node_property(value)?;
         }
-        self.set_nodes_attrs.insert(id.into(), attrs);
+        let is_new = self.created_nodes.contains(id.into());
+        if is_new {
+            self.new_nodes_attrs.insert(id.into(), attrs);
+        } else {
+            self.existing_nodes_attrs.insert(id.into(), attrs);
+        }
         Ok(())
     }
 
@@ -232,7 +243,12 @@ impl Pending {
         value: Value,
     ) -> Result<(), String> {
         validate_node_property(&value)?;
-        let entry = self.set_nodes_attrs.entry(id.into()).or_default();
+        let map = if self.created_nodes.contains(id.into()) {
+            &mut self.new_nodes_attrs
+        } else {
+            &mut self.existing_nodes_attrs
+        };
+        let entry = map.entry(id.into()).or_default();
         entry.insert(key, value);
         Ok(())
     }
@@ -241,7 +257,8 @@ impl Pending {
         &mut self,
         id: NodeId,
     ) {
-        self.set_nodes_attrs.remove(&id.into());
+        self.new_nodes_attrs.remove(&id.into());
+        self.existing_nodes_attrs.remove(&id.into());
     }
 
     #[must_use]
@@ -250,9 +267,14 @@ impl Pending {
         id: NodeId,
         key: &Arc<String>,
     ) -> Option<&Value> {
-        self.set_nodes_attrs
+        self.new_nodes_attrs
             .get(&id.into())
             .and_then(|attrs| attrs.get(key))
+            .or_else(|| {
+                self.existing_nodes_attrs
+                    .get(&id.into())
+                    .and_then(|attrs| attrs.get(key))
+            })
     }
 
     pub fn update_node_attrs(
@@ -260,7 +282,11 @@ impl Pending {
         id: NodeId,
         attrs: &mut OrderMap<Arc<String>, Value>,
     ) {
-        if let Some(added) = self.set_nodes_attrs.get(&id.into()) {
+        let added = self
+            .new_nodes_attrs
+            .get(&id.into())
+            .or_else(|| self.existing_nodes_attrs.get(&id.into()));
+        if let Some(added) = added {
             for (key, value) in added.iter() {
                 if matches!(value, Value::Null) {
                     attrs.remove(key);
@@ -352,7 +378,11 @@ impl Pending {
         }
 
         // Collect pending attrs
-        let attrs = self.set_nodes_attrs.remove(&id.into()).unwrap_or_default();
+        let attrs = self
+            .new_nodes_attrs
+            .remove(&id.into())
+            .or_else(|| self.existing_nodes_attrs.remove(&id.into()))
+            .unwrap_or_default();
 
         // Find pending-created relationships connected to this node
         let rels: Vec<_> = self
@@ -371,7 +401,7 @@ impl Pending {
 
     /// Remove and return all pending-created relationships incident on the
     /// given node, along with their staged attributes. Also cleans up
-    /// `set_relationships_attrs` and `deleted_relationships` entries for
+    /// `new_relationships_attrs` and `deleted_relationships` entries for
     /// each removed relationship so that commit() has no stale state.
     pub fn remove_pending_relationships_for_node(
         &mut self,
@@ -393,7 +423,7 @@ impl Pending {
         let mut result = Vec::with_capacity(rels.len());
         for (rel_id, from, to, type_name) in rels {
             self.created_relationships.remove(&rel_id);
-            let attrs = self.set_relationships_attrs.remove(&rel_id.into());
+            let attrs = self.new_relationships_attrs.remove(&rel_id.into());
             self.deleted_relationships.remove(&rel_id);
             result.push((rel_id, from, to, type_name, attrs));
         }
@@ -419,7 +449,11 @@ impl Pending {
         for value in attrs.values() {
             validate_relationship_property(value)?;
         }
-        self.set_relationships_attrs.insert(id.into(), attrs);
+        if self.created_relationships.contains_key(&id) {
+            self.new_relationships_attrs.insert(id.into(), attrs);
+        } else {
+            self.existing_relationships_attrs.insert(id.into(), attrs);
+        }
         Ok(())
     }
 
@@ -430,7 +464,12 @@ impl Pending {
         value: Value,
     ) -> Result<(), String> {
         validate_relationship_property(&value)?;
-        let entry = self.set_relationships_attrs.entry(id.into()).or_default();
+        let map = if self.created_relationships.contains_key(&id) {
+            &mut self.new_relationships_attrs
+        } else {
+            &mut self.existing_relationships_attrs
+        };
+        let entry = map.entry(id.into()).or_default();
         entry.insert(key, value);
         Ok(())
     }
@@ -441,9 +480,14 @@ impl Pending {
         id: RelationshipId,
         key: &Arc<String>,
     ) -> Option<&Value> {
-        self.set_relationships_attrs
+        self.new_relationships_attrs
             .get(&id.into())
             .and_then(|attrs| attrs.get(key))
+            .or_else(|| {
+                self.existing_relationships_attrs
+                    .get(&id.into())
+                    .and_then(|attrs| attrs.get(key))
+            })
     }
 
     pub fn update_relationship_attrs(
@@ -451,7 +495,11 @@ impl Pending {
         id: RelationshipId,
         attrs: &mut OrderMap<Arc<String>, Value>,
     ) {
-        if let Some(added) = self.set_relationships_attrs.get(&id.into()) {
+        let added = self
+            .new_relationships_attrs
+            .get(&id.into())
+            .or_else(|| self.existing_relationships_attrs.get(&id.into()));
+        if let Some(added) = added {
             for (key, value) in added.iter() {
                 if matches!(value, Value::Null) {
                     attrs.remove(key);
@@ -610,34 +658,49 @@ impl Pending {
             g.borrow_mut()
                 .remove_nodes_labels(&mut self.remove_node_labels, &mut self.index_remove_docs);
         }
-        if !self.set_nodes_attrs.is_empty() {
-            stats.borrow_mut().properties_set += self
-                .set_nodes_attrs
-                .values()
-                .flat_map(super::ordermap::OrderMap::values)
-                .map(|v| match *v {
-                    Value::Null => 0,
-                    _ => 1,
-                })
-                .sum::<usize>();
-            stats.borrow_mut().properties_removed += g
-                .borrow_mut()
-                .set_nodes_attributes(&self.set_nodes_attrs, &mut self.index_add_docs)?;
+        if !self.new_nodes_attrs.is_empty() || !self.existing_nodes_attrs.is_empty() {
+            let count_properties = |map: &HashMap<u64, OrderMap<Arc<String>, Value>>| -> usize {
+                map.values()
+                    .flat_map(super::ordermap::OrderMap::values)
+                    .map(|v| match *v {
+                        Value::Null => 0,
+                        _ => 1,
+                    })
+                    .sum()
+            };
+            stats.borrow_mut().properties_set += count_properties(&self.new_nodes_attrs)
+                + count_properties(&self.existing_nodes_attrs);
+            let mut g = g.borrow_mut();
+            if !self.new_nodes_attrs.is_empty() {
+                g.import_node_attrs(&self.new_nodes_attrs, &mut self.index_add_docs);
+            }
+            if !self.existing_nodes_attrs.is_empty() {
+                stats.borrow_mut().properties_removed +=
+                    g.set_nodes_attributes(&self.existing_nodes_attrs, &mut self.index_add_docs)?;
+            }
         }
 
-        if !self.set_relationships_attrs.is_empty() {
-            stats.borrow_mut().properties_set += self
-                .set_relationships_attrs
-                .values()
-                .flat_map(super::ordermap::OrderMap::values)
-                .map(|v| match *v {
-                    Value::Null => 0,
-                    _ => 1,
-                })
-                .sum::<usize>();
-            stats.borrow_mut().properties_removed += g
-                .borrow_mut()
-                .set_relationships_attributes(&self.set_relationships_attrs)?;
+        if !self.new_relationships_attrs.is_empty() || !self.existing_relationships_attrs.is_empty()
+        {
+            let count_properties = |map: &HashMap<u64, OrderMap<Arc<String>, Value>>| -> usize {
+                map.values()
+                    .flat_map(super::ordermap::OrderMap::values)
+                    .map(|v| match *v {
+                        Value::Null => 0,
+                        _ => 1,
+                    })
+                    .sum()
+            };
+            stats.borrow_mut().properties_set += count_properties(&self.new_relationships_attrs)
+                + count_properties(&self.existing_relationships_attrs);
+            let mut g = g.borrow_mut();
+            if !self.new_relationships_attrs.is_empty() {
+                g.import_relationship_attrs(&self.new_relationships_attrs);
+            }
+            if !self.existing_relationships_attrs.is_empty() {
+                stats.borrow_mut().properties_removed +=
+                    g.set_relationships_attributes(&self.existing_relationships_attrs)?;
+            }
         }
         if !self.deleted_nodes.is_empty() {
             stats.borrow_mut().nodes_deleted += self.deleted_nodes.len();
@@ -667,8 +730,10 @@ impl Pending {
         self.created_relationships.clear();
         self.set_node_labels.clear();
         self.remove_node_labels.clear();
-        self.set_nodes_attrs.clear();
-        self.set_relationships_attrs.clear();
+        self.new_nodes_attrs.clear();
+        self.existing_nodes_attrs.clear();
+        self.new_relationships_attrs.clear();
+        self.existing_relationships_attrs.clear();
         self.deleted_nodes.clear();
         self.deleted_relationships.clear();
     }
@@ -680,8 +745,10 @@ impl Pending {
             + self.created_relationships.len() as u64
             + self.deleted_nodes.len()
             + self.deleted_relationships.len() as u64
-            + self.set_nodes_attrs.len() as u64
-            + self.set_relationships_attrs.len() as u64
+            + self.new_nodes_attrs.len() as u64
+            + self.existing_nodes_attrs.len() as u64
+            + self.new_relationships_attrs.len() as u64
+            + self.existing_relationships_attrs.len() as u64
             + self.set_node_labels.nvals()
             + self.remove_node_labels.nvals()
     }
@@ -758,7 +825,7 @@ impl Pending {
             drop(graph);
 
             // Attributes
-            if let Some(attrs) = self.set_nodes_attrs.get(&node_id) {
+            if let Some(attrs) = self.new_nodes_attrs.get(&node_id) {
                 write_u16(buf, attrs.len() as u16);
                 for (key, value) in attrs.iter() {
                     write_string(buf, key);
@@ -778,7 +845,7 @@ impl Pending {
             buf.extend_from_slice(&u64::from(rel.to).to_le_bytes());
             write_string(buf, &rel.type_name);
 
-            if let Some(attrs) = self.set_relationships_attrs.get(&u64::from(*rel_id)) {
+            if let Some(attrs) = self.new_relationships_attrs.get(&u64::from(*rel_id)) {
                 write_u16(buf, attrs.len() as u16);
                 for (key, value) in attrs.iter() {
                     write_string(buf, key);
@@ -790,11 +857,8 @@ impl Pending {
             n_effects += 1;
         }
 
-        // --- Updated node attributes (non-created nodes only) ---
-        for (node_id, attrs) in &self.set_nodes_attrs {
-            if self.created_nodes.contains(*node_id) {
-                continue; // Already handled in CREATE_NODE
-            }
+        // --- Updated node attributes (existing nodes only) ---
+        for (node_id, attrs) in &self.existing_nodes_attrs {
             buf.push(EFFECT_UPDATE_NODE);
             buf.extend_from_slice(&node_id.to_le_bytes());
             write_u16(buf, attrs.len() as u16);
@@ -805,14 +869,8 @@ impl Pending {
             n_effects += 1;
         }
 
-        // --- Updated relationship attributes (non-created rels only) ---
-        for (rel_id, attrs) in &self.set_relationships_attrs {
-            if self
-                .created_relationships
-                .contains_key(&RelationshipId::from(*rel_id))
-            {
-                continue; // Already handled in CREATE_EDGE
-            }
+        // --- Updated relationship attributes (existing rels only) ---
+        for (rel_id, attrs) in &self.existing_relationships_attrs {
             buf.push(EFFECT_UPDATE_EDGE);
             buf.extend_from_slice(&rel_id.to_le_bytes());
             write_u16(buf, attrs.len() as u16);
