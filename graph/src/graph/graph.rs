@@ -955,6 +955,15 @@ impl Graph {
         self.reserved_node_count -= nodes.len();
         self.deleted_nodes -= nodes;
 
+        // Ensure capacity covers the highest node ID (effects replay may
+        // insert IDs above the current count when applied one-by-one).
+        if let Some(max_id) = nodes.max() {
+            let needed = max_id + 1;
+            while needed > self.node_cap {
+                self.node_cap *= 2;
+            }
+        }
+
         self.resize();
 
         for id in nodes {
@@ -1299,6 +1308,15 @@ impl Graph {
                 break;
             }
             self.deleted_relationships.remove(id.0);
+        }
+
+        // Ensure capacity covers the highest relationship ID (effects replay
+        // may insert IDs above the current count when applied one-by-one).
+        if let Some(max_id) = relationships.keys().map(|id| id.0).max() {
+            let needed = max_id + 1;
+            while needed > self.relationship_cap {
+                self.relationship_cap *= 2;
+            }
         }
 
         for (
