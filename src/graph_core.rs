@@ -109,6 +109,12 @@ impl ThreadedGraph {
         }
     }
 
+    /// Returns the graph name.
+    pub fn name(&self) -> String {
+        let g = self.graph.read();
+        g.borrow().name().to_string()
+    }
+
     pub fn execute_query(
         &self,
         ctx: &Context,

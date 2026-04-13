@@ -83,7 +83,8 @@ use super::{
     GrB_Matrix_clear, GrB_Matrix_dup, GrB_Matrix_eWiseAdd_Semiring, GrB_Matrix_eWiseMult_Semiring,
     GrB_Matrix_extractElement_BOOL, GrB_Matrix_extractElement_UINT64, GrB_Matrix_free,
     GrB_Matrix_get_INT32, GrB_Matrix_ncols, GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals,
-    GrB_Matrix_removeElement, GrB_Matrix_resize, GrB_Matrix_setElement_BOOL, GrB_Matrix_wait,
+    GrB_Matrix_removeElement, GrB_Matrix_resize, GrB_Matrix_setElement_BOOL,
+    GrB_Matrix_setElement_UINT64, GrB_Matrix_wait,
     GrB_Mode, GrB_UINT64, GrB_WaitMode, GrB_finalize, GrB_mxm, GrB_transpose, GxB_ANY_BOOL,
     GxB_ANY_PAIR_BOOL, GxB_Container_free, GxB_Container_new, GxB_Iterator, GxB_Iterator_free,
     GxB_Iterator_new, GxB_Matrix_fprint, GxB_Matrix_memoryUsage, GxB_Matrix_type, GxB_Option_Field,
@@ -707,6 +708,36 @@ impl Dup<Self> for Matrix {
 }
 
 impl Matrix {
+    /// Create a new UINT64 matrix (for C-compatible tensor encoding).
+    #[must_use]
+    pub fn new_uint64(
+        nrows: u64,
+        ncols: u64,
+    ) -> Self {
+        unsafe {
+            let mut m: MaybeUninit<GrB_Matrix> = MaybeUninit::uninit();
+            let info = GrB_Matrix_new(m.as_mut_ptr(), GrB_UINT64, nrows, ncols);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            Self {
+                m: Arc::new(m.assume_init()),
+                lock: Arc::new(Mutex::new(())),
+            }
+        }
+    }
+
+    /// Set a UINT64 value at (i, j).
+    pub fn set_uint64(
+        &mut self,
+        i: u64,
+        j: u64,
+        value: u64,
+    ) {
+        unsafe {
+            let info = GrB_Matrix_setElement_UINT64(*self.m, value, i, j);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+    }
+
     #[must_use]
     #[allow(clippy::iter_without_into_iter)]
     pub fn iter(

@@ -4,8 +4,9 @@
 //! and `GRAPHMETA_TYPE` -- a Redis module type named `"graphmeta"` --
 //! along with RDB and lifecycle callbacks that Redis invokes automatically.
 //!
-//! Virtual keys ("graphmeta") are managed through a persistence event handler
-//! that fires before and after RDB saves.
+//! `GRAPHMETA_TYPE` is needed to load C FalkorDB RDB files, which use
+//! `"graphmeta"` for virtual keys and AUX data. Rust's own virtual keys
+//! use `"graphdata"` so that C FalkorDB can also load them.
 
 use crate::config::CONFIGURATION_VKEY_MAX_ENTITY_COUNT;
 use crate::graph_core::{ThreadedGraph, graph_free};
@@ -106,132 +107,62 @@ unsafe extern "C" fn graph_rdb_save(
     value: *mut c_void,
 ) {
     unsafe {
-        let graph_arc = &*(value.cast::<Arc<RwLock<ThreadedGraph>>>());
-        let tg = graph_arc.read();
-        let g = tg.graph.read();
-        let graph = g.borrow();
+        // Get the key name to determine if this is a main key or virtual key.
+        let rm_key_name = raw::RedisModule_GetKeyNameFromIO.unwrap()(rdb);
+        let key_name = if rm_key_name.is_null() {
+            String::new()
+        } else {
+            let mut len: usize = 0;
+            let ptr = raw::RedisModule_StringPtrLen.unwrap()(rm_key_name, &raw mut len);
+            String::from_utf8_lossy(std::slice::from_raw_parts(ptr.cast(), len)).to_string()
+        };
 
-        // Check if we have pre-computed virtual key payloads for this graph.
         let vkey_state = VKEY_STATE.lock().unwrap();
-        let graph_name = graph.name().to_string();
 
-        if let Some((_gn, payloads)) = vkey_state.get_vkey_payloads(&graph_name) {
+        // Check if this is a virtual key by looking up in VKEY_STATE.
+        // Virtual keys have their graph ref stored separately because
+        // they hold a placeholder value, not the actual graph.
+        if let Some((graph_name, payloads)) = vkey_state.get_vkey_payloads(&key_name) {
+            // Virtual key: use the stored graph reference.
+            let graph_name = graph_name.to_string();
             let payloads = payloads.to_vec();
             let key_count = vkey_state
                 .graph_vkeys
                 .iter()
                 .find(|(name, _)| name == &graph_name)
                 .map_or(1, |(_, vkeys)| (vkeys.len() + 1) as u64);
+            let Some(graph_arc) = vkey_state.get_graph_ref(&graph_name).cloned() else {
+                return;
+            };
             drop(vkey_state);
+
+            let tg = graph_arc.read();
+            let g = tg.graph.read();
+            let graph = g.borrow();
             serializers::encoder::rdb_save_graph_key(rdb, &graph, &payloads, key_count);
         } else {
-            drop(vkey_state);
-            serializers::encoder::rdb_save_graph(rdb, &graph);
+            // Main key: use the value pointer directly.
+            let graph_arc = &*(value.cast::<Arc<RwLock<ThreadedGraph>>>());
+            let tg = graph_arc.read();
+            let g = tg.graph.read();
+            let graph = g.borrow();
+            let graph_name = graph.name().to_string();
+
+            if let Some((_gn, payloads)) = vkey_state.get_vkey_payloads(&graph_name) {
+                let payloads = payloads.to_vec();
+                let key_count = vkey_state
+                    .graph_vkeys
+                    .iter()
+                    .find(|(name, _)| name == &graph_name)
+                    .map_or(1, |(_, vkeys)| (vkeys.len() + 1) as u64);
+                drop(vkey_state);
+                serializers::encoder::rdb_save_graph_key(rdb, &graph, &payloads, key_count);
+            } else {
+                drop(vkey_state);
+                serializers::encoder::rdb_save_graph(rdb, &graph);
+            }
         }
     }
-}
-
-// ---------------------------------------------------------------------------
-// graphmeta rdb_load / rdb_save / free
-// ---------------------------------------------------------------------------
-
-/// The graphmeta rdb_save encodes a virtual key's portion of a graph.
-#[unsafe(no_mangle)]
-unsafe extern "C" fn graphmeta_rdb_save(
-    rdb: *mut RedisModuleIO,
-    _value: *mut c_void,
-) {
-    unsafe {
-        // Get the key name from IO to look up which payloads to write.
-        let rm_key_name = raw::RedisModule_GetKeyNameFromIO.unwrap()(rdb);
-        if rm_key_name.is_null() {
-            return;
-        }
-        let mut len: usize = 0;
-        let ptr = raw::RedisModule_StringPtrLen.unwrap()(rm_key_name, &raw mut len);
-        let key_name =
-            String::from_utf8_lossy(std::slice::from_raw_parts(ptr.cast(), len)).to_string();
-
-        let vkey_state = VKEY_STATE.lock().unwrap();
-        let Some((graph_name, payloads)) = vkey_state.get_vkey_payloads(&key_name) else {
-            return;
-        };
-        let graph_name = graph_name.to_string();
-        let payloads = payloads.to_vec();
-        let key_count = vkey_state
-            .graph_vkeys
-            .iter()
-            .find(|(name, _)| name == &graph_name)
-            .map_or(1, |(_, vkeys)| (vkeys.len() + 1) as u64);
-
-        // Get the graph reference stored during virtual key creation.
-        let Some(graph_arc) = vkey_state.get_graph_ref(&graph_name).cloned() else {
-            return;
-        };
-        drop(vkey_state);
-
-        let tg = graph_arc.read();
-        let g = tg.graph.read();
-        let graph = g.borrow();
-
-        serializers::encoder::rdb_save_graph_key(rdb, &graph, &payloads, key_count);
-    }
-}
-
-/// The graphmeta rdb_load decodes a virtual key and merges data into the pending graph.
-#[unsafe(no_mangle)]
-unsafe extern "C" fn graphmeta_rdb_load(
-    rdb: *mut RedisModuleIO,
-    _encver: i32,
-) -> *mut c_void {
-    match serializers::decoder::rdb_load_graph(rdb, DEFAULT_CACHE_SIZE) {
-        Ok(_) => {
-            // Return a non-null dummy value. Redis needs non-null for successful load.
-            // We allocate a small dummy that will be freed by graphmeta_free.
-            Box::into_raw(Box::new(0u8)).cast()
-        }
-        Err(e) => {
-            eprintln!("graphmeta rdb_load error: {e}");
-            null_mut()
-        }
-    }
-}
-
-/// Free callback for graphmeta keys. These hold a dummy u8 value.
-#[unsafe(no_mangle)]
-unsafe extern "C" fn graphmeta_free(value: *mut c_void) {
-    if !value.is_null() {
-        unsafe {
-            drop(Box::from_raw(value.cast::<u8>()));
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// graphmeta aux_save / aux_load -- used to finalize multi-key graph loads
-// ---------------------------------------------------------------------------
-
-#[unsafe(no_mangle)]
-unsafe extern "C" fn graphmeta_aux_save(
-    rdb: *mut RedisModuleIO,
-    _when: i32,
-) {
-    // Write a placeholder so aux_load has something to read.
-    save_unsigned(rdb, 0);
-}
-
-#[unsafe(no_mangle)]
-unsafe extern "C" fn graphmeta_aux_load(
-    rdb: *mut RedisModuleIO,
-    _encver: i32,
-    when: i32,
-) -> i32 {
-    let _ = load_unsigned(rdb);
-    if when == raw::Aux::After as i32 {
-        // AFTER_RDB: All graphmeta keys are loaded. Finalize pending graphs.
-        finalize_pending_graphs();
-    }
-    0
 }
 
 // ---------------------------------------------------------------------------
@@ -297,8 +228,6 @@ unsafe extern "C" fn graph_aux_load(
     } else {
         // AFTER_RDB: Read placeholder, finalize pending multi-key graphs.
         let _ = load_unsigned(rdb);
-        // Note: finalization may also happen in graphmeta_aux_load(AFTER_RDB)
-        // if graphmeta keys are loaded after this callback.
         finalize_pending_graphs();
         0
     }
@@ -340,10 +269,10 @@ pub unsafe extern "C" fn on_persistence(
 
 pub(crate) unsafe fn create_virtual_keys(ctx: *mut RedisModuleCtx) {
     unsafe {
-        // First, delete any leftover graphmeta keys from a previous RDB load.
+        // First, delete any leftover virtual keys from a previous RDB load.
         // These persist in the keyspace after loading and must be cleaned up
         // before creating new virtual keys.
-        delete_stale_graphmeta_keys(ctx);
+        delete_stale_virtual_keys(ctx);
 
         let graphs = scan_graphdata_keys(ctx);
 
@@ -365,7 +294,7 @@ pub(crate) unsafe fn create_virtual_keys(ctx: *mut RedisModuleCtx) {
                 continue;
             }
 
-            // Store graph reference for graphmeta_rdb_save to use.
+            // Store graph reference for virtual key rdb_save to use.
             vkey_state.store_graph_ref(graph_name, graph_ref.clone());
 
             let virtual_key_count = key_count - 1;
@@ -404,12 +333,14 @@ pub(crate) unsafe fn create_virtual_keys(ctx: *mut RedisModuleCtx) {
                 let key =
                     raw::RedisModule_OpenKey.unwrap()(ctx, rm_str, raw::KeyMode::WRITE.bits());
                 // Must pass a non-null value; Redis skips keys with null values during RDB save.
-                // We allocate a dummy u8 that graphmeta_free will drop.
-                let dummy = Box::into_raw(Box::new(0u8)).cast();
+                // Create a placeholder ThreadedGraph so graph_free can handle it.
+                let tg = ThreadedGraph::new(DEFAULT_CACHE_SIZE, "__vkey_placeholder__");
+                let boxed: Box<Arc<RwLock<ThreadedGraph>>> = Box::new(Arc::new(RwLock::new(tg)));
+                let value = Box::into_raw(boxed).cast();
                 raw::RedisModule_ModuleTypeSetValue.unwrap()(
                     key,
-                    *GRAPHMETA_TYPE.raw_type.borrow(),
-                    dummy,
+                    *GRAPH_TYPE.raw_type.borrow(),
+                    value,
                 );
                 raw::RedisModule_CloseKey.unwrap()(key);
                 raw::RedisModule_FreeString.unwrap()(ctx, rm_str);
@@ -528,7 +459,14 @@ unsafe fn scan_graphdata_keys(
 
                 if !value.is_null() {
                     let graph_arc_ref = &*(value.cast::<Arc<RwLock<ThreadedGraph>>>());
-                    result.push((key_name, graph_arc_ref.clone()));
+                    // Skip placeholder/virtual keys — only collect real graphs.
+                    let tg = graph_arc_ref.read();
+                    let name = tg.name();
+                    if !name.starts_with("__placeholder") && !name.starts_with("__vkey_placeholder")
+                    {
+                        drop(tg);
+                        result.push((key_name, graph_arc_ref.clone()));
+                    }
                 }
 
                 raw::RedisModule_CloseKey.unwrap()(key);
@@ -547,17 +485,90 @@ unsafe fn scan_graphdata_keys(
     }
 }
 
-/// Delete any graphmeta keys left in the keyspace from a previous RDB load.
+/// Delete any stale virtual keys left in the keyspace from a previous RDB load.
 /// Called before creating new virtual keys during the persistence event.
-pub(crate) unsafe fn delete_stale_graphmeta_keys(ctx: *mut RedisModuleCtx) {
+/// Scans for both old "graphmeta" keys and new "graphdata" virtual keys.
+pub(crate) unsafe fn delete_stale_virtual_keys(ctx: *mut RedisModuleCtx) {
     unsafe {
         let scan_cmd = CString::new("SCAN").unwrap();
         let type_arg = CString::new("TYPE").unwrap();
-        let graphmeta_arg = CString::new("graphmeta").unwrap();
         let fmt = CString::new("ccc").unwrap();
 
-        let mut cursor_val = CString::new("0").unwrap();
         let mut keys_to_delete = Vec::new();
+
+        // Scan for old "graphmeta" keys (from previous Rust versions).
+        let graphmeta_arg = CString::new("graphmeta").unwrap();
+        scan_keys_by_type(
+            ctx,
+            &scan_cmd,
+            &type_arg,
+            &graphmeta_arg,
+            &fmt,
+            &mut keys_to_delete,
+        );
+
+        // Scan for "graphdata" keys that are virtual (placeholder) keys.
+        let graphdata_arg = CString::new("graphdata").unwrap();
+        let mut graphdata_keys = Vec::new();
+        scan_keys_by_type(
+            ctx,
+            &scan_cmd,
+            &type_arg,
+            &graphdata_arg,
+            &fmt,
+            &mut graphdata_keys,
+        );
+        for key_name in graphdata_keys {
+            let rm_str = raw::RedisModule_CreateString.unwrap()(
+                ctx,
+                key_name.as_ptr().cast(),
+                key_name.len(),
+            );
+            let key = raw::RedisModule_OpenKey.unwrap()(ctx, rm_str, raw::KeyMode::READ.bits());
+            let value = raw::RedisModule_ModuleTypeGetValue.unwrap()(key);
+            if !value.is_null() {
+                let graph_arc_ref = &*(value.cast::<Arc<RwLock<ThreadedGraph>>>());
+                let tg = graph_arc_ref.read();
+                let name = tg.name();
+                if name.starts_with("__placeholder") || name.starts_with("__vkey_placeholder") {
+                    keys_to_delete.push(key_name);
+                }
+            }
+            raw::RedisModule_CloseKey.unwrap()(key);
+            raw::RedisModule_FreeString.unwrap()(ctx, rm_str);
+        }
+
+        for key_name in &keys_to_delete {
+            let rm_str = raw::RedisModule_CreateString.unwrap()(
+                ctx,
+                key_name.as_ptr().cast(),
+                key_name.len(),
+            );
+            let key = raw::RedisModule_OpenKey.unwrap()(ctx, rm_str, raw::KeyMode::WRITE.bits());
+            raw::RedisModule_DeleteKey.unwrap()(key);
+            raw::RedisModule_CloseKey.unwrap()(key);
+            raw::RedisModule_FreeString.unwrap()(ctx, rm_str);
+        }
+
+        if !keys_to_delete.is_empty() {
+            log_notice(format!(
+                "Deleted {} stale virtual keys before save",
+                keys_to_delete.len()
+            ));
+        }
+    }
+}
+
+unsafe fn scan_keys_by_type(
+    ctx: *mut RedisModuleCtx,
+    scan_cmd: &CString,
+    type_arg: &CString,
+    type_name: &CString,
+    fmt: &CString,
+    out: &mut Vec<String>,
+) {
+    unsafe {
+        let mut cursor_val = CString::new("0").unwrap();
 
         loop {
             let reply = raw::RedisModule_Call.unwrap()(
@@ -566,7 +577,7 @@ pub(crate) unsafe fn delete_stale_graphmeta_keys(ctx: *mut RedisModuleCtx) {
                 fmt.as_ptr(),
                 cursor_val.as_ptr(),
                 type_arg.as_ptr(),
-                graphmeta_arg.as_ptr(),
+                type_name.as_ptr(),
             );
             if reply.is_null() {
                 break;
@@ -606,7 +617,7 @@ pub(crate) unsafe fn delete_stale_graphmeta_keys(ctx: *mut RedisModuleCtx) {
                     name_len,
                 ))
                 .to_string();
-                keys_to_delete.push(key_name);
+                out.push(key_name);
             }
 
             cursor_val = CString::new(new_cursor).unwrap();
@@ -615,25 +626,6 @@ pub(crate) unsafe fn delete_stale_graphmeta_keys(ctx: *mut RedisModuleCtx) {
             if done {
                 break;
             }
-        }
-
-        for key_name in &keys_to_delete {
-            let rm_str = raw::RedisModule_CreateString.unwrap()(
-                ctx,
-                key_name.as_ptr().cast(),
-                key_name.len(),
-            );
-            let key = raw::RedisModule_OpenKey.unwrap()(ctx, rm_str, raw::KeyMode::WRITE.bits());
-            raw::RedisModule_DeleteKey.unwrap()(key);
-            raw::RedisModule_CloseKey.unwrap()(key);
-            raw::RedisModule_FreeString.unwrap()(ctx, rm_str);
-        }
-
-        if !keys_to_delete.is_empty() {
-            log_notice(format!(
-                "Deleted {} stale graphmeta keys before save",
-                keys_to_delete.len()
-            ));
         }
     }
 }
@@ -767,6 +759,69 @@ pub static GRAPH_TYPE: RedisType = RedisType::new(
     },
 );
 
+// ---------------------------------------------------------------------------
+// graphmeta -- kept for loading C FalkorDB RDB files.
+//
+// C FalkorDB uses "graphmeta" for virtual keys and emits graphmeta AUX data.
+// We register this type with rdb_load + aux_load so Rust can consume C's RDB
+// stream. We intentionally omit aux_save so that Rust never emits graphmeta
+// AUX data (which C can't load since it doesn't register "graphmeta" either).
+// ---------------------------------------------------------------------------
+
+/// Load a C FalkorDB graphmeta virtual key.
+#[unsafe(no_mangle)]
+unsafe extern "C" fn graphmeta_rdb_load(
+    rdb: *mut RedisModuleIO,
+    _encver: i32,
+) -> *mut c_void {
+    match serializers::decoder::rdb_load_graph(rdb, DEFAULT_CACHE_SIZE) {
+        Ok(_) => {
+            // Return a non-null dummy value. Redis needs non-null for successful load.
+            Box::into_raw(Box::new(0u8)).cast()
+        }
+        Err(e) => {
+            eprintln!("graphmeta rdb_load error: {e}");
+            null_mut()
+        }
+    }
+}
+
+/// Save callback for graphmeta keys left over from a C RDB load.
+/// These should be cleaned up before save by `delete_stale_virtual_keys`,
+/// but this is kept as a safety net.
+#[unsafe(no_mangle)]
+unsafe extern "C" fn graphmeta_rdb_save(
+    _rdb: *mut RedisModuleIO,
+    _value: *mut c_void,
+) {
+    // Stale graphmeta keys should have been deleted before save.
+    // If we get here, write nothing — the key will be empty.
+}
+
+/// Free callback for graphmeta keys. These hold a dummy u8 value.
+#[unsafe(no_mangle)]
+unsafe extern "C" fn graphmeta_free(value: *mut c_void) {
+    if !value.is_null() {
+        unsafe {
+            drop(Box::from_raw(value.cast::<u8>()));
+        }
+    }
+}
+
+/// Consume C FalkorDB's graphmeta AUX data during RDB load.
+#[unsafe(no_mangle)]
+unsafe extern "C" fn graphmeta_aux_load(
+    rdb: *mut RedisModuleIO,
+    _encver: i32,
+    when: i32,
+) -> i32 {
+    let _ = load_unsigned(rdb);
+    if when == raw::Aux::After as i32 {
+        finalize_pending_graphs();
+    }
+    0
+}
+
 pub static GRAPHMETA_TYPE: RedisType = RedisType::new(
     "graphmeta",
     19,
@@ -780,10 +835,11 @@ pub static GRAPHMETA_TYPE: RedisType = RedisType::new(
         mem_usage: None,
         digest: None,
 
+        // aux_load only — consume C's graphmeta AUX data but never emit it.
         aux_load: Some(graphmeta_aux_load),
         aux_save: None,
-        aux_save2: Some(graphmeta_aux_save),
-        aux_save_triggers: 3, // BEFORE_RDB | AFTER_RDB
+        aux_save2: None,
+        aux_save_triggers: 3,
 
         free_effort: None,
         unlink: None,

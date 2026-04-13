@@ -1,6 +1,4 @@
-use crate::redis_type::{
-    create_virtual_keys, delete_stale_graphmeta_keys, finalize_pending_graphs,
-};
+use crate::redis_type::{create_virtual_keys, delete_stale_virtual_keys, finalize_pending_graphs};
 use crate::serializers::DECODE_STATE;
 use redis_module::{Context, NextArg, RedisError, RedisResult, RedisString, RedisValue};
 
@@ -35,7 +33,7 @@ fn debug_aux(
         }
         "END" => {
             finalize_pending_graphs();
-            unsafe { delete_stale_graphmeta_keys(ctx.ctx) };
+            unsafe { delete_stale_virtual_keys(ctx.ctx) };
             Ok(RedisValue::Integer(0))
         }
         _ => Err(RedisError::String(format!("Unknown AUX action: {action}"))),

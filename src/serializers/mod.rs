@@ -29,7 +29,7 @@ pub struct VirtualKeyState {
     pub vkey_map: Vec<(String, String, usize, Vec<PayloadEntry>)>,
     /// (graph_name, list of virtual key names)
     pub graph_vkeys: Vec<(String, Vec<String>)>,
-    /// Graph references indexed by graph_name for use by graphmeta_rdb_save.
+    /// Graph references indexed by graph_name for use by virtual key rdb_save.
     graph_refs: Vec<(String, Arc<RwLock<ThreadedGraph>>)>,
 }
 
@@ -230,7 +230,7 @@ impl Header {
             multi_edge: graph
                 .relationship_tensors()
                 .iter()
-                .map(|t| t.edge_count() > 0)
+                .map(|t| t.has_multi_edge())
                 .collect(),
             key_count,
         }
