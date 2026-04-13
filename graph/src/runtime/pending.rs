@@ -866,19 +866,19 @@ impl Pending {
             }
         }
 
-        // --- Deleted nodes ---
-        for node_id in &self.deleted_nodes {
-            buf.push(EFFECT_DELETE_NODE);
-            buf.extend_from_slice(&node_id.to_le_bytes());
-            n_effects += 1;
-        }
-
-        // --- Deleted relationships ---
+        // --- Deleted relationships (before nodes, so replica removes edges first) ---
         for (rel_id, (from, to)) in &self.deleted_relationships {
             buf.push(EFFECT_DELETE_EDGE);
             buf.extend_from_slice(&u64::from(*rel_id).to_le_bytes());
             buf.extend_from_slice(&u64::from(*from).to_le_bytes());
             buf.extend_from_slice(&u64::from(*to).to_le_bytes());
+            n_effects += 1;
+        }
+
+        // --- Deleted nodes ---
+        for node_id in &self.deleted_nodes {
+            buf.push(EFFECT_DELETE_NODE);
+            buf.extend_from_slice(&node_id.to_le_bytes());
             n_effects += 1;
         }
 
@@ -900,6 +900,8 @@ pub const EFFECT_SET_LABELS: u8 = 7;
 pub const EFFECT_REMOVE_LABELS: u8 = 8;
 pub const EFFECT_ADD_SCHEMA: u8 = 9;
 pub const EFFECT_ADD_ATTRIBUTE: u8 = 10;
+pub const EFFECT_CREATE_INDEX: u8 = 11;
+pub const EFFECT_DROP_INDEX: u8 = 12;
 
 // Schema type tags (used in EFFECT_ADD_SCHEMA)
 pub const SCHEMA_NODE_LABEL: u8 = 0;
@@ -923,14 +925,14 @@ const VALUE_DATE: u8 = 9;
 const VALUE_TIME: u8 = 10;
 const VALUE_DURATION: u8 = 11;
 
-fn write_u16(
+pub fn write_u16(
     buf: &mut Vec<u8>,
     v: u16,
 ) {
     buf.extend_from_slice(&v.to_le_bytes());
 }
 
-fn write_string(
+pub fn write_string(
     buf: &mut Vec<u8>,
     s: &str,
 ) {

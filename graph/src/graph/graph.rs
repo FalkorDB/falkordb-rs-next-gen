@@ -914,6 +914,12 @@ impl Graph {
         NodeId(self.node_count + self.reserved_node_count - 1)
     }
 
+    /// Increment the reserved node counter without allocating a specific ID.
+    /// Used by effect replay where the actual ID comes from the primary.
+    pub const fn inc_reserved_node_count(&mut self) {
+        self.reserved_node_count += 1;
+    }
+
     pub fn reserve_nodes(
         &mut self,
         count: usize,
@@ -1246,6 +1252,12 @@ impl Graph {
         }
         self.reserved_relationship_count += 1;
         RelationshipId(self.relationship_count + self.reserved_relationship_count - 1)
+    }
+
+    /// Increment the reserved relationship counter without allocating a specific ID.
+    /// Used by effect replay where the actual ID comes from the primary.
+    pub const fn inc_reserved_relationship_count(&mut self) {
+        self.reserved_relationship_count += 1;
     }
 
     pub fn reserve_relationships(

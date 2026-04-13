@@ -35,7 +35,7 @@
 use super::{FnType, Functions, Type};
 use crate::runtime::{runtime::Runtime, value::Value};
 use std::sync::Arc;
-use thin_vec::{ThinVec, thin_vec};
+use thin_vec::ThinVec;
 
 pub fn register(funcs: &mut Functions) {
     cypher_fn!(funcs, "tointeger",

@@ -45,7 +45,14 @@ use graph::{
         mvcc_graph::MvccGraph,
     },
     planner::{IR, plan_is_non_deterministic},
-    runtime::{eval::evaluate_param, pool::Pool, runtime::Runtime},
+    runtime::{
+        eval::evaluate_param,
+        pending::{
+            EFFECT_CREATE_INDEX, EFFECT_DROP_INDEX, EFFECTS_VERSION, write_string, write_u16,
+        },
+        pool::Pool,
+        runtime::Runtime,
+    },
     threadpool::{pending_count, spawn},
 };
 use orx_tree::Collection;
@@ -202,8 +209,11 @@ impl ThreadedGraph {
         };
 
         // Capture effects buffer before replying (pending data is still available)
-        let effects_buffer =
+        let mut effects_buffer =
             should_use_effects(is_non_deterministic, &runtime, result.stats.execution_time);
+
+        // Build index effects for CreateIndex / DropIndex IR nodes (not tracked by Pending)
+        effects_buffer = build_index_effects(&runtime, effects_buffer);
 
         result.stats.cached = cached;
         if compact {
@@ -465,8 +475,75 @@ fn replicate_effects(
         let args: &[&[u8]] = &[key_name.as_bytes(), &buf];
         ctx.replicate("GRAPH.EFFECT", args);
     } else {
-        ctx.replicate("GRAPH.QUERY", &[key_name.as_bytes(), query.as_bytes()]);
+        let args: &[&[u8]] = &[key_name.as_bytes(), query.as_bytes()];
+        ctx.replicate("GRAPH.QUERY", args);
     }
+}
+
+/// Encode IndexType as u8 tag for effects buffer.
+const fn index_type_tag(it: &graph::index::IndexType) -> u8 {
+    use graph::index::IndexType;
+    match it {
+        IndexType::Range => 0,
+        IndexType::Fulltext => 1,
+        IndexType::Vector => 2,
+    }
+}
+
+/// Encode EntityType as u8 tag for effects buffer.
+const fn entity_type_tag(et: &graph::entity_type::EntityType) -> u8 {
+    use graph::entity_type::EntityType;
+    match et {
+        EntityType::Node => 0,
+        EntityType::Relationship => 1,
+    }
+}
+
+/// Scan the plan for CreateIndex / DropIndex IR nodes and append their
+/// effects to the buffer. Returns the (possibly new) effects buffer.
+fn build_index_effects(
+    runtime: &Runtime,
+    mut effects_buffer: Option<Vec<u8>>,
+) -> Option<Vec<u8>> {
+    for node in runtime.plan.iter() {
+        match node {
+            IR::CreateIndex {
+                label,
+                attrs,
+                index_type,
+                entity_type,
+                ..
+            } => {
+                let buf = effects_buffer.get_or_insert_with(|| vec![EFFECTS_VERSION]);
+                buf.push(EFFECT_CREATE_INDEX);
+                buf.push(index_type_tag(index_type));
+                buf.push(entity_type_tag(entity_type));
+                write_string(buf, label);
+                write_u16(buf, attrs.len() as u16);
+                for attr in attrs {
+                    write_string(buf, attr);
+                }
+            }
+            IR::DropIndex {
+                label,
+                attrs,
+                index_type,
+                entity_type,
+            } => {
+                let buf = effects_buffer.get_or_insert_with(|| vec![EFFECTS_VERSION]);
+                buf.push(EFFECT_DROP_INDEX);
+                buf.push(index_type_tag(index_type));
+                buf.push(entity_type_tag(entity_type));
+                write_string(buf, label);
+                write_u16(buf, attrs.len() as u16);
+                for attr in attrs {
+                    write_string(buf, attr);
+                }
+            }
+            _ => {}
+        }
+    }
+    effects_buffer
 }
 
 #[unsafe(no_mangle)]

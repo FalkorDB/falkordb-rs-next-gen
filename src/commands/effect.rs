@@ -12,17 +12,19 @@
 
 use crate::{config::CONFIGURATION_CACHE_SIZE, graph_core::ThreadedGraph, redis_type::GRAPH_TYPE};
 use graph::{
+    entity_type::EntityType,
     graph::graph::{Graph, NodeId, RelationshipId},
     graph::graphblas::matrix::{Matrix, New, Set},
     graph::graphblas::tensor::GrB_INDEX_MAX,
+    index::IndexType,
     runtime::{
         ordermap::OrderMap,
         pending::{
             ATTR_NODE, ATTR_REL, EFFECT_ADD_ATTRIBUTE, EFFECT_ADD_SCHEMA, EFFECT_CREATE_EDGE,
-            EFFECT_CREATE_NODE, EFFECT_DELETE_EDGE, EFFECT_DELETE_NODE, EFFECT_REMOVE_LABELS,
-            EFFECT_SET_LABELS, EFFECT_UPDATE_EDGE, EFFECT_UPDATE_NODE, EFFECTS_VERSION,
-            PendingRelationship, SCHEMA_NODE_LABEL, SCHEMA_REL_TYPE, read_string, read_u16,
-            read_u64, read_value,
+            EFFECT_CREATE_INDEX, EFFECT_CREATE_NODE, EFFECT_DELETE_EDGE, EFFECT_DELETE_NODE,
+            EFFECT_DROP_INDEX, EFFECT_REMOVE_LABELS, EFFECT_SET_LABELS, EFFECT_UPDATE_EDGE,
+            EFFECT_UPDATE_NODE, EFFECTS_VERSION, PendingRelationship, SCHEMA_NODE_LABEL,
+            SCHEMA_REL_TYPE, read_string, read_u16, read_u64, read_value,
         },
         value::Value,
     },
@@ -108,15 +110,16 @@ fn apply_effects(
 
     let mut index_add_docs: HashMap<u64, RoaringTreemap> = HashMap::new();
     let mut index_remove_docs: HashMap<u64, RoaringTreemap> = HashMap::new();
+    let mut has_index_ops = false;
 
     while offset < buf.len() {
         let effect_type = buf[offset];
         offset += 1;
-
+        
         match effect_type {
             EFFECT_CREATE_NODE => {
                 let node_id_raw = read_u64(buf, &mut offset)?;
-                let _node_id = g.reserve_node();
+                g.inc_reserved_node_count();
 
                 // Labels
                 let label_count = read_u16(buf, &mut offset)?;
@@ -153,7 +156,7 @@ fn apply_effects(
                 let dst_id = read_u64(buf, &mut offset)?;
                 let type_name = read_string(buf, &mut offset)?;
 
-                let _rel_id = g.reserve_relationship();
+                g.inc_reserved_relationship_count();
 
                 let pending_rel =
                     PendingRelationship::new(NodeId::from(src_id), NodeId::from(dst_id), type_name);
@@ -263,6 +266,32 @@ fn apply_effects(
                 }
             }
 
+            EFFECT_CREATE_INDEX => {
+                let index_type = read_index_type(buf, &mut offset)?;
+                let entity_type = read_entity_type(buf, &mut offset)?;
+                let label = read_string(buf, &mut offset)?;
+                let attr_count = read_u16(buf, &mut offset)?;
+                let mut attrs = Vec::with_capacity(attr_count as usize);
+                for _ in 0..attr_count {
+                    attrs.push(read_string(buf, &mut offset)?);
+                }
+                // Use sync variant to avoid spawning async population threads on the replica
+                g.create_index_sync(&index_type, &entity_type, &label, &attrs, None)?;
+                has_index_ops = true;
+            }
+
+            EFFECT_DROP_INDEX => {
+                let index_type = read_index_type(buf, &mut offset)?;
+                let entity_type = read_entity_type(buf, &mut offset)?;
+                let label = read_string(buf, &mut offset)?;
+                let attr_count = read_u16(buf, &mut offset)?;
+                let mut attrs = Vec::with_capacity(attr_count as usize);
+                for _ in 0..attr_count {
+                    attrs.push(read_string(buf, &mut offset)?);
+                }
+                g.drop_index(&index_type, &entity_type, &label, &attrs)?;
+            }
+
             _ => return Err(format!("unknown effect type: {effect_type}")),
         }
     }
@@ -270,7 +299,44 @@ fn apply_effects(
     g.commit_attrs()?;
     g.commit_index(&mut index_add_docs, &mut index_remove_docs);
 
+    if has_index_ops {
+        g.populate_indexes_sync();
+    }
+
     Ok(())
+}
+
+fn read_index_type(
+    buf: &[u8],
+    offset: &mut usize,
+) -> Result<IndexType, String> {
+    if *offset >= buf.len() {
+        return Err("effects buffer truncated".to_string());
+    }
+    let tag = buf[*offset];
+    *offset += 1;
+    match tag {
+        0 => Ok(IndexType::Range),
+        1 => Ok(IndexType::Fulltext),
+        2 => Ok(IndexType::Vector),
+        _ => Err(format!("unknown index type tag: {tag}")),
+    }
+}
+
+fn read_entity_type(
+    buf: &[u8],
+    offset: &mut usize,
+) -> Result<EntityType, String> {
+    if *offset >= buf.len() {
+        return Err("effects buffer truncated".to_string());
+    }
+    let tag = buf[*offset];
+    *offset += 1;
+    match tag {
+        0 => Ok(EntityType::Node),
+        1 => Ok(EntityType::Relationship),
+        _ => Err(format!("unknown entity type tag: {tag}")),
+    }
 }
 
 fn read_attrs(

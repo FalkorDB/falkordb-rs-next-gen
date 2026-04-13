@@ -439,7 +439,7 @@ impl Indexer {
             .unwrap_or_default()
     }
 
-    /// Get fields for all labels (for synchronous index population during RDB load).
+    /// Get fields for all labels with pending population.
     #[must_use]
     pub fn get_all_pending_fields(
         &self
@@ -447,6 +447,7 @@ impl Indexer {
         self.index
             .read()
             .iter()
+            .filter(|(_, index)| index.pending_count() > 0)
             .map(|(label, index)| (label.clone(), index.fields().clone()))
             .collect()
     }
