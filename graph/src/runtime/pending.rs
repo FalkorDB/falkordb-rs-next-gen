@@ -595,26 +595,20 @@ impl Pending {
         if !self.created_nodes.is_empty() {
             stats.borrow_mut().nodes_created += self.created_nodes.len();
             g.borrow_mut().create_nodes(&self.created_nodes);
-            self.created_nodes.clear();
         }
         if !self.created_relationships.is_empty() {
             stats.borrow_mut().relationships_created += self.created_relationships.len();
             g.borrow_mut()
                 .create_relationships(&self.created_relationships);
-            self.created_relationships.clear();
         }
         if self.set_node_labels.nvals() > 0 {
             g.borrow_mut()
                 .set_nodes_labels(&mut self.set_node_labels, &mut self.index_add_docs);
-
-            self.set_node_labels.clear();
         }
         if self.remove_node_labels.nvals() > 0 {
             stats.borrow_mut().labels_removed += self.remove_node_labels.nvals() as usize;
             g.borrow_mut()
                 .remove_nodes_labels(&mut self.remove_node_labels, &mut self.index_remove_docs);
-
-            self.remove_node_labels.clear();
         }
         if !self.set_nodes_attrs.is_empty() {
             stats.borrow_mut().properties_set += self
@@ -629,7 +623,6 @@ impl Pending {
             stats.borrow_mut().properties_removed += g
                 .borrow_mut()
                 .set_nodes_attributes(&self.set_nodes_attrs, &mut self.index_add_docs)?;
-            self.set_nodes_attrs.clear();
         }
 
         if !self.set_relationships_attrs.is_empty() {
@@ -645,13 +638,11 @@ impl Pending {
             stats.borrow_mut().properties_removed += g
                 .borrow_mut()
                 .set_relationships_attributes(&self.set_relationships_attrs)?;
-            self.set_relationships_attrs.clear();
         }
         if !self.deleted_nodes.is_empty() {
             stats.borrow_mut().nodes_deleted += self.deleted_nodes.len();
             g.borrow_mut()
                 .delete_nodes(&self.deleted_nodes, &mut self.index_remove_docs)?;
-            self.deleted_nodes.clear();
         }
         if !self.deleted_relationships.is_empty() {
             stats.borrow_mut().relationships_deleted += self.deleted_relationships.len();
@@ -670,6 +661,18 @@ impl Pending {
         Ok(())
     }
 
+    /// Clear all pending mutation state.
+    pub fn clear(&mut self) {
+        self.created_nodes.clear();
+        self.created_relationships.clear();
+        self.set_node_labels.clear();
+        self.remove_node_labels.clear();
+        self.set_nodes_attrs.clear();
+        self.set_relationships_attrs.clear();
+        self.deleted_nodes.clear();
+        self.deleted_relationships.clear();
+    }
+
     /// Returns the number of effects (operations) tracked in this Pending.
     #[must_use]
     pub fn effects_count(&self) -> u64 {
@@ -684,10 +687,10 @@ impl Pending {
     }
 
     /// Build a binary effects buffer from the accumulated mutations.
-    /// Must be called before `commit()` clears the data.
+    /// Must be called before `clear()` resets the pending data.
     /// Appends to an existing buffer if provided, so multiple commits
     /// in the same query accumulate into a single effects buffer.
-    /// Returns the buffer and the number of effect records written.
+    /// Returns the number of effect records written.
     pub fn build_effects_buffer(
         &self,
         g: &AtomicRefCell<Graph>,
