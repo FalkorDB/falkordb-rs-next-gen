@@ -90,6 +90,7 @@ use crate::{
                 Dup, MaskedElementWiseAdd, MaskedElementWiseMultiply, Matrix, MxM, New, Remove,
                 Set, Size, Transpose,
             },
+            serialization::{Encode, EncodeState, PayloadEntry, Writer},
             tensor::Tensor,
             versioned_matrix::VersionedMatrix,
         },
@@ -219,6 +220,8 @@ pub struct MemoryUsageReport {
 /// The Graph is `Send + Sync` but not internally synchronized. Use [`MvccGraph`]
 /// for concurrent access with proper read/write isolation.
 pub struct Graph {
+    /// Graph name (Redis key name)
+    name: String,
     /// Maximum node capacity (for matrix sizing)
     node_cap: u64,
     /// Maximum relationship capacity (for matrix sizing)
@@ -263,6 +266,8 @@ pub struct Graph {
     cache: Arc<Mutex<LruCache<String, PlanTree>>>,
     /// Version counter (incremented on each write transaction)
     pub version: u64,
+    /// Schema version (incremented only on schema changes: new labels, relationship types, or attributes)
+    pub schema_version: u64,
 }
 
 /// Wrapper for plan trees to implement Send+Sync.
@@ -394,6 +399,20 @@ fn drop_index_bg(
 
 static DATABASE: OnceCell<Database> = OnceCell::new();
 
+/// Get or initialize the shared fjall database for attribute stores.
+pub fn get_database() -> Database {
+    DATABASE
+        .get_or_init(|| {
+            Database::builder(format!("./attrs/{}", std::process::id()))
+                .temporary(true)
+                .manual_journal_persist(true)
+                .cache_size(128 * 1_024 * 1_024)
+                .open()
+                .expect("failed to open fjall database")
+        })
+        .clone()
+}
+
 impl Graph {
     #[must_use]
     pub fn new(
@@ -403,15 +422,9 @@ impl Graph {
         version: u64,
         name: &str,
     ) -> Self {
-        let db = DATABASE.get_or_init(|| {
-            Database::builder(format!("./attrs/{}", std::process::id()))
-                .temporary(true)
-                .manual_journal_persist(true)
-                .cache_size(128 * 1_024 * 1_024)
-                .open()
-                .expect("failed to open fjall database")
-        });
+        let db = get_database();
         Self {
+            name: name.to_string(),
             node_cap: n,
             relationship_cap: e,
             reserved_node_count: 0,
@@ -428,11 +441,7 @@ impl Graph {
             labels_matices: Vec::new(),
             relationship_matrices: Vec::new(),
             node_attrs: AttributeStore::new(db.clone(), &format!("{name}/nodes"), version),
-            relationship_attrs: AttributeStore::new(
-                db.clone(),
-                &format!("{name}/relationships"),
-                version,
-            ),
+            relationship_attrs: AttributeStore::new(db, &format!("{name}/relationships"), version),
             node_indexer: Indexer::default(),
             node_labels: Vec::new(),
             relationship_types: Vec::new(),
@@ -440,6 +449,100 @@ impl Graph {
                 NonZeroUsize::new(cache_size.max(1)).expect("cache_size.max(1) is always >= 1"),
             ))),
             version,
+            schema_version: 0,
+        }
+    }
+
+    /// Restore a graph from decoded RDB data.
+    ///
+    /// Used by the RDB load path to construct a fully-populated graph
+    /// without going through the mutation API.
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
+    pub fn restore(
+        name: &str,
+        cache_size: usize,
+        node_count: u64,
+        relationship_count: u64,
+        deleted_nodes: RoaringTreemap,
+        deleted_relationships: RoaringTreemap,
+        adjacancy_matrix: VersionedMatrix,
+        node_labels_matrix: VersionedMatrix,
+        relationship_type_matrix: VersionedMatrix,
+        all_nodes_matrix: VersionedMatrix,
+        labels_matices: Vec<VersionedMatrix>,
+        relationship_matrices: Vec<Tensor>,
+        node_labels: Vec<Arc<String>>,
+        relationship_types: Vec<Arc<String>>,
+        node_attrs: AttributeStore,
+        relationship_attrs: AttributeStore,
+    ) -> Self {
+        let node_cap = node_count + deleted_nodes.len();
+        let relationship_cap = relationship_count + deleted_relationships.len();
+        let schema_version = (node_labels.len() + relationship_types.len()) as u64;
+        Self {
+            name: name.to_string(),
+            node_cap: node_cap.next_power_of_two().max(64),
+            relationship_cap: relationship_cap.next_power_of_two().max(64),
+            reserved_node_count: 0,
+            reserved_relationship_count: 0,
+            node_count,
+            relationship_count,
+            deleted_nodes,
+            deleted_relationships,
+            zero_matrix: VersionedMatrix::new(0, 0),
+            adjacancy_matrix,
+            node_labels_matrix,
+            relationship_type_matrix,
+            all_nodes_matrix,
+            labels_matices,
+            relationship_matrices,
+            node_attrs,
+            relationship_attrs,
+            node_indexer: Indexer::default(),
+            node_labels,
+            relationship_types,
+            cache: Arc::new(Mutex::new(LruCache::new(
+                NonZeroUsize::new(cache_size.max(1)).expect("cache_size.max(1) is always >= 1"),
+            ))),
+            version: 0,
+            schema_version,
+        }
+    }
+
+    /// Rebuild derived matrices after RDB load.
+    ///
+    /// - `all_nodes_matrix`: diagonal `(id, id) = true` for all live nodes
+    /// - `relationship_type_matrix`: `(edge_id, type_index) = true` for all edges
+    /// - Tensor backward (`mt`): transpose of forward (`m`)
+    pub fn rebuild_derived_matrices(&mut self) {
+        // Resize the derived matrices to match the graph capacity
+        let nc = self.node_cap;
+        let rc = self.relationship_cap;
+        self.all_nodes_matrix.resize(nc, nc);
+        self.relationship_type_matrix
+            .resize(rc, self.relationship_types.len() as u64);
+
+        // Rebuild all_nodes_matrix from node count + deleted nodes
+        let max_id = self.node_count + self.deleted_nodes.len();
+        for id in 0..max_id {
+            if !self.deleted_nodes.contains(id) {
+                self.all_nodes_matrix.set(id, id, true);
+            }
+        }
+
+        // Rebuild relationship_type_matrix and tensor backward matrices
+        for (type_idx, tensor) in self.relationship_matrices.iter_mut().enumerate() {
+            // Resize tensor backward matrix to proper dimensions
+            tensor.resize(nc, nc);
+            // Rebuild backward (transpose) matrix from forward matrix in one operation
+            tensor.rebuild_backward();
+
+            // Iterate edges matrix to rebuild relationship_type_matrix
+            for (_, _, edge_id) in tensor.iter(0, u64::MAX, false) {
+                self.relationship_type_matrix
+                    .set(edge_id, type_idx as u64, true);
+            }
         }
     }
 
@@ -450,6 +553,7 @@ impl Graph {
         let node_attrs = self.node_attrs.new_version(self.version + 1);
         let relationship_attrs = self.relationship_attrs.new_version(self.version + 1);
         Self {
+            name: self.name.clone(),
             node_cap: self.node_cap,
             relationship_cap: self.relationship_cap,
             reserved_node_count: 0,
@@ -476,10 +580,15 @@ impl Graph {
             relationship_types: self.relationship_types.clone(),
             cache: self.cache.clone(),
             version: self.version + 1,
+            schema_version: self.schema_version,
         }
     }
 
     #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
     pub const fn node_count(&self) -> u64 {
         self.node_count
     }
@@ -609,6 +718,29 @@ impl Graph {
             .iter()
             .position(|t| t.as_str() == relationship_type)
             .map(TypeId)
+    }
+
+    /// Get-or-create a relationship type by name, returning its `TypeId`.
+    pub fn get_type_id_mut(
+        &mut self,
+        relationship_type: &str,
+    ) -> TypeId {
+        if let Some(pos) = self
+            .relationship_types
+            .iter()
+            .position(|t| t.as_str() == relationship_type)
+            .map(TypeId)
+        {
+            return pos;
+        }
+
+        self.relationship_types
+            .push(Arc::new(relationship_type.to_string()));
+        self.relationship_matrices.insert(
+            self.relationship_types.len() - 1,
+            Tensor::new(self.node_cap, self.node_cap),
+        );
+        TypeId(self.relationship_types.len() - 1)
     }
 
     pub fn get_plan(
@@ -782,6 +914,12 @@ impl Graph {
         NodeId(self.node_count + self.reserved_node_count - 1)
     }
 
+    /// Increment the reserved node counter without allocating a specific ID.
+    /// Used by effect replay where the actual ID comes from the primary.
+    pub const fn inc_reserved_node_count(&mut self) {
+        self.reserved_node_count += 1;
+    }
+
     pub fn reserve_nodes(
         &mut self,
         count: usize,
@@ -817,6 +955,15 @@ impl Graph {
         self.reserved_node_count -= nodes.len();
         self.deleted_nodes -= nodes;
 
+        // Ensure capacity covers the highest node ID (effects replay may
+        // insert IDs above the current count when applied one-by-one).
+        if let Some(max_id) = nodes.max() {
+            let needed = max_id + 1;
+            while needed > self.node_cap {
+                self.node_cap *= 2;
+            }
+        }
+
         self.resize();
 
         for id in nodes {
@@ -830,6 +977,14 @@ impl Graph {
             return 0;
         }
         self.node_count + self.deleted_nodes.len() - 1
+    }
+
+    #[must_use]
+    pub fn max_relationship_id(&self) -> u64 {
+        if self.relationship_count == 0 {
+            return 0;
+        }
+        self.relationship_count + self.deleted_relationships.len() - 1
     }
 
     pub fn set_nodes_attributes(
@@ -1108,6 +1263,12 @@ impl Graph {
         RelationshipId(self.relationship_count + self.reserved_relationship_count - 1)
     }
 
+    /// Increment the reserved relationship counter without allocating a specific ID.
+    /// Used by effect replay where the actual ID comes from the primary.
+    pub const fn inc_reserved_relationship_count(&mut self) {
+        self.reserved_relationship_count += 1;
+    }
+
     pub fn reserve_relationships(
         &mut self,
         count: usize,
@@ -1147,6 +1308,15 @@ impl Graph {
                 break;
             }
             self.deleted_relationships.remove(id.0);
+        }
+
+        // Ensure capacity covers the highest relationship ID (effects replay
+        // may insert IDs above the current count when applied one-by-one).
+        if let Some(max_id) = relationships.keys().map(|id| id.0).max() {
+            let needed = max_id + 1;
+            while needed > self.relationship_cap {
+                self.relationship_cap *= 2;
+            }
         }
 
         for (
@@ -1203,8 +1373,33 @@ impl Graph {
     }
 
     #[must_use]
+    pub fn deleted_nodes_count(&self) -> u64 {
+        self.deleted_nodes.len()
+    }
+
+    #[must_use]
     pub const fn deleted_nodes(&self) -> &RoaringTreemap {
         &self.deleted_nodes
+    }
+
+    #[must_use]
+    pub fn deleted_relationships_count(&self) -> u64 {
+        self.deleted_relationships.len()
+    }
+
+    #[must_use]
+    pub const fn deleted_relationships(&self) -> &RoaringTreemap {
+        &self.deleted_relationships
+    }
+
+    #[must_use]
+    pub fn label_matrices(&self) -> &[VersionedMatrix] {
+        &self.labels_matices
+    }
+
+    #[must_use]
+    pub fn relationship_tensors(&self) -> &[Tensor] {
+        &self.relationship_matrices
     }
 
     #[must_use]
@@ -1457,7 +1652,7 @@ impl Graph {
         &self,
         id: NodeId,
     ) -> impl Iterator<Item = (u16, Value)> + '_ {
-        self.node_attrs.get_all_attrs_by_id(id.0)
+        self.node_attrs.get_all_attrs_by_id(id.0).into_iter()
     }
 
     pub fn get_relationship_attrs(
@@ -1479,7 +1674,9 @@ impl Graph {
         &self,
         id: RelationshipId,
     ) -> impl Iterator<Item = (u16, Value)> + '_ {
-        self.relationship_attrs.get_all_attrs_by_id(id.0)
+        self.relationship_attrs
+            .get_all_attrs_by_id(id.0)
+            .into_iter()
     }
 
     pub fn create_index(
@@ -1500,6 +1697,61 @@ impl Graph {
             EntityType::Relationship => {}
         }
         Ok(())
+    }
+
+    /// Create an index and populate it synchronously (for RDB load).
+    /// Unlike `create_index`, this doesn't spawn async tasks.
+    pub fn create_index_sync(
+        &mut self,
+        index_type: &IndexType,
+        entity_type: &EntityType,
+        label: &Arc<String>,
+        attrs: &Vec<Arc<String>>,
+        options: Option<IndexOptions>,
+    ) -> Result<(), String> {
+        match entity_type {
+            EntityType::Node => {
+                let len = self.get_label_matrix_mut(label).nvals();
+                self.node_indexer
+                    .create_index(index_type, label, attrs, len, options)?;
+                // Don't spawn async — caller will populate via populate_index_sync
+            }
+            EntityType::Relationship => {}
+        }
+        Ok(())
+    }
+
+    /// Synchronously populate all pending indexes.
+    /// Used after RDB load when the graph is fully constructed.
+    pub fn populate_indexes_sync(&mut self) {
+        let fields_by_label = self.node_indexer.get_all_pending_fields();
+        for (label, attrs) in fields_by_label {
+            if let Some(lm) = self.get_label_matrix(&label) {
+                let mut batch = Vec::new();
+                for (n, _) in lm.iter(0, u64::MAX) {
+                    let mut doc = Document::new(n);
+                    let mut has_fields = false;
+                    for (attr, fields) in &attrs {
+                        let value = self.get_node_attribute(NodeId(n), attr);
+                        if let Some(value) = value {
+                            for field in fields {
+                                doc.set(field, &value);
+                            }
+                            has_fields = true;
+                        }
+                    }
+                    if has_fields {
+                        batch.push(doc);
+                    }
+                }
+                if !batch.is_empty() {
+                    let mut add_docs = HashMap::new();
+                    add_docs.insert(label.clone(), batch);
+                    self.node_indexer.commit(&mut add_docs, &mut HashMap::new());
+                }
+                self.node_indexer.enable(&label);
+            }
+        }
     }
 
     fn start_populate_index(
@@ -1876,5 +2128,119 @@ impl Graph {
             sz += std::mem::size_of::<u16>() + std::mem::size_of::<Value>() + val.heap_size();
         }
         sz
+    }
+
+    /// Encode a single payload entry.
+    pub fn encode_payload(
+        &self,
+        w: &mut dyn Writer,
+        p: &PayloadEntry,
+    ) {
+        let global_attrs = self.build_global_attrs();
+        match p.state {
+            EncodeState::Nodes => {
+                let this = &self;
+                let count = p.count;
+                let offset = p.offset;
+                this.node_attrs.set_encode_context(
+                    &this.deleted_nodes,
+                    this.max_node_id(),
+                    &global_attrs,
+                );
+                this.node_attrs.encode_with_range(w, count, offset);
+            }
+            EncodeState::DeletedNodes => {
+                self.deleted_nodes.encode_with_range(w, p.count, p.offset);
+            }
+            EncodeState::Edges => {
+                let this = &self;
+                let count = p.count;
+                let offset = p.offset;
+                this.relationship_attrs.set_encode_context(
+                    &this.deleted_relationships,
+                    this.max_relationship_id(),
+                    &global_attrs,
+                );
+                this.relationship_attrs.encode_with_range(w, count, offset);
+            }
+            EncodeState::DeletedEdges => {
+                self.deleted_relationships
+                    .encode_with_range(w, p.count, p.offset);
+            }
+            EncodeState::LabelsMatrices => {
+                let label_matrices = self.label_matrices();
+                w.write_unsigned(label_matrices.len() as u64);
+                for (i, lm) in label_matrices.iter().enumerate() {
+                    w.write_unsigned(i as u64);
+                    lm.encode(w);
+                }
+            }
+            EncodeState::RelationMatrices => {
+                let tensors = self.relationship_tensors();
+                for (i, tensor) in tensors.iter().enumerate() {
+                    w.write_unsigned(i as u64);
+                    tensor.encode(w);
+                }
+            }
+            EncodeState::AdjMatrix => self.adjacancy_matrix.encode(w),
+            EncodeState::LblsMatrix => self.node_labels_matrix.encode(w),
+            _ => {}
+        }
+    }
+
+    /// Get node attribute names.
+    pub fn get_node_attribute_names(&self) -> Vec<Arc<String>> {
+        self.node_attrs.attrs_name.iter().cloned().collect()
+    }
+
+    /// Get relationship attribute names.
+    pub fn get_relationship_attribute_names(&self) -> Vec<Arc<String>> {
+        self.relationship_attrs.attrs_name.iter().cloned().collect()
+    }
+
+    /// Register a node attribute name (get-or-create). Used by effect
+    /// replication to pre-register attribute names on the replica.
+    pub fn add_node_attribute_name(
+        &mut self,
+        name: &str,
+    ) {
+        let arc = Arc::new(name.to_string());
+        if self.node_attrs.attrs_name.get_index_of(&arc).is_none() {
+            self.node_attrs.attrs_name.insert(arc);
+        }
+    }
+
+    /// Register a relationship attribute name (get-or-create). Used by effect
+    /// replication to pre-register attribute names on the replica.
+    pub fn add_rel_attribute_name(
+        &mut self,
+        name: &str,
+    ) {
+        let arc = Arc::new(name.to_string());
+        if self
+            .relationship_attrs
+            .attrs_name
+            .get_index_of(&arc)
+            .is_none()
+        {
+            self.relationship_attrs.attrs_name.insert(arc);
+        }
+    }
+
+    /// Build the unified global attribute list (node attrs ∪ relationship attrs, in order).
+    pub fn build_global_attrs(&self) -> Vec<Arc<String>> {
+        let mut attrs = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for name in self.node_attrs.attrs_name.iter() {
+            if seen.insert(name.clone()) {
+                attrs.push(name.clone());
+            }
+        }
+        for name in self.relationship_attrs.attrs_name.iter() {
+            if seen.insert(name.clone()) {
+                attrs.push(name.clone());
+            }
+        }
+        attrs
     }
 }

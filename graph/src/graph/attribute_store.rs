@@ -83,7 +83,13 @@
 //! Each attribute is stored as a separate fjall entry:
 //! `entity_id (8 bytes big-endian) + attr_idx (2 bytes big-endian)`
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 
 use fjall::{
     Database, Keyspace, KeyspaceCreateOptions, Readable, Snapshot, config::HashRatioPolicy,
@@ -92,6 +98,7 @@ use once_cell::sync::OnceCell;
 use roaring::RoaringTreemap;
 
 use super::attribute_cache::AttributeCache;
+use super::graphblas::serialization::{Decode, Encode, Reader, Writer};
 use crate::runtime::{ordermap::OrderMap, orderset::OrderSet, value::Value};
 
 /// Create a composite key from entity ID and attribute index.
@@ -134,6 +141,12 @@ pub struct AttributeStore {
     dirty_entities: RoaringTreemap,
     /// Entity IDs pending full deletion (all attributes) — applied on commit, cleared on rollback.
     pending_deletes: RoaringTreemap,
+    /// Encoding context: deleted entity IDs (set before serialization).
+    encode_deleted: Mutex<Option<RoaringTreemap>>,
+    /// Encoding context: maximum entity ID (set before serialization).
+    encode_max_id: AtomicU64,
+    /// Encoding context: mapping from local attr IDs to global attr IDs (set before serialization).
+    encode_attr_remap: Mutex<Option<Vec<u16>>>,
 }
 
 impl Clone for AttributeStore {
@@ -148,6 +161,9 @@ impl Clone for AttributeStore {
             version: self.version,
             dirty_entities: self.dirty_entities.clone(),
             pending_deletes: self.pending_deletes.clone(),
+            encode_deleted: Mutex::new(None),
+            encode_max_id: AtomicU64::new(0),
+            encode_attr_remap: Mutex::new(None),
         }
     }
 }
@@ -172,6 +188,9 @@ impl AttributeStore {
             version,
             dirty_entities: RoaringTreemap::new(),
             pending_deletes: RoaringTreemap::new(),
+            encode_deleted: Mutex::new(None),
+            encode_max_id: AtomicU64::new(0),
+            encode_attr_remap: Mutex::new(None),
         }
     }
 
@@ -235,6 +254,9 @@ impl AttributeStore {
             version,
             dirty_entities: RoaringTreemap::new(),
             pending_deletes: RoaringTreemap::new(),
+            encode_deleted: Mutex::new(None),
+            encode_max_id: AtomicU64::new(0),
+            encode_attr_remap: Mutex::new(None),
         }
     }
 
@@ -369,10 +391,10 @@ impl AttributeStore {
     pub fn get_all_attrs_by_id(
         &self,
         key: u64,
-    ) -> impl Iterator<Item = (u16, Value)> + '_ {
-        let cached = self.cache.get_entity(key, self.version);
-        let attrs = cached.unwrap_or_else(|| self.populate_cache_from_fjall(key));
-        attrs.into_iter()
+    ) -> Vec<(u16, Value)> {
+        self.cache
+            .get_entity(key, self.version)
+            .unwrap_or_else(|| self.populate_cache_from_fjall(key))
     }
 
     // ---- write path (cache only) ----------------------------------------
@@ -619,6 +641,29 @@ impl AttributeStore {
     pub const fn cache(&self) -> &Arc<AttributeCache> {
         &self.cache
     }
+
+    /// Set encoding context needed by `Encode::encode_with_range`.
+    ///
+    /// Builds a mapping from local attribute IDs (indices in this store's attrs_name)
+    /// to global attribute IDs (indices in the provided global_attrs list).
+    pub fn set_encode_context(
+        &self,
+        deleted: &RoaringTreemap,
+        max_id: u64,
+        global_attrs: &[Arc<String>],
+    ) {
+        *self.encode_deleted.lock().unwrap() = Some(deleted.clone());
+        self.encode_max_id.store(max_id, Ordering::Relaxed);
+
+        // Build mapping from local attr ID to global attr ID
+        let mut remap = vec![u16::MAX; self.attrs_name.len()];
+        for (local_id, local_name) in self.attrs_name.iter().enumerate() {
+            if let Some(global_id) = global_attrs.iter().position(|n| n == local_name) {
+                remap[local_id] = global_id as u16;
+            }
+        }
+        *self.encode_attr_remap.lock().unwrap() = Some(remap);
+    }
 }
 
 // SAFETY: AttributeStore is Send+Sync because:
@@ -628,3 +673,95 @@ impl AttributeStore {
 // - All other fields (`RoaringTreemap`, `OrderSet`, etc.) are owned and not shared
 unsafe impl Send for AttributeStore {}
 unsafe impl Sync for AttributeStore {}
+
+impl Encode<19> for AttributeStore {
+    fn encode(
+        &self,
+        _w: &mut dyn Writer,
+    ) {
+        unimplemented!("use encode_with_range for AttributeStore")
+    }
+
+    fn encode_with_range(
+        &self,
+        w: &mut dyn Writer,
+        count: u64,
+        offset: u64,
+    ) {
+        let binding = self.encode_deleted.lock().unwrap();
+        let deleted = binding.as_ref().expect("encode context not set");
+        let max_id = self.encode_max_id.load(Ordering::Relaxed);
+
+        let remap_binding = self.encode_attr_remap.lock().unwrap();
+        let remap = remap_binding.as_ref().expect("encode attr remap not set");
+
+        let mut skipped = 0u64;
+        let mut encoded = 0u64;
+
+        for id in 0..=max_id {
+            if deleted.contains(id) {
+                continue;
+            }
+            if skipped < offset {
+                skipped += 1;
+                continue;
+            }
+
+            w.write_unsigned(id);
+
+            let props: Vec<(u16, Value)> = self.get_all_attrs_by_id(id);
+            w.write_unsigned(props.len() as u64);
+
+            for (local_attr_id, value) in props {
+                // Remap local attribute ID to global attribute ID
+                let global_attr_id = if (local_attr_id as usize) < remap.len() {
+                    remap[local_attr_id as usize]
+                } else {
+                    local_attr_id
+                };
+                w.write_unsigned(global_attr_id as u64);
+                value.encode(w);
+            }
+
+            encoded += 1;
+            if encoded >= count {
+                break;
+            }
+        }
+    }
+}
+
+impl Decode<19> for AttributeStore {
+    fn decode(_r: &mut dyn Reader) -> Result<Self, String> {
+        unimplemented!("use decode_with_count for AttributeStore")
+    }
+
+    fn decode_with_count(
+        &mut self,
+        r: &mut dyn Reader,
+        count: u64,
+    ) -> Result<(), String> {
+        for _ in 0..count {
+            let entity_id = r.read_unsigned()?;
+            let attr_count = r.read_unsigned()?;
+
+            let mut entity_attrs = OrderMap::default();
+            for _ in 0..attr_count {
+                let attr_id = r.read_unsigned()? as u16;
+                let value = Value::decode(r)?;
+
+                if (attr_id as usize) < self.attrs_name.len() {
+                    let attr_name = self.attrs_name[attr_id as usize].clone();
+                    entity_attrs.insert(attr_name, value);
+                }
+            }
+
+            if !entity_attrs.is_empty() {
+                let mut batch = HashMap::new();
+                batch.insert(entity_id, entity_attrs);
+                self.insert_attrs(&batch)?;
+            }
+        }
+        Ok(())
+    }
+}
