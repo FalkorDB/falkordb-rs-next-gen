@@ -42,7 +42,7 @@ fi
 # TEST="tests/flow/test_function_calls" FAIL_FAST=1 ./flow.sh
 
 if [[ ${#TEST_FILTER[@]} -eq 0 ]]; then
-    RLTest -f "$TESTS_FILE" --module "$TARGET_DIR/$TARGET" --no-progress $PARALLELISM $STOP_ON_FAILURE --clear-logs --log-dir tests/flow/logs $V
+    RLTest -f "$TESTS_FILE" --module "$TARGET_DIR/$TARGET" --no-progress $PARALLELISM $STOP_ON_FAILURE --clear-logs --log-dir tests/flow/logs --enable-debug-command --enable-protected-configs $V
 else
-    RLTest "${TEST_FILTER[@]}" --module "$TARGET_DIR/$TARGET" --no-progress $PARALLELISM $STOP_ON_FAILURE --clear-logs --log-dir tests/flow/logs $V
+    RLTest "${TEST_FILTER[@]}" --module "$TARGET_DIR/$TARGET" --no-progress $PARALLELISM $STOP_ON_FAILURE --clear-logs --log-dir tests/flow/logs --enable-debug-command --enable-protected-configs $V
 fi
