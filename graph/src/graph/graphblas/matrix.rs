@@ -55,6 +55,7 @@
 #![allow(clippy::doc_markdown)]
 
 use std::{
+    marker::PhantomData,
     mem::{ManuallyDrop, MaybeUninit},
     os::raw::c_void,
     ptr::null_mut,
@@ -80,15 +81,15 @@ use super::{
     GrB_DESC_SCT1, GrB_DESC_ST0, GrB_DESC_ST0T1, GrB_DESC_ST1, GrB_DESC_T0, GrB_DESC_T0T1,
     GrB_DESC_T1, GrB_Descriptor, GrB_GLOBAL, GrB_Global_set_INT32, GrB_Info, GrB_Matrix,
     GrB_Matrix_clear, GrB_Matrix_dup, GrB_Matrix_eWiseAdd_Semiring, GrB_Matrix_eWiseMult_Semiring,
-    GrB_Matrix_extractElement_BOOL, GrB_Matrix_free, GrB_Matrix_get_INT32, GrB_Matrix_ncols,
-    GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals, GrB_Matrix_removeElement,
-    GrB_Matrix_resize, GrB_Matrix_setElement_BOOL, GrB_Matrix_wait, GrB_Mode, GrB_WaitMode,
-    GrB_finalize, GrB_mxm, GrB_transpose, GxB_ANY_BOOL, GxB_ANY_PAIR_BOOL, GxB_Container_free,
-    GxB_Container_new, GxB_Iterator, GxB_Iterator_free, GxB_Iterator_new, GxB_Matrix_fprint,
-    GxB_Matrix_memoryUsage, GxB_Option_Field, GxB_Print_Level, GxB_init,
-    GxB_load_Matrix_from_Container, GxB_rowIterator_attach, GxB_rowIterator_getColIndex,
-    GxB_rowIterator_getRowIndex, GxB_rowIterator_nextCol, GxB_rowIterator_nextRow,
-    GxB_rowIterator_seekRow, GxB_unload_Matrix_into_Container,
+    GrB_Matrix_extractElement_BOOL, GrB_Matrix_extractElement_UINT64, GrB_Matrix_free,
+    GrB_Matrix_get_INT32, GrB_Matrix_ncols, GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals,
+    GrB_Matrix_removeElement, GrB_Matrix_resize, GrB_Matrix_setElement_BOOL, GrB_Matrix_wait,
+    GrB_Mode, GrB_UINT64, GrB_WaitMode, GrB_finalize, GrB_mxm, GrB_transpose, GxB_ANY_BOOL,
+    GxB_ANY_PAIR_BOOL, GxB_Container_free, GxB_Container_new, GxB_Iterator, GxB_Iterator_free,
+    GxB_Iterator_new, GxB_Matrix_fprint, GxB_Matrix_memoryUsage, GxB_Matrix_type, GxB_Option_Field,
+    GxB_Print_Level, GxB_init, GxB_load_Matrix_from_Container, GxB_rowIterator_attach,
+    GxB_rowIterator_getColIndex, GxB_rowIterator_getRowIndex, GxB_rowIterator_nextCol,
+    GxB_rowIterator_nextRow, GxB_rowIterator_seekRow, GxB_unload_Matrix_into_Container,
 };
 
 /// Initializes the GraphBLAS library in non-blocking mode.
@@ -538,6 +539,29 @@ impl Matrix {
         *self.m
     }
 
+    /// Iterate entries as `(row, col, value)` UINT64 triples.
+    ///
+    /// Used when loading C-produced relation matrices where single-edge
+    /// entries store the edge ID as a UINT64 value.
+    #[must_use]
+    pub fn uint64_iter(&self) -> Iter<Uint64Extract> {
+        Iter::new(self, 0, u64::MAX)
+    }
+
+    /// Returns true if this matrix has UINT64 element type.
+    ///
+    /// C-produced relation matrices store edge IDs as UINT64, while
+    /// Rust-produced ones use BOOL.
+    #[must_use]
+    pub fn is_uint64(&self) -> bool {
+        unsafe {
+            let mut t: MaybeUninit<super::GrB_Type> = MaybeUninit::uninit();
+            let info = GxB_Matrix_type(t.as_mut_ptr(), *self.m);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            t.assume_init() == GrB_UINT64
+        }
+    }
+
     #[must_use]
     pub fn pending(&self) -> bool {
         unsafe {
@@ -777,7 +801,57 @@ where
     }
 }
 
-pub struct Iter {
+/// Strategy for extracting values from a GraphBLAS row iterator position.
+///
+/// # Safety
+/// Implementations must only call valid GraphBLAS FFI functions on the provided matrix.
+pub trait IterExtract {
+    type Item;
+
+    /// Extract the item from the current iterator position.
+    ///
+    /// # Safety
+    /// `m` must be a valid `GrB_Matrix` and the iterator must be positioned on a valid entry.
+    unsafe fn extract(
+        m: GrB_Matrix,
+        row: u64,
+        col: u64,
+    ) -> Self::Item;
+}
+
+/// Extracts `(row, col)` pairs from a boolean matrix.
+pub struct BoolExtract;
+
+impl IterExtract for BoolExtract {
+    type Item = (u64, u64);
+
+    unsafe fn extract(
+        _m: GrB_Matrix,
+        row: u64,
+        col: u64,
+    ) -> Self::Item {
+        (row, col)
+    }
+}
+
+/// Extracts `(row, col, value)` triples from a UINT64 matrix.
+pub struct Uint64Extract;
+
+impl IterExtract for Uint64Extract {
+    type Item = (u64, u64, u64);
+
+    unsafe fn extract(
+        m: GrB_Matrix,
+        row: u64,
+        col: u64,
+    ) -> Self::Item {
+        let mut val: u64 = 0;
+        unsafe { GrB_Matrix_extractElement_UINT64(&raw mut val, m, row, col) };
+        (row, col, val)
+    }
+}
+
+pub struct Iter<E: IterExtract = BoolExtract> {
     m: Arc<GrB_Matrix>,
     /// The underlying GraphBLAS iterator.
     inner: GxB_Iterator,
@@ -785,12 +859,13 @@ pub struct Iter {
     depleted: bool,
     /// The maximum row index for the iterator.
     max_row: u64,
+    _extract: PhantomData<E>,
 }
 
-unsafe impl Send for Iter {}
-unsafe impl Sync for Iter {}
+unsafe impl<E: IterExtract> Send for Iter<E> {}
+unsafe impl<E: IterExtract> Sync for Iter<E> {}
 
-impl Drop for Iter {
+impl<E: IterExtract> Drop for Iter<E> {
     /// Frees the GraphBLAS iterator when the `Iter` is dropped.
     fn drop(&mut self) {
         unsafe {
@@ -803,7 +878,7 @@ impl Drop for Iter {
     }
 }
 
-impl Iter {
+impl<E: IterExtract> Iter<E> {
     /// Creates a new iterator for traversing all elements in a matrix.
     ///
     /// # Parameters
@@ -838,18 +913,19 @@ impl Iter {
                 depleted: info != GrB_Info::GrB_SUCCESS
                     || GxB_rowIterator_getRowIndex(iter) > max_row,
                 max_row,
+                _extract: PhantomData,
             }
         }
     }
 }
 
-impl Iterator for Iter {
-    type Item = (u64, u64);
+impl<E: IterExtract> Iterator for Iter<E> {
+    type Item = E::Item;
 
     /// Advances the iterator and returns the next element in the matrix.
     ///
     /// # Returns
-    /// - `Some((u64, u64))`: The next element in the matrix.
+    /// - `Some(E::Item)`: The next element in the matrix.
     /// - `None`: The iterator is depleted.
     fn next(&mut self) -> Option<Self::Item> {
         if self.depleted {
@@ -858,6 +934,7 @@ impl Iterator for Iter {
         unsafe {
             let row = GxB_rowIterator_getRowIndex(self.inner);
             let col = GxB_rowIterator_getColIndex(self.inner);
+            let item = E::extract(*self.m, row, col);
             if GxB_rowIterator_nextCol(self.inner) != GrB_Info::GrB_SUCCESS {
                 let mut info = GxB_rowIterator_nextRow(self.inner);
                 debug_assert!(
@@ -873,7 +950,7 @@ impl Iterator for Iter {
                 self.depleted = info != GrB_Info::GrB_SUCCESS
                     || GxB_rowIterator_getRowIndex(self.inner) > self.max_row;
             }
-            Some((row, col))
+            Some(item)
         }
     }
 }

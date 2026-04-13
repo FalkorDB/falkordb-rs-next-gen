@@ -194,6 +194,24 @@ impl VersionedMatrix {
 
         (m, dp)
     }
+
+    /// Returns true if the base matrix has UINT64 element type.
+    ///
+    /// C-produced relation matrices store edge IDs as UINT64, while
+    /// Rust-produced ones use BOOL.
+    #[must_use]
+    pub fn is_uint64(&self) -> bool {
+        self.m.is_uint64()
+    }
+
+    /// Iterate UINT64 entries from the base M and delta-plus DP matrices.
+    ///
+    /// Used during RDB decode to read C-produced relation matrices where
+    /// single-edge entries store the edge ID as a UINT64 value.
+    /// Returns an empty iterator for Rust-produced BOOL matrices.
+    pub fn uint64_iter(&self) -> impl Iterator<Item = (u64, u64, u64)> + '_ {
+        self.m.uint64_iter().chain(self.dp.uint64_iter())
+    }
 }
 
 impl Remove for VersionedMatrix {

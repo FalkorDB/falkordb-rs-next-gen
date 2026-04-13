@@ -235,6 +235,26 @@ impl Decode<19> for Tensor {
         let forward = VersionedMatrix::decode(r)?;
         let mut edges = VersionedMatrix::new(GrB_INDEX_MAX, GrB_INDEX_MAX);
 
+        // C FalkorDB stores edge IDs as UINT64 values in the forward matrix.
+        // Single-edge entries (MSB not set) hold the edge ID directly.
+        // Multi-edge entries (MSB set) are stored in the tensor section below.
+        // Iterate entries, extract single-edge IDs, and rebuild as BOOL.
+        const MSB_MASK: u64 = 1u64 << 63;
+        let forward = if forward.is_uint64() {
+            let mut bool_forward = VersionedMatrix::new(forward.nrows(), forward.ncols());
+            for (src, dst, value) in forward.uint64_iter() {
+                bool_forward.set(src, dst, true);
+                if value & MSB_MASK == 0 {
+                    // Single-edge: value is the edge ID
+                    let compound_key = (src << 32) | dst;
+                    edges.set(compound_key, value, true);
+                }
+            }
+            bool_forward
+        } else {
+            forward
+        };
+
         let total_tensor_count = r.read_unsigned()?;
         if total_tensor_count > 0 {
             // TM tensors (base), then TDP tensors (delta-plus)
