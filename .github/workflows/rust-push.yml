@@ -88,8 +88,8 @@ jobs:
     steps:
       - name: Free disk space
         run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghcrunner /usr/local/share/boost
-          sudo apt-get clean
+          rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghcrunner /usr/local/share/boost /usr/share/doc /usr/share/man || true
+          apt-get clean 2>/dev/null || true
           df -h
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - run: rustup default stable
@@ -122,8 +122,8 @@ jobs:
     steps:
       - name: Free disk space
         run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghcrunner /usr/local/share/boost
-          sudo apt-get clean
+          rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghcrunner /usr/local/share/boost /usr/share/doc /usr/share/man || true
+          apt-get clean 2>/dev/null || true
           df -h
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - run: rustup default stable
