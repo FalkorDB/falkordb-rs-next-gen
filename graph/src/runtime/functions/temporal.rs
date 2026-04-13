@@ -560,8 +560,8 @@ pub fn register(funcs: &mut Functions) {
         args: [],
         ret: Type::Date,
         non_deterministic,
-        fn date_transaction_fn(_, _args) {
-            let now = Utc::now().date_naive();
+        fn date_transaction_fn(rt, _args) {
+            let now = rt.transaction_timestamp.date_naive();
             let ts = now.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
             Ok(Value::Date(ts))
         }
@@ -572,8 +572,8 @@ pub fn register(funcs: &mut Functions) {
         args: [],
         ret: Type::Time,
         non_deterministic,
-        fn localtime_transaction_fn(_, _args) {
-            let now = Utc::now().time();
+        fn localtime_transaction_fn(rt, _args) {
+            let now = rt.transaction_timestamp.time();
             let epoch = NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
             let dt = NaiveDateTime::new(epoch, now);
             let ts = dt.and_utc().timestamp();
@@ -586,8 +586,8 @@ pub fn register(funcs: &mut Functions) {
         args: [],
         ret: Type::Datetime,
         non_deterministic,
-        fn localdatetime_transaction_fn(_, _args) {
-            let now = Utc::now().naive_utc();
+        fn localdatetime_transaction_fn(rt, _args) {
+            let now = rt.transaction_timestamp.naive_utc();
             let ts = now.and_utc().timestamp();
             Ok(Value::Datetime(ts))
         }

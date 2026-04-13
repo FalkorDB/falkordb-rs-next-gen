@@ -276,6 +276,23 @@ fn query_graph_has_non_deterministic(qg: &QueryGraph<Arc<String>, Arc<String>, V
     false
 }
 
+/// Returns true if an IndexQuery tree contains any non-deterministic function call.
+fn index_query_has_non_deterministic(query: &IndexQuery<QueryExpr<Variable>>) -> bool {
+    match query {
+        IndexQuery::Equal { value, .. } => expr_has_non_deterministic(value),
+        IndexQuery::Range { min, max, .. } => {
+            min.as_ref().is_some_and(|e| expr_has_non_deterministic(e))
+                || max.as_ref().is_some_and(|e| expr_has_non_deterministic(e))
+        }
+        IndexQuery::And(queries) | IndexQuery::Or(queries) => {
+            queries.iter().any(index_query_has_non_deterministic)
+        }
+        IndexQuery::Point { point, radius, .. } => {
+            expr_has_non_deterministic(point) || expr_has_non_deterministic(radius)
+        }
+    }
+}
+
 /// Returns true if the execution plan contains any non-deterministic function call.
 #[must_use]
 pub fn plan_is_non_deterministic(plan: &DynTree<IR>) -> bool {
@@ -319,6 +336,13 @@ pub fn plan_is_non_deterministic(plan: &DynTree<IR>) -> bool {
             } => expr_has_non_deterministic(file_path) || expr_has_non_deterministic(delimiter),
             IR::ValueHashJoin { lhs_exp, rhs_exp } => {
                 expr_has_non_deterministic(lhs_exp) || expr_has_non_deterministic(rhs_exp)
+            }
+            IR::NodeByIndexScan { query, .. } => index_query_has_non_deterministic(query),
+            IR::NodeByFulltextScan { label, query, .. } => {
+                expr_has_non_deterministic(label) || expr_has_non_deterministic(query)
+            }
+            IR::NodeByLabelAndIdScan { filter, .. } | IR::NodeByIdSeek { filter, .. } => {
+                filter.iter().any(|(e, _)| expr_has_non_deterministic(e))
             }
             _ => false,
         })
