@@ -959,8 +959,11 @@ impl Graph {
         // insert IDs above the current count when applied one-by-one).
         if let Some(max_id) = nodes.max() {
             let needed = max_id + 1;
-            while needed > self.node_cap {
-                self.node_cap *= 2;
+            if needed > self.node_cap {
+                while needed > self.node_cap {
+                    self.node_cap *= 2;
+                }
+                self.resize_node_matrices();
             }
         }
 
@@ -1314,8 +1317,11 @@ impl Graph {
         // may insert IDs above the current count when applied one-by-one).
         if let Some(max_id) = relationships.keys().map(|id| id.0).max() {
             let needed = max_id + 1;
-            while needed > self.relationship_cap {
-                self.relationship_cap *= 2;
+            if needed > self.relationship_cap {
+                while needed > self.relationship_cap {
+                    self.relationship_cap *= 2;
+                }
+                self.resize_relationship_matrices();
             }
         }
 
@@ -1597,21 +1603,30 @@ impl Graph {
         self.relationship_attrs.get_attr(id.0, attr)
     }
 
+    fn resize_node_matrices(&mut self) {
+        self.adjacancy_matrix.resize(self.node_cap, self.node_cap);
+        self.node_labels_matrix
+            .resize(self.node_cap, self.labels_matices.len() as u64);
+        self.all_nodes_matrix.resize(self.node_cap, self.node_cap);
+        for label_matrix in &mut self.labels_matices {
+            label_matrix.resize(self.node_cap, self.node_cap);
+        }
+        for relationship_matrix in &mut self.relationship_matrices {
+            relationship_matrix.resize(self.node_cap, self.node_cap);
+        }
+    }
+
+    fn resize_relationship_matrices(&mut self) {
+        self.relationship_type_matrix
+            .resize(self.relationship_cap, self.relationship_types.len() as u64);
+    }
+
     fn resize(&mut self) {
         if self.node_count > self.node_cap {
             while self.node_count > self.node_cap {
                 self.node_cap *= 2;
             }
-            self.adjacancy_matrix.resize(self.node_cap, self.node_cap);
-            self.node_labels_matrix
-                .resize(self.node_cap, self.labels_matices.len() as u64);
-            self.all_nodes_matrix.resize(self.node_cap, self.node_cap);
-            for label_matrix in &mut self.labels_matices {
-                label_matrix.resize(self.node_cap, self.node_cap);
-            }
-            for relationship_matrix in &mut self.relationship_matrices {
-                relationship_matrix.resize(self.node_cap, self.node_cap);
-            }
+            self.resize_node_matrices();
         }
 
         if self.labels_matices.len() as u64 > self.node_labels_matrix.ncols() {
@@ -1623,8 +1638,7 @@ impl Graph {
             while self.relationship_count > self.relationship_cap {
                 self.relationship_cap *= 2;
             }
-            self.relationship_type_matrix
-                .resize(self.relationship_cap, self.relationship_types.len() as u64);
+            self.resize_relationship_matrices();
         }
 
         if self.relationship_types.len() as u64 > self.relationship_type_matrix.ncols() {
