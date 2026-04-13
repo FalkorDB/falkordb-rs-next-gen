@@ -24,7 +24,15 @@ if [[ "$TESTS_FILE" == "" ]]; then
 fi
 
 STOP_ON_FAILURE=""
-PARALLELISM="--parallelism 8"
+if [[ "$PARALLELISM" == "" ]]; then
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    CORES=$(sysctl -n hw.ncpu)
+  else
+    CORES=$(nproc)
+  fi
+  echo "Running with parallelism: $CORES"
+  PARALLELISM="--parallelism $CORES"
+fi
 if [[ "$FAIL_FAST" == 1 ]]; then
 	STOP_ON_FAILURE="--stop-on-failure"
 	PARALLELISM="--parallelism 1"
