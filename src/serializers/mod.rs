@@ -4,7 +4,7 @@ pub mod encoder;
 
 use std::collections::HashMap;
 use std::ffi::CString;
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, LazyLock};
 
 use graph::graph::attribute_store::AttributeStore;
 use graph::graph::graph::Graph;
@@ -12,7 +12,7 @@ use graph::graph::graphblas::serialization::{Decode, Encode, Reader, Writer, ind
 use graph::graph::graphblas::tensor::Tensor;
 use graph::graph::graphblas::versioned_matrix::VersionedMatrix;
 use graph::index::{Field, IndexInfo, IndexType, TextIndexOptions, VectorIndexOptions};
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use roaring::RoaringTreemap;
 
 use crate::graph_core::ThreadedGraph;

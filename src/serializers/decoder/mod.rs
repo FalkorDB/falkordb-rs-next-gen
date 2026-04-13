@@ -48,7 +48,7 @@ pub fn rdb_load_graph(
 
     // For multi-key graphs, check if we already have a pending graph in DECODE_STATE.
     if hdr.key_count > 1 {
-        let mut decode_state = DECODE_STATE.lock().unwrap();
+        let mut decode_state = DECODE_STATE.lock();
         let is_first_key = !decode_state.pending.contains_key(&hdr.graph_name);
 
         if is_first_key {

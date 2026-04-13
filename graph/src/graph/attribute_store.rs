@@ -86,10 +86,12 @@
 use std::{
     collections::HashMap,
     sync::{
-        Arc, Mutex,
+        Arc,
         atomic::{AtomicU64, Ordering},
     },
 };
+
+use parking_lot::Mutex;
 
 use fjall::{
     Database, Keyspace, KeyspaceCreateOptions, Readable, Snapshot, config::HashRatioPolicy,
@@ -680,7 +682,7 @@ impl AttributeStore {
         max_id: u64,
         global_attrs: &[Arc<String>],
     ) {
-        *self.encode_deleted.lock().unwrap() = Some(deleted.clone());
+        *self.encode_deleted.lock() = Some(deleted.clone());
         self.encode_max_id.store(max_id, Ordering::Relaxed);
 
         // Build a reverse index from global attr name to global ID for O(1) lookup
@@ -697,7 +699,7 @@ impl AttributeStore {
                 remap[local_id] = global_id as u16;
             }
         }
-        *self.encode_attr_remap.lock().unwrap() = Some(remap);
+        *self.encode_attr_remap.lock() = Some(remap);
     }
 }
 
@@ -723,11 +725,11 @@ impl Encode<19> for AttributeStore {
         count: u64,
         offset: u64,
     ) {
-        let binding = self.encode_deleted.lock().unwrap();
+        let binding = self.encode_deleted.lock();
         let deleted = binding.as_ref().expect("encode context not set");
         let max_id = self.encode_max_id.load(Ordering::Relaxed);
 
-        let remap_binding = self.encode_attr_remap.lock().unwrap();
+        let remap_binding = self.encode_attr_remap.lock();
         let remap = remap_binding.as_ref().expect("encode attr remap not set");
 
         let mut skipped = 0u64;

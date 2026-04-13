@@ -27,7 +27,7 @@ fn debug_aux(
     let action = args.next_str()?;
     match action.to_uppercase().as_str() {
         "START" => {
-            DECODE_STATE.lock().unwrap().clear();
+            DECODE_STATE.lock().clear();
             unsafe { create_virtual_keys(ctx.ctx) };
             Ok(RedisValue::Integer(1))
         }

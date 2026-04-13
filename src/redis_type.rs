@@ -67,7 +67,7 @@ unsafe extern "C" fn graph_rdb_load(
             // Check if all keys have already been loaded (inline finalization),
             // in which case we can return the real graph directly.
             {
-                let mut decode_state = DECODE_STATE.lock().unwrap();
+                let mut decode_state = DECODE_STATE.lock();
                 if let Some(graph) = decode_state.finalized.remove(&key_name) {
                     let mvcc = MvccGraph::from_graph(graph);
                     let graph_arc = mvcc.read();
@@ -86,7 +86,7 @@ unsafe extern "C" fn graph_rdb_load(
 
             // Store an Arc clone keyed by graph name for later finalization.
             {
-                let mut decode_state = DECODE_STATE.lock().unwrap();
+                let mut decode_state = DECODE_STATE.lock();
                 decode_state.placeholders.insert(key_name, arc.clone());
             }
 
@@ -117,7 +117,7 @@ unsafe extern "C" fn graph_rdb_save(
             String::from_utf8_lossy(std::slice::from_raw_parts(ptr.cast(), len)).to_string()
         };
 
-        let vkey_state = VKEY_STATE.lock().unwrap();
+        let vkey_state = VKEY_STATE.lock();
 
         // Check if this is a virtual key by looking up in VKEY_STATE.
         // Virtual keys have their graph ref stored separately because
@@ -276,7 +276,7 @@ pub(crate) unsafe fn create_virtual_keys(ctx: *mut RedisModuleCtx) {
 
         let graphs = scan_graphdata_keys(ctx);
 
-        let mut vkey_state = VKEY_STATE.lock().unwrap();
+        let mut vkey_state = VKEY_STATE.lock();
         vkey_state.clear();
 
         let context = redis_module::Context::new(ctx);
@@ -361,7 +361,7 @@ pub(crate) unsafe fn create_virtual_keys(ctx: *mut RedisModuleCtx) {
 
 unsafe fn delete_virtual_keys(ctx: *mut RedisModuleCtx) {
     unsafe {
-        let mut vkey_state = VKEY_STATE.lock().unwrap();
+        let mut vkey_state = VKEY_STATE.lock();
 
         for (graph_name, vkey_names) in &vkey_state.graph_vkeys {
             for vkey_name in vkey_names {
@@ -639,7 +639,7 @@ unsafe fn scan_keys_by_type(
 /// In both cases, the placeholder ThreadedGraph's inner MvccGraph is replaced
 /// using the raw pointer stored during graph_rdb_load.
 pub(crate) fn finalize_pending_graphs() {
-    let mut decode_state = DECODE_STATE.lock().unwrap();
+    let mut decode_state = DECODE_STATE.lock();
 
     // First, handle graphs that were already finalized inline during rdb_load_graph.
     let finalized_names: Vec<String> = decode_state.finalized.keys().cloned().collect();
