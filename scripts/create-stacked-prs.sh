@@ -33,7 +33,7 @@ declare -a SHAS=(
   "40ec48c"   # PR5: Planner non-determinism detection
   "d3ed112"   # PR6: GRAPH.EFFECT, GRAPH.DEBUG commands + config
   "392f10b"   # PR7: RDB encoder/decoder + Redis type integration
-  "$(git rev-parse origin/copilot/split-prs-for-review)"  # PR8: Tests + infrastructure
+  "00d1795"   # PR8: Tests + infrastructure
 )
 
 declare -a BRANCH_NAMES=(
@@ -160,9 +160,6 @@ Part of stacked PR series splitting #359. Base: \`rdb/pr7-rdb-serializers\`."
 # ─── Step 1: fetch the split-prs branch so we have all SHAs ─────────────────
 echo "Fetching copilot/split-prs-for-review..."
 git fetch origin copilot/split-prs-for-review
-
-# Update last SHA now that we've fetched
-SHAS[7]="$(git rev-parse origin/copilot/split-prs-for-review)"
 
 # ─── Step 2: create branches and push ───────────────────────────────────────
 echo ""
