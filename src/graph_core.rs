@@ -171,7 +171,7 @@ impl ThreadedGraph {
         query: &str,
         compact: bool,
         first_cached: bool,
-    ) -> Result<(Arc<AtomicRefCell<Graph>>, Option<Vec<u8>>), String> {
+    ) -> Result<(Arc<AtomicRefCell<Graph>>, Option<Vec<u8>>, bool), String> {
         let Plan {
             plan, parameters, ..
         } = self.graph.read().borrow().get_plan(query)?;
@@ -221,7 +221,17 @@ impl ThreadedGraph {
         } else {
             reply_verbose(ctx, &runtime, &result);
         }
-        Ok((g, effects_buffer))
+        let modified = result.stats.nodes_created > 0
+            || result.stats.nodes_deleted > 0
+            || result.stats.relationships_created > 0
+            || result.stats.relationships_deleted > 0
+            || result.stats.properties_set > 0
+            || result.stats.properties_removed > 0
+            || result.stats.labels_added > 0
+            || result.stats.labels_removed > 0
+            || result.stats.indexes_created > 0
+            || result.stats.indexes_dropped > 0;
+        Ok((g, effects_buffer, modified))
     }
 }
 
@@ -358,9 +368,11 @@ fn query_sync(
                 let mut g = graph.write();
                 let res = g.execute_query_write(ctx, query, compact, cached);
                 match res {
-                    Ok((new_graph, effects_buffer)) => {
+                    Ok((new_graph, effects_buffer, modified)) => {
                         g.graph.commit(new_graph);
-                        replicate_effects(ctx, &key_name, effects_buffer, query);
+                        if modified {
+                            replicate_effects(ctx, &key_name, effects_buffer, query);
+                        }
                         // Flush dirty cache entries to fjall if over budget.
                         let value = g.graph.read().borrow().maybe_flush_caches();
                         if let Err(e) = value {
@@ -395,7 +407,7 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
             let ctx = Context::new(ctx);
             let res = graph.execute_query_write(&ctx, &query, compact, cached);
             match res {
-                Ok((g, effects_buffer)) => {
+                Ok((g, effects_buffer, modified)) => {
                     // Signal the key as modified so WATCH gets triggered.
                     unsafe {
                         raw::RedisModule_ThreadSafeContextLock.unwrap()(ctx.ctx);
@@ -408,7 +420,9 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
                         raw::RedisModule_FreeString.unwrap()(ctx.ctx, rstr);
                     };
                     // Send replication while GIL is held
-                    replicate_effects(&ctx, &key_name, effects_buffer, &query);
+                    if modified {
+                        replicate_effects(&ctx, &key_name, effects_buffer, &query);
+                    }
                     unsafe {
                         raw::RedisModule_ThreadSafeContextUnlock.unwrap()(ctx.ctx);
                         raw::RedisModule_FreeThreadSafeContext.unwrap()(ctx.ctx);
