@@ -72,6 +72,7 @@ use std::{
 use crate::allocator::{current_thread_usage, disable_tracking, enable_tracking, reset_counter};
 
 type WriteMessage = (BlockedClient, Arc<String>, bool, bool, Arc<String>);
+type WriteQueryResult = Result<(Arc<AtomicRefCell<Graph>>, Option<Vec<u8>>, bool), String>;
 
 pub struct ThreadedGraph {
     pub graph: MvccGraph,
@@ -177,7 +178,7 @@ impl ThreadedGraph {
         query: &str,
         compact: bool,
         first_cached: bool,
-    ) -> Result<(Arc<AtomicRefCell<Graph>>, Option<Vec<u8>>, bool), String> {
+    ) -> WriteQueryResult {
         let Plan {
             plan, parameters, ..
         } = self.graph.read().borrow().get_plan(query)?;
@@ -266,7 +267,7 @@ pub fn query_mut(
 ) -> RedisResult {
     // Inside MULTI/EXEC: execute synchronously (blocking commands not allowed).
     if ctx.get_flags().contains(ContextFlags::MULTI) {
-        return query_sync(ctx, graph, query, compact, write, key_name);
+        return query_sync(ctx, graph, query, compact, write, &key_name);
     }
 
     // Check pending queries limit before dispatching.
@@ -356,7 +357,7 @@ fn query_sync(
     query: &str,
     compact: bool,
     write: bool,
-    key_name: Arc<String>,
+    key_name: &Arc<String>,
 ) -> RedisResult {
     // First pass: parse + detect if write, execute reads inline.
     // Sync query timeout to UDF JS runtime
@@ -377,7 +378,7 @@ fn query_sync(
                     Ok((new_graph, effects_buffer, modified)) => {
                         g.graph.commit(new_graph);
                         if modified {
-                            replicate_effects(ctx, &key_name, effects_buffer, query);
+                            replicate_effects(ctx, key_name, effects_buffer, query);
                         }
                         // Flush dirty cache entries to fjall if over budget.
                         let value = g.graph.read().borrow().maybe_flush_caches();

@@ -61,13 +61,10 @@ pub fn graph_effect(
     };
 
     let mut tg = graph.write();
-    let g_arc = match tg.graph.write() {
-        Some(g) => g,
-        None => {
-            return Err(redis_module::RedisError::String(
-                "ERR write lock unavailable".to_string(),
-            ));
-        }
+    let Some(g_arc) = tg.graph.write() else {
+        return Err(redis_module::RedisError::String(
+            "ERR write lock unavailable".to_string(),
+        ));
     };
 
     let result = {
@@ -94,6 +91,7 @@ pub fn graph_effect(
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn apply_effects(
     g: &mut Graph,
     buf: &[u8],

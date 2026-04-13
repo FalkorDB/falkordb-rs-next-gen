@@ -230,7 +230,7 @@ impl Header {
             multi_edge: graph
                 .relationship_tensors()
                 .iter()
-                .map(|t| t.has_multi_edge())
+                .map(Tensor::has_multi_edge)
                 .collect(),
             key_count,
         }

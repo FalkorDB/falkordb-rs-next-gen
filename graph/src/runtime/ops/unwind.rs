@@ -85,9 +85,7 @@ fn eval_row<'a>(
     let iter = eval.eval_iter_expr(list, list.root().idx(), Some(env))?;
 
     match iter {
-        ValueIter::Empty => Ok(None),
-        ValueIter::Once(None) => Ok(None),
-        ValueIter::Once(Some(Value::Null)) => Ok(None),
+        ValueIter::Empty | ValueIter::Once(None | Some(Value::Null)) => Ok(None),
         ValueIter::Once(Some(val)) => {
             let mut out_row = env.clone_pooled(pool);
             out_row.insert(name, val);

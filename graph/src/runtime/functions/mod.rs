@@ -686,6 +686,7 @@ impl Functions {
         Self::default()
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn add(
         &mut self,
         name: &str,
@@ -713,6 +714,7 @@ impl Functions {
         self.functions.insert(lower_name, graph_fn);
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn add_var_len(
         &mut self,
         name: &str,
