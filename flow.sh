@@ -49,8 +49,11 @@ fi
 # To run all tests in a specific file, use:
 # TEST="tests/flow/test_function_calls" FAIL_FAST=1 ./flow.sh
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REDIS_CONF="$SCRIPT_DIR/tests/flow/redis.conf"
+
 if [[ ${#TEST_FILTER[@]} -eq 0 ]]; then
-    RLTest -f "$TESTS_FILE" --module "$TARGET_DIR/$TARGET" --no-progress $PARALLELISM $STOP_ON_FAILURE --clear-logs --log-dir tests/flow/logs --enable-debug-command --enable-protected-configs $V
+    RLTest -f "$TESTS_FILE" --module "$TARGET_DIR/$TARGET" --no-progress $PARALLELISM $STOP_ON_FAILURE --clear-logs --log-dir tests/flow/logs --enable-debug-command --enable-protected-configs --redis-config-file "$REDIS_CONF" $V
 else
-    RLTest "${TEST_FILTER[@]}" --module "$TARGET_DIR/$TARGET" --no-progress $PARALLELISM $STOP_ON_FAILURE --clear-logs --log-dir tests/flow/logs --enable-debug-command --enable-protected-configs $V
+    RLTest "${TEST_FILTER[@]}" --module "$TARGET_DIR/$TARGET" --no-progress $PARALLELISM $STOP_ON_FAILURE --clear-logs --log-dir tests/flow/logs --enable-debug-command --enable-protected-configs --redis-config-file "$REDIS_CONF" $V
 fi
