@@ -1675,7 +1675,12 @@ impl Graph {
         &self,
         id: NodeId,
     ) -> impl Iterator<Item = (u16, Value)> + '_ {
-        self.node_attrs.get_all_attrs_by_id(id.0).into_iter()
+        self.node_attrs
+            .get_all_attrs_by_id(id.0)
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>()
+            .into_iter()
     }
 
     pub fn get_relationship_attrs(
@@ -1699,6 +1704,9 @@ impl Graph {
     ) -> impl Iterator<Item = (u16, Value)> + '_ {
         self.relationship_attrs
             .get_all_attrs_by_id(id.0)
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>()
             .into_iter()
     }
 
@@ -2156,7 +2164,7 @@ impl Graph {
         entity_id: u64,
     ) -> usize {
         let mut sz: usize = 0;
-        for (_, val) in store.get_all_attrs_by_id(entity_id) {
+        for &(_, ref val) in store.get_all_attrs_by_id(entity_id).iter() {
             sz += std::mem::size_of::<u16>() + std::mem::size_of::<Value>() + val.heap_size();
         }
         sz
