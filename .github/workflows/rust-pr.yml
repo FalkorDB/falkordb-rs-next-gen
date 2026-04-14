@@ -105,7 +105,7 @@ jobs:
       - name: Run Flow tests
         run: |
           . /data/venv/bin/activate
-          RELEASE=1 ./flow.sh
+          PARALLELISM=1 RELEASE=1 ./flow.sh
       - name: Run TCK tests
         run: |
           . /data/venv/bin/activate
@@ -137,7 +137,7 @@ jobs:
           RUSTFLAGS="-C instrument-coverage" cargo test -p graph
           . /data/venv/bin/activate
           pytest tests/test_e2e.py tests/test_functions.py tests/test_mvcc.py tests/test_concurrency.py -vv
-          ./flow.sh
+          PARALLELISM=1  ./flow.sh
           TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
           llvm-profdata-22 merge --sparse `find . -name "*.profraw"` -o cov.profdata
           llvm-cov-22 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so > codecov.txt.all
