@@ -269,12 +269,11 @@ pub unsafe extern "C" fn on_persistence(
 
 pub unsafe fn create_virtual_keys(ctx: *mut RedisModuleCtx) {
     unsafe {
-        // First, delete any leftover virtual keys from a previous RDB load.
-        // These persist in the keyspace after loading and must be cleaned up
-        // before creating new virtual keys.
-        delete_stale_virtual_keys(ctx);
+        // Delete stale graphmeta keys (from C FalkorDB RDB loads).
+        delete_stale_graphmeta_keys(ctx);
 
-        let graphs = scan_graphdata_keys(ctx);
+        // Single graphdata scan: collect real graphs and delete stale virtual keys.
+        let graphs = scan_and_clean_graphdata_keys(ctx);
 
         let mut vkey_state = VKEY_STATE.lock();
         vkey_state.clear();
@@ -387,12 +386,14 @@ unsafe fn delete_virtual_keys(ctx: *mut RedisModuleCtx) {
     }
 }
 
-/// Scan the keyspace for all graphdata keys using RM_Call("SCAN").
-unsafe fn scan_graphdata_keys(
+/// Single-pass scan of graphdata keys: collects real graphs and deletes stale
+/// virtual/placeholder keys in one traversal (instead of scanning twice).
+unsafe fn scan_and_clean_graphdata_keys(
     ctx: *mut RedisModuleCtx
 ) -> Vec<(String, Arc<RwLock<ThreadedGraph>>)> {
     unsafe {
         let mut result = Vec::new();
+        let mut stale_keys = Vec::new();
 
         let scan_cmd = CString::new("SCAN").unwrap();
         let type_arg = CString::new("TYPE").unwrap();
@@ -459,11 +460,13 @@ unsafe fn scan_graphdata_keys(
 
                 if !value.is_null() {
                     let graph_arc_ref = &*(value.cast::<Arc<RwLock<ThreadedGraph>>>());
-                    // Skip placeholder/virtual keys — only collect real graphs.
                     let tg = graph_arc_ref.read();
                     let name = tg.name();
-                    if !name.starts_with("__placeholder") && !name.starts_with("__vkey_placeholder")
-                    {
+                    if name.starts_with("__placeholder") || name.starts_with("__vkey_placeholder") {
+                        // Stale virtual key — mark for deletion.
+                        stale_keys.push(key_name);
+                    } else {
+                        // Real graph — collect it.
                         drop(tg);
                         result.push((key_name, graph_arc_ref.clone()));
                     }
@@ -481,22 +484,38 @@ unsafe fn scan_graphdata_keys(
             }
         }
 
+        // Delete stale virtual keys.
+        for key_name in &stale_keys {
+            let rm_str = raw::RedisModule_CreateString.unwrap()(
+                ctx,
+                key_name.as_ptr().cast(),
+                key_name.len(),
+            );
+            let key = raw::RedisModule_OpenKey.unwrap()(ctx, rm_str, raw::KeyMode::WRITE.bits());
+            raw::RedisModule_DeleteKey.unwrap()(key);
+            raw::RedisModule_CloseKey.unwrap()(key);
+            raw::RedisModule_FreeString.unwrap()(ctx, rm_str);
+        }
+
+        if !stale_keys.is_empty() {
+            log_notice(format!(
+                "Deleted {} stale graphdata virtual keys before save",
+                stale_keys.len()
+            ));
+        }
+
         result
     }
 }
 
-/// Delete any stale virtual keys left in the keyspace from a previous RDB load.
-/// Called before creating new virtual keys during the persistence event.
-/// Scans for both old "graphmeta" keys and new "graphdata" virtual keys.
-pub unsafe fn delete_stale_virtual_keys(ctx: *mut RedisModuleCtx) {
+/// Delete stale graphmeta keys (from C FalkorDB RDB loads).
+unsafe fn delete_stale_graphmeta_keys(ctx: *mut RedisModuleCtx) {
     unsafe {
         let scan_cmd = CString::new("SCAN").unwrap();
         let type_arg = CString::new("TYPE").unwrap();
         let fmt = CString::new("ccc").unwrap();
 
         let mut keys_to_delete = Vec::new();
-
-        // Scan for old "graphmeta" keys (from previous Rust versions).
         let graphmeta_arg = CString::new("graphmeta").unwrap();
         scan_keys_by_type(
             ctx,
@@ -506,37 +525,6 @@ pub unsafe fn delete_stale_virtual_keys(ctx: *mut RedisModuleCtx) {
             &fmt,
             &mut keys_to_delete,
         );
-
-        // Scan for "graphdata" keys that are virtual (placeholder) keys.
-        let graphdata_arg = CString::new("graphdata").unwrap();
-        let mut graphdata_keys = Vec::new();
-        scan_keys_by_type(
-            ctx,
-            &scan_cmd,
-            &type_arg,
-            &graphdata_arg,
-            &fmt,
-            &mut graphdata_keys,
-        );
-        for key_name in graphdata_keys {
-            let rm_str = raw::RedisModule_CreateString.unwrap()(
-                ctx,
-                key_name.as_ptr().cast(),
-                key_name.len(),
-            );
-            let key = raw::RedisModule_OpenKey.unwrap()(ctx, rm_str, raw::KeyMode::READ.bits());
-            let value = raw::RedisModule_ModuleTypeGetValue.unwrap()(key);
-            if !value.is_null() {
-                let graph_arc_ref = &*(value.cast::<Arc<RwLock<ThreadedGraph>>>());
-                let tg = graph_arc_ref.read();
-                let name = tg.name();
-                if name.starts_with("__placeholder") || name.starts_with("__vkey_placeholder") {
-                    keys_to_delete.push(key_name);
-                }
-            }
-            raw::RedisModule_CloseKey.unwrap()(key);
-            raw::RedisModule_FreeString.unwrap()(ctx, rm_str);
-        }
 
         for key_name in &keys_to_delete {
             let rm_str = raw::RedisModule_CreateString.unwrap()(
@@ -552,10 +540,20 @@ pub unsafe fn delete_stale_virtual_keys(ctx: *mut RedisModuleCtx) {
 
         if !keys_to_delete.is_empty() {
             log_notice(format!(
-                "Deleted {} stale virtual keys before save",
+                "Deleted {} stale graphmeta keys before save",
                 keys_to_delete.len()
             ));
         }
+    }
+}
+
+/// Delete any stale virtual keys left in the keyspace from a previous RDB load.
+/// Public entry point used by the debug command.
+pub unsafe fn delete_stale_virtual_keys(ctx: *mut RedisModuleCtx) {
+    unsafe {
+        delete_stale_graphmeta_keys(ctx);
+        // scan_and_clean_graphdata_keys deletes stale graphdata keys as a side effect.
+        let _ = scan_and_clean_graphdata_keys(ctx);
     }
 }
 
