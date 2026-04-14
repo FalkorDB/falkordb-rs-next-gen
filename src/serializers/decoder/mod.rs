@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use graph::entity_type::EntityType;
 use graph::graph::attribute_store::AttributeStore;
-use graph::graph::graph::{Graph, get_database};
+use graph::graph::graph::Graph;
 use graph::graph::graphblas::matrix::New;
 use graph::graph::graphblas::serialization::Decode;
 use graph::graph::graphblas::tensor::Tensor;
@@ -53,11 +53,9 @@ pub fn rdb_load_graph(
 
         if is_first_key {
             // First key: initialize the pending graph.
-            let db = get_database();
-            let node_attrs =
-                AttributeStore::new(db.clone(), &format!("{}/nodes", hdr.graph_name), 0);
+            let node_attrs = AttributeStore::new(&format!("{}/nodes", hdr.graph_name), 0);
             let mut rel_attrs =
-                AttributeStore::new(db, &format!("{}/relationships", hdr.graph_name), 0);
+                AttributeStore::new(&format!("{}/relationships", hdr.graph_name), 0);
 
             // Set attribute names on the stores now -- they are the same across all keys.
             let mut node_attrs_init = node_attrs;
@@ -127,9 +125,8 @@ pub fn rdb_load_graph(
     }
 
     // Single-key path (key_count == 1): decode everything in one go.
-    let db = get_database();
-    let mut node_attrs = AttributeStore::new(db.clone(), &format!("{}/nodes", hdr.graph_name), 0);
-    let mut rel_attrs = AttributeStore::new(db, &format!("{}/relationships", hdr.graph_name), 0);
+    let mut node_attrs = AttributeStore::new(&format!("{}/nodes", hdr.graph_name), 0);
+    let mut rel_attrs = AttributeStore::new(&format!("{}/relationships", hdr.graph_name), 0);
 
     for name in &schema.attribute_names {
         node_attrs.attrs_name.insert(name.clone());

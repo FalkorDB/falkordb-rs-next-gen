@@ -85,6 +85,7 @@
 
 use std::{
     collections::HashMap,
+    process,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -129,7 +130,6 @@ fn extract_attr_idx(key: &[u8]) -> Option<u16> {
 /// durable cold store.  The fjall keyspace is created lazily on first access
 /// to avoid I/O overhead for graphs that fit entirely in cache.
 pub struct AttributeStore {
-    database: Database,
     snapshot: OnceCell<Snapshot>,
     keyspace: OnceCell<Keyspace>,
     keyspace_name: Arc<String>,
@@ -154,7 +154,6 @@ pub struct AttributeStore {
 impl Clone for AttributeStore {
     fn clone(&self) -> Self {
         Self {
-            database: self.database.clone(),
             snapshot: self.snapshot.clone(),
             keyspace: self.keyspace.clone(),
             keyspace_name: self.keyspace_name.clone(),
@@ -173,10 +172,25 @@ impl Clone for AttributeStore {
 /// Default memory budget per attribute cache (2 GiB).
 const DEFAULT_ATTR_CACHE_BYTES: usize = 2 * 1024 * 1024 * 1024;
 
+static DATABASE: OnceCell<Database> = OnceCell::new();
+
+/// Get or initialize the shared fjall database for attribute stores.
+fn get_database() -> Database {
+    DATABASE
+        .get_or_init(|| {
+            Database::builder(format!("./attrs/{}", process::id()))
+                .temporary(true)
+                .manual_journal_persist(true)
+                .cache_size(128 * 1_024 * 1_024)
+                .open()
+                .expect("failed to open fjall database")
+        })
+        .clone()
+}
+
 impl AttributeStore {
     #[must_use]
     pub fn new(
-        database: Database,
         keyspace: &str,
         version: u64,
     ) -> Self {
@@ -184,7 +198,6 @@ impl AttributeStore {
             snapshot: OnceCell::new(),
             keyspace: OnceCell::new(),
             keyspace_name: Arc::new(keyspace.to_owned()),
-            database,
             attrs_name: OrderSet::default(),
             cache: Arc::new(AttributeCache::new(DEFAULT_ATTR_CACHE_BYTES)),
             version,
@@ -209,9 +222,9 @@ impl AttributeStore {
     /// the process cannot continue safely.
     fn keyspace(&self) -> &Keyspace {
         self.keyspace.get_or_init(|| {
-            let ks_exists = self.database.keyspace_exists(&self.keyspace_name);
-            let ks = self
-                .database
+            let db = get_database();
+            let ks_exists = db.keyspace_exists(&self.keyspace_name);
+            let ks = db
                 .keyspace(&self.keyspace_name, || {
                     KeyspaceCreateOptions::default()
                         .data_block_hash_ratio_policy(HashRatioPolicy::all(0.75))
@@ -237,7 +250,7 @@ impl AttributeStore {
             // taking a snapshot, so the new version never sees data from a
             // previously-deleted graph that reused the same keyspace name.
             let _ = self.keyspace();
-            self.database.snapshot()
+            get_database().snapshot()
         })
     }
 
@@ -247,7 +260,6 @@ impl AttributeStore {
         version: u64,
     ) -> Self {
         Self {
-            database: self.database.clone(),
             snapshot: self.snapshot.clone(),
             keyspace: self.keyspace.clone(),
             keyspace_name: self.keyspace_name.clone(),
@@ -562,7 +574,7 @@ impl AttributeStore {
     pub fn commit(&mut self) -> Result<(), String> {
         // Apply pending full entity deletions to fjall.
         if !self.pending_deletes.is_empty() {
-            let mut batch = self.database.batch();
+            let mut batch = get_database().batch();
             for key in &self.pending_deletes {
                 let prefix = key.to_be_bytes();
                 for entry in self.keyspace().prefix(prefix) {
@@ -574,7 +586,7 @@ impl AttributeStore {
             batch.durability(None).commit().map_err(|e| e.to_string())?;
         }
         let new_snapshot = OnceCell::new();
-        let _ = new_snapshot.set(self.database.snapshot());
+        let _ = new_snapshot.set(get_database().snapshot());
         self.snapshot = new_snapshot;
         self.dirty_entities.clear();
         self.pending_deletes.clear();
@@ -605,7 +617,7 @@ impl AttributeStore {
             return Ok(());
         }
 
-        let mut batch = self.database.batch();
+        let mut batch = get_database().batch();
         for (entity_id, attrs) in &dirty_entries {
             // Delete all existing fjall keys for this entity first, so that
             // removed attributes don't reappear after cache eviction.
@@ -655,7 +667,7 @@ impl AttributeStore {
             // Write dirty cached attributes to fjall before losing the cache entry.
             // Safe to flush: these are pre-existing dirty entries from prior
             // transactions, not from the active one.
-            let mut batch = self.database.batch();
+            let mut batch = get_database().batch();
             for &(attr_idx, ref value) in &cached {
                 let composite_key = make_key(entity_id, attr_idx);
                 batch.insert(self.keyspace(), composite_key, value.to_bytes());
