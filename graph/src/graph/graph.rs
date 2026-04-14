@@ -516,10 +516,11 @@ impl Graph {
     /// - `relationship_type_matrix`: `(edge_id, type_index) = true` for all edges
     /// - Tensor backward (`mt`): transpose of forward (`m`)
     pub fn rebuild_derived_matrices(&mut self) {
-        // Resize the derived matrices to match the graph capacity
-        let nc = self.node_cap;
+        // Resize all node-dimension matrices to match the restored graph capacity.
+        // Decoded matrices may have dimensions from the original graph's node_cap,
+        // which can differ from the restored node_cap.
+        self.resize_node_matrices();
         let rc = self.relationship_cap;
-        self.all_nodes_matrix.resize(nc, nc);
         self.relationship_type_matrix
             .resize(rc, self.relationship_types.len() as u64);
 
@@ -534,8 +535,6 @@ impl Graph {
 
         // Rebuild relationship_type_matrix and tensor backward matrices
         for (type_idx, tensor) in self.relationship_matrices.iter_mut().enumerate() {
-            // Resize tensor backward matrix to proper dimensions
-            tensor.resize(nc, nc);
             // Rebuild backward (transpose) matrix from forward matrix in one operation
             tensor.rebuild_backward();
 
