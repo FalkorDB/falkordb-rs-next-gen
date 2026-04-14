@@ -22,23 +22,24 @@ use crate::graph_core::ThreadedGraph;
 pub const ENCODING_VERSION: u64 = 19;
 
 /// Global state for virtual key management during RDB save.
-pub static VKEY_STATE: Mutex<VirtualKeyState> = Mutex::new(VirtualKeyState::new());
+pub static VKEY_STATE: std::sync::LazyLock<Mutex<VirtualKeyState>> =
+    std::sync::LazyLock::new(|| Mutex::new(VirtualKeyState::new()));
 
 pub struct VirtualKeyState {
-    /// (vkey_name, graph_name, key_index, payloads for that key)
-    pub vkey_map: Vec<(String, String, usize, Vec<PayloadEntry>)>,
-    /// (graph_name, list of virtual key names)
-    pub graph_vkeys: Vec<(String, Vec<String>)>,
-    /// Graph references indexed by graph_name for use by virtual key rdb_save.
-    graph_refs: Vec<(String, Arc<RwLock<ThreadedGraph>>)>,
+    /// vkey_name → (graph_name, key_index, payloads for that key)
+    pub vkey_map: HashMap<String, (String, usize, Vec<PayloadEntry>)>,
+    /// graph_name → list of virtual key names
+    pub graph_vkeys: HashMap<String, Vec<String>>,
+    /// Graph references keyed by graph_name for use by virtual key rdb_save.
+    graph_refs: HashMap<String, Arc<RwLock<ThreadedGraph>>>,
 }
 
 impl VirtualKeyState {
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
-            vkey_map: Vec::new(),
-            graph_vkeys: Vec::new(),
-            graph_refs: Vec::new(),
+            vkey_map: HashMap::new(),
+            graph_vkeys: HashMap::new(),
+            graph_refs: HashMap::new(),
         }
     }
 
@@ -52,12 +53,9 @@ impl VirtualKeyState {
         &self,
         vkey_name: &str,
     ) -> Option<(&str, &[PayloadEntry])> {
-        for (name, graph_name, _key_idx, payloads) in &self.vkey_map {
-            if name == vkey_name {
-                return Some((graph_name.as_str(), payloads.as_slice()));
-            }
-        }
-        None
+        self.vkey_map
+            .get(vkey_name)
+            .map(|(graph_name, _key_idx, payloads)| (graph_name.as_str(), payloads.as_slice()))
     }
 
     /// Store a graph reference for use during RDB save.
@@ -66,7 +64,7 @@ impl VirtualKeyState {
         graph_name: &str,
         graph: Arc<RwLock<ThreadedGraph>>,
     ) {
-        self.graph_refs.push((graph_name.to_string(), graph));
+        self.graph_refs.insert(graph_name.to_string(), graph);
     }
 
     /// Retrieve the stored graph reference for RDB save.
@@ -74,12 +72,7 @@ impl VirtualKeyState {
         &self,
         graph_name: &str,
     ) -> Option<&Arc<RwLock<ThreadedGraph>>> {
-        for (name, gr) in &self.graph_refs {
-            if name == graph_name {
-                return Some(gr);
-            }
-        }
-        None
+        self.graph_refs.get(graph_name)
     }
 }
 
@@ -543,8 +536,10 @@ fn decode_index_field(r: &mut dyn Reader) -> Result<(Arc<String>, Field), String
 }
 
 impl Schema {
-    pub fn from_graph(graph: &Graph) -> Self {
-        let attribute_names = graph.build_global_attrs();
+    pub fn from_graph(
+        graph: &Graph,
+        attribute_names: Vec<Arc<String>>,
+    ) -> Self {
         let node_labels = graph.get_labels().to_vec();
         let relationship_types = graph.get_types().to_vec();
         let indexes = graph.index_info();

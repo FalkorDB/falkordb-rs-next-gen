@@ -2167,34 +2167,31 @@ impl Graph {
         &self,
         w: &mut dyn Writer,
         p: &PayloadEntry,
+        global_attrs: &[Arc<String>],
     ) {
         match p.state {
             EncodeState::Nodes => {
-                let global_attrs = self.build_global_attrs();
-                let this = &self;
-                let count = p.count;
-                let offset = p.offset;
-                this.node_attrs.set_encode_context(
-                    &this.deleted_nodes,
-                    this.max_node_id(),
-                    &global_attrs,
+                self.node_attrs.encode_with_range(
+                    w,
+                    &self.deleted_nodes,
+                    self.max_node_id(),
+                    global_attrs,
+                    p.count,
+                    p.offset,
                 );
-                this.node_attrs.encode_with_range(w, count, offset);
             }
             EncodeState::DeletedNodes => {
                 self.deleted_nodes.encode_with_range(w, p.count, p.offset);
             }
             EncodeState::Edges => {
-                let global_attrs = self.build_global_attrs();
-                let this = &self;
-                let count = p.count;
-                let offset = p.offset;
-                this.relationship_attrs.set_encode_context(
-                    &this.deleted_relationships,
-                    this.max_relationship_id(),
-                    &global_attrs,
+                self.relationship_attrs.encode_with_range(
+                    w,
+                    &self.deleted_relationships,
+                    self.max_relationship_id(),
+                    global_attrs,
+                    p.count,
+                    p.offset,
                 );
-                this.relationship_attrs.encode_with_range(w, count, offset);
             }
             EncodeState::DeletedEdges => {
                 self.deleted_relationships

@@ -83,16 +83,7 @@
 //! Each attribute is stored as a separate fjall entry:
 //! `entity_id (8 bytes big-endian) + attr_idx (2 bytes big-endian)`
 
-use std::{
-    collections::HashMap,
-    process,
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
-};
-
-use parking_lot::Mutex;
+use std::{collections::HashMap, process, sync::Arc};
 
 use fjall::{
     Database, Keyspace, KeyspaceCreateOptions, Readable, Snapshot, config::HashRatioPolicy,
@@ -143,12 +134,6 @@ pub struct AttributeStore {
     dirty_entities: RoaringTreemap,
     /// Entity IDs pending full deletion (all attributes) — applied on commit, cleared on rollback.
     pending_deletes: RoaringTreemap,
-    /// Encoding context: deleted entity IDs (set before serialization).
-    encode_deleted: Mutex<Option<RoaringTreemap>>,
-    /// Encoding context: maximum entity ID (set before serialization).
-    encode_max_id: AtomicU64,
-    /// Encoding context: mapping from local attr IDs to global attr IDs (set before serialization).
-    encode_attr_remap: Mutex<Option<Vec<u16>>>,
 }
 
 impl Clone for AttributeStore {
@@ -162,9 +147,6 @@ impl Clone for AttributeStore {
             version: self.version,
             dirty_entities: self.dirty_entities.clone(),
             pending_deletes: self.pending_deletes.clone(),
-            encode_deleted: Mutex::new(None),
-            encode_max_id: AtomicU64::new(0),
-            encode_attr_remap: Mutex::new(None),
         }
     }
 }
@@ -203,9 +185,6 @@ impl AttributeStore {
             version,
             dirty_entities: RoaringTreemap::new(),
             pending_deletes: RoaringTreemap::new(),
-            encode_deleted: Mutex::new(None),
-            encode_max_id: AtomicU64::new(0),
-            encode_attr_remap: Mutex::new(None),
         }
     }
 
@@ -268,9 +247,6 @@ impl AttributeStore {
             version,
             dirty_entities: RoaringTreemap::new(),
             pending_deletes: RoaringTreemap::new(),
-            encode_deleted: Mutex::new(None),
-            encode_max_id: AtomicU64::new(0),
-            encode_attr_remap: Mutex::new(None),
         }
     }
 
@@ -684,65 +660,29 @@ impl AttributeStore {
         &self.cache
     }
 
-    /// Set encoding context needed by `Encode::encode_with_range`.
-    ///
-    /// Builds a mapping from local attribute IDs (indices in this store's attrs_name)
-    /// to global attribute IDs (indices in the provided global_attrs list).
-    pub fn set_encode_context(
+    /// Encode a range of entities, borrowing the deleted bitmap directly.
+    pub fn encode_with_range(
         &self,
+        w: &mut dyn Writer,
         deleted: &RoaringTreemap,
         max_id: u64,
         global_attrs: &[Arc<String>],
+        count: u64,
+        offset: u64,
     ) {
-        *self.encode_deleted.lock() = Some(deleted.clone());
-        self.encode_max_id.store(max_id, Ordering::Relaxed);
-
-        // Build a reverse index from global attr name to global ID for O(1) lookup
+        // Build attr remap inline.
         let global_index: std::collections::HashMap<&Arc<String>, usize> = global_attrs
             .iter()
             .enumerate()
             .map(|(i, n)| (n, i))
             .collect();
 
-        // Build mapping from local attr ID to global attr ID
         let mut remap = vec![u16::MAX; self.attrs_name.len()];
         for (local_id, local_name) in self.attrs_name.iter().enumerate() {
             if let Some(&global_id) = global_index.get(local_name) {
                 remap[local_id] = global_id as u16;
             }
         }
-        *self.encode_attr_remap.lock() = Some(remap);
-    }
-}
-
-// SAFETY: AttributeStore is Send+Sync because:
-// - `Database`, `Snapshot`, `Keyspace` are thread-safe (fjall guarantees)
-// - `AttributeCache` is wrapped in `Arc` and uses sharded locks internally
-// - `OnceCell<Keyspace>` is `Sync` (interior init is thread-safe)
-// - All other fields (`RoaringTreemap`, `OrderSet`, etc.) are owned and not shared
-unsafe impl Send for AttributeStore {}
-unsafe impl Sync for AttributeStore {}
-
-impl Encode<19> for AttributeStore {
-    fn encode(
-        &self,
-        _w: &mut dyn Writer,
-    ) {
-        unimplemented!("use encode_with_range for AttributeStore")
-    }
-
-    fn encode_with_range(
-        &self,
-        w: &mut dyn Writer,
-        count: u64,
-        offset: u64,
-    ) {
-        let binding = self.encode_deleted.lock();
-        let deleted = binding.as_ref().expect("encode context not set");
-        let max_id = self.encode_max_id.load(Ordering::Relaxed);
-
-        let remap_binding = self.encode_attr_remap.lock();
-        let remap = remap_binding.as_ref().expect("encode attr remap not set");
 
         let mut skipped = 0u64;
         let mut encoded = 0u64;
@@ -762,7 +702,6 @@ impl Encode<19> for AttributeStore {
             w.write_unsigned(props.len() as u64);
 
             for (local_attr_id, value) in props {
-                // Remap local attribute ID to global attribute ID
                 let global_attr_id = if (local_attr_id as usize) < remap.len() {
                     remap[local_attr_id as usize]
                 } else {
@@ -779,6 +718,14 @@ impl Encode<19> for AttributeStore {
         }
     }
 }
+
+// SAFETY: AttributeStore is Send+Sync because:
+// - `Database`, `Snapshot`, `Keyspace` are thread-safe (fjall guarantees)
+// - `AttributeCache` is wrapped in `Arc` and uses sharded locks internally
+// - `OnceCell<Keyspace>` is `Sync` (interior init is thread-safe)
+// - All other fields (`RoaringTreemap`, `OrderSet`, etc.) are owned and not shared
+unsafe impl Send for AttributeStore {}
+unsafe impl Sync for AttributeStore {}
 
 impl Decode<19> for AttributeStore {
     fn decode(_r: &mut dyn Reader) -> Result<Self, String> {

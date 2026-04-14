@@ -128,9 +128,8 @@ unsafe extern "C" fn graph_rdb_save(
             let payloads = payloads.to_vec();
             let key_count = vkey_state
                 .graph_vkeys
-                .iter()
-                .find(|(name, _)| name == &graph_name)
-                .map_or(1, |(_, vkeys)| (vkeys.len() + 1) as u64);
+                .get(&graph_name)
+                .map_or(1, |vkeys| (vkeys.len() + 1) as u64);
             let Some(graph_arc) = vkey_state.get_graph_ref(&graph_name).cloned() else {
                 return;
             };
@@ -152,9 +151,8 @@ unsafe extern "C" fn graph_rdb_save(
                 let payloads = payloads.to_vec();
                 let key_count = vkey_state
                     .graph_vkeys
-                    .iter()
-                    .find(|(name, _)| name == &graph_name)
-                    .map_or(1, |(_, vkeys)| (vkeys.len() + 1) as u64);
+                    .get(&graph_name)
+                    .map_or(1, |vkeys| (vkeys.len() + 1) as u64);
                 drop(vkey_state);
                 serializers::encoder::rdb_save_graph_key(rdb, &graph, &payloads, key_count);
             } else {
@@ -300,12 +298,10 @@ pub unsafe fn create_virtual_keys(ctx: *mut RedisModuleCtx) {
             let mut vkey_names = Vec::with_capacity(virtual_key_count);
 
             // Store key 0's payloads under the graph name.
-            vkey_state.vkey_map.push((
+            vkey_state.vkey_map.insert(
                 graph_name.clone(),
-                graph_name.clone(),
-                0,
-                multi_payloads[0].clone(),
-            ));
+                (graph_name.clone(), 0, multi_payloads[0].clone()),
+            );
 
             // Create virtual keys for keys 1..N.
             for (i, payloads) in multi_payloads.iter().enumerate().skip(1) {
@@ -316,12 +312,9 @@ pub unsafe fn create_virtual_keys(ctx: *mut RedisModuleCtx) {
                     format!("{{{graph_name}}}{graph_name}_{uuid}")
                 };
 
-                vkey_state.vkey_map.push((
-                    vkey_name.clone(),
-                    graph_name.clone(),
-                    i,
-                    payloads.clone(),
-                ));
+                vkey_state
+                    .vkey_map
+                    .insert(vkey_name.clone(), (graph_name.clone(), i, payloads.clone()));
 
                 // Create the Redis key.
                 let rm_str = raw::RedisModule_CreateString.unwrap()(
@@ -353,7 +346,7 @@ pub unsafe fn create_virtual_keys(ctx: *mut RedisModuleCtx) {
 
             vkey_state
                 .graph_vkeys
-                .push((graph_name.clone(), vkey_names));
+                .insert(graph_name.clone(), vkey_names);
         }
     }
 }

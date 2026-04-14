@@ -25,11 +25,14 @@ pub fn rdb_save_graph_key(
 ) {
     let mut w = BufferedWriter::new(rdb);
 
+    // Compute global attrs once — reused by Schema and all payload encodes.
+    let global_attrs = graph.build_global_attrs();
+
     // --- Header ---
     Header::from_graph(graph, key_count).encode(&mut w);
 
     // --- Schema (inline in header) ---
-    Schema::from_graph(graph).encode(&mut w);
+    Schema::from_graph(graph, global_attrs.clone()).encode(&mut w);
 
     // --- Key Schema (payload directory) ---
     w.write_unsigned(payloads.len() as u64);
@@ -40,7 +43,7 @@ pub fn rdb_save_graph_key(
 
     // --- Payload data ---
     for p in payloads {
-        graph.encode_payload(&mut w, p);
+        graph.encode_payload(&mut w, p, &global_attrs);
     }
 
     w.finish();
