@@ -82,11 +82,6 @@ jobs:
       - docker
     if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
     steps:
-      - name: Free disk space
-        run: |
-          rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghcrunner /usr/local/share/boost /usr/share/doc /usr/share/man || true
-          apt-get clean 2>/dev/null || true
-          df -h
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - run: rustup default stable
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
@@ -105,7 +100,7 @@ jobs:
       - name: Run Flow tests
         run: |
           . /data/venv/bin/activate
-          PARALLELISM="--parallelism 1" RELEASE=1 ./flow.sh
+          RELEASE=1 ./flow.sh
       - name: Run TCK tests
         run: |
           . /data/venv/bin/activate
@@ -120,11 +115,6 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Free disk space
-        run: |
-          rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghcrunner /usr/local/share/boost /usr/share/doc /usr/share/man || true
-          apt-get clean 2>/dev/null || true
-          df -h
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - run: rustup default stable
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
@@ -137,7 +127,7 @@ jobs:
           RUSTFLAGS="-C instrument-coverage" cargo test -p graph
           . /data/venv/bin/activate
           pytest tests/test_e2e.py tests/test_functions.py tests/test_mvcc.py tests/test_concurrency.py -vv
-          PARALLELISM="--parallelism 1"  ./flow.sh
+          ./flow.sh
           TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
           llvm-profdata-22 merge --sparse `find . -name "*.profraw"` -o cov.profdata
           llvm-cov-22 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so > codecov.txt.all
