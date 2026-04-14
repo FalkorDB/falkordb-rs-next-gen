@@ -279,7 +279,6 @@ fn query_graph_has_non_deterministic(qg: &QueryGraph<Arc<String>, Arc<String>, V
 /// Returns true if an IndexQuery tree contains any non-deterministic function call.
 fn index_query_has_non_deterministic(query: &IndexQuery<QueryExpr<Variable>>) -> bool {
     match query {
-        IndexQuery::Equal { value, .. } => expr_has_non_deterministic(value),
         IndexQuery::Range { min, max, .. } => {
             min.as_ref().is_some_and(|e| expr_has_non_deterministic(e))
                 || max.as_ref().is_some_and(|e| expr_has_non_deterministic(e))
@@ -289,6 +288,10 @@ fn index_query_has_non_deterministic(query: &IndexQuery<QueryExpr<Variable>>) ->
         }
         IndexQuery::Point { point, radius, .. } => {
             expr_has_non_deterministic(point) || expr_has_non_deterministic(radius)
+        }
+        IndexQuery::InList { list, .. } => expr_has_non_deterministic(list),
+        IndexQuery::Equal { value, .. } | IndexQuery::ArrayContains { value, .. } => {
+            expr_has_non_deterministic(value)
         }
     }
 }

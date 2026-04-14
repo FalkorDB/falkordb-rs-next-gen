@@ -2164,7 +2164,7 @@ impl Graph {
         entity_id: u64,
     ) -> usize {
         let mut sz: usize = 0;
-        for &(_, ref val) in store.get_all_attrs_by_id(entity_id).iter() {
+        for (_, val) in store.get_all_attrs_by_id(entity_id).iter() {
             sz += std::mem::size_of::<u16>() + std::mem::size_of::<Value>() + val.heap_size();
         }
         sz
