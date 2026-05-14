@@ -1503,9 +1503,12 @@ pub fn try_compile(
     // init_block, then jump to main_block. This guarantees every slot is
     // initialized before any helper or drop runs, regardless of which CLIF
     // path the runtime takes.
-    let resume_block = builder
-        .current_block()
-        .expect("emit must leave builder in a live block");
+    //
+    // Cranelift requires the current block to be terminated before
+    // `switch_to_block`, so jump from wherever emit() left us into a fresh
+    // resume_block; the post-init code is appended there.
+    let resume_block = builder.create_block();
+    builder.ins().jump(resume_block, &[]);
     builder.switch_to_block(init_block);
     let null_helper = get_null(&mut state.helpers, state.module, &mut builder.func);
     let slots_snapshot: Vec<ir::StackSlot> = state.slots.clone();
@@ -1517,6 +1520,7 @@ pub fn try_compile(
     builder.seal_block(init_block);
     builder.seal_block(main_block);
     builder.switch_to_block(resume_block);
+    builder.seal_block(resume_block);
 
     let exit_block = builder.create_block();
     builder.append_block_param(exit_block, types::I8);
