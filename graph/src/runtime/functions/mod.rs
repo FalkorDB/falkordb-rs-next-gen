@@ -348,7 +348,7 @@ mod conversion;
 mod entity;
 mod internal;
 mod list;
-mod math;
+pub mod math;
 mod path;
 mod procedures;
 mod spatial;

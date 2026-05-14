@@ -18,6 +18,11 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin)'] }
 [dependencies]
 atomic_refcell = "0.1.14"
 chrono = "0.4.44"
+cranelift-jit = "0.131"
+cranelift-module = "0.131"
+cranelift-codegen = "0.131"
+cranelift-frontend = "0.131"
+cranelift-native = "0.131"
 crossfire = "3.1.10"
 csv = "1.4.0"
 fjall = "3.1.4"

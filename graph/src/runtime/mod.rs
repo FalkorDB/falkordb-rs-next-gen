@@ -53,6 +53,7 @@ pub mod bitset;
 pub mod env;
 pub mod eval;
 pub mod functions;
+pub mod jit;
 pub mod ops;
 pub mod ordermap;
 pub mod orderset;
