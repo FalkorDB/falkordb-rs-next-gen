@@ -33,9 +33,11 @@ use cranelift_codegen::{Context, ir};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{Linkage, Module};
+use lru::LruCache;
 use once_cell::sync::Lazy;
 use orx_tree::{Dyn, DynNode, DynTree, NodeIdx, NodeRef};
-use parking_lot::RwLock;
+use parking_lot::Mutex;
+use std::num::NonZeroUsize;
 use thin_vec::ThinVec;
 
 use crate::parser::ast::{ExprIR, Variable};
@@ -253,15 +255,26 @@ fn fingerprint_walk(
     }
 }
 
-static JIT_CACHE: Lazy<RwLock<rustc_hash::FxHashMap<CacheKey, CacheEntry>>> =
-    Lazy::new(|| RwLock::new(rustc_hash::FxHashMap::default()));
+// Cap on number of compiled-expression entries kept in each cache. Each
+// CompiledExpr owns a JITModule with mmap'd executable pages, so an unbounded
+// cache leaks memory across long-running workloads with many distinct
+// expressions (e.g. test suites). 256 entries comfortably covers a typical
+// query mix while bounding worst-case memory.
+const JIT_CACHE_CAPACITY: usize = 256;
+const TLS_CACHE_CAPACITY: usize = 128;
+
+static JIT_CACHE: Lazy<Mutex<LruCache<CacheKey, CacheEntry>>> = Lazy::new(|| {
+    Mutex::new(LruCache::new(
+        NonZeroUsize::new(JIT_CACHE_CAPACITY).unwrap(),
+    ))
+});
 
 thread_local! {
     static JIT_STATS: RefCell<JitStats> = RefCell::new(JitStats::default());
-    // Per-thread cache: avoids hot-path RwLock + Arc clone contention across
-    // worker threads. Bounded LRU-ish: when full, oldest entry evicted.
-    static TLS_CACHE: RefCell<rustc_hash::FxHashMap<CacheKey, CacheEntry>> =
-        RefCell::new(rustc_hash::FxHashMap::default());
+    // Per-thread cache: avoids hot-path lock + Arc clone contention across
+    // worker threads. Bounded LRU: when full, oldest entry evicted.
+    static TLS_CACHE: RefCell<LruCache<CacheKey, CacheEntry>> =
+        RefCell::new(LruCache::new(NonZeroUsize::new(TLS_CACHE_CAPACITY).unwrap()));
     // Current aggregation group key, threaded into the JIT via TLS rather
     // than the calling convention so helper signatures stay uniform. None
     // outside aggregation; Some(group_id) inside Aggregate's accumulate /
@@ -294,7 +307,7 @@ pub fn try_eval_cached(
     let key: CacheKey = fingerprint(tree, idx.clone());
 
     // Thread-local fast path: no atomics, no Arc clone.
-    let tls_hit = TLS_CACHE.with(|c| c.borrow().get(&key).cloned());
+    let tls_hit = TLS_CACHE.with(|c| c.borrow_mut().get(&key).cloned());
     if let Some(entry) = tls_hit {
         return match entry {
             Some(ce) => {
@@ -305,9 +318,9 @@ pub fn try_eval_cached(
         };
     }
 
-    // Global cache lookup (read-lock).
-    if let Some(entry) = JIT_CACHE.read().get(&key).cloned() {
-        TLS_CACHE.with(|c| c.borrow_mut().insert(key, entry.clone()));
+    // Global cache lookup.
+    if let Some(entry) = JIT_CACHE.lock().get(&key).cloned() {
+        TLS_CACHE.with(|c| c.borrow_mut().put(key, entry.clone()));
         return match entry {
             Some(ce) => {
                 JIT_STATS.with(|s| s.borrow_mut().hits += 1);
@@ -328,8 +341,8 @@ pub fn try_eval_cached(
         }
     });
 
-    JIT_CACHE.write().insert(key, compiled.clone());
-    TLS_CACHE.with(|c| c.borrow_mut().insert(key, compiled.clone()));
+    JIT_CACHE.lock().put(key, compiled.clone());
+    TLS_CACHE.with(|c| c.borrow_mut().put(key, compiled.clone()));
     compiled.map(|ce| ce.call(eval, env, tree, &idx, agg_group_key))
 }
 
