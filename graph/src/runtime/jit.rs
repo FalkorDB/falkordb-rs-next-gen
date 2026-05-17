@@ -331,8 +331,12 @@ pub fn try_eval_cached(
         };
     }
 
-    // Global cache lookup.
-    if let Some(entry) = JIT_CACHE.lock().get(&key).cloned() {
+    // Global cache lookup. Bind to a local so the MutexGuard drops before
+    // ce.call() — JIT-compiled code may recursively re-enter try_eval_cached
+    // via specialized bridges (jit_list_comp, jit_quantifier, …), and
+    // parking_lot::Mutex is non-reentrant.
+    let global_hit = JIT_CACHE.lock().get(&key).cloned();
+    if let Some(entry) = global_hit {
         TLS_CACHE.with(|c| c.borrow_mut().put(key, entry.clone()));
         return match entry {
             Some(ce) => {
