@@ -1465,6 +1465,7 @@ pub fn try_compile(
     }
     let mut flags_builder = settings::builder();
     flags_builder.set("opt_level", "speed").ok();
+    flags_builder.set("regalloc_algorithm", "single_pass").ok();
     let isa_builder = cranelift_native::builder().ok()?;
     let isa = isa_builder
         .finish(settings::Flags::new(flags_builder))
