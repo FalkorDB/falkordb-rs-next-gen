@@ -496,10 +496,17 @@ unsafe extern "C" fn jit_negate(
     out: *mut Value,
 ) -> u8 {
     match &*src {
-        Value::Int(i) => {
-            ptr::write(out, Value::Int(-*i));
-            0
-        }
+        Value::Int(i) => match i.checked_neg() {
+            Some(n) => {
+                ptr::write(out, Value::Int(n));
+                0
+            }
+            None => {
+                ptr::write(out, Value::Null);
+                set_err(String::from("integer overflow"));
+                1
+            }
+        },
         Value::Float(f) => {
             ptr::write(out, Value::Float(-*f));
             0
