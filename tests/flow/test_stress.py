@@ -7,6 +7,13 @@ from queue import Queue, Empty
 graph    = None
 GRAPH_ID = "stress"  # graph identifier
 
+# Wall-clock timeout for each stress test. The tests issue 10K concurrent
+# operations; if the system is unhealthy (deadlock / livelock / extreme
+# slowdown) the queue can fail to drain within the CI runner budget (6h),
+# which causes the whole job to be cancelled with no useful diagnostics.
+# Failing fast here turns that into a normal, debuggable test failure.
+STRESS_TIMEOUT_SEC = 600
+
 def query_create(g, i):
     param = {'v': i}
     create_query = "CREATE (:Node {v:$v})<-[:HAVE]-(:Node {v:$v})-[:HAVE]->(:Node {v:$v})"
@@ -69,22 +76,23 @@ def BGSAVE_loop(env, conn, stop_event):
 
     conn.close()
 
-def worker(conn, task_queue):
+def worker(conn, task_queue, stop_event):
     graph = Graph(conn, GRAPH_ID)
 
-    while True:
+    while not stop_event.is_set():
         try:
             task = task_queue.get(timeout=1)
         except Empty:
             break
 
-        task_func, args = task
-        if args:
-            task_func(graph, *args)
-        else:
-            task_func(graph)
-
-        task_queue.task_done()
+        try:
+            task_func, args = task
+            if args:
+                task_func(graph, *args)
+            else:
+                task_func(graph)
+        finally:
+            task_queue.task_done()
 
     conn.close()
 
@@ -99,17 +107,45 @@ class testStressFlow():
     def tearDown(self):
         self.graph.delete()
 
-    def start_workers(self, worker_count, task_queue):
+    def start_workers(self, worker_count, task_queue, stop_event):
         threads = []
         for _ in range(worker_count):
-            thread = threading.Thread(target=worker, args=(self.env.getConnection(), task_queue))
+            thread = threading.Thread(
+                target=worker,
+                args=(self.env.getConnection(), task_queue, stop_event),
+            )
             thread.start()
             threads.append(thread)
         return threads
 
-    def join_workers(self, threads):
+    def join_workers(self, threads, stop_event, task_queue, timeout):
+        """Join workers with a wall-clock budget.
+
+        Returns True if all workers exited within `timeout` seconds, False
+        otherwise. On timeout, signals workers to stop and drains any
+        unconsumed tasks so that task_queue.join() will not block.
+        """
+        deadline = time.time() + timeout
         for thread in threads:
-            thread.join()
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                break
+            thread.join(timeout=remaining)
+
+        if any(t.is_alive() for t in threads):
+            # Signal workers to stop pulling new tasks and drain whatever
+            # is still queued so task_queue.join() can return.
+            stop_event.set()
+            while True:
+                try:
+                    task_queue.get_nowait()
+                    task_queue.task_done()
+                except Empty:
+                    break
+            for thread in threads:
+                thread.join(timeout=30)
+            return False
+        return True
 
     def test00_stress(self):
         n_tasks     = 10000 # number of tasks to run
@@ -131,8 +167,13 @@ class testStressFlow():
                 task_queue.put((query_update, (i,)))
         
         # start and wait for all tasks to complete
-        self.join_workers(self.start_workers(16, task_queue))
+        stop_event = threading.Event()
+        threads    = self.start_workers(16, task_queue, stop_event)
+        completed  = self.join_workers(threads, stop_event, task_queue, STRESS_TIMEOUT_SEC)
         task_queue.join()
+        self.env.assertTrue(
+            completed,
+            message=f"test00_stress did not complete within {STRESS_TIMEOUT_SEC}s")
 
     def test01_bgsave_stress(self):
         n_tasks     = 10000 # number of tasks to run
@@ -164,13 +205,19 @@ class testStressFlow():
                 task_queue.put((update_nodes, ()))
 
         # start and wait for all tasks to complete
-        self.join_workers(self.start_workers(16, task_queue))
+        worker_stop_event = threading.Event()
+        threads   = self.start_workers(16, task_queue, worker_stop_event)
+        completed = self.join_workers(
+            threads, worker_stop_event, task_queue, STRESS_TIMEOUT_SEC)
 
         # Stop BGSAVE thread
         stop_event.set()
         bgsave_thread.join(timeout=10)
         self.env.assertFalse(bgsave_thread.is_alive())
         task_queue.join()
+        self.env.assertTrue(
+            completed,
+            message=f"test01_bgsave_stress did not complete within {STRESS_TIMEOUT_SEC}s")
 
     def test02_write_only_workload(self):
         n_tasks           = 10000 # number of tasks to run
@@ -189,8 +236,13 @@ class testStressFlow():
                 task_queue.put((delete_edges, ()))
 
         # start and wait for all tasks to complete
-        self.join_workers(self.start_workers(16, task_queue))
+        stop_event = threading.Event()
+        threads    = self.start_workers(16, task_queue, stop_event)
+        completed  = self.join_workers(threads, stop_event, task_queue, STRESS_TIMEOUT_SEC)
         task_queue.join()
+        self.env.assertTrue(
+            completed,
+            message=f"test02_write_only_workload did not complete within {STRESS_TIMEOUT_SEC}s")
 
         # make sure we did not crash
         conn = self.env.getConnection()
