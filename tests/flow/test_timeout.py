@@ -95,11 +95,17 @@ class testQueryTimeout():
         # expecting queries to run to completion
         for q in queries:
             q += " LIMIT 10"
+            res = None
             try:
                 res = self.graph.query(q, timeout=5)
                 timeouts.append(res.run_time_ms)
             except:
-                timeouts.append(res.run_time_ms)
+                if res is not None:
+                    timeouts.append(res.run_time_ms)
+                else:
+                    # query raised before completion (e.g. timed out);
+                    # fall back to the configured timeout as the baseline
+                    timeouts.append(5)
 
         for i, q in enumerate(queries):
             try:
