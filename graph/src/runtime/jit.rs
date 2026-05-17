@@ -99,7 +99,20 @@ pub struct CompiledExpr {
     /// relative so it's safe to reuse across distinct trees with the same
     /// fingerprint (unlike `NodeIdx`, which is tied to a tree's memory).
     _paths: Vec<Box<Vec<usize>>>,
-    _module: JITModule,
+    // Option so Drop can take ownership and call free_memory(self).
+    // cranelift's JITModule has no Drop impl — dropping it without
+    // free_memory leaks the mmap'd executable pages.
+    _module: Option<JITModule>,
+}
+
+impl Drop for CompiledExpr {
+    fn drop(&mut self) {
+        if let Some(m) = self._module.take() {
+            // SAFETY: self.func pointed into m's code, and self is being
+            // dropped — no live references into the JIT memory remain.
+            unsafe { m.free_memory() };
+        }
+    }
 }
 
 impl CompiledExpr {
@@ -1594,7 +1607,7 @@ pub fn try_compile(
         _fn_arcs: fn_arcs,
         _params: params,
         _paths: paths,
-        _module: module,
+        _module: Some(module),
     })
 }
 
