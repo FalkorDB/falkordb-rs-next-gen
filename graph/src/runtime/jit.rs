@@ -19,7 +19,6 @@
 
 use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
-use std::hash::{Hash, Hasher};
 use std::mem::{MaybeUninit, size_of};
 use std::ptr;
 use std::sync::Arc;
@@ -33,14 +32,10 @@ use cranelift_codegen::{Context, ir};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{Linkage, Module};
-use lru::LruCache;
-use once_cell::sync::Lazy;
 use orx_tree::{Dyn, DynNode, DynTree, NodeIdx, NodeRef};
-use parking_lot::Mutex;
-use std::num::NonZeroUsize;
 use thin_vec::ThinVec;
 
-use crate::parser::ast::{ExprIR, Variable};
+use crate::parser::ast::{ExprIR, QueryExprInner, Variable};
 use crate::runtime::env::Env;
 use crate::runtime::eval::{
     ExprEval, all_equals, all_not_equals, get_elements, list_contains, logical_xor,
@@ -99,6 +94,17 @@ pub struct CompiledExpr {
     /// relative so it's safe to reuse across distinct trees with the same
     /// fingerprint (unlike `NodeIdx`, which is tied to a tree's memory).
     _paths: Vec<Box<Vec<usize>>>,
+    /// Owned pointer arrays for the `helpers` bridge param. Each entry is a
+    /// boxed `Vec<*const CompiledExpr>` whose pointer is baked as a constant
+    /// into the compiled function.
+    _helper_ptr_arrays: Vec<Box<Vec<*const CompiledExpr>>>,
+    /// Owned `Arc<CompiledExpr>` instances kept alive for the lifetime of
+    /// this CompiledExpr; their addresses populate `_helper_ptr_arrays`.
+    _helper_arcs: Vec<Arc<CompiledExpr>>,
+    /// Owned constant `Value`s pre-evaluated at codegen (e.g. all-literal
+    /// list/map literals). Their addresses are baked as constants and the
+    /// runtime clones from them.
+    _const_values: Vec<Box<Value>>,
     // Option so Drop can take ownership and call free_memory(self).
     // cranelift's JITModule has no Drop impl — dropping it without
     // free_memory leaks the mmap'd executable pages.
@@ -122,14 +128,14 @@ impl CompiledExpr {
         &self,
         eval: &ExprEval<'_>,
         env: Option<&Env<'_>>,
-        tree: &DynTree<ExprIR<Variable>>,
+        tree: &QueryExprInner<Variable>,
         idx: &NodeIdx<Dyn<ExprIR<Variable>>>,
         agg_group_key: Option<u64>,
     ) -> Result<Value, String> {
         let mut out = MaybeUninit::<Value>::uninit();
         let env_ptr = env.map_or(ptr::null(), |e| e as *const Env<'_> as *const c_void);
         let eval_ptr = eval as *const ExprEval<'_> as *const c_void;
-        let tree_ptr = tree as *const DynTree<ExprIR<Variable>> as *const c_void;
+        let tree_ptr = tree as *const QueryExprInner<Variable> as *const c_void;
         let idx_ptr = idx as *const NodeIdx<Dyn<ExprIR<Variable>>> as *const c_void;
         let prev_key = AGG_KEY.with(|c| c.replace(agg_group_key));
         let prev_err = swap_err(String::new());
@@ -155,139 +161,13 @@ unsafe impl Send for CompiledExpr {}
 unsafe impl Sync for CompiledExpr {}
 
 // ---------------------------------------------------------------------------
-// Process-wide cache
+// JIT compilation cache lives in `QueryExprInner` (one OnceLock per root
+// expression, one Mutex<HashMap<NodeIdx-hash, Option<Arc<CompiledExpr>>>> for
+// sub-expressions). See `ExprEval::eval` in runtime/eval.rs.
 // ---------------------------------------------------------------------------
-//
-// Keyed by a 64-bit content fingerprint of the expression subtree. The
-// fingerprint walks every node in the subtree and feeds discriminant + payload
-// + child count into FxHasher. This is collision-resistant enough for caching
-// and immune to the address-reuse hazard that would arise from keying on a
-// `*const DynTree` (which can be freed and reallocated when the Plan LRU
-// evicts a cached query plan).
-//
-// Entries are `Option<Arc<CompiledExpr>>` — `None` records a previous compile
-// failure so we don't keep re-attempting.
-
-type CacheKey = u64;
-type CacheEntry = Option<Arc<CompiledExpr>>;
-
-fn fingerprint(
-    tree: &DynTree<ExprIR<Variable>>,
-    idx: NodeIdx<Dyn<ExprIR<Variable>>>,
-) -> u64 {
-    let mut h = rustc_hash::FxHasher::default();
-    fingerprint_walk(tree.node(idx), &mut h);
-    h.finish()
-}
-
-fn fingerprint_walk(
-    node: DynNode<'_, ExprIR<Variable>>,
-    h: &mut rustc_hash::FxHasher,
-) {
-    std::mem::discriminant(node.data()).hash(h);
-    match node.data() {
-        ExprIR::Null
-        | ExprIR::List
-        | ExprIR::Map
-        | ExprIR::Length
-        | ExprIR::GetElement
-        | ExprIR::GetElements
-        | ExprIR::IsNode
-        | ExprIR::IsRelationship
-        | ExprIR::Or
-        | ExprIR::Xor
-        | ExprIR::And
-        | ExprIR::Not
-        | ExprIR::Negate
-        | ExprIR::Eq
-        | ExprIR::Neq
-        | ExprIR::Lt
-        | ExprIR::Gt
-        | ExprIR::Le
-        | ExprIR::Ge
-        | ExprIR::In
-        | ExprIR::Add
-        | ExprIR::Sub
-        | ExprIR::Mul
-        | ExprIR::Div
-        | ExprIR::Pow
-        | ExprIR::Modulo
-        | ExprIR::Distinct
-        | ExprIR::Paren
-        | ExprIR::MapProjection => {}
-        ExprIR::Bool(b) => b.hash(h),
-        ExprIR::Integer(i) => i.hash(h),
-        ExprIR::Float(f) => f.to_bits().hash(h),
-        ExprIR::String(s) => s.as_str().hash(h),
-        ExprIR::Variable(v) => v.id.hash(h),
-        ExprIR::Parameter(p) => p.hash(h),
-        ExprIR::Property(p) => p.as_str().hash(h),
-        ExprIR::FuncInvocation(f) => {
-            // GraphFn instances are uniquely owned per registered function;
-            // address identity is a stable, cheap fingerprint.
-            (Arc::as_ptr(f) as usize).hash(h);
-        }
-        ExprIR::Quantifier {
-            quantifier_type,
-            var,
-        } => {
-            std::mem::discriminant(quantifier_type).hash(h);
-            var.id.hash(h);
-        }
-        ExprIR::ListComprehension(v) => v.id.hash(h),
-        ExprIR::Reduce {
-            accumulator,
-            iterator,
-        } => {
-            accumulator.id.hash(h);
-            iterator.id.hash(h);
-        }
-        ExprIR::ShortestPath {
-            rel_types,
-            min_hops,
-            max_hops,
-            directed,
-            all_paths,
-        } => {
-            for r in rel_types {
-                r.as_str().hash(h);
-            }
-            min_hops.hash(h);
-            max_hops.hash(h);
-            directed.hash(h);
-            all_paths.hash(h);
-        }
-        ExprIR::PatternComprehension(_) | ExprIR::Pattern(_) => {
-            // JIT bails on these; key by discriminant only.
-        }
-    }
-    let n = node.num_children();
-    n.hash(h);
-    for i in 0..n {
-        fingerprint_walk(node.child(i), h);
-    }
-}
-
-// Cap on number of compiled-expression entries kept in each cache. Each
-// CompiledExpr owns a JITModule with mmap'd executable pages, so an unbounded
-// cache leaks memory across long-running workloads with many distinct
-// expressions (e.g. test suites). 256 entries comfortably covers a typical
-// query mix while bounding worst-case memory.
-const JIT_CACHE_CAPACITY: usize = 256;
-const TLS_CACHE_CAPACITY: usize = 128;
-
-static JIT_CACHE: Lazy<Mutex<LruCache<CacheKey, CacheEntry>>> = Lazy::new(|| {
-    Mutex::new(LruCache::new(
-        NonZeroUsize::new(JIT_CACHE_CAPACITY).unwrap(),
-    ))
-});
 
 thread_local! {
     static JIT_STATS: RefCell<JitStats> = RefCell::new(JitStats::default());
-    // Per-thread cache: avoids hot-path lock + Arc clone contention across
-    // worker threads. Bounded LRU: when full, oldest entry evicted.
-    static TLS_CACHE: RefCell<LruCache<CacheKey, CacheEntry>> =
-        RefCell::new(LruCache::new(NonZeroUsize::new(TLS_CACHE_CAPACITY).unwrap()));
     // Current aggregation group key, threaded into the JIT via TLS rather
     // than the calling convention so helper signatures stay uniform. None
     // outside aggregation; Some(group_id) inside Aggregate's accumulate /
@@ -310,57 +190,19 @@ pub fn stats_snapshot() -> JitStats {
     JIT_STATS.with(|s| *s.borrow())
 }
 
-pub fn try_eval_cached(
-    tree: &DynTree<ExprIR<Variable>>,
-    idx: NodeIdx<Dyn<ExprIR<Variable>>>,
-    eval: &ExprEval<'_>,
-    env: Option<&Env<'_>>,
-    agg_group_key: Option<u64>,
-) -> Option<Result<Value, String>> {
-    let key: CacheKey = fingerprint(tree, idx.clone());
-
-    // Thread-local fast path: no atomics, no Arc clone.
-    let tls_hit = TLS_CACHE.with(|c| c.borrow_mut().get(&key).cloned());
-    if let Some(entry) = tls_hit {
-        return match entry {
-            Some(ce) => {
-                JIT_STATS.with(|s| s.borrow_mut().hits += 1);
-                Some(ce.call(eval, env, tree, &idx, agg_group_key))
-            }
-            None => None,
-        };
-    }
-
-    // Global cache lookup. Bind to a local so the MutexGuard drops before
-    // ce.call() — JIT-compiled code may recursively re-enter try_eval_cached
-    // via specialized bridges (jit_list_comp, jit_quantifier, …), and
-    // parking_lot::Mutex is non-reentrant.
-    let global_hit = JIT_CACHE.lock().get(&key).cloned();
-    if let Some(entry) = global_hit {
-        TLS_CACHE.with(|c| c.borrow_mut().put(key, entry.clone()));
-        return match entry {
-            Some(ce) => {
-                JIT_STATS.with(|s| s.borrow_mut().hits += 1);
-                Some(ce.call(eval, env, tree, &idx, agg_group_key))
-            }
-            None => None,
-        };
-    }
-
-    // Compile outside the lock.
-    let compiled = try_compile(tree, idx.clone()).map(Arc::new);
+pub(crate) fn record_compile(success: bool) {
     JIT_STATS.with(|s| {
         let mut s = s.borrow_mut();
-        if compiled.is_some() {
+        if success {
             s.compiles += 1;
         } else {
             s.compile_failures += 1;
         }
     });
+}
 
-    JIT_CACHE.lock().put(key, compiled.clone());
-    TLS_CACHE.with(|c| c.borrow_mut().put(key, compiled.clone()));
-    compiled.map(|ce| ce.call(eval, env, tree, &idx, agg_group_key))
+pub(crate) fn record_hit() {
+    JIT_STATS.with(|s| s.borrow_mut().hits += 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -378,6 +220,14 @@ unsafe extern "C" fn jit_int(
     lo: i64,
 ) -> u8 {
     ptr::write(out, Value::Int(lo));
+    0
+}
+
+unsafe extern "C" fn jit_const_clone(
+    out: *mut Value,
+    val_ptr: *const Value,
+) -> u8 {
+    ptr::write(out, (*val_ptr).clone());
     0
 }
 
@@ -1127,7 +977,7 @@ unsafe fn resolve_node<'t>(
 }
 
 macro_rules! specialized_bridge {
-    ($name:ident, |$eval:ident, $env:ident, $tree:ident, $node:ident| $body:expr) => {
+    ($name:ident, |$eval:ident, $env:ident, $tree:ident, $node:ident, $args:ident, $helpers:ident| $body:expr) => {
         unsafe extern "C" fn $name(
             eval: *const c_void,
             env: *const c_void,
@@ -1135,10 +985,14 @@ macro_rules! specialized_bridge {
             idx: *const c_void,
             path_ptr: *const usize,
             path_len: usize,
+            args_ptr: *const *const Value,
+            n_args: usize,
+            helpers_ptr: *const *const CompiledExpr,
+            n_helpers: usize,
             out: *mut Value,
         ) -> u8 {
             let $eval = &*(eval as *const ExprEval<'_>);
-            let $tree = &*(tree as *const DynTree<ExprIR<Variable>>);
+            let $tree = &*(tree as *const QueryExprInner<Variable>);
             let $env = if env.is_null() {
                 None
             } else {
@@ -1146,7 +1000,17 @@ macro_rules! specialized_bridge {
             };
             let root_idx = &*(idx as *const NodeIdx<Dyn<ExprIR<Variable>>>);
             let path = std::slice::from_raw_parts(path_ptr, path_len);
-            let $node = resolve_node($tree, root_idx, path);
+            let $node = resolve_node(&$tree.tree, root_idx, path);
+            let $args: &[*const Value] = if n_args == 0 {
+                &[]
+            } else {
+                std::slice::from_raw_parts(args_ptr, n_args)
+            };
+            let $helpers: &[*const CompiledExpr] = if n_helpers == 0 {
+                &[]
+            } else {
+                std::slice::from_raw_parts(helpers_ptr, n_helpers)
+            };
             let result: Result<Value, String> = $body;
             match result {
                 Ok(v) => {
@@ -1163,95 +1027,139 @@ macro_rules! specialized_bridge {
     };
 }
 
-specialized_bridge!(jit_quantifier, |eval, env, tree, node| {
+specialized_bridge!(jit_quantifier, |eval, env, tree, node, args, helpers| {
     if let ExprIR::Quantifier {
         quantifier_type,
         var,
     } = node.data()
     {
-        eval.eval_quantifier_expr(
-            tree,
-            node.idx(),
-            env,
-            current_agg_key(),
-            quantifier_type,
-            var,
-        )
+        debug_assert_eq!(args.len(), 1);
+        debug_assert_eq!(helpers.len(), 1);
+        let list: &Value = unsafe { &*args[0] };
+        match unsafe { helpers[0].as_ref() } {
+            Some(body_ce) => eval.eval_quantifier_expr(
+                tree,
+                node.idx(),
+                env,
+                current_agg_key(),
+                quantifier_type,
+                var,
+                list,
+                body_ce,
+            ),
+            None => Err(String::from("quantifier body not JIT-compilable")),
+        }
     } else {
         Err("jit_quantifier: not a Quantifier node".into())
     }
 });
 
-specialized_bridge!(jit_list_comp, |eval, env, tree, node| {
+specialized_bridge!(jit_list_comp, |eval, env, tree, node, _args, helpers| {
     if let ExprIR::ListComprehension(var) = node.data() {
-        eval.eval_list_comprehension_expr(tree, node.idx(), env, current_agg_key(), var)
+        debug_assert!(helpers.len() >= 2);
+        match (unsafe { helpers[0].as_ref() }, unsafe {
+            helpers[1].as_ref()
+        }) {
+            (Some(pred_ce), Some(proj_ce)) => eval.eval_list_comprehension_expr(
+                tree,
+                node.idx(),
+                env,
+                current_agg_key(),
+                var,
+                pred_ce,
+                proj_ce,
+                &helpers[2..],
+            ),
+            _ => Err(String::from("list-comp pred/proj not JIT-compilable")),
+        }
     } else {
         Err("jit_list_comp: not a ListComprehension node".into())
     }
 });
 
-specialized_bridge!(jit_reduce, |eval, env, tree, node| {
+specialized_bridge!(jit_reduce, |eval, env, tree, node, args, helpers| {
     if let ExprIR::Reduce {
         accumulator,
         iterator,
     } = node.data()
     {
-        eval.eval_reduce_expr(
-            tree,
-            node.idx(),
-            env,
-            current_agg_key(),
-            accumulator,
-            iterator,
-        )
+        debug_assert_eq!(args.len(), 2);
+        debug_assert_eq!(helpers.len(), 1);
+        let init: &Value = unsafe { &*args[0] };
+        let list: &Value = unsafe { &*args[1] };
+        match unsafe { helpers[0].as_ref() } {
+            Some(body_ce) => eval.eval_reduce_expr(
+                tree,
+                node.idx(),
+                env,
+                current_agg_key(),
+                accumulator,
+                iterator,
+                init,
+                list,
+                body_ce,
+            ),
+            None => Err(String::from("reduce body not JIT-compilable")),
+        }
     } else {
         Err("jit_reduce: not a Reduce node".into())
     }
 });
 
-specialized_bridge!(jit_map_projection, |eval, env, tree, node| {
-    eval.eval_map_projection(tree, node.idx(), env, current_agg_key())
-});
-
-specialized_bridge!(jit_distinct, |eval, env, tree, node| {
-    eval.eval_distinct(tree, node.idx(), env, current_agg_key())
-});
-
-specialized_bridge!(jit_list_runtime, |eval, env, tree, node| {
-    (|| -> Result<Value, String> {
-        let n = node.num_children();
-        let mut list: ThinVec<Value> = ThinVec::with_capacity(n);
-        for i in 0..n {
-            list.push(eval.eval(tree, node.child(i).idx(), env, current_agg_key())?);
-        }
-        Ok(Value::List(Arc::new(list)))
-    })()
-});
-
-specialized_bridge!(jit_shortest_path, |eval, env, tree, node| {
-    if let ExprIR::ShortestPath {
-        rel_types,
-        min_hops,
-        max_hops,
-        directed,
-        all_paths,
-    } = node.data()
-    {
-        eval.eval_shortest_path(
-            tree,
-            node.idx(),
-            env,
-            None,
-            rel_types,
-            *min_hops,
-            *max_hops,
-            *directed,
-            *all_paths,
-        )
-    } else {
-        Err("jit_shortest_path: not a ShortestPath node".into())
+specialized_bridge!(
+    jit_map_projection,
+    |eval, env, tree, node, args, helpers| {
+        debug_assert_eq!(args.len(), 1);
+        let base: &Value = unsafe { &*args[0] };
+        eval.eval_map_projection(tree, node.idx(), env, current_agg_key(), base, helpers)
     }
+);
+
+specialized_bridge!(jit_distinct, |eval, env, tree, node, args, _helpers| {
+    let borrowed: ThinVec<&Value> = args.iter().map(|p| unsafe { &**p }).collect();
+    eval.eval_distinct(tree, node.idx(), env, current_agg_key(), &borrowed)
 });
+
+specialized_bridge!(
+    jit_list_runtime,
+    |_eval, _env, _tree, _node, args, _helpers| {
+        let list: ThinVec<Value> = args.iter().map(|p| unsafe { (&**p).clone() }).collect();
+        Ok(Value::List(Arc::new(list)))
+    }
+);
+
+specialized_bridge!(
+    jit_shortest_path,
+    |eval, env, tree, node, args, _helpers| {
+        if let ExprIR::ShortestPath {
+            rel_types,
+            min_hops,
+            max_hops,
+            directed,
+            all_paths,
+        } = node.data()
+        {
+            debug_assert_eq!(args.len(), 2);
+            let src: &Value = unsafe { &*args[0] };
+            let dst: &Value = unsafe { &*args[1] };
+            eval.eval_shortest_path(
+                tree,
+                node.idx(),
+                env,
+                None,
+                rel_types,
+                *min_hops,
+                *max_hops,
+                *directed,
+                *all_paths,
+                src,
+                dst,
+            )
+        } else {
+            Err("jit_shortest_path: not a ShortestPath node".into())
+        }
+    }
+);
 
 // Aggregator FuncInvocation bridge. Mirrors the original interpreter:
 // during finalization (agg_group_key is None and last child is a Variable
@@ -1267,11 +1175,15 @@ unsafe extern "C" fn jit_agg_func_call(
     idx: *const c_void,
     path_ptr: *const usize,
     path_len: usize,
+    _args_ptr: *const *const Value,
+    _n_args: usize,
+    helpers_ptr: *const *const CompiledExpr,
+    n_helpers: usize,
     func_ptr: *const Arc<GraphFn>,
     out: *mut Value,
 ) -> u8 {
     let eval_ref = &*(eval as *const ExprEval<'_>);
-    let tree_ref = &*(tree as *const DynTree<ExprIR<Variable>>);
+    let tree_ref = &*(tree as *const QueryExprInner<Variable>);
     let env_opt = if env.is_null() {
         None
     } else {
@@ -1279,9 +1191,14 @@ unsafe extern "C" fn jit_agg_func_call(
     };
     let root_idx = &*(idx as *const NodeIdx<Dyn<ExprIR<Variable>>>);
     let path = std::slice::from_raw_parts(path_ptr, path_len);
-    let node = resolve_node(tree_ref, root_idx, path);
+    let node = resolve_node(&tree_ref.tree, root_idx, path);
     let func = &**func_ptr;
     let agg_key = current_agg_key();
+    let helpers: &[*const CompiledExpr] = if n_helpers == 0 {
+        &[]
+    } else {
+        std::slice::from_raw_parts(helpers_ptr, n_helpers)
+    };
 
     if agg_key.is_none()
         && let FnType::Aggregation { finalizer, .. } = &func.fn_type
@@ -1302,8 +1219,8 @@ unsafe extern "C" fn jit_agg_func_call(
         return 0;
     }
 
-    // Accumulate / non-finalize path: evaluate all children via eval (which
-    // dispatches back into the JIT cache), then call the function.
+    // Accumulate / non-finalize path: evaluate all children via pre-compiled
+    // helpers (one per child), then call the function.
     let rt = match eval_ref.runtime_opt() {
         Some(rt) => rt,
         None => {
@@ -1313,10 +1230,22 @@ unsafe extern "C" fn jit_agg_func_call(
         }
     };
     let n = node.num_children();
+    debug_assert_eq!(helpers.len(), n);
     let mut args: ThinVec<Value> = ThinVec::with_capacity(n);
     for i in 0..n {
         let child = node.child(i);
-        match eval_ref.eval(tree_ref, child.idx(), env_opt, agg_key) {
+        let child_idx = child.idx();
+        let child_ce_ptr = helpers[i];
+        let res = if child_ce_ptr.is_null() {
+            Err(format!(
+                "agg arg #{i} not JIT-compilable: {:?}",
+                child.data()
+            ))
+        } else {
+            let ce = &*child_ce_ptr;
+            ce.call(eval_ref, env_opt, tree_ref, &child_idx, agg_key)
+        };
+        match res {
             Ok(v) => args.push(v),
             Err(e) => {
                 ptr::write(out, Value::Null);
@@ -1526,6 +1455,9 @@ pub fn try_compile(
         fn_arcs: Vec::new(),
         params: Vec::new(),
         paths: Vec::new(),
+        helper_ptr_arrays: Vec::new(),
+        helper_arcs: Vec::new(),
+        const_values: Vec::new(),
         helpers: Helpers::default(),
     };
 
@@ -1598,6 +1530,9 @@ pub fn try_compile(
     let fn_arcs = std::mem::take(&mut state.fn_arcs);
     let params = std::mem::take(&mut state.params);
     let paths = std::mem::take(&mut state.paths);
+    let helper_ptr_arrays = std::mem::take(&mut state.helper_ptr_arrays);
+    let helper_arcs = std::mem::take(&mut state.helper_arcs);
+    let const_values = std::mem::take(&mut state.const_values);
     drop(state);
 
     module
@@ -1619,6 +1554,9 @@ pub fn try_compile(
         _fn_arcs: fn_arcs,
         _params: params,
         _paths: paths,
+        _helper_ptr_arrays: helper_ptr_arrays,
+        _helper_arcs: helper_arcs,
+        _const_values: const_values,
         _module: Some(module),
     })
 }
@@ -1649,12 +1587,16 @@ struct CodegenState<'m> {
     /// relative so a CompiledExpr remains valid when shared across distinct
     /// trees with the same fingerprint.
     paths: Vec<Box<Vec<usize>>>,
+    helper_ptr_arrays: Vec<Box<Vec<*const CompiledExpr>>>,
+    helper_arcs: Vec<Arc<CompiledExpr>>,
+    const_values: Vec<Box<Value>>,
     helpers: Helpers,
 }
 
 #[derive(Default)]
 struct Helpers {
     int: Option<ir::FuncRef>,
+    const_clone: Option<ir::FuncRef>,
     float: Option<ir::FuncRef>,
     bool_: Option<ir::FuncRef>,
     null: Option<ir::FuncRef>,
@@ -1715,6 +1657,7 @@ fn register_helpers(jb: &mut JITBuilder) {
         };
     }
     reg!("jit_int", jit_int);
+    reg!("jit_const_clone", jit_const_clone);
     reg!("jit_float", jit_float);
     reg!("jit_bool", jit_bool);
     reg!("jit_null", jit_null);
@@ -1926,7 +1869,9 @@ impl Helpers {
         sig
     }
 
-    /// (eval, env, tree, *const NodeIdx idx, *const usize path, usize path_len, out) -> u8
+    /// (eval, env, tree, *const NodeIdx idx, *const usize path, usize path_len,
+    ///  *const *const Value args, usize n_args,
+    ///  *const *const CompiledExpr helpers, usize n_helpers, out) -> u8
     fn bridge_sig(ptr: ir::Type) -> Signature {
         let mut sig = Signature::new(CallConv::SystemV);
         sig.params.push(AbiParam::new(ptr)); // eval
@@ -1935,12 +1880,17 @@ impl Helpers {
         sig.params.push(AbiParam::new(ptr)); // idx (NodeIdx)
         sig.params.push(AbiParam::new(ptr)); // path_ptr
         sig.params.push(AbiParam::new(ptr)); // path_len
+        sig.params.push(AbiParam::new(ptr)); // args_ptr (*const *const Value)
+        sig.params.push(AbiParam::new(ptr)); // n_args
+        sig.params.push(AbiParam::new(ptr)); // helpers_ptr (*const *const CompiledExpr)
+        sig.params.push(AbiParam::new(ptr)); // n_helpers
         sig.params.push(AbiParam::new(ptr)); // out
         sig.returns.push(AbiParam::new(types::I8));
         sig
     }
 
-    /// (eval, env, tree, idx, path_ptr, path_len, func_ptr, out) -> u8
+    /// (eval, env, tree, idx, path_ptr, path_len, args_ptr, n_args,
+    ///  helpers_ptr, n_helpers, func_ptr, out) -> u8
     fn agg_bridge_sig(ptr: ir::Type) -> Signature {
         let mut sig = Signature::new(CallConv::SystemV);
         sig.params.push(AbiParam::new(ptr)); // eval
@@ -1949,6 +1899,10 @@ impl Helpers {
         sig.params.push(AbiParam::new(ptr)); // idx
         sig.params.push(AbiParam::new(ptr)); // path_ptr
         sig.params.push(AbiParam::new(ptr)); // path_len
+        sig.params.push(AbiParam::new(ptr)); // args_ptr
+        sig.params.push(AbiParam::new(ptr)); // n_args
+        sig.params.push(AbiParam::new(ptr)); // helpers_ptr
+        sig.params.push(AbiParam::new(ptr)); // n_helpers
         sig.params.push(AbiParam::new(ptr)); // func_ptr
         sig.params.push(AbiParam::new(ptr)); // out
         sig.returns.push(AbiParam::new(types::I8));
@@ -1989,6 +1943,12 @@ macro_rules! helper_getter {
 }
 
 helper_getter!(get_int, int, "jit_int", Helpers::int_sig);
+helper_getter!(
+    get_const_clone,
+    const_clone,
+    "jit_const_clone",
+    Helpers::string_sig
+);
 helper_getter!(get_float, float, "jit_float", Helpers::int_sig);
 helper_getter!(get_bool, bool_, "jit_bool", Helpers::int_sig);
 helper_getter!(get_null, null, "jit_null", Helpers::null_sig);
@@ -2193,8 +2153,19 @@ fn emit(
         ExprIR::Ge => emit_binary(state, builder, tree, &node, get_ge),
         ExprIR::Paren => emit(state, builder, tree, node.child(0).idx()),
         ExprIR::FuncInvocation(func) => emit_func_call(state, builder, tree, &node, func.clone()),
+        ExprIR::List if node.num_children() > 65536 => {
+            // Very large list literals would require a multi-MB stack slot for
+            // the args array (8 bytes per child). Try to constant-fold; if all
+            // children are simple literals we can pre-evaluate the whole list
+            // at codegen and bake it as a const. Otherwise bail out of JIT.
+            match try_fold_literal_list(&node) {
+                Some(value) => emit_const_value(state, builder, value),
+                None => Err(()),
+            }
+        }
         ExprIR::List if node.num_children() > 64 => {
-            emit_specialized_bridge(state, builder, tree, idx, get_list_runtime)
+            let all: Vec<usize> = (0..node.num_children()).collect();
+            emit_specialized_bridge_with_args(state, builder, tree, idx, get_list_runtime, &all)
         }
         ExprIR::List => emit_nary(state, builder, tree, &node, get_list),
         ExprIR::GetElement => emit_get_element(state, builder, tree, &node),
@@ -2203,19 +2174,66 @@ fn emit(
         // Specialized bridges that dispatch directly to extracted ExprEval methods,
         // avoiding the generic eval-dispatch match.
         ExprIR::MapProjection => {
-            emit_specialized_bridge(state, builder, tree, idx, get_map_projection)
+            let mut pre_compile_paths: Vec<Vec<usize>> = Vec::new();
+            for i in 1..node.num_children() {
+                if matches!(node.child(i).data(), ExprIR::String(_)) {
+                    pre_compile_paths.push(vec![i, 0]);
+                }
+            }
+            emit_specialized_bridge_full(
+                state,
+                builder,
+                tree,
+                idx,
+                get_map_projection,
+                &[0],
+                &pre_compile_paths,
+            )
         }
-        ExprIR::Quantifier { .. } => {
-            emit_specialized_bridge(state, builder, tree, idx, get_quantifier)
-        }
+        ExprIR::Quantifier { .. } => emit_specialized_bridge_full(
+            state,
+            builder,
+            tree,
+            idx,
+            get_quantifier,
+            &[0],
+            &[vec![1]],
+        ),
         ExprIR::ListComprehension(_) => {
-            emit_specialized_bridge(state, builder, tree, idx, get_list_comp)
+            // helpers: [pred, proj, then iter helpers — either [range.start,
+            // range.end, optional range.step] or [whole_list_expr]].
+            let mut pre_compile_paths: Vec<Vec<usize>> = vec![vec![1], vec![2]];
+            let iter_node = node.child(0);
+            if let ExprIR::FuncInvocation(func) = iter_node.data()
+                && func.name == "range"
+            {
+                let n = iter_node.num_children();
+                for i in 0..n {
+                    pre_compile_paths.push(vec![0, i]);
+                }
+            } else {
+                pre_compile_paths.push(vec![0]);
+            }
+            emit_specialized_bridge_full(
+                state,
+                builder,
+                tree,
+                idx,
+                get_list_comp,
+                &[],
+                &pre_compile_paths,
+            )
         }
-        ExprIR::Reduce { .. } => emit_specialized_bridge(state, builder, tree, idx, get_reduce),
+        ExprIR::Reduce { .. } => {
+            emit_specialized_bridge_full(state, builder, tree, idx, get_reduce, &[0, 1], &[vec![2]])
+        }
         ExprIR::ShortestPath { .. } => {
-            emit_specialized_bridge(state, builder, tree, idx, get_shortest_path)
+            emit_specialized_bridge_with_args(state, builder, tree, idx, get_shortest_path, &[0, 1])
         }
-        ExprIR::Distinct => emit_specialized_bridge(state, builder, tree, idx, get_distinct),
+        ExprIR::Distinct => {
+            let all: Vec<usize> = (0..node.num_children()).collect();
+            emit_specialized_bridge_with_args(state, builder, tree, idx, get_distinct, &all)
+        }
         // Pattern/PatternComprehension are unreachable at eval time (the
         // planner consumes them). JIT skips them; expressions containing
         // them fall back to the interpreter.
@@ -2259,6 +2277,42 @@ fn emit_int(
     let val = builder.ins().iconst(types::I64, i);
     builder.ins().call(helper, &[addr, val]);
     Ok(slot)
+}
+
+fn emit_const_value(
+    state: &mut CodegenState<'_>,
+    builder: &mut FunctionBuilder<'_>,
+    value: Value,
+) -> Result<ir::StackSlot, ()> {
+    let slot = alloc_slot(state, builder);
+    let helper = get_const_clone(&mut state.helpers, state.module, &mut builder.func);
+    let out_addr = builder.ins().stack_addr(state.pointer_type, slot, 0);
+    let boxed: Box<Value> = Box::new(value);
+    let val_ptr = boxed.as_ref() as *const Value as usize;
+    state.const_values.push(boxed);
+    let val_const = builder.ins().iconst(state.pointer_type, val_ptr as i64);
+    builder.ins().call(helper, &[out_addr, val_const]);
+    Ok(slot)
+}
+
+fn try_fold_literal(node: &DynNode<'_, ExprIR<Variable>>) -> Option<Value> {
+    match node.data() {
+        ExprIR::Null => Some(Value::Null),
+        ExprIR::Bool(b) => Some(Value::Bool(*b)),
+        ExprIR::Integer(i) => Some(Value::Int(*i)),
+        ExprIR::Float(f) => Some(Value::Float(*f)),
+        ExprIR::String(s) => Some(Value::String(s.clone())),
+        _ => None,
+    }
+}
+
+fn try_fold_literal_list(node: &DynNode<'_, ExprIR<Variable>>) -> Option<Value> {
+    let n = node.num_children();
+    let mut items: ThinVec<Value> = ThinVec::with_capacity(n);
+    for i in 0..n {
+        items.push(try_fold_literal(&node.child(i))?);
+    }
+    Some(Value::List(Arc::new(items)))
 }
 
 fn emit_float(
@@ -2541,15 +2595,108 @@ fn emit_specialized_bridge(
     idx: NodeIdx<Dyn<ExprIR<Variable>>>,
     get: HelperGetter,
 ) -> Result<ir::StackSlot, ()> {
+    emit_specialized_bridge_full(state, builder, tree, idx, get, &[], &[])
+}
+
+/// Pre-evaluates the children listed in `pre_eval_children` (passed as
+/// `args`) and pre-compiles the sub-trees rooted at the children listed in
+/// `pre_compile_children` (passed as `helpers`). The bridge sees them as
+/// `args: &[*const Value]` and `helpers: &[*const CompiledExpr]`.
+fn emit_specialized_bridge_with_args(
+    state: &mut CodegenState<'_>,
+    builder: &mut FunctionBuilder<'_>,
+    tree: &DynTree<ExprIR<Variable>>,
+    idx: NodeIdx<Dyn<ExprIR<Variable>>>,
+    get: HelperGetter,
+    pre_eval_children: &[usize],
+) -> Result<ir::StackSlot, ()> {
+    emit_specialized_bridge_full(state, builder, tree, idx, get, pre_eval_children, &[])
+}
+
+fn emit_specialized_bridge_full(
+    state: &mut CodegenState<'_>,
+    builder: &mut FunctionBuilder<'_>,
+    tree: &DynTree<ExprIR<Variable>>,
+    idx: NodeIdx<Dyn<ExprIR<Variable>>>,
+    get: HelperGetter,
+    pre_eval_children: &[usize],
+    pre_compile_paths: &[Vec<usize>],
+) -> Result<ir::StackSlot, ()> {
     let slot = alloc_slot(state, builder);
-    let helper = get(&mut state.helpers, state.module, &mut builder.func);
     let out_addr = builder.ins().stack_addr(state.pointer_type, slot, 0);
 
-    // Compute the path from the compile-time subtree root to this node
-    // (sequence of child indices). Walk parents until we hit the compile
-    // root. The path is RELATIVE to the runtime-supplied subtree root,
-    // so the same CompiledExpr is safe to reuse across distinct trees
-    // sharing this subtree's fingerprint.
+    // Pre-evaluate the requested children.
+    let mut arg_slots: Vec<ir::StackSlot> = Vec::with_capacity(pre_eval_children.len());
+    for &ci in pre_eval_children {
+        let child_slot = emit(state, builder, tree, tree.node(idx.clone()).child(ci).idx())?;
+        arg_slots.push(child_slot);
+    }
+
+    let ptr_size = u32::from(state.pointer_type.bytes());
+    let n_args = arg_slots.len();
+    let (args_addr, n_args_const) = if n_args == 0 {
+        (
+            builder.ins().iconst(state.pointer_type, 0),
+            builder.ins().iconst(state.pointer_type, 0),
+        )
+    } else {
+        let args_slot = builder.create_sized_stack_slot(ir::StackSlotData::new(
+            ir::StackSlotKind::ExplicitSlot,
+            ptr_size * n_args as u32,
+            3,
+        ));
+        for (i, child_slot) in arg_slots.iter().enumerate() {
+            let child_addr = builder.ins().stack_addr(state.pointer_type, *child_slot, 0);
+            builder.ins().stack_store(
+                child_addr,
+                args_slot,
+                i32::try_from(i).unwrap() * i32::try_from(ptr_size).unwrap(),
+            );
+        }
+        (
+            builder.ins().stack_addr(state.pointer_type, args_slot, 0),
+            builder.ins().iconst(state.pointer_type, n_args as i64),
+        )
+    };
+
+    // Pre-compile sub-trees and bake their `*const CompiledExpr` ptrs into
+    // a heap-allocated array. Null entries indicate sub-trees that were not
+    // JIT-compilable; bridges must treat them as a hard error.
+    let n_helpers = pre_compile_paths.len();
+    let (helpers_addr, n_helpers_const) = if n_helpers == 0 {
+        (
+            builder.ins().iconst(state.pointer_type, 0),
+            builder.ins().iconst(state.pointer_type, 0),
+        )
+    } else {
+        let mut ptrs: Vec<*const CompiledExpr> = Vec::with_capacity(n_helpers);
+        for path in pre_compile_paths {
+            let mut child_node = tree.node(idx.clone());
+            for &p in path {
+                child_node = child_node.child(p);
+            }
+            let child_idx = child_node.idx();
+            match try_compile(tree, child_idx) {
+                Some(ce) => {
+                    let arc = Arc::new(ce);
+                    let raw = Arc::as_ptr(&arc);
+                    state.helper_arcs.push(arc);
+                    ptrs.push(raw);
+                }
+                None => ptrs.push(std::ptr::null()),
+            }
+        }
+        let boxed: Box<Vec<*const CompiledExpr>> = Box::new(ptrs);
+        let arr_ptr = boxed.as_ptr() as usize;
+        state.helper_ptr_arrays.push(boxed);
+        (
+            builder.ins().iconst(state.pointer_type, arr_ptr as i64),
+            builder.ins().iconst(state.pointer_type, n_helpers as i64),
+        )
+    };
+
+    // Path from compile-time root to this node (for `resolve_node` inside
+    // the bridge).
     let mut path: Vec<usize> = Vec::new();
     let root_node_ptr = tree.node(state.root_idx.clone()).idx();
     let mut node = tree.node(idx);
@@ -2566,6 +2713,7 @@ fn emit_specialized_bridge(
     let path_len = boxed.len();
     state.paths.push(boxed);
 
+    let helper = get(&mut state.helpers, state.module, &mut builder.func);
     let path_const = builder.ins().iconst(state.pointer_type, path_ptr as i64);
     let path_len_const = builder.ins().iconst(state.pointer_type, path_len as i64);
     builder.ins().call(
@@ -2577,6 +2725,10 @@ fn emit_specialized_bridge(
             state.idx_param,
             path_const,
             path_len_const,
+            args_addr,
+            n_args_const,
+            helpers_addr,
+            n_helpers_const,
             out_addr,
         ],
     );
@@ -2820,7 +2972,7 @@ fn emit_agg_func_call(
     // Path relative to the compile-time subtree root.
     let mut path: Vec<usize> = Vec::new();
     let root_node_ptr = tree.node(state.root_idx.clone()).idx();
-    let mut node = tree.node(idx);
+    let mut node = tree.node(idx.clone());
     while node.idx() != root_node_ptr {
         path.push(node.sibling_idx());
         node = match node.parent() {
@@ -2838,9 +2990,35 @@ fn emit_agg_func_call(
     let func_ptr = boxed_fn.as_ref() as *const Arc<GraphFn> as usize;
     state.fn_arcs.push(boxed_fn);
 
+    // Pre-compile every child arg into a helper. Null entries are tolerated
+    // by the bridge in the finalize path (where children aren't evaluated).
+    let n = tree.node(idx.clone()).num_children();
+    let mut ptrs: Vec<*const CompiledExpr> = Vec::with_capacity(n);
+    for i in 0..n {
+        let child_idx = tree.node(idx.clone()).child(i).idx();
+        match try_compile(tree, child_idx) {
+            Some(ce) => {
+                let arc = Arc::new(ce);
+                let raw = Arc::as_ptr(&arc);
+                state.helper_arcs.push(arc);
+                ptrs.push(raw);
+            }
+            None => ptrs.push(std::ptr::null()),
+        }
+    }
+    let helpers_boxed: Box<Vec<*const CompiledExpr>> = Box::new(ptrs);
+    let helpers_arr_ptr = helpers_boxed.as_ptr() as usize;
+    state.helper_ptr_arrays.push(helpers_boxed);
+
     let path_const = builder.ins().iconst(state.pointer_type, path_ptr as i64);
     let path_len_const = builder.ins().iconst(state.pointer_type, path_len as i64);
     let func_const = builder.ins().iconst(state.pointer_type, func_ptr as i64);
+    let null_args = builder.ins().iconst(state.pointer_type, 0);
+    let zero_n = builder.ins().iconst(state.pointer_type, 0);
+    let helpers_const = builder
+        .ins()
+        .iconst(state.pointer_type, helpers_arr_ptr as i64);
+    let n_helpers_const = builder.ins().iconst(state.pointer_type, n as i64);
 
     builder.ins().call(
         helper,
@@ -2851,6 +3029,10 @@ fn emit_agg_func_call(
             state.idx_param,
             path_const,
             path_len_const,
+            null_args,
+            zero_n,
+            helpers_const,
+            n_helpers_const,
             func_const,
             out_addr,
         ],

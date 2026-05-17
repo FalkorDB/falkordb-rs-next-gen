@@ -62,7 +62,9 @@ fn get_id_filter(
         && !references_var(&filter.child(1), node_alias)
     {
         Some((
-            Arc::new(filter.child(1).clone_as_tree()),
+            Arc::new(crate::parser::ast::QueryExprInner::from(
+                filter.child(1).clone_as_tree(),
+            )),
             filter.data().clone(),
         ))
     } else if matches!(
@@ -82,7 +84,12 @@ fn get_id_filter(
             ExprIR::Le => ExprIR::Ge,
             _ => unreachable!(),
         };
-        Some((Arc::new(filter.child(0).clone_as_tree()), op))
+        Some((
+            Arc::new(crate::parser::ast::QueryExprInner::from(
+                filter.child(0).clone_as_tree(),
+            )),
+            op,
+        ))
     } else {
         None
     }

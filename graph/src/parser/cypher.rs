@@ -332,7 +332,9 @@ impl<'a> Parser<'a> {
                 IndexType::Range
             };
             let options = if (vector || fulltext) && optional_match_token!(self.lexer => Options) {
-                Some(Arc::new(self.parse_map()?))
+                Some(Arc::new(crate::parser::ast::QueryExprInner::from(
+                    self.parse_map()?,
+                )))
             } else {
                 None
             };
@@ -636,14 +638,20 @@ impl<'a> Parser<'a> {
                 let headers = optional_match_token!(self.lexer => With)
                     && optional_match_token!(self.lexer => Headers);
                 match_token!(self.lexer => From);
-                let file_path = Arc::new(self.parse_expr(false)?);
+                let file_path = Arc::new(crate::parser::ast::QueryExprInner::from(
+                    self.parse_expr(false)?,
+                ));
                 match_token!(self.lexer => As);
                 let ident = self.parse_ident()?;
                 // Support standard Cypher FIELDTERMINATOR after AS
                 let delimiter = if optional_match_token!(self.lexer => Fieldterminator) {
-                    Arc::new(self.parse_expr(false)?)
+                    Arc::new(crate::parser::ast::QueryExprInner::from(
+                        self.parse_expr(false)?,
+                    ))
                 } else {
-                    Arc::new(tree!(ExprIR::String(Arc::new(String::from(',')))))
+                    Arc::new(crate::parser::ast::QueryExprInner::from(tree!(
+                        ExprIR::String(Arc::new(String::from(',')))
+                    )))
                 };
                 Ok(QueryIR::LoadCsv {
                     file_path,
@@ -726,7 +734,7 @@ impl<'a> Parser<'a> {
         let args: Vec<Arc<_>> = if optional_match_token!(self.lexer, LParen) {
             self.parse_expression_list(ExpressionListType::ZeroOrMoreClosedBy(RParen), false)?
                 .into_iter()
-                .map(Arc::new)
+                .map(|t| Arc::new(crate::parser::ast::QueryExprInner::from(t)))
                 .collect()
         } else {
             vec![]
@@ -811,7 +819,9 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_unwind_clause(&mut self) -> Result<RawQueryIR, String> {
-        let list = Arc::new(self.parse_expr(false)?);
+        let list = Arc::new(crate::parser::ast::QueryExprInner::from(
+            self.parse_expr(false)?,
+        ));
         match_token!(self.lexer => As);
         let ident = self.parse_ident()?;
         Ok(QueryIR::Unwind {
@@ -853,7 +863,7 @@ impl<'a> Parser<'a> {
         let mut exprs = self
             .parse_expression_list(ExpressionListType::OneOrMore, false)?
             .into_iter()
-            .map(Arc::new)
+            .map(|t| Arc::new(crate::parser::ast::QueryExprInner::from(t)))
             .collect::<Vec<_>>();
         let mut any_detach = is_detach;
 
@@ -870,7 +880,7 @@ impl<'a> Parser<'a> {
             let more_exprs = self
                 .parse_expression_list(ExpressionListType::OneOrMore, false)?
                 .into_iter()
-                .map(Arc::new)
+                .map(|t| Arc::new(crate::parser::ast::QueryExprInner::from(t)))
                 .collect::<Vec<_>>();
             exprs.extend(more_exprs);
             any_detach = any_detach || next_is_detach;
@@ -895,7 +905,9 @@ impl<'a> Parser<'a> {
                     .lexer
                     .format_error(&format!("Invalid use of aggregating function '{func}'")));
             }
-            return Ok(Some(Arc::new(expr)));
+            return Ok(Some(Arc::new(crate::parser::ast::QueryExprInner::from(
+                expr,
+            ))));
         }
         Ok(None)
     }
@@ -917,7 +929,9 @@ impl<'a> Parser<'a> {
             vec![]
         };
         let skip = if optional_match_token!(self.lexer => Skip) {
-            let skip = Arc::new(self.parse_expr(false)?);
+            let skip = Arc::new(crate::parser::ast::QueryExprInner::from(
+                self.parse_expr(false)?,
+            ));
             match skip.root().data() {
                 ExprIR::Integer(i) => {
                     if *i < 0 {
@@ -938,7 +952,9 @@ impl<'a> Parser<'a> {
             None
         };
         let limit = if optional_match_token!(self.lexer => Limit) {
-            let limit = Arc::new(self.parse_expr(false)?);
+            let limit = Arc::new(crate::parser::ast::QueryExprInner::from(
+                self.parse_expr(false)?,
+            ));
             match limit.root().data() {
                 ExprIR::Integer(i) => {
                     if *i < 0 {
@@ -2268,7 +2284,9 @@ impl<'a> Parser<'a> {
         let mut named_exprs = Vec::new();
         loop {
             let pos = self.lexer.pos(false);
-            let expr = Arc::new(self.parse_expr(true)?);
+            let expr = Arc::new(crate::parser::ast::QueryExprInner::from(
+                self.parse_expr(true)?,
+            ));
             if let Token::IdentifierOrKeyword {
                 keyword: Some(Keyword::As),
                 ..
@@ -2493,7 +2511,11 @@ impl<'a> Parser<'a> {
             tree!(ExprIR::Map)
         };
         match_token!(self.lexer, RParen);
-        Ok(Arc::new(QueryNode::new(alias, labels, Arc::new(attrs))))
+        Ok(Arc::new(QueryNode::new(
+            alias,
+            labels,
+            Arc::new(crate::parser::ast::QueryExprInner::from(attrs)),
+        )))
     }
 
     #[allow(clippy::too_many_lines)]
@@ -2613,7 +2635,7 @@ impl<'a> Parser<'a> {
                 QueryRelationship::new(
                     alias,
                     types,
-                    Arc::new(attrs),
+                    Arc::new(crate::parser::ast::QueryExprInner::from(attrs)),
                     src,
                     dst.clone(),
                     true,
@@ -2624,7 +2646,7 @@ impl<'a> Parser<'a> {
             (true, false) => QueryRelationship::new(
                 alias,
                 types,
-                Arc::new(attrs),
+                Arc::new(crate::parser::ast::QueryExprInner::from(attrs)),
                 dst.clone(),
                 src,
                 false,
@@ -2634,7 +2656,7 @@ impl<'a> Parser<'a> {
             (false, true) => QueryRelationship::new(
                 alias,
                 types,
-                Arc::new(attrs),
+                Arc::new(crate::parser::ast::QueryExprInner::from(attrs)),
                 src,
                 dst.clone(),
                 false,
@@ -2748,7 +2770,9 @@ impl<'a> Parser<'a> {
         match_token!(self.lexer => By);
         let mut orderby = vec![];
         loop {
-            let expr = Arc::new(self.parse_expr(false)?);
+            let expr = Arc::new(crate::parser::ast::QueryExprInner::from(
+                self.parse_expr(false)?,
+            ));
             let is_ascending = optional_match_token!(self.lexer => Asc)
                 || optional_match_token!(self.lexer => Ascending);
             let is_descending = !is_ascending
@@ -2790,9 +2814,11 @@ impl<'a> Parser<'a> {
                     expr = self.parse_property_lookup(expr)?;
                 }
                 match_token!(self.lexer, Equal);
-                let value = Arc::new(self.parse_expr(false)?);
+                let value = Arc::new(crate::parser::ast::QueryExprInner::from(
+                    self.parse_expr(false)?,
+                ));
                 set_items.push(SetItem::Attribute {
-                    target: Arc::new(expr),
+                    target: Arc::new(crate::parser::ast::QueryExprInner::from(expr)),
                     value,
                     replace: false,
                 });
@@ -2814,9 +2840,11 @@ impl<'a> Parser<'a> {
                     match_token!(self.lexer, PlusEqual);
                     true
                 };
-                let value = Arc::new(self.parse_expr(false)?);
+                let value = Arc::new(crate::parser::ast::QueryExprInner::from(
+                    self.parse_expr(false)?,
+                ));
                 set_items.push(SetItem::Attribute {
-                    target: Arc::new(expr),
+                    target: Arc::new(crate::parser::ast::QueryExprInner::from(expr)),
                     value,
                     replace: !plus_equals,
                 });
@@ -2855,14 +2883,14 @@ impl<'a> Parser<'a> {
                     self.lexer.next();
                     expr = self.parse_property_lookup(expr)?;
                 }
-                remove_items.push(Arc::new(expr));
+                remove_items.push(Arc::new(crate::parser::ast::QueryExprInner::from(expr)));
             } else if self.lexer.current()? == Token::Colon {
                 expr = tree!(
                     ExprIR::FuncInvocation(get_functions().get("hasLabels", &FnType::Function)?),
                     expr,
                     tree!(ExprIR::List; self.parse_labels()?.into_iter().map(|l| tree!(ExprIR::String(l))))
                 );
-                remove_items.push(Arc::new(expr));
+                remove_items.push(Arc::new(crate::parser::ast::QueryExprInner::from(expr)));
             } else {
                 return Err(self
                     .lexer
@@ -2945,7 +2973,7 @@ impl<'a> Parser<'a> {
                 .format_error("FOREACH body must contain at least one clause"));
         }
         Ok(QueryIR::ForEach {
-            list: Arc::new(list_expr),
+            list: Arc::new(crate::parser::ast::QueryExprInner::from(list_expr)),
             var,
             body,
         })

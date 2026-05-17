@@ -146,8 +146,8 @@ fn try_hash_join_rewrite(
                         ci,
                         li,
                         ri,
-                        Arc::new(lhs_tree.clone()),
-                        Arc::new(rhs_tree.clone()),
+                        Arc::new(crate::parser::ast::QueryExprInner::from(lhs_tree.clone())),
+                        Arc::new(crate::parser::ast::QueryExprInner::from(rhs_tree.clone())),
                     ));
                     break 'outer;
                 }
@@ -158,8 +158,8 @@ fn try_hash_join_rewrite(
                         ci,
                         li,
                         ri,
-                        Arc::new(rhs_tree.clone()),
-                        Arc::new(lhs_tree.clone()),
+                        Arc::new(crate::parser::ast::QueryExprInner::from(rhs_tree.clone())),
+                        Arc::new(crate::parser::ast::QueryExprInner::from(lhs_tree.clone())),
                     ));
                     break 'outer;
                 }
@@ -206,9 +206,13 @@ fn try_hash_join_rewrite(
         Some(join_subtree)
     } else {
         let remaining_filter = if remaining.len() == 1 {
-            Arc::new(remaining.into_iter().next().unwrap())
+            Arc::new(crate::parser::ast::QueryExprInner::from(
+                remaining.into_iter().next().unwrap(),
+            ))
         } else {
-            Arc::new(tree!(ExprIR::And; remaining))
+            Arc::new(crate::parser::ast::QueryExprInner::from(
+                tree!(ExprIR::And; remaining),
+            ))
         };
         let mut result = DynTree::new(IR::Filter(remaining_filter));
         result.root_mut().push_child_tree(join_subtree);

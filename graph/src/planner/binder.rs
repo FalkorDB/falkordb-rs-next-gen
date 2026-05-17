@@ -892,7 +892,9 @@ impl Binder {
                 self.node_labels
                     .insert((inner_var.scope_id, inner_var.id), labels);
             }
-            let outer_expr = Arc::new(DynTree::new(ExprIR::Variable(outer_var.clone())));
+            let outer_expr = Arc::new(crate::parser::ast::QueryExprInner::from(DynTree::new(
+                ExprIR::Variable(outer_var.clone()),
+            )));
             projections.push((inner_var, outer_expr));
         }
         projections.sort_by(|(a, _), (b, _)| a.name.cmp(&b.name));
@@ -1008,7 +1010,9 @@ impl Binder {
                     self.node_labels
                         .insert((bound_var.scope_id, bound_var.id), labels);
                 }
-                let expr = Arc::new(DynTree::new(ExprIR::Variable(var.clone())));
+                let expr = Arc::new(crate::parser::ast::QueryExprInner::from(DynTree::new(
+                    ExprIR::Variable(var.clone()),
+                )));
                 projected.push((bound_var, expr));
             }
             projected.sort_by(|(name_a, _), (name_b, _)| name_a.name.cmp(&name_b.name));
@@ -1101,7 +1105,10 @@ impl Binder {
             .map(|(expr, desc)| {
                 if expr.is_aggregation() {
                     let replaced = replace_agg_subtrees(&expr.root(), exprs);
-                    (Arc::new(replaced), *desc)
+                    (
+                        Arc::new(crate::parser::ast::QueryExprInner::from(replaced)),
+                        *desc,
+                    )
                 } else {
                     (expr.clone(), *desc)
                 }
@@ -1620,7 +1627,9 @@ impl Binder {
         locals: &mut Vec<HashMap<Arc<String>, Variable>>,
     ) -> Result<QueryExpr<Variable>, String> {
         let root = expr.root();
-        Ok(Arc::new(self.bind_expr_node(expr, &root, locals)?))
+        Ok(Arc::new(crate::parser::ast::QueryExprInner::from(
+            self.bind_expr_node(expr, &root, locals)?,
+        )))
     }
 
     #[allow(

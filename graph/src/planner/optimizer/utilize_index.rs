@@ -75,11 +75,11 @@ fn build_has_labels_filter(
     let has_labels_fn = get_functions()
         .get("hasLabels", &FnType::Function)
         .expect("hasLabels function must exist");
-    Arc::new(tree!(
+    Arc::new(crate::parser::ast::QueryExprInner::from(tree!(
         ExprIR::FuncInvocation(has_labels_fn),
         tree!(ExprIR::Variable(var.clone())),
         tree!(ExprIR::List; labels.map(|l| tree!(ExprIR::String(l))))
-    ))
+    )))
 }
 
 /// Result of a single-predicate index-scan attempt: the pattern
@@ -329,18 +329,22 @@ fn build_op_query(
     match op {
         ExprIR::Eq => Some(IndexQuery::Equal {
             key: attr.clone(),
-            value: Arc::new(constant_node),
+            value: Arc::new(crate::parser::ast::QueryExprInner::from(constant_node)),
         }),
         ExprIR::Gt => Some(IndexQuery::Range {
             key: attr.clone(),
-            min: Some(Arc::new(constant_node)),
+            min: Some(Arc::new(crate::parser::ast::QueryExprInner::from(
+                constant_node,
+            ))),
             max: None,
             include_min: false,
             include_max: false,
         }),
         ExprIR::Ge => Some(IndexQuery::Range {
             key: attr.clone(),
-            min: Some(Arc::new(constant_node)),
+            min: Some(Arc::new(crate::parser::ast::QueryExprInner::from(
+                constant_node,
+            ))),
             max: None,
             include_min: true,
             include_max: false,
@@ -348,14 +352,18 @@ fn build_op_query(
         ExprIR::Lt => Some(IndexQuery::Range {
             key: attr.clone(),
             min: None,
-            max: Some(Arc::new(constant_node)),
+            max: Some(Arc::new(crate::parser::ast::QueryExprInner::from(
+                constant_node,
+            ))),
             include_min: false,
             include_max: false,
         }),
         ExprIR::Le => Some(IndexQuery::Range {
             key: attr.clone(),
             min: None,
-            max: Some(Arc::new(constant_node)),
+            max: Some(Arc::new(crate::parser::ast::QueryExprInner::from(
+                constant_node,
+            ))),
             include_min: false,
             include_max: true,
         }),
@@ -464,8 +472,10 @@ fn try_distance_index_scan(
             label,
             IndexQuery::Point {
                 key: attr.clone(),
-                point: Arc::new(filter.node(child_1_idx).clone_as_tree()),
-                radius: Arc::new(constant_node),
+                point: Arc::new(crate::parser::ast::QueryExprInner::from(
+                    filter.node(child_1_idx).clone_as_tree(),
+                )),
+                radius: Arc::new(crate::parser::ast::QueryExprInner::from(constant_node)),
             },
         )),
         (None, Some(_)) => Some((
@@ -473,8 +483,10 @@ fn try_distance_index_scan(
             label,
             IndexQuery::Point {
                 key: attr.clone(),
-                point: Arc::new(filter.node(child_0_idx).clone_as_tree()),
-                radius: Arc::new(constant_node),
+                point: Arc::new(crate::parser::ast::QueryExprInner::from(
+                    filter.node(child_0_idx).clone_as_tree(),
+                )),
+                radius: Arc::new(crate::parser::ast::QueryExprInner::from(constant_node)),
             },
         )),
         _ => None,
@@ -653,13 +665,17 @@ fn try_in_filter_scan<T: IndexSubject>(
         }
         IndexQuery::InList {
             key: attr,
-            list: Arc::new(filter.node(expr_side).clone_as_tree()),
+            list: Arc::new(crate::parser::ast::QueryExprInner::from(
+                filter.node(expr_side).clone_as_tree(),
+            )),
         }
     } else {
         // Pattern: $x IN p.samples
         IndexQuery::ArrayContains {
             key: attr,
-            value: Arc::new(filter.node(expr_side).clone_as_tree()),
+            value: Arc::new(crate::parser::ast::QueryExprInner::from(
+                filter.node(expr_side).clone_as_tree(),
+            )),
         }
     };
 
@@ -1024,9 +1040,13 @@ fn apply_filter_pushdown<T: IndexSubject>(
         *op.parent_mut().unwrap().data_mut() = IR::Filter(original_filter.clone());
     } else {
         let remaining_filter = if remaining.len() == 1 {
-            Arc::new(remaining.into_iter().next().unwrap())
+            Arc::new(crate::parser::ast::QueryExprInner::from(
+                remaining.into_iter().next().unwrap(),
+            ))
         } else {
-            Arc::new(tree!(ExprIR::And; remaining))
+            Arc::new(crate::parser::ast::QueryExprInner::from(
+                tree!(ExprIR::And; remaining),
+            ))
         };
         *op.parent_mut().unwrap().data_mut() = IR::Filter(remaining_filter);
     }
@@ -1045,12 +1065,15 @@ fn apply_inline_rewrite<T: IndexSubject>(
     metadata: T::Metadata,
 ) {
     if needs_inline_post_filter(&inline_filter) {
-        plan.node_mut(idx)
-            .push_parent(IR::Filter(Arc::new(inline_filter.clone())));
+        plan.node_mut(idx).push_parent(IR::Filter(Arc::new(
+            crate::parser::ast::QueryExprInner::from(inline_filter.clone()),
+        )));
     }
     let query = Arc::new(IndexQuery::Equal {
         key: attr,
-        value: Arc::new(inline_filter.root().child(1).clone_as_tree()),
+        value: Arc::new(crate::parser::ast::QueryExprInner::from(
+            inline_filter.root().child(1).clone_as_tree(),
+        )),
     });
     let subject = reorder_subject_labels(subject, &label);
     *plan.node_mut(idx).data_mut() = subject.build_scan_ir(label, query, metadata);

@@ -758,8 +758,8 @@ impl Planner {
         extracted: &mut Vec<(
             Variable,
             QueryGraph<Arc<String>, Arc<String>, Variable>,
-            Option<Arc<DynTree<ExprIR<Variable>>>>,
-            Arc<DynTree<ExprIR<Variable>>>,
+            Option<QueryExpr<Variable>>,
+            QueryExpr<Variable>,
             Vec<Arc<QueryPath<Variable>>>,
         )>,
     ) -> DynTree<ExprIR<Variable>> {
@@ -773,13 +773,11 @@ impl Planner {
                     if matches!(t.root().data(), ExprIR::Bool(true)) {
                         None
                     } else {
-                        Some(Arc::new(t))
+                        Some(Arc::new(crate::parser::ast::QueryExprInner::from(t)))
                     }
                 };
-                let result_tree = Arc::new(self.extract_pattern_comprehensions(
-                    &node.child(1),
-                    scope_id,
-                    extracted,
+                let result_tree = Arc::new(crate::parser::ast::QueryExprInner::from(
+                    self.extract_pattern_comprehensions(&node.child(1), scope_id, extracted),
                 ));
 
                 extracted.push((var.clone(), graph.clone(), where_tree, result_tree, vec![]));
@@ -808,7 +806,9 @@ impl Planner {
                     var.clone(),
                     graph.clone(),
                     None,
-                    Arc::new(DynTree::new(ExprIR::Variable(path_var))),
+                    Arc::new(crate::parser::ast::QueryExprInner::from(DynTree::new(
+                        ExprIR::Variable(path_var),
+                    ))),
                     vec![query_path],
                 ));
                 DynTree::new(ExprIR::Variable(var))
@@ -832,8 +832,8 @@ impl Planner {
         &mut self,
         var: &Variable,
         graph: &QueryGraph<Arc<String>, Arc<String>, Variable>,
-        where_filter: Option<&Arc<DynTree<ExprIR<Variable>>>>,
-        result_expr: &Arc<DynTree<ExprIR<Variable>>>,
+        where_filter: Option<&QueryExpr<Variable>>,
+        result_expr: &QueryExpr<Variable>,
         paths: &[Arc<QueryPath<Variable>>],
     ) -> DynTree<IR> {
         use crate::runtime::functions::{FnType, get_functions};
@@ -877,11 +877,11 @@ impl Planner {
         let mut collect_expr = DynTree::new(ExprIR::FuncInvocation(collect_fn));
         collect_expr
             .root_mut()
-            .push_child_tree(result_expr.as_ref().clone());
+            .push_child_tree(result_expr.tree.clone());
         collect_expr
             .root_mut()
             .push_child_tree(DynTree::new(ExprIR::Variable(agg_acc_var)));
-        let collect_expr = Arc::new(collect_expr);
+        let collect_expr = Arc::new(crate::parser::ast::QueryExprInner::from(collect_expr));
 
         // Create Aggregate node: names=[var], group_by_keys=[], aggregations=[(var, collect(expr))]
         tree!(
@@ -935,7 +935,12 @@ impl Planner {
         // Pure scalar (no inline var refs) → Filter
         if !Self::contains_inline_var(node, &inline_var_ids) {
             let expr_tree = node.clone_as_tree();
-            return tree!(IR::Filter(Arc::new(expr_tree)), input);
+            return tree!(
+                IR::Filter(Arc::new(crate::parser::ast::QueryExprInner::from(
+                    expr_tree
+                ))),
+                input
+            );
         }
 
         // OR → OrApplyMultiplexer
@@ -961,7 +966,12 @@ impl Planner {
         // Fallback for other operators (XOR etc.) with inline vars:
         // shouldn't happen in practice; treat as opaque filter.
         let expr_tree = node.clone_as_tree();
-        tree!(IR::Filter(Arc::new(expr_tree)), input)
+        tree!(
+            IR::Filter(Arc::new(crate::parser::ast::QueryExprInner::from(
+                expr_tree
+            ))),
+            input
+        )
     }
 
     /// Build an `OrApplyMultiplexer` for an OR expression.
@@ -1005,7 +1015,12 @@ impl Planner {
             // Pure scalar → Filter(expr, Argument)
             if !Self::contains_inline_var(&child, &inline_var_ids) {
                 let expr_tree = child.clone_as_tree();
-                let branch = tree!(IR::Filter(Arc::new(expr_tree)), tree!(IR::Argument));
+                let branch = tree!(
+                    IR::Filter(Arc::new(crate::parser::ast::QueryExprInner::from(
+                        expr_tree
+                    ))),
+                    tree!(IR::Argument)
+                );
                 scalar_branches.push(branch);
                 continue;
             }
@@ -1064,9 +1079,13 @@ impl Planner {
         // Apply scalar filter first (cheapest).
         if !scalar_parts.is_empty() {
             let filter_expr = if scalar_parts.len() == 1 {
-                Arc::new(scalar_parts.into_iter().next().unwrap())
+                Arc::new(crate::parser::ast::QueryExprInner::from(
+                    scalar_parts.into_iter().next().unwrap(),
+                ))
             } else {
-                Arc::new(tree!(ExprIR::And; scalar_parts))
+                Arc::new(crate::parser::ast::QueryExprInner::from(
+                    tree!(ExprIR::And; scalar_parts),
+                ))
             };
             plan = tree!(IR::Filter(filter_expr), plan);
         }
@@ -1258,12 +1277,12 @@ impl Planner {
                         let from_node = Arc::new(QueryNode::new(
                             node.alias.clone(),
                             OrderSet::default(),
-                            Arc::new(tree!(ExprIR::Map)),
+                            Arc::new(crate::parser::ast::QueryExprInner::from(tree!(ExprIR::Map))),
                         ));
                         let to_node = Arc::new(QueryNode::new(
                             node.alias.clone(),
                             node.labels.clone(),
-                            Arc::new(tree!(ExprIR::Map)),
+                            Arc::new(crate::parser::ast::QueryExprInner::from(tree!(ExprIR::Map))),
                         ));
                         let edge_alias = Variable {
                             name: None,
@@ -1274,7 +1293,7 @@ impl Planner {
                         let rel = Arc::new(QueryRelationship::new(
                             edge_alias,
                             vec![],
-                            Arc::new(tree!(ExprIR::Map)),
+                            Arc::new(crate::parser::ast::QueryExprInner::from(tree!(ExprIR::Map))),
                             from_node,
                             to_node,
                             false,
@@ -1303,7 +1322,12 @@ impl Planner {
                         tree!(IR::NodeByLabelScan { node: node.clone() })
                     };
                     if let Some(filter_expr) = attr_filter {
-                        res = tree!(IR::Filter(Arc::new(filter_expr)), res);
+                        res = tree!(
+                            IR::Filter(Arc::new(crate::parser::ast::QueryExprInner::from(
+                                filter_expr
+                            ))),
+                            res
+                        );
                     }
                     self.visited.insert((node.alias.id, node.alias.scope_id));
                     let paths = component.paths();
@@ -1370,7 +1394,12 @@ impl Planner {
                         })
                     };
                     if let Some(filter_expr) = from_attr_filter {
-                        scan = tree!(IR::Filter(Arc::new(filter_expr)), scan);
+                        scan = tree!(
+                            IR::Filter(Arc::new(crate::parser::ast::QueryExprInner::from(
+                                filter_expr
+                            ))),
+                            scan
+                        );
                     }
                     Some(scan)
                 };
@@ -1407,7 +1436,12 @@ impl Planner {
                         sibling_edges: sibling_edges.clone()
                     });
                     if let Some(filter_expr) = attr_filter {
-                        ei = tree!(IR::Filter(Arc::new(filter_expr)), ei);
+                        ei = tree!(
+                            IR::Filter(Arc::new(crate::parser::ast::QueryExprInner::from(
+                                filter_expr
+                            ))),
+                            ei
+                        );
                     }
                     ei
                 } else {
@@ -1421,7 +1455,12 @@ impl Planner {
                         })
                     };
                     if let Some(filter_expr) = attr_filter {
-                        scan = tree!(IR::Filter(Arc::new(filter_expr)), scan);
+                        scan = tree!(
+                            IR::Filter(Arc::new(crate::parser::ast::QueryExprInner::from(
+                                filter_expr
+                            ))),
+                            scan
+                        );
                     }
                     tree!(
                         IR::ExpandInto {
@@ -1450,12 +1489,22 @@ impl Planner {
                 let from_attr_filter =
                     inline_attrs_to_filter(&relationship.from.alias, &relationship.from.attrs);
                 if let Some(filter_expr) = from_attr_filter {
-                    ei = tree!(IR::Filter(Arc::new(filter_expr)), ei);
+                    ei = tree!(
+                        IR::Filter(Arc::new(crate::parser::ast::QueryExprInner::from(
+                            filter_expr
+                        ))),
+                        ei
+                    );
                 }
                 let to_attr_filter =
                     inline_attrs_to_filter(&relationship.to.alias, &relationship.to.attrs);
                 if let Some(filter_expr) = to_attr_filter {
-                    ei = tree!(IR::Filter(Arc::new(filter_expr)), ei);
+                    ei = tree!(
+                        IR::Filter(Arc::new(crate::parser::ast::QueryExprInner::from(
+                            filter_expr
+                        ))),
+                        ei
+                    );
                 }
                 ei
             } else {
@@ -1469,7 +1518,12 @@ impl Planner {
                     chain: Vec::new(),
                 });
                 if let Some(filter_expr) = edge_attr_filter {
-                    ct = tree!(IR::Filter(Arc::new(filter_expr)), ct);
+                    ct = tree!(
+                        IR::Filter(Arc::new(crate::parser::ast::QueryExprInner::from(
+                            filter_expr
+                        ))),
+                        ct
+                    );
                 }
                 ct
             };
@@ -1482,7 +1536,12 @@ impl Planner {
                 let to_attr_filter =
                     inline_attrs_to_filter(&relationship.to.alias, &relationship.to.attrs);
                 if let Some(filter_expr) = to_attr_filter {
-                    res = tree!(IR::Filter(Arc::new(filter_expr)), res);
+                    res = tree!(
+                        IR::Filter(Arc::new(crate::parser::ast::QueryExprInner::from(
+                            filter_expr
+                        ))),
+                        res
+                    );
                 }
             }
             // Check source node for inline attributes and add a Filter above
@@ -1495,7 +1554,12 @@ impl Planner {
                 let from_attr_filter =
                     inline_attrs_to_filter(&relationship.from.alias, &relationship.from.attrs);
                 if let Some(filter_expr) = from_attr_filter {
-                    res = tree!(IR::Filter(Arc::new(filter_expr)), res);
+                    res = tree!(
+                        IR::Filter(Arc::new(crate::parser::ast::QueryExprInner::from(
+                            filter_expr
+                        ))),
+                        res
+                    );
                 }
             }
             self.visited
@@ -1526,7 +1590,12 @@ impl Planner {
                             &relationship.from.attrs,
                         );
                         if let Some(filter_expr) = from_attr_filter {
-                            cvlt = tree!(IR::Filter(Arc::new(filter_expr)), cvlt);
+                            cvlt = tree!(
+                                IR::Filter(Arc::new(crate::parser::ast::QueryExprInner::from(
+                                    filter_expr
+                                ))),
+                                cvlt
+                            );
                         }
                     }
                     cvlt
@@ -1548,7 +1617,12 @@ impl Planner {
                             res
                         );
                         if let Some(filter_expr) = attr_filter {
-                            ei = tree!(IR::Filter(Arc::new(filter_expr)), ei);
+                            ei = tree!(
+                                IR::Filter(Arc::new(crate::parser::ast::QueryExprInner::from(
+                                    filter_expr
+                                ))),
+                                ei
+                            );
                         }
                         ei
                     } else {
@@ -1564,7 +1638,12 @@ impl Planner {
                             })
                         };
                         if let Some(filter_expr) = attr_filter {
-                            scan = tree!(IR::Filter(Arc::new(filter_expr)), scan);
+                            scan = tree!(
+                                IR::Filter(Arc::new(crate::parser::ast::QueryExprInner::from(
+                                    filter_expr
+                                ))),
+                                scan
+                            );
                         }
                         tree!(
                             IR::ExpandInto {
@@ -1594,12 +1673,22 @@ impl Planner {
                     let from_attr_filter =
                         inline_attrs_to_filter(&relationship.from.alias, &relationship.from.attrs);
                     if let Some(filter_expr) = from_attr_filter {
-                        ei = tree!(IR::Filter(Arc::new(filter_expr)), ei);
+                        ei = tree!(
+                            IR::Filter(Arc::new(crate::parser::ast::QueryExprInner::from(
+                                filter_expr
+                            ))),
+                            ei
+                        );
                     }
                     let to_attr_filter =
                         inline_attrs_to_filter(&relationship.to.alias, &relationship.to.attrs);
                     if let Some(filter_expr) = to_attr_filter {
-                        ei = tree!(IR::Filter(Arc::new(filter_expr)), ei);
+                        ei = tree!(
+                            IR::Filter(Arc::new(crate::parser::ast::QueryExprInner::from(
+                                filter_expr
+                            ))),
+                            ei
+                        );
                     }
                     ei
                 } else {
@@ -1616,7 +1705,12 @@ impl Planner {
                         res
                     );
                     if let Some(filter_expr) = edge_attr_filter {
-                        ct = tree!(IR::Filter(Arc::new(filter_expr)), ct);
+                        ct = tree!(
+                            IR::Filter(Arc::new(crate::parser::ast::QueryExprInner::from(
+                                filter_expr
+                            ))),
+                            ct
+                        );
                     }
                     ct
                 };
@@ -1629,7 +1723,12 @@ impl Planner {
                     let to_attr_filter =
                         inline_attrs_to_filter(&relationship.to.alias, &relationship.to.attrs);
                     if let Some(filter_expr) = to_attr_filter {
-                        res = tree!(IR::Filter(Arc::new(filter_expr)), res);
+                        res = tree!(
+                            IR::Filter(Arc::new(crate::parser::ast::QueryExprInner::from(
+                                filter_expr
+                            ))),
+                            res
+                        );
                     }
                 }
                 self.visited
@@ -1672,7 +1771,10 @@ impl Planner {
             if !inline.is_empty() {
                 res = self.expr_to_plan(&rebuilt.root(), &inline, res);
             } else if !matches!(rebuilt.root().data(), ExprIR::Bool(true)) {
-                res = tree!(IR::Filter(Arc::new(rebuilt)), res);
+                res = tree!(
+                    IR::Filter(Arc::new(crate::parser::ast::QueryExprInner::from(rebuilt))),
+                    res
+                );
             }
 
             // Apply SemiApply/AntiSemiApply for each extractable pattern
@@ -1698,7 +1800,12 @@ impl Planner {
             } else {
                 tree!(ExprIR::And; bound_filters)
             };
-            res = tree!(IR::Filter(Arc::new(filter_expr)), res);
+            res = tree!(
+                IR::Filter(Arc::new(crate::parser::ast::QueryExprInner::from(
+                    filter_expr
+                ))),
+                res
+            );
         }
         res
     }
@@ -1753,7 +1860,10 @@ impl Planner {
                         pre_scope_id,
                         &mut all_extracted,
                     );
-                    (var, Arc::new(rebuilt) as QueryExpr<Variable>)
+                    (
+                        var,
+                        Arc::new(crate::parser::ast::QueryExprInner::from(rebuilt)),
+                    )
                 })
                 .collect()
         } else {
@@ -1769,7 +1879,10 @@ impl Planner {
                         pre_scope_id,
                         &mut all_extracted,
                     );
-                    (Arc::new(rebuilt) as QueryExpr<Variable>, desc)
+                    (
+                        Arc::new(crate::parser::ast::QueryExprInner::from(rebuilt)),
+                        desc,
+                    )
                 })
                 .collect()
         } else {
@@ -1893,7 +2006,10 @@ impl Planner {
 
             if !matches!(rebuilt.root().data(), ExprIR::Bool(true)) {
                 if inline.is_empty() {
-                    res = tree!(IR::Filter(Arc::new(rebuilt)), res);
+                    res = tree!(
+                        IR::Filter(Arc::new(crate::parser::ast::QueryExprInner::from(rebuilt))),
+                        res
+                    );
                 } else {
                     res = self.expr_to_plan(&rebuilt.root(), &inline, res);
                 }
@@ -2475,8 +2591,9 @@ impl Planner {
                         let exprs: Vec<(Variable, QueryExpr<Variable>)> = remap
                             .iter()
                             .map(|(inner_var, outer_var)| {
-                                let expr =
-                                    Arc::new(DynTree::new(ExprIR::Variable(inner_var.clone())));
+                                let expr = Arc::new(crate::parser::ast::QueryExprInner::from(
+                                    DynTree::new(ExprIR::Variable(inner_var.clone())),
+                                ));
                                 (outer_var.clone(), expr)
                             })
                             .collect();

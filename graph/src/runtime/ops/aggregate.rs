@@ -28,6 +28,7 @@
 use crate::parser::ast::{ExprIR, QueryExpr, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
+use crate::runtime::jit::{self, CompiledExpr};
 use crate::runtime::{
     batch::{BATCH_SIZE, Batch, BatchOp, Column, NullBitmap},
     env::Env,
@@ -35,7 +36,8 @@ use crate::runtime::{
     runtime::Runtime,
     value::Value,
 };
-use orx_tree::{Dyn, DynNode, DynTree, NodeIdx, NodeRef};
+use orx_tree::{Dyn, DynNode, NodeIdx, NodeRef};
+use rustc_hash::FxHashMap;
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
@@ -119,11 +121,20 @@ type CachedAggAnalysis = Option<Option<AggAnalysis>>;
 // AggregateOp
 // ---------------------------------------------------------------------------
 
+/// One aggregate output slot, owning the JIT-compiled forms of every
+/// aggregate-function argument inside its expression tree. Pre-computed at
+/// `AggregateOp::new` so the per-row hot path is a plain HashMap lookup.
+struct AggEntry<'a> {
+    var: &'a Variable,
+    tree: &'a QueryExpr<Variable>,
+    compiled: FxHashMap<NodeIdx<Dyn<ExprIR<Variable>>>, Vec<Option<Arc<CompiledExpr>>>>,
+}
+
 pub struct AggregateOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Option<Box<BatchOp<'a>>>,
     keys: &'a [(Variable, QueryExpr<Variable>)],
-    agg: &'a [(Variable, QueryExpr<Variable>)],
+    agg: Vec<AggEntry<'a>>,
     copy_from_parent: &'a [(Variable, Variable)],
     default_acc: Option<Env<'a>>,
     errors: std::vec::IntoIter<String>,
@@ -147,6 +158,19 @@ impl<'a> AggregateOp<'a> {
             Self::set_agg_expr_zero(&t.root(), &mut default_acc);
         }
 
+        let agg: Vec<AggEntry<'a>> = agg
+            .iter()
+            .map(|(var, tree)| {
+                let mut compiled = FxHashMap::default();
+                Self::collect_agg_args(tree, &tree.root(), &mut compiled);
+                AggEntry {
+                    var,
+                    tree,
+                    compiled,
+                }
+            })
+            .collect();
+
         Self {
             runtime,
             child: Some(child),
@@ -158,6 +182,31 @@ impl<'a> AggregateOp<'a> {
             groups: HashMap::new().into_iter(),
             idx,
             vectorized: None,
+        }
+    }
+
+    /// Recursively walks an agg expression tree, pre-compiling every argument
+    /// of every aggregate `FuncInvocation` it encounters. The JIT entries are
+    /// keyed by the FuncInvocation node idx so `run_agg_expr` can look them up
+    /// in O(1) per row instead of triggering cranelift codegen.
+    fn collect_agg_args(
+        ir: &crate::parser::ast::QueryExprInner<Variable>,
+        node: &DynNode<ExprIR<Variable>>,
+        out: &mut FxHashMap<NodeIdx<Dyn<ExprIR<Variable>>>, Vec<Option<Arc<CompiledExpr>>>>,
+    ) {
+        if let ExprIR::FuncInvocation(func) = node.data()
+            && func.is_aggregate()
+        {
+            let n = node.num_children();
+            if n >= 2 {
+                let args: Vec<Option<Arc<CompiledExpr>>> = (0..n - 1)
+                    .map(|i| jit::try_compile(&ir.tree, node.child(i).idx()).map(Arc::new))
+                    .collect();
+                out.insert(node.idx(), args);
+            }
+        }
+        for child in node.children() {
+            Self::collect_agg_args(ir, &child, out);
         }
     }
 
@@ -193,11 +242,9 @@ impl<'a> AggregateOp<'a> {
         }
 
         let mut agg_kinds = Vec::with_capacity(self.agg.len());
-        for (_target, tree) in self.agg {
-            {
-                let agg = Self::analyze_agg_tree(tree)?;
-                agg_kinds.push(agg);
-            }
+        for entry in &self.agg {
+            let agg = Self::analyze_agg_tree(entry.tree)?;
+            agg_kinds.push(agg);
         }
 
         Some(AggAnalysis {
@@ -327,7 +374,7 @@ impl<'a> AggregateOp<'a> {
                 Self::consume_batch_per_row(
                     self.runtime,
                     self.keys,
-                    self.agg,
+                    &self.agg,
                     self.copy_from_parent,
                     &batch,
                     &default_acc,
@@ -344,7 +391,7 @@ impl<'a> AggregateOp<'a> {
                 Self::consume_batch_per_row(
                     self.runtime,
                     self.keys,
-                    self.agg,
+                    &self.agg,
                     self.copy_from_parent,
                     &batch,
                     &default_acc,
@@ -559,7 +606,7 @@ impl<'a> AggregateOp<'a> {
             Self::consume_batch_per_row(
                 self.runtime,
                 self.keys,
-                self.agg,
+                &self.agg,
                 self.copy_from_parent,
                 &batch,
                 &default_acc,
@@ -579,7 +626,7 @@ impl<'a> AggregateOp<'a> {
     fn consume_batch_per_row(
         runtime: &'a Runtime<'a>,
         keys: &[(Variable, QueryExpr<Variable>)],
-        agg: &[(Variable, QueryExpr<Variable>)],
+        agg: &[AggEntry<'a>],
         copy_from_parent: &[(Variable, Variable)],
         batch: &Batch<'a>,
         default_acc: &Env<'a>,
@@ -625,14 +672,15 @@ impl<'a> AggregateOp<'a> {
             let agg_group_key = entry.0.hash_u64();
 
             let mut curr = vars.clone_pooled(runtime.env_pool);
-            for (_, tree) in agg {
+            for ae in agg {
                 if let Err(e) = Self::run_agg_expr(
                     runtime,
-                    tree,
-                    tree.root().idx(),
+                    ae.tree,
+                    ae.tree.root().idx(),
                     &mut curr,
                     &mut entry.1,
                     agg_group_key,
+                    &ae.compiled,
                 ) {
                     errors.push(e);
                     break;
@@ -647,22 +695,24 @@ impl<'a> AggregateOp<'a> {
 
     fn run_agg_expr(
         runtime: &Runtime,
-        ir: &DynTree<ExprIR<Variable>>,
+        ir: &crate::parser::ast::QueryExprInner<Variable>,
         idx: NodeIdx<Dyn<ExprIR<Variable>>>,
         curr: &mut Env<'a>,
         acc: &mut Env<'a>,
         agg_group_key: u64,
+        agg_compiled: &FxHashMap<NodeIdx<Dyn<ExprIR<Variable>>>, Vec<Option<Arc<CompiledExpr>>>>,
     ) -> Result<(), String> {
-        match ir.node(idx).data() {
+        match ir.node(idx.clone()).data() {
             ExprIR::FuncInvocation(func) if func.is_aggregate() => {
-                let num_children = ir.node(idx).num_children();
+                let num_children = ir.node(idx.clone()).num_children();
                 if num_children < 2 {
                     return Err(String::from(
                         "Aggregation function must have at least one argument",
                     ));
                 }
 
-                let ExprIR::Variable(key) = ir.node(idx).child(num_children - 1).data() else {
+                let ExprIR::Variable(key) = ir.node(idx.clone()).child(num_children - 1).data()
+                else {
                     return Err(String::from(
                         "Aggregation function must end with a variable",
                     ));
@@ -670,16 +720,24 @@ impl<'a> AggregateOp<'a> {
 
                 let prev_value = acc.take(key).unwrap_or(Value::Null);
 
+                let compiled_args = agg_compiled.get(&idx);
+                let eval = ExprEval::from_runtime(runtime);
                 let arg_results: Result<ThinVec<Value>, String> = (0..num_children - 1)
                     .map(|i| {
-                        let child = ir.node(idx).child(i);
-
-                        ExprEval::from_runtime(runtime).eval(
-                            ir,
-                            child.idx(),
-                            Some(curr),
-                            Some(agg_group_key),
-                        )
+                        let child = ir.node(idx.clone()).child(i);
+                        let child_idx = child.idx();
+                        match compiled_args
+                            .and_then(|v| v.get(i))
+                            .and_then(|c| c.as_ref())
+                        {
+                            Some(ce) => {
+                                ce.call(&eval, Some(curr), ir, &child_idx, Some(agg_group_key))
+                            }
+                            None => Err(format!(
+                                "expression not JIT-compilable: {:?}",
+                                ir.node(child_idx).data()
+                            )),
+                        }
                     })
                     .collect();
 
@@ -699,7 +757,9 @@ impl<'a> AggregateOp<'a> {
                     return Ok(());
                 }
 
-                if num_children == 2 && matches!(ir.node(idx).child(0).data(), ExprIR::Distinct) {
+                if num_children == 2
+                    && matches!(ir.node(idx.clone()).child(0).data(), ExprIR::Distinct)
+                {
                     let arg = args.remove(0);
                     if let Value::List(values) = arg {
                         args = Arc::unwrap_or_clone(values);
@@ -726,7 +786,15 @@ impl<'a> AggregateOp<'a> {
             }
             _ => {
                 for child in ir.node(idx).children() {
-                    Self::run_agg_expr(runtime, ir, child.idx(), curr, acc, agg_group_key)?;
+                    Self::run_agg_expr(
+                        runtime,
+                        ir,
+                        child.idx(),
+                        curr,
+                        acc,
+                        agg_group_key,
+                        agg_compiled,
+                    )?;
                 }
             }
         }
@@ -809,20 +877,20 @@ impl<'a> Iterator for AggregateOp<'a> {
                     }
                 }
                 combined.merge(&acc);
-                for (name, tree) in self.agg {
+                for ae in &self.agg {
                     let val = {
                         let this = &self.runtime;
-                        let idx = tree.root().idx();
+                        let idx = ae.tree.root().idx();
                         let env: &Env<'_> = &combined;
                         crate::runtime::eval::ExprEval::from_runtime(this).eval(
-                            tree,
+                            ae.tree,
                             idx,
                             Some(env),
                             None,
                         )
                     }?;
-                    acc.insert(name, val.clone());
-                    combined.insert(name, val);
+                    acc.insert(ae.var, val.clone());
+                    combined.insert(ae.var, val);
                 }
                 // Insert pre-projection key variable values into acc so
                 // downstream operators can find them, but skip any slot that
@@ -831,10 +899,7 @@ impl<'a> Iterator for AggregateOp<'a> {
                 for (name, tree) in self.keys {
                     if let ExprIR::Variable(original_var) = tree.root().data()
                         && let Some(value) = key.get(name)
-                        && !self
-                            .agg
-                            .iter()
-                            .any(|(agg_name, _)| agg_name.id == original_var.id)
+                        && !self.agg.iter().any(|ae| ae.var.id == original_var.id)
                     {
                         acc.insert(original_var, value.clone());
                     }
@@ -843,8 +908,8 @@ impl<'a> Iterator for AggregateOp<'a> {
                 // Unbind internal accumulator variables so they don't leak
                 // to downstream operators and collide with variables in
                 // subsequent scopes that reuse the same slot IDs.
-                for (_, tree) in self.agg {
-                    unbind_agg_accumulators(&tree.root(), &mut acc);
+                for ae in &self.agg {
+                    unbind_agg_accumulators(&ae.tree.root(), &mut acc);
                 }
                 Ok::<Env<'_>, String>(acc)
             })() {

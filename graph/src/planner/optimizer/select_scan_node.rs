@@ -148,7 +148,12 @@ fn make_scan_subtree(node: &Arc<QueryNode<Arc<String>, Variable>>) -> DynTree<IR
         DynTree::new(IR::NodeByLabelScan { node: node.clone() })
     };
     if let Some(filter_expr) = attr_filter {
-        scan = tree!(IR::Filter(Arc::new(filter_expr)), scan);
+        scan = tree!(
+            IR::Filter(Arc::new(crate::parser::ast::QueryExprInner::from(
+                filter_expr
+            ))),
+            scan
+        );
     }
     scan
 }

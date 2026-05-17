@@ -36,7 +36,7 @@ use std::{collections::HashMap, sync::Arc};
 use orx_tree::{Bfs, DynTree, NodeRef};
 
 use crate::{
-    parser::ast::{ExprIR, Variable},
+    parser::ast::{ExprIR, QueryExprInner, Variable},
     runtime::{eval::ExprEval, value::Value},
     tree,
 };
@@ -50,9 +50,10 @@ fn is_constant_true(
     filter: &DynTree<ExprIR<Variable>>,
     params: &HashMap<String, Value>,
 ) -> bool {
+    let wrapped = QueryExprInner::from(filter.clone());
     // Fast path: pure constant (no params needed).
     if matches!(
-        ExprEval::constant().eval(filter, filter.root().idx(), None, None),
+        ExprEval::constant().eval(&wrapped, wrapped.tree.root().idx(), None, None),
         Ok(Value::Bool(true))
     ) {
         return true;
@@ -61,9 +62,9 @@ fn is_constant_true(
     // Slow path: substitute parameters into a cloned expression, then
     // re-evaluate as constant.
     if !params.is_empty() && expr_has_parameter(filter) {
-        let substituted = substitute_params(filter, params);
+        let substituted = QueryExprInner::from(substitute_params(filter, params));
         return matches!(
-            ExprEval::constant().eval(&substituted, substituted.root().idx(), None, None),
+            ExprEval::constant().eval(&substituted, substituted.tree.root().idx(), None, None),
             Ok(Value::Bool(true))
         );
     }
@@ -141,10 +142,13 @@ pub(super) fn eliminate_true_filters(
                         optimized_plan.node_mut(idx).take_out();
                     } else if remaining.len() == 1 {
                         *optimized_plan.node_mut(idx).data_mut() =
-                            IR::Filter(Arc::new(remaining.into_iter().next().unwrap()));
+                            IR::Filter(Arc::new(crate::parser::ast::QueryExprInner::from(
+                                remaining.into_iter().next().unwrap(),
+                            )));
                     } else {
-                        *optimized_plan.node_mut(idx).data_mut() =
-                            IR::Filter(Arc::new(tree!(ExprIR::And; remaining)));
+                        *optimized_plan.node_mut(idx).data_mut() = IR::Filter(Arc::new(
+                            crate::parser::ast::QueryExprInner::from(tree!(ExprIR::And; remaining)),
+                        ));
                     }
                     changed = true;
                     break;

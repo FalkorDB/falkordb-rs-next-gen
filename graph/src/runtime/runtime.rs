@@ -1157,15 +1157,6 @@ impl<'a> Runtime<'a> {
         }
     }
 
-    pub fn run_iter_expr(
-        &self,
-        ir: &DynTree<ExprIR<Variable>>,
-        idx: NodeIdx<Dyn<ExprIR<Variable>>>,
-        env: &Env<'_>,
-    ) -> Result<ValueIter, String> {
-        super::eval::ExprEval::from_runtime(self).eval_iter_expr(ir, idx, Some(env))
-    }
-
     pub fn evaluate_id_filter(
         &self,
         filter: &Vec<(QueryExpr<Variable>, ExprIR<Variable>)>,

@@ -97,9 +97,13 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                 }
 
                 let merged = if conjuncts.len() == 1 {
-                    Arc::new(conjuncts.into_iter().next().unwrap())
+                    Arc::new(crate::parser::ast::QueryExprInner::from(
+                        conjuncts.into_iter().next().unwrap(),
+                    ))
                 } else {
-                    Arc::new(tree!(ExprIR::And; conjuncts))
+                    Arc::new(crate::parser::ast::QueryExprInner::from(
+                        tree!(ExprIR::And; conjuncts),
+                    ))
                 };
                 *optimized_plan.node_mut(idx).data_mut() = IR::Filter(merged);
                 optimized_plan.node_mut(child_idx).take_out();
@@ -317,9 +321,13 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
 
                 // Build the filter expression for this child
                 let filter_expr = if conjuncts.len() == 1 {
-                    Arc::new(conjuncts.into_iter().next().unwrap())
+                    Arc::new(crate::parser::ast::QueryExprInner::from(
+                        conjuncts.into_iter().next().unwrap(),
+                    ))
                 } else {
-                    Arc::new(tree!(ExprIR::And; conjuncts))
+                    Arc::new(crate::parser::ast::QueryExprInner::from(
+                        tree!(ExprIR::And; conjuncts),
+                    ))
                 };
 
                 // Insert the new filter node above the child
@@ -332,11 +340,13 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
             if remaining.is_empty() {
                 optimized_plan.node_mut(idx).take_out();
             } else if remaining.len() == 1 {
-                *optimized_plan.node_mut(idx).data_mut() =
-                    IR::Filter(Arc::new(remaining.into_iter().next().unwrap()));
+                *optimized_plan.node_mut(idx).data_mut() = IR::Filter(Arc::new(
+                    crate::parser::ast::QueryExprInner::from(remaining.into_iter().next().unwrap()),
+                ));
             } else {
-                *optimized_plan.node_mut(idx).data_mut() =
-                    IR::Filter(Arc::new(tree!(ExprIR::And; remaining)));
+                *optimized_plan.node_mut(idx).data_mut() = IR::Filter(Arc::new(
+                    crate::parser::ast::QueryExprInner::from(tree!(ExprIR::And; remaining)),
+                ));
             }
 
             changed = true;
@@ -390,7 +400,7 @@ fn rebuild_with_cp_split(
                 .collect();
 
             let inner_cp = tree!(IR::CartesianProduct; extracted);
-            let filter_expr = Arc::new(conjunct.clone());
+            let filter_expr = Arc::new(crate::parser::ast::QueryExprInner::from(conjunct.clone()));
             let inner_filtered = tree!(IR::Filter(filter_expr); [inner_cp]);
 
             let mut new_children = others;
@@ -400,10 +410,14 @@ fn rebuild_with_cp_split(
                 tree!(IR::CartesianProduct; new_children)
             } else {
                 let remaining_filter = if remaining_conjuncts.len() == 1 {
-                    Arc::new(remaining_conjuncts[0].clone())
+                    Arc::new(crate::parser::ast::QueryExprInner::from(
+                        remaining_conjuncts[0].clone(),
+                    ))
                 } else {
                     #[allow(clippy::unnecessary_to_owned)]
-                    Arc::new(tree!(ExprIR::And; remaining_conjuncts.to_vec()))
+                    Arc::new(crate::parser::ast::QueryExprInner::from(
+                        tree!(ExprIR::And; remaining_conjuncts.to_vec()),
+                    ))
                 };
                 let cp = tree!(IR::CartesianProduct; new_children);
                 tree!(IR::Filter(remaining_filter), cp)

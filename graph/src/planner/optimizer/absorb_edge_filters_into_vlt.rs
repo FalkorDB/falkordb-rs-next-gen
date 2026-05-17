@@ -46,7 +46,7 @@ use std::sync::Arc;
 use orx_tree::{Bfs, Dyn, DynTree, NodeIdx, NodeRef};
 
 use crate::{
-    parser::ast::{ExprIR, Variable},
+    parser::ast::{ExprIR, QueryExpr, Variable},
     tree,
 };
 
@@ -139,19 +139,23 @@ pub(super) fn absorb_edge_filters_into_vlt(optimized_plan: &mut DynTree<IR>) {
             }
 
             // Build the edge filter expression
-            let edge_filter_expr: Arc<DynTree<ExprIR<Variable>>> = if edge_conjuncts.len() == 1 {
-                Arc::new(edge_conjuncts.into_iter().next().unwrap())
+            let edge_filter_expr: QueryExpr<Variable> = if edge_conjuncts.len() == 1 {
+                Arc::new(crate::parser::ast::QueryExprInner::from(
+                    edge_conjuncts.into_iter().next().unwrap(),
+                ))
             } else {
-                Arc::new(tree!(ExprIR::And; edge_conjuncts))
+                Arc::new(crate::parser::ast::QueryExprInner::from(
+                    tree!(ExprIR::And; edge_conjuncts),
+                ))
             };
 
             // Merge with existing edge_filter if present
             match optimized_plan.node_mut(vlt_idx).data_mut() {
                 IR::CondVarLenTraverse { edge_filter, .. } => {
                     if let Some(existing) = edge_filter.take() {
-                        *edge_filter = Some(Arc::new(
-                            tree!(ExprIR::And; [(*existing).clone(), (*edge_filter_expr).clone()]),
-                        ));
+                        *edge_filter = Some(Arc::new(crate::parser::ast::QueryExprInner::from(
+                            tree!(ExprIR::And; [existing.tree.clone(), edge_filter_expr.tree.clone()]),
+                        )));
                     } else {
                         *edge_filter = Some(edge_filter_expr);
                     }
@@ -163,11 +167,13 @@ pub(super) fn absorb_edge_filters_into_vlt(optimized_plan: &mut DynTree<IR>) {
             if remaining.is_empty() {
                 optimized_plan.node_mut(idx).take_out();
             } else if remaining.len() == 1 {
-                *optimized_plan.node_mut(idx).data_mut() =
-                    IR::Filter(Arc::new(remaining.into_iter().next().unwrap()));
+                *optimized_plan.node_mut(idx).data_mut() = IR::Filter(Arc::new(
+                    crate::parser::ast::QueryExprInner::from(remaining.into_iter().next().unwrap()),
+                ));
             } else {
-                *optimized_plan.node_mut(idx).data_mut() =
-                    IR::Filter(Arc::new(tree!(ExprIR::And; remaining)));
+                *optimized_plan.node_mut(idx).data_mut() = IR::Filter(Arc::new(
+                    crate::parser::ast::QueryExprInner::from(tree!(ExprIR::And; remaining)),
+                ));
             }
 
             changed = true;

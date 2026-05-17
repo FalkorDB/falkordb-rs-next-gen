@@ -154,8 +154,9 @@ pub(super) fn reduce_count(
         // Replace the Aggregate subtree with a Project that emits the count
         // as a constant integer.
         let agg_var = agg_var.clone();
-        let count_expr: Arc<DynTree<ExprIR<Variable>>> =
-            Arc::new(tree!(ExprIR::Integer(count_value)));
+        let count_expr: crate::parser::ast::QueryExpr<Variable> = Arc::new(
+            crate::parser::ast::QueryExprInner::from(tree!(ExprIR::Integer(count_value))),
+        );
 
         // First prune all children.
         while optimized_plan.node(idx).num_children() > 0 {

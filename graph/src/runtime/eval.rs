@@ -46,11 +46,11 @@ use std::cmp::Ordering;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
-use orx_tree::{Dyn, DynNode, DynTree, NodeIdx, NodeRef};
+use orx_tree::{Dyn, DynNode, NodeIdx, NodeRef};
 use thin_vec::{ThinVec, thin_vec};
 
 use crate::{
-    parser::ast::{ExprIR, QuantifierType, Variable},
+    parser::ast::{ExprIR, QuantifierType, QueryExprInner, Variable},
     runtime::{
         env::Env,
         ordermap::OrderMap,
@@ -160,40 +160,190 @@ impl<'a> ExprEval<'a> {
     // Main evaluator
     // -------------------------------------------------------------------
 
+    /// Resolve (and compile if needed) the JIT entry for the root expression.
+    /// Mirrors `eval`'s cache discipline; returns `None` if the expression
+    /// is not JIT-compilable. Sub-expression compilation is hoisted at JIT
+    /// codegen time into helper arrays owned by the parent CompiledExpr —
+    /// callers should not invoke this with a non-root idx unless they have
+    /// no other option (currently only UnwindOp at construction time).
+    pub fn resolve_compiled(
+        ir: &QueryExprInner<Variable>,
+        idx: NodeIdx<Dyn<ExprIR<Variable>>>,
+    ) -> Option<Arc<crate::runtime::jit::CompiledExpr>> {
+        if idx == ir.tree.root().idx() {
+            let mut compiled_now = false;
+            let entry = ir.compiled.get_or_init(|| {
+                compiled_now = true;
+                crate::runtime::jit::try_compile(&ir.tree, idx.clone()).map(Arc::new)
+            });
+            if compiled_now {
+                crate::runtime::jit::record_compile(entry.is_some());
+            } else {
+                crate::runtime::jit::record_hit();
+            }
+            entry.clone()
+        } else {
+            // Non-root resolve has no shared cache; hot callers (currently only
+            // AggregateOp::run_agg_expr) pre-compile their sub-expressions at
+            // construction time and invoke CompiledExpr::call directly.
+            let compiled = crate::runtime::jit::try_compile(&ir.tree, idx).map(Arc::new);
+            crate::runtime::jit::record_compile(compiled.is_some());
+            compiled
+        }
+    }
+
     pub fn eval(
         &self,
-        ir: &DynTree<ExprIR<Variable>>,
+        ir: &QueryExprInner<Variable>,
         idx: NodeIdx<Dyn<ExprIR<Variable>>>,
         env: Option<&Env<'_>>,
         agg_group_key: Option<u64>,
     ) -> Result<Value, String> {
-        crate::runtime::jit::try_eval_cached(ir, idx.clone(), self, env, agg_group_key)
-            .unwrap_or_else(|| {
-                Err(format!(
-                    "expression not JIT-compilable: {:?}",
-                    ir.node(idx).data()
-                ))
-            })
+        match Self::resolve_compiled(ir, idx.clone()) {
+            Some(ce) => ce.call(self, env, ir, &idx, agg_group_key),
+            None => Err(format!(
+                "expression not JIT-compilable: {:?}",
+                ir.tree.node(idx).data()
+            )),
+        }
     }
 
     // -------------------------------------------------------------------
     // Companion methods
     // -------------------------------------------------------------------
 
-    pub fn eval_iter_expr(
+    /// Evaluate `ALL/ANY/NONE/SINGLE(var IN list WHERE pred)`.
+    pub fn eval_distinct(
         &self,
-        ir: &DynTree<ExprIR<Variable>>,
+        _ir: &QueryExprInner<Variable>,
+        idx: NodeIdx<Dyn<ExprIR<Variable>>>,
+        _env: Option<&Env<'_>>,
+        agg_group_key: Option<u64>,
+        args: &[&Value],
+    ) -> Result<Value, String> {
+        let rt = self.rt()?;
+        let Some(group_id) = agg_group_key else {
+            // Outside an accumulate phase (e.g. JIT-compiled aggregator
+            // finalization) the Distinct value is unused; return Null.
+            return Ok(Value::Null);
+        };
+        let values: ThinVec<Value> = args.iter().map(|v| (*v).clone()).collect();
+        let mut value_dedupers = rt.value_dedupers.borrow_mut();
+        let value_deduper = value_dedupers
+            .entry(format!("{idx:?}_{group_id}"))
+            .or_default();
+        if value_deduper.is_seen(&values) {
+            Ok(Value::List(Arc::new(thin_vec![Value::Null])))
+        } else {
+            Ok(Value::List(Arc::new(values)))
+        }
+    }
+
+    pub fn eval_quantifier_expr(
+        &self,
+        ir: &QueryExprInner<Variable>,
         idx: NodeIdx<Dyn<ExprIR<Variable>>>,
         env: Option<&Env<'_>>,
+        agg_group_key: Option<u64>,
+        quantifier: &QuantifierType,
+        var: &Variable,
+        list: &Value,
+        body_ce: &crate::runtime::jit::CompiledExpr,
+    ) -> Result<Value, String> {
+        let node = ir.node(idx);
+        match list {
+            Value::List(values) => {
+                let e = env.ok_or_else(|| String::from("Variable not found"))?;
+                let mut env = self.clone_env(e)?;
+                let body_idx = node.child(1).idx();
+                let mut t = 0;
+                let mut f = 0;
+                let mut n = 0;
+                for value in values.iter().cloned() {
+                    env.insert(var, value);
+                    match body_ce.call(self, Some(&env), ir, &body_idx, agg_group_key)? {
+                        Value::Bool(true) => t += 1,
+                        Value::Bool(false) => f += 1,
+                        Value::Null => n += 1,
+                        value => {
+                            return Err(format!(
+                                "Type mismatch: expected Boolean but was {}",
+                                value.name()
+                            ));
+                        }
+                    }
+                }
+                Ok(eval_quantifier(quantifier, t, f, n))
+            }
+            Value::Null => Ok(Value::Null),
+            value => Err(format!(
+                "Type mismatch: expected List but was {}",
+                value.name()
+            )),
+        }
+    }
+
+    /// Evaluate `[var IN list WHERE pred | proj]`.
+    pub fn eval_list_comprehension_expr(
+        &self,
+        ir: &QueryExprInner<Variable>,
+        idx: NodeIdx<Dyn<ExprIR<Variable>>>,
+        env: Option<&Env<'_>>,
+        agg_group_key: Option<u64>,
+        var: &Variable,
+        pred_ce: &crate::runtime::jit::CompiledExpr,
+        proj_ce: &crate::runtime::jit::CompiledExpr,
+        iter_helpers: &[*const crate::runtime::jit::CompiledExpr],
+    ) -> Result<Value, String> {
+        let node = ir.node(idx);
+        let e = env.ok_or_else(|| String::from("Variable not found"))?;
+        let iter = self.build_iter_from_helpers(ir, node.child(0).idx(), env, iter_helpers)?;
+        let mut env = self.clone_env(e)?;
+        let pred_idx = node.child(1).idx();
+        let proj_idx = node.child(2).idx();
+        let mut acc = thin_vec![];
+        for value in iter {
+            env.insert(var, value);
+            match pred_ce.call(self, Some(&env), ir, &pred_idx, agg_group_key)? {
+                Value::Bool(true) => {}
+                _ => continue,
+            }
+            acc.push(proj_ce.call(self, Some(&env), ir, &proj_idx, agg_group_key)?);
+        }
+        Ok(Value::List(Arc::new(acc)))
+    }
+
+    /// Build a ValueIter from pre-compiled helpers. Mirrors `eval_iter_expr`'s
+    /// range optimization: for `FuncInvocation("range")`, helpers contain
+    /// [start, end, optional step]; otherwise helpers[0] evaluates to the whole
+    /// list / value.
+    pub fn build_iter_from_helpers(
+        &self,
+        ir: &QueryExprInner<Variable>,
+        idx: NodeIdx<Dyn<ExprIR<Variable>>>,
+        env: Option<&Env<'_>>,
+        helpers: &[*const crate::runtime::jit::CompiledExpr],
     ) -> Result<ValueIter, String> {
-        match ir.node(idx).data() {
+        let call_helper = |i: usize, child_idx: NodeIdx<Dyn<ExprIR<Variable>>>| {
+            let ptr = helpers.get(i).copied().unwrap_or(std::ptr::null());
+            if ptr.is_null() {
+                Err(String::from("list-comp iter helper not JIT-compilable"))
+            } else {
+                let ce = unsafe { &*ptr };
+                ce.call(self, env, ir, &child_idx, None)
+            }
+        };
+
+        match ir.node(idx.clone()).data() {
             ExprIR::FuncInvocation(func) if func.name == "range" => {
-                let start = self.eval(ir, ir.node(idx).child(0).idx(), env, None)?;
-                let end = self.eval(ir, ir.node(idx).child(1).idx(), env, None)?;
-                let step = ir
-                    .node(idx)
-                    .get_child(2)
-                    .map_or_else(|| Ok(Value::Int(1)), |c| self.eval(ir, c.idx(), env, None))?;
+                let n = ir.node(idx.clone()).num_children();
+                let start = call_helper(0, ir.node(idx.clone()).child(0).idx())?;
+                let end = call_helper(1, ir.node(idx.clone()).child(1).idx())?;
+                let step = if n >= 3 {
+                    call_helper(2, ir.node(idx.clone()).child(2).idx())?
+                } else {
+                    Value::Int(1)
+                };
                 func.validate_args_type(&[&start, &end, &step])?;
                 match (start, end, step) {
                     (Value::Int(start), Value::Int(end), Value::Int(step)) => {
@@ -231,13 +381,11 @@ impl<'a> ExprEval<'a> {
                             step: step.unsigned_abs() as usize,
                         })
                     }
-                    _ => {
-                        unreachable!();
-                    }
+                    _ => unreachable!(),
                 }
             }
             _ => {
-                let res = self.eval(ir, idx, env, None)?;
+                let res = call_helper(0, idx)?;
                 match res {
                     Value::List(arr) => Ok(ValueIter::List(Arc::unwrap_or_clone(arr).into_iter())),
                     Value::Null => Ok(ValueIter::Empty),
@@ -247,125 +395,30 @@ impl<'a> ExprEval<'a> {
         }
     }
 
-    /// Evaluate `ALL/ANY/NONE/SINGLE(var IN list WHERE pred)`.
-    pub fn eval_distinct(
-        &self,
-        ir: &DynTree<ExprIR<Variable>>,
-        idx: NodeIdx<Dyn<ExprIR<Variable>>>,
-        env: Option<&Env<'_>>,
-        agg_group_key: Option<u64>,
-    ) -> Result<Value, String> {
-        let node = ir.node(idx.clone());
-        let rt = self.rt()?;
-        let Some(group_id) = agg_group_key else {
-            // Outside an accumulate phase (e.g. JIT-compiled aggregator
-            // finalization) the Distinct value is unused; return Null.
-            return Ok(Value::Null);
-        };
-        let values = node
-            .children()
-            .map(|child| self.eval(ir, child.idx(), env, agg_group_key))
-            .collect::<Result<ThinVec<_>, _>>()?;
-        let mut value_dedupers = rt.value_dedupers.borrow_mut();
-        let value_deduper = value_dedupers
-            .entry(format!("{idx:?}_{group_id}"))
-            .or_default();
-        if value_deduper.is_seen(&values) {
-            Ok(Value::List(Arc::new(thin_vec![Value::Null])))
-        } else {
-            Ok(Value::List(Arc::new(values)))
-        }
-    }
-
-    pub fn eval_quantifier_expr(
-        &self,
-        ir: &DynTree<ExprIR<Variable>>,
-        idx: NodeIdx<Dyn<ExprIR<Variable>>>,
-        env: Option<&Env<'_>>,
-        agg_group_key: Option<u64>,
-        quantifier: &QuantifierType,
-        var: &Variable,
-    ) -> Result<Value, String> {
-        let node = ir.node(idx);
-        let list = self.eval(ir, node.child(0).idx(), env, agg_group_key)?;
-        match list {
-            Value::List(values) => {
-                let e = env.ok_or_else(|| String::from("Variable not found"))?;
-                let mut env = self.clone_env(e)?;
-                let mut t = 0;
-                let mut f = 0;
-                let mut n = 0;
-                for value in values.iter().cloned() {
-                    env.insert(var, value);
-                    match self.eval(ir, node.child(1).idx(), Some(&env), agg_group_key)? {
-                        Value::Bool(true) => t += 1,
-                        Value::Bool(false) => f += 1,
-                        Value::Null => n += 1,
-                        value => {
-                            return Err(format!(
-                                "Type mismatch: expected Boolean but was {}",
-                                value.name()
-                            ));
-                        }
-                    }
-                }
-                Ok(eval_quantifier(quantifier, t, f, n))
-            }
-            Value::Null => Ok(Value::Null),
-            value => Err(format!(
-                "Type mismatch: expected List but was {}",
-                value.name()
-            )),
-        }
-    }
-
-    /// Evaluate `[var IN list WHERE pred | proj]`.
-    pub fn eval_list_comprehension_expr(
-        &self,
-        ir: &DynTree<ExprIR<Variable>>,
-        idx: NodeIdx<Dyn<ExprIR<Variable>>>,
-        env: Option<&Env<'_>>,
-        agg_group_key: Option<u64>,
-        var: &Variable,
-    ) -> Result<Value, String> {
-        let node = ir.node(idx);
-        let e = env.ok_or_else(|| String::from("Variable not found"))?;
-        let iter = self.eval_iter_expr(ir, node.child(0).idx(), env)?;
-        let mut env = self.clone_env(e)?;
-        let mut acc = thin_vec![];
-        for value in iter {
-            env.insert(var, value);
-            match self.eval(ir, node.child(1).idx(), Some(&env), agg_group_key)? {
-                Value::Bool(true) => {}
-                _ => continue,
-            }
-            acc.push(self.eval(ir, node.child(2).idx(), Some(&env), agg_group_key)?);
-        }
-        Ok(Value::List(Arc::new(acc)))
-    }
-
     /// Evaluate `reduce(acc = init, var IN list | body)`.
     pub fn eval_reduce_expr(
         &self,
-        ir: &DynTree<ExprIR<Variable>>,
+        ir: &QueryExprInner<Variable>,
         idx: NodeIdx<Dyn<ExprIR<Variable>>>,
         env: Option<&Env<'_>>,
         agg_group_key: Option<u64>,
         acc_var: &Variable,
         iter_var: &Variable,
+        init: &Value,
+        list: &Value,
+        body_ce: &crate::runtime::jit::CompiledExpr,
     ) -> Result<Value, String> {
         let node = ir.node(idx);
-        let init = self.eval(ir, node.child(0).idx(), env, agg_group_key)?;
-        let list = self.eval(ir, node.child(1).idx(), env, agg_group_key)?;
         match list {
             Value::List(values) => {
                 let e = env.ok_or_else(|| String::from("Variable not found"))?;
                 let mut env = self.clone_env(e)?;
-                let mut accumulator = init;
+                let body_idx = node.child(2).idx();
+                let mut accumulator = init.clone();
                 for value in values.iter().cloned() {
                     env.insert(acc_var, accumulator);
                     env.insert(iter_var, value);
-                    accumulator = self.eval(ir, node.child(2).idx(), Some(&env), agg_group_key)?;
+                    accumulator = body_ce.call(self, Some(&env), ir, &body_idx, agg_group_key)?;
                 }
                 Ok(accumulator)
             }
@@ -384,26 +437,25 @@ impl<'a> ExprEval<'a> {
     #[allow(clippy::too_many_arguments)]
     pub fn eval_shortest_path(
         &self,
-        ir: &DynTree<ExprIR<Variable>>,
-        idx: NodeIdx<Dyn<ExprIR<Variable>>>,
-        env: Option<&Env<'_>>,
-        agg_group_key: Option<u64>,
+        ir: &QueryExprInner<Variable>,
+        _idx: NodeIdx<Dyn<ExprIR<Variable>>>,
+        _env: Option<&Env<'_>>,
+        _agg_group_key: Option<u64>,
         rel_types: &[Arc<String>],
         min_hops: u32,
         max_hops: Option<u32>,
         directed: bool,
         all_paths: bool,
+        src_val: &Value,
+        dst_val: &Value,
     ) -> Result<Value, String> {
-        let node = ir.node(idx);
-        let src_val = self.eval(ir, node.child(0).idx(), env, agg_group_key)?;
-        let dst_val = self.eval(ir, node.child(1).idx(), env, agg_group_key)?;
-
-        let src_id = match &src_val {
+        let _ = ir;
+        let src_id = match src_val {
             Value::Node(id) => *id,
             Value::Null => return Ok(Value::Null),
             _ => return Err("A shortestPath requires bound nodes".into()),
         };
-        let dst_id = match &dst_val {
+        let dst_id = match dst_val {
             Value::Node(id) => *id,
             Value::Null => return Ok(Value::Null),
             _ => return Err("A shortestPath requires bound nodes".into()),
@@ -692,32 +744,34 @@ impl<'a> ExprEval<'a> {
 
     pub fn eval_map_projection(
         &self,
-        ir: &DynTree<ExprIR<Variable>>,
+        ir: &QueryExprInner<Variable>,
         idx: NodeIdx<Dyn<ExprIR<Variable>>>,
         env: Option<&Env<'_>>,
         agg_group_key: Option<u64>,
+        base: &Value,
+        helpers: &[*const crate::runtime::jit::CompiledExpr],
     ) -> Result<Value, String> {
         let rt = self.rt()?;
         let node = ir.node(idx);
-        let base = self.eval(ir, node.child(0).idx(), env, agg_group_key)?;
 
         if matches!(base, Value::Null) {
             return Ok(Value::Null);
         }
 
         if !matches!(
-            &base,
+            base,
             Value::Node(_) | Value::Relationship(_) | Value::Map(_)
         ) {
             return Err("Encountered unhandled type evaluating map projection".to_string());
         }
 
         let mut result = OrderMap::default();
+        let mut helper_cursor = 0;
 
         for i in 1..node.num_children() {
             let item = node.child(i);
             match item.data() {
-                ExprIR::MapProjection => match &base {
+                ExprIR::MapProjection => match base {
                     Value::Node(id) => {
                         for (k, v) in rt.get_node_attrs(*id) {
                             result.insert(k, v);
@@ -740,7 +794,7 @@ impl<'a> ExprEval<'a> {
                     }
                 },
                 ExprIR::Property(prop_name) => {
-                    let value = match &base {
+                    let value = match base {
                         Value::Node(id) => {
                             rt.get_node_attribute(*id, prop_name).unwrap_or(Value::Null)
                         }
@@ -762,7 +816,18 @@ impl<'a> ExprEval<'a> {
                     } else {
                         unreachable!();
                     };
-                    let value = self.eval(ir, item.child(0).idx(), env, agg_group_key)?;
+                    let child_idx = item.child(0).idx();
+                    let ce_ptr = helpers
+                        .get(helper_cursor)
+                        .copied()
+                        .unwrap_or(std::ptr::null());
+                    helper_cursor += 1;
+                    let value = if ce_ptr.is_null() {
+                        return Err("map-projection value not JIT-compilable".to_string());
+                    } else {
+                        let ce = unsafe { &*ce_ptr };
+                        ce.call(self, env, ir, &child_idx, agg_group_key)?
+                    };
                     result.insert(key, value);
                 }
                 _ => {

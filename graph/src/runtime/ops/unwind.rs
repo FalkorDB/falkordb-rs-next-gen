@@ -24,10 +24,12 @@
 //! produce no output rows.
 
 use std::collections::VecDeque;
+use std::sync::Arc;
 
-use crate::parser::ast::{QueryExpr, Variable};
+use crate::parser::ast::{ExprIR, QueryExpr, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::{ExprEval, ValueIter};
+use crate::runtime::jit::CompiledExpr;
 use crate::runtime::{
     batch::{BATCH_SIZE, Batch, BatchOp},
     env::Env,
@@ -76,13 +78,14 @@ impl<'a> IterExpansion<'a> {
 fn eval_row<'a>(
     runtime: &'a Runtime<'a>,
     list: &QueryExpr<Variable>,
+    iter_helpers: &[*const CompiledExpr],
     name: &Variable,
     env: &Env<'a>,
     pending: &mut VecDeque<Env<'a>>,
 ) -> Result<Option<IterExpansion<'a>>, String> {
     let pool = runtime.env_pool;
     let eval = ExprEval::from_runtime(runtime);
-    let iter = eval.eval_iter_expr(list, list.root().idx(), Some(env))?;
+    let iter = eval.build_iter_from_helpers(list, list.root().idx(), Some(env), iter_helpers)?;
 
     match iter {
         ValueIter::Empty | ValueIter::Once(None | Some(Value::Null)) => Ok(None),
@@ -103,6 +106,11 @@ pub struct UnwindOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Box<BatchOp<'a>>,
     list: &'a QueryExpr<Variable>,
+    /// Pre-compiled iter helpers — for `range(start, end[, step])` these are
+    /// the compiled args; otherwise a single helper for the whole expression.
+    /// Pointers stay valid for the operator lifetime via `_iter_helper_arcs`.
+    iter_helpers: Vec<*const CompiledExpr>,
+    _iter_helper_arcs: Vec<Arc<CompiledExpr>>,
     name: &'a Variable,
     pending: VecDeque<Env<'a>>,
     current_batch: Option<Batch<'a>>,
@@ -113,17 +121,20 @@ pub struct UnwindOp<'a> {
 }
 
 impl<'a> UnwindOp<'a> {
-    pub const fn new(
+    pub fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
         list: &'a QueryExpr<Variable>,
         name: &'a Variable,
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
+        let (iter_helpers, iter_helper_arcs) = build_unwind_helpers(list);
         Self {
             runtime,
             child,
             list,
+            iter_helpers,
+            _iter_helper_arcs: iter_helper_arcs,
             name,
             pending: VecDeque::new(),
             current_batch: None,
@@ -132,6 +143,38 @@ impl<'a> UnwindOp<'a> {
             idx,
         }
     }
+}
+
+/// Pre-compile the iter children at operator construction. For a range
+/// invocation we compile each arg child individually so the iterator can be
+/// built lazily; otherwise we compile the whole list expression.
+fn build_unwind_helpers(
+    list: &QueryExpr<Variable>
+) -> (Vec<*const CompiledExpr>, Vec<Arc<CompiledExpr>>) {
+    let root = list.tree.root();
+    let mut arcs: Vec<Arc<CompiledExpr>> = Vec::new();
+    let mut ptrs: Vec<*const CompiledExpr> = Vec::new();
+    let push = |arcs: &mut Vec<Arc<CompiledExpr>>,
+                ptrs: &mut Vec<*const CompiledExpr>,
+                idx: NodeIdx<Dyn<ExprIR<Variable>>>| {
+        match ExprEval::resolve_compiled(list, idx) {
+            Some(arc) => {
+                ptrs.push(Arc::as_ptr(&arc));
+                arcs.push(arc);
+            }
+            None => ptrs.push(std::ptr::null()),
+        }
+    };
+    if let ExprIR::FuncInvocation(func) = root.data()
+        && func.name == "range"
+    {
+        for i in 0..root.num_children() {
+            push(&mut arcs, &mut ptrs, root.child(i).idx());
+        }
+    } else {
+        push(&mut arcs, &mut ptrs, root.idx());
+    }
+    (ptrs, arcs)
 }
 
 impl<'a> Iterator for UnwindOp<'a> {
@@ -181,7 +224,14 @@ impl<'a> Iterator for UnwindOp<'a> {
                     let row_idx = active[self.current_pos];
                     self.current_pos += 1;
                     let env = batch.env_ref(row_idx);
-                    match eval_row(self.runtime, self.list, self.name, env, &mut self.pending) {
+                    match eval_row(
+                        self.runtime,
+                        self.list,
+                        &self.iter_helpers,
+                        self.name,
+                        env,
+                        &mut self.pending,
+                    ) {
                         Ok(Some(expansion)) => {
                             self.iter_expansion = Some(expansion);
                             break; // drain the expansion in the next loop iteration

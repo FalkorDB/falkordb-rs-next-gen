@@ -743,8 +743,59 @@ impl<T, L> QueryGraph<T, L, Variable> {
     }
 }
 
-/// Type alias for expression trees.
-pub type QueryExpr<TVar> = Arc<DynTree<ExprIR<TVar>>>;
+/// Expression tree with embedded JIT-compiled-code cache.
+///
+/// The `compiled` field is populated lazily on first evaluation (see
+/// `runtime::eval::ExprEval::eval`). Sub-expressions referenced by JIT
+/// bridges (quantifier bodies, list-comp projections, etc.) are pre-compiled
+/// at codegen time and stored as helper arrays inside the parent
+/// `CompiledExpr`, so non-root resolves bypass any shared cache.
+pub struct QueryExprInner<TVar> {
+    pub tree: DynTree<ExprIR<TVar>>,
+    #[allow(clippy::type_complexity)]
+    pub compiled: std::sync::OnceLock<Option<std::sync::Arc<crate::runtime::jit::CompiledExpr>>>,
+}
+
+impl<TVar: std::fmt::Debug> std::fmt::Debug for QueryExprInner<TVar> {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        self.tree.fmt(f)
+    }
+}
+
+impl<TVar> Display for QueryExprInner<TVar>
+where
+    DynTree<ExprIR<TVar>>: Display,
+{
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        self.tree.fmt(f)
+    }
+}
+
+impl<TVar> std::ops::Deref for QueryExprInner<TVar> {
+    type Target = DynTree<ExprIR<TVar>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.tree
+    }
+}
+
+impl<TVar> From<DynTree<ExprIR<TVar>>> for QueryExprInner<TVar> {
+    fn from(tree: DynTree<ExprIR<TVar>>) -> Self {
+        Self {
+            tree,
+            compiled: std::sync::OnceLock::new(),
+        }
+    }
+}
+
+/// Type alias for expression trees with embedded JIT-cache.
+pub type QueryExpr<TVar> = Arc<QueryExprInner<TVar>>;
 
 /// An item in a SET clause - either property assignment or label modification.
 #[derive(Clone, Debug)]
