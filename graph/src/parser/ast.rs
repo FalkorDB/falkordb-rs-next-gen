@@ -252,6 +252,23 @@ pub enum ExprIR<TVar> {
     /// Map projection: base { .prop, .*, key: expr, var }
     /// First child is the base expression, remaining children are projection items
     MapProjection,
+    /// Reads an entity count from live graph metadata at runtime.
+    /// Emitted only by the `reduce_count` optimizer pass; never produced by the parser.
+    GraphCount(CountKind),
+}
+
+/// Selector for which graph-level count `ExprIR::GraphCount` reads.
+#[derive(Clone, Debug)]
+pub enum CountKind {
+    /// Total node count across all labels.
+    AllNodes,
+    /// Node count for a single label.
+    NodesWithLabel(Arc<String>),
+    /// Total relationship count across all types.
+    AllRelationships,
+    /// Sum of edge counts across the listed relationship types
+    /// (missing types contribute 0).
+    RelationshipsByTypes(Vec<Arc<String>>),
 }
 
 #[cfg_attr(tarpaulin, skip)]
@@ -324,6 +341,7 @@ impl<TVar: Display + std::fmt::Debug> Display for ExprIR<TVar> {
                 }
             }
             Self::MapProjection => write!(f, "map_projection"),
+            Self::GraphCount(kind) => write!(f, "graph_count({kind:?})"),
         }
     }
 }

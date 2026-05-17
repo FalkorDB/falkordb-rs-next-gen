@@ -38,8 +38,7 @@ use std::sync::Arc;
 use orx_tree::{DynTree, NodeRef};
 
 use crate::{
-    graph::graph::Graph,
-    parser::ast::{ExprIR, Variable},
+    parser::ast::{CountKind, ExprIR, Variable},
     tree,
 };
 
@@ -49,11 +48,10 @@ use super::super::IR;
 ///
 /// Detects patterns where the entire query is a simple `MATCH ... RETURN COUNT(x)`
 /// with no filters, and replaces the Aggregate + scan subtree with a Project
-/// that emits the count as a constant integer.
-pub(super) fn reduce_count(
-    optimized_plan: &mut DynTree<IR>,
-    graph: &Graph,
-) {
+/// that emits an `ExprIR::GraphCount`. The actual count is read from the live
+/// graph at runtime, so this rewrite stays valid across cache hits as the
+/// graph mutates.
+pub(super) fn reduce_count(optimized_plan: &mut DynTree<IR>) {
     // Walk the plan looking for Aggregate nodes.
     let indices = optimized_plan
         .root()
@@ -91,10 +89,10 @@ pub(super) fn reduce_count(
         }
         let child = agg_node.child(0);
 
-        let count = match child.data() {
+        let kind = match child.data() {
             // MATCH (n) RETURN COUNT(n)
             IR::AllNodeScan(node) if node.alias.id == count_var_id && child.num_children() == 0 => {
-                Some(graph.node_count() as i64)
+                Some(CountKind::AllNodes)
             }
             // MATCH (n:Label) RETURN COUNT(n)
             IR::NodeByLabelScan { node, .. }
@@ -102,9 +100,8 @@ pub(super) fn reduce_count(
                     && child.num_children() == 0
                     && node.labels.len() == 1 =>
             {
-                // Get count for the single label (the scan label).
                 let label = node.labels.iter().next().unwrap();
-                Some(graph.label_node_count(label.as_str()) as i64)
+                Some(CountKind::NodesWithLabel(label.clone()))
             }
             // MATCH ()-[r]->() RETURN COUNT(r) or MATCH ()-[r:Type]->() RETURN COUNT(r)
             // Plan shape: CondTraverse { rel } (leaf, before select_scan_node adds the scan child)
@@ -128,34 +125,26 @@ pub(super) fn reduce_count(
                 if relationship.bidirectional {
                     continue;
                 }
-                // Compute the edge count based on relationship types.
                 if relationship.types.is_empty() {
-                    // Untyped: total relationship count.
-                    Some(graph.relationship_count() as i64)
+                    Some(CountKind::AllRelationships)
                 } else {
-                    // Typed: sum counts per type.
-                    let mut total: i64 = 0;
-                    for type_name in &relationship.types {
-                        if let Some(type_id) = graph.get_type_id(type_name.as_str()) {
-                            total += graph.type_edge_count(usize::from(type_id)) as i64;
-                        }
-                        // If the type doesn't exist, its count is 0.
-                    }
-                    Some(total)
+                    Some(CountKind::RelationshipsByTypes(
+                        relationship.types.iter().cloned().collect(),
+                    ))
                 }
             }
             _ => None,
         };
 
-        let Some(count_value) = count else {
+        let Some(kind) = kind else {
             continue;
         };
 
         // Replace the Aggregate subtree with a Project that emits the count
-        // as a constant integer.
+        // via a runtime GraphCount lookup.
         let agg_var = agg_var.clone();
         let count_expr: crate::parser::ast::QueryExpr<Variable> = Arc::new(
-            crate::parser::ast::QueryExprInner::from(tree!(ExprIR::Integer(count_value))),
+            crate::parser::ast::QueryExprInner::from(tree!(ExprIR::GraphCount(kind))),
         );
 
         // First prune all children.

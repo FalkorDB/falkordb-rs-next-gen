@@ -199,6 +199,9 @@ impl<'a> ExprEval<'a> {
         env: Option<&Env<'_>>,
         agg_group_key: Option<u64>,
     ) -> Result<Value, String> {
+        if let ExprIR::GraphCount(kind) = ir.tree.node(idx.clone()).data() {
+            return self.eval_graph_count(kind);
+        }
         match Self::resolve_compiled(ir, idx.clone()) {
             Some(ce) => ce.call(self, env, ir, &idx, agg_group_key),
             None => Err(format!(
@@ -206,6 +209,32 @@ impl<'a> ExprEval<'a> {
                 ir.tree.node(idx).data()
             )),
         }
+    }
+
+    fn eval_graph_count(
+        &self,
+        kind: &crate::parser::ast::CountKind,
+    ) -> Result<Value, String> {
+        use crate::parser::ast::CountKind;
+        let rt = self
+            .runtime
+            .ok_or_else(|| String::from("GraphCount requires runtime access"))?;
+        let g = rt.g.borrow();
+        let count: i64 = match kind {
+            CountKind::AllNodes => g.node_count() as i64,
+            CountKind::NodesWithLabel(label) => g.label_node_count(label.as_str()) as i64,
+            CountKind::AllRelationships => g.relationship_count() as i64,
+            CountKind::RelationshipsByTypes(types) => {
+                let mut total: i64 = 0;
+                for type_name in types {
+                    if let Some(type_id) = g.get_type_id(type_name.as_str()) {
+                        total += g.type_edge_count(usize::from(type_id)) as i64;
+                    }
+                }
+                total
+            }
+        };
+        Ok(Value::Int(count))
     }
 
     // -------------------------------------------------------------------

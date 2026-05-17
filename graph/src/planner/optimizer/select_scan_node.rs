@@ -117,24 +117,22 @@ fn collect_filtered_vars(
     start_idx: NodeIdx<Dyn<IR>>,
 ) -> HashSet<u32> {
     let mut vars = HashSet::new();
+    let mut absorb = |filter: &DynTree<ExprIR<Variable>>| {
+        for idx in filter.root().indices::<Bfs>() {
+            if let ExprIR::Variable(v) = filter.node(idx).data() {
+                vars.insert(v.id);
+            }
+        }
+    };
     let mut current = start_idx;
     while let Some(parent) = plan.node(current).parent() {
         match parent.data() {
-            IR::Filter(filter) => {
-                for idx in filter.root().indices::<Bfs>() {
-                    if let ExprIR::Variable(v) = filter.node(idx).data() {
-                        vars.insert(v.id);
-                    }
-                }
-            }
-            // Walk through transparent operators to find filters higher up
+            IR::Filter(filter) => absorb(filter),
             IR::CondTraverse { .. } | IR::CondVarLenTraverse { .. } | IR::PathBuilder(_) => {}
             _ => break,
         }
         current = parent.idx();
     }
-    // Also check the node at current if it has a parent that is a filter
-    // (the loop above moves through parents)
     vars
 }
 
@@ -234,35 +232,58 @@ pub(super) fn select_scan_node(
     optimized_plan: &mut DynTree<IR>,
     graph: &Graph,
 ) {
-    // Collect all bottom-of-chain CondTraverse indices.
-    // A "bottom CT" is a CT that either has no children (leaf) or whose
-    // only child is not a CT (e.g., Project, AllNodeScan).
-    let bottom_ct_indices: Vec<_> = {
+    // Collect bottom-of-chain CondTraverse nodes with an identity token.
+    // A "bottom CT" either has no children (leaf) or has one child that is
+    // not a CT. The identity token is an `Arc<QueryRelationship>` pointer:
+    // tree mutations in branch 2 (chain reversal) prune subtrees and
+    // orx-tree's MemoryPolicy can recycle freed slots into newly pushed
+    // subtrees, so a stored `NodeIdx` may point at an unrelated CT after a
+    // mutation. The identity check rejects those impostors.
+    let bottom_cts: Vec<(
+        NodeIdx<Dyn<IR>>,
+        Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>,
+    )> = {
         let indices = optimized_plan.root().indices::<Bfs>().collect::<Vec<_>>();
         indices
             .into_iter()
-            .filter(|&idx| {
+            .filter_map(|idx| {
                 let node = optimized_plan.node(idx);
-                if !matches!(node.data(), IR::CondTraverse { .. }) {
-                    return false;
+                let IR::CondTraverse { relationship, .. } = node.data() else {
+                    return None;
+                };
+                let is_bottom = if node.num_children() == 0 {
+                    true
+                } else if node.num_children() == 1 {
+                    let mut child = node.child(0);
+                    while matches!(child.data(), IR::Filter(_)) && child.num_children() == 1 {
+                        child = child.child(0);
+                    }
+                    !matches!(child.data(), IR::CondTraverse { .. })
+                } else {
+                    false
+                };
+                if is_bottom {
+                    Some((idx, relationship.clone()))
+                } else {
+                    None
                 }
-                if node.num_children() == 0 {
-                    return true; // leaf CT
-                }
-                if node.num_children() != 1 {
-                    return false;
-                }
-                // Walk through single-child Filter nodes to find the real child.
-                let mut child = node.child(0);
-                while matches!(child.data(), IR::Filter(_)) && child.num_children() == 1 {
-                    child = child.child(0);
-                }
-                !matches!(child.data(), IR::CondTraverse { .. })
             })
             .collect()
     };
 
-    for bottom_idx in bottom_ct_indices {
+    for (bottom_idx, expected_rel) in bottom_cts {
+        // Skip if the slot was reclaimed (returns None) or filled with a
+        // different node — the CT we wanted is gone, and the affected
+        // chain will be reconsidered on the next optimizer invocation.
+        if optimized_plan.get_node(bottom_idx).is_none() {
+            continue;
+        }
+        let IR::CondTraverse { relationship, .. } = optimized_plan.node(bottom_idx).data() else {
+            continue;
+        };
+        if !Arc::ptr_eq(relationship, &expected_rel) {
+            continue;
+        }
         let is_leaf = optimized_plan.node(bottom_idx).num_children() == 0;
         // Detect if the child is a planner-added scan (not an outer-context op).
         let has_planner_scan = !is_leaf && {

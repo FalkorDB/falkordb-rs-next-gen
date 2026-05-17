@@ -100,7 +100,11 @@ use crate::{
         indexer::{Document, IndexInfo, IndexOptions, IndexQuery, IndexType, Indexer},
     },
     parser::{ast::ExprIR, cypher::Parser},
-    planner::{IR, Planner, binder::Binder, optimizer::optimize},
+    planner::{
+        IR, Planner,
+        binder::Binder,
+        optimizer::{optimize_compiletime, optimize_runtime},
+    },
     runtime::{
         eval::evaluate_param, ordermap::OrderMap, orderset::OrderSet, value::Value, vec_distance,
     },
@@ -1000,7 +1004,8 @@ impl Graph {
             let mut cache = self.cache.lock();
             if let Some(plan) = cache.get(query) {
                 if plan.udf_version == current_udf_version {
-                    let optimize_plan = optimize(&plan.plan, self, &param_values);
+                    let mut optimize_plan = plan.plan.clone();
+                    optimize_runtime(&mut optimize_plan, self, &param_values);
                     return Ok(Plan::new(
                         Arc::new(optimize_plan),
                         true,
@@ -1023,23 +1028,29 @@ impl Graph {
 
         let mut planner = Planner::new(scope_vars);
         let start = Instant::now();
-        let plan = planner.plan(ir);
-        let optimize_plan = optimize(&plan, self, &param_values);
+        let mut plan = planner.plan(ir);
+        optimize_compiletime(&mut plan, self, &param_values);
+        let cache_plan = plan.clone();
+        optimize_runtime(&mut plan, self, &param_values);
         plan_duration = start.elapsed();
 
-        // Only cache the plan if UDF version hasn't changed during planning.
-        // A drift means the plan may reference stale UDF bindings.
+        // Cache the plan AFTER compile-time but BEFORE runtime passes.
+        // Runtime passes depend on parameters and live graph state (e.g.
+        // `eliminate_true_filters` substitutes params; `select_scan_node`
+        // reads label cardinality), so caching their output would bake in
+        // values that change per request. Only cache if UDF version hasn't
+        // drifted during planning.
         if crate::runtime::functions::udf_version() == current_udf_version {
             self.cache.lock().push(
                 query.to_string(),
                 PlanTree {
-                    plan,
+                    plan: cache_plan,
                     udf_version: current_udf_version,
                 },
             );
         }
         Ok(Plan::new(
-            Arc::new(optimize_plan),
+            Arc::new(plan),
             false,
             parameters,
             parse_duration,

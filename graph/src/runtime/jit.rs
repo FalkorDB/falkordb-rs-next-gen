@@ -1389,7 +1389,9 @@ pub fn try_compile(
     // When they appear at the root we'd waste a Cranelift module setup
     // on a guaranteed Err. Bail early.
     match tree.node(root).data() {
-        ExprIR::PatternComprehension(_) | ExprIR::Pattern(_) => return None,
+        ExprIR::PatternComprehension(_) | ExprIR::Pattern(_) | ExprIR::GraphCount(_) => {
+            return None;
+        }
         _ => {}
     }
     let mut flags_builder = settings::builder();
@@ -2237,7 +2239,7 @@ fn emit(
         // Pattern/PatternComprehension are unreachable at eval time (the
         // planner consumes them). JIT skips them; expressions containing
         // them fall back to the interpreter.
-        ExprIR::PatternComprehension(_) | ExprIR::Pattern(_) => Err(()),
+        ExprIR::PatternComprehension(_) | ExprIR::Pattern(_) | ExprIR::GraphCount(_) => Err(()),
     }
 }
 

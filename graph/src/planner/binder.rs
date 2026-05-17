@@ -1967,6 +1967,7 @@ impl Binder {
                     | ExprIR::ListComprehension(_)
                     | ExprIR::Reduce { .. }
                     | ExprIR::PatternComprehension(_) => unreachable!("handled above"),
+                    ExprIR::GraphCount(_) => unreachable!("not produced by parser"),
                     ExprIR::Pattern(pattern) => {
                         // Snapshot outer scope so pattern-local aliases can be
                         // cleaned up after binding (they must not leak outward).
@@ -2199,7 +2200,8 @@ impl Binder {
             | ExprIR::GetElement
             | ExprIR::GetElements
             | ExprIR::ListComprehension(_)
-            | ExprIR::PatternComprehension(_) => false,
+            | ExprIR::PatternComprehension(_)
+            | ExprIR::GraphCount(_) => false,
 
             // Boolean literals, comparisons, predicates, and runtime-typed nodes
             ExprIR::Bool(_)
@@ -2284,7 +2286,8 @@ impl Binder {
             | ExprIR::IsRelationship
             | ExprIR::Quantifier { .. }
             | ExprIR::ShortestPath { .. }
-            | ExprIR::Pattern(_) => false,
+            | ExprIR::Pattern(_)
+            | ExprIR::GraphCount(_) => false,
         }
     }
 }
