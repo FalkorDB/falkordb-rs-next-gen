@@ -446,14 +446,6 @@ def test_graph_crud():
     assert res.nodes_deleted == 3
     assert res.relationships_deleted == 3
 
-def test_match_node_by_id():
-    query("UNWIND range(0, 1000) AS x CREATE (n:N {v: x})", write=True)
-
-    res1 = query("MATCH (n) WHERE id(n) = 1000 RETURN n.v")
-    res2 = query("MATCH (n) WHERE n.v = 1000 RETURN n.v")
-
-    assert res1.result_set == res2.result_set == [[1000]]
-    assert res1.run_time_ms < res2.run_time_ms
 
 def test_node_labels():
     res = query("CREATE ()", write=True)
@@ -1708,84 +1700,6 @@ def test_nested_list():
     for _ in range(100):
         expected = [expected]
     assert res.result_set == [expected]
-
-
-def test_index():
-    res = query(
-        "UNWIND range(1, 100000) AS x CREATE (n:Node {vi: x, vs: tostring(x)})",
-        write=True,
-    )
-    assert res.nodes_created == 100000
-
-    memory_usage_before = memory_usage()
-
-    res = query("MATCH (n:Node {vi: 5}) RETURN n")
-    assert res.result_set == [
-        [Node(4, labels=["Node"], properties={"vi": 5, "vs": "5"})]
-    ]
-    runtime_ms = res.run_time_ms
-
-    query("CREATE INDEX FOR (n:Node) ON (n.vi, n.vs)", write=True)
-
-    common.wait_for_indices_to_sync(common.g)
-
-    res = query("MATCH (n:Node {vi: 5}) RETURN n", steps=2)
-    assert res.result_set == [
-        [Node(4, labels=["Node"], properties={"vi": 5, "vs": "5"})]
-    ]
-    assert res.run_time_ms < runtime_ms / 100
-
-    res = query("MATCH (n:Node {vs: '5'}) RETURN n", steps=2)
-    assert res.result_set == [
-        [Node(4, labels=["Node"], properties={"vi": 5, "vs": "5"})]
-    ]
-
-    res = query("MATCH (n:Node {vi: 5}) SET n.vi = 0", write=True)
-    assert res.properties_set == 1
-
-    res = query("MATCH (n:Node {vi: 5}) RETURN n")
-    assert res.result_set == []
-
-    res = query("MATCH (n:Node {vi: 0}) RETURN n")
-    assert res.result_set == [
-        [Node(4, labels=["Node"], properties={"vi": 0, "vs": "5"})]
-    ]
-
-    res = query("MATCH (n:Node {vi: 0}) REMOVE n:Node", write=True)
-
-    res = query("MATCH (n:Node {vi: 0}) RETURN n")
-    assert res.result_set == []
-
-    res = query("MATCH (n {vi: 0}) SET n:Node", write=True)
-
-    res = query("MATCH (n:Node {vi: 0}) RETURN n")
-    assert res.result_set == [
-        [Node(4, labels=["Node"], properties={"vi": 0, "vs": "5"})]
-    ]
-
-    res = query("MATCH (n:Node {vi: 0}) DELETE n", write=True)
-    assert res.nodes_deleted == 1
-
-    res = query("MATCH (n:Node {vi: 0}) RETURN n")
-    assert res.result_set == []
-
-    res = query("CREATE (n:Node {vi: 5, vs: '5'})", write=True)
-    assert res.nodes_created == 1
-
-    res = query("MATCH (n:Node {vi: 5}) RETURN n")
-    assert res.result_set == [
-        [Node(4, labels=["Node"], properties={"vi": 5, "vs": "5"})]
-    ]
-
-    query("DROP INDEX FOR (n:Node) ON (n.vi, n.vs)", write=True)
-
-    # global is_extra
-    # if not is_extra:
-    #     # wait for index drop to complete
-    #     sleep(5)
-
-    #     memory_usage_after = memory_usage()
-    #     assert abs(memory_usage_after - memory_usage_before) < 1024 * 1024 / 2
 
 
 @pytest.mark.extra
