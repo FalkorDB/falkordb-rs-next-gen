@@ -232,21 +232,21 @@ pub(super) fn select_scan_node(
     optimized_plan: &mut DynTree<IR>,
     graph: &Graph,
 ) {
-    // Collect bottom-of-chain CondTraverse nodes with an identity token.
-    // A "bottom CT" either has no children (leaf) or has one child that is
-    // not a CT. The identity token is an `Arc<QueryRelationship>` pointer:
-    // tree mutations in branch 2 (chain reversal) prune subtrees and
-    // orx-tree's MemoryPolicy can recycle freed slots into newly pushed
-    // subtrees, so a stored `NodeIdx` may point at an unrelated CT after a
-    // mutation. The identity check rejects those impostors.
-    let bottom_cts: Vec<(
-        NodeIdx<Dyn<IR>>,
-        Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>,
-    )> = {
-        let indices = optimized_plan.root().indices::<Bfs>().collect::<Vec<_>>();
-        indices
-            .into_iter()
-            .filter_map(|idx| {
+    // Process one bottom-of-chain CondTraverse per pass, restarting the
+    // collection after each mutation. Chain reversal in branch 2 prunes
+    // subtrees and orx-tree's MemoryPolicy can recycle freed slots, which
+    // invalidates any NodeIdx collected before the mutation. Restarting
+    // eliminates the cross-iteration stale-NodeIdx hazard.
+    //
+    // `processed` tracks `Arc<QueryRelationship>` pointers we've already
+    // visited (by identity) so each chain is considered at most once even
+    // if its NodeIdx changes across mutations.
+    let mut processed: HashSet<*const QueryRelationship<Arc<String>, Arc<String>, Variable>> =
+        HashSet::new();
+    loop {
+        let next: Option<NodeIdx<Dyn<IR>>> = {
+            let indices = optimized_plan.root().indices::<Bfs>().collect::<Vec<_>>();
+            indices.into_iter().find_map(|idx| {
                 let node = optimized_plan.node(idx);
                 let IR::CondTraverse { relationship, .. } = node.data() else {
                     return None;
@@ -262,27 +262,25 @@ pub(super) fn select_scan_node(
                 } else {
                     false
                 };
-                if is_bottom {
-                    Some((idx, relationship.clone()))
+                if is_bottom
+                    && !processed.contains(
+                        &(Arc::as_ptr(relationship)
+                            as *const QueryRelationship<Arc<String>, Arc<String>, Variable>),
+                    )
+                {
+                    Some(idx)
                 } else {
                     None
                 }
             })
-            .collect()
-    };
-
-    for (bottom_idx, expected_rel) in bottom_cts {
-        // Skip if the slot was reclaimed (returns None) or filled with a
-        // different node — the CT we wanted is gone, and the affected
-        // chain will be reconsidered on the next optimizer invocation.
-        if optimized_plan.get_node(bottom_idx).is_none() {
-            continue;
-        }
-        let IR::CondTraverse { relationship, .. } = optimized_plan.node(bottom_idx).data() else {
-            continue;
         };
-        if !Arc::ptr_eq(relationship, &expected_rel) {
-            continue;
+        let Some(bottom_idx) = next else { break };
+        {
+            let IR::CondTraverse { relationship, .. } = optimized_plan.node(bottom_idx).data()
+            else {
+                continue;
+            };
+            processed.insert(Arc::as_ptr(relationship));
         }
         let is_leaf = optimized_plan.node(bottom_idx).num_children() == 0;
         // Detect if the child is a planner-added scan (not an outer-context op).
@@ -420,7 +418,6 @@ pub(super) fn select_scan_node(
                 let edges = sibling_edges.clone();
                 let scan_node = relationship.to.clone();
 
-                // Check if child is a planner-added scan before mutating
                 let child_is_planner_scan = if is_leaf {
                     false
                 } else {
@@ -430,17 +427,7 @@ pub(super) fn select_scan_node(
                     )
                 };
 
-                // Remove old scan child if it was a planner-added scan
-                if child_is_planner_scan {
-                    let child_idx = optimized_plan.node(ct_idx).child(0).idx();
-                    optimized_plan.node_mut(child_idx).prune();
-                }
-
-                // Build scan subtree before taking mutable borrow
-                let scan_subtree = make_scan_subtree(&scan_node);
-
-                let mut op = optimized_plan.node_mut(ct_idx);
-                *op.data_mut() = IR::CondTraverse {
+                let new_ct = IR::CondTraverse {
                     relationship: new_rel,
                     emit_relationship: emit,
                     sibling_edges: edges,
@@ -449,10 +436,18 @@ pub(super) fn select_scan_node(
                 };
 
                 if is_leaf || child_is_planner_scan {
-                    // Add scan subtree (with optional attr filter) as child.
-                    op.push_child_tree(scan_subtree);
+                    // Build the full replacement subtree (CT + new scan) so
+                    // we can swap it in atomically via `replace`. We cannot
+                    // prune-then-mutate because `Auto` memory policy
+                    // reclaims slots on prune, invalidating `ct_idx`.
+                    let scan_subtree = make_scan_subtree(&scan_node);
+                    let new_subtree = tree!(new_ct, scan_subtree);
+                    optimized_plan.node_mut(ct_idx).replace(new_subtree);
+                } else {
+                    // Child is from outer context — keep it; just rewrite
+                    // this CT's data. No structural mutation, no reclaim.
+                    *optimized_plan.node_mut(ct_idx).data_mut() = new_ct;
                 }
-                // else: child is from outer context, keep it.
             }
         } else if need_swap && chain.len() > 1 {
             // Best is at a parent CT (best_pos > 0). Reverse the chain.
@@ -566,24 +561,13 @@ pub(super) fn select_scan_node(
                 }
             }
 
-            // Replace the chain in the plan.
+            // Replace the entire top-CT subtree atomically. We cannot do
+            // prune-then-replace-then-push, because `Auto` memory policy
+            // reclaims slots after `prune` and invalidates `top_idx`. The
+            // built `subtree` already includes the new top CT (with new
+            // direction) as its root, so a single `replace` does it.
             let top_idx = *chain.last().unwrap();
-
-            // Detach all children of the top CT (the old chain below it).
-            while optimized_plan.node(top_idx).num_children() > 0 {
-                let child_idx = optimized_plan.node(top_idx).child(0).idx();
-                optimized_plan.node_mut(child_idx).prune();
-            }
-
-            // Replace the top CT with the root of the new subtree.
-            let new_root = subtree.root();
-            *optimized_plan.node_mut(top_idx).data_mut() = new_root.data().clone();
-
-            // Add children of the new subtree root to the top CT node.
-            for child in new_root.children() {
-                let child_tree: DynTree<IR> = child.clone_as_tree();
-                optimized_plan.node_mut(top_idx).push_child_tree(child_tree);
-            }
+            optimized_plan.node_mut(top_idx).replace(subtree);
         } else if effectively_leaf {
             // No swap needed. Add/replace a scan for the current `from` node.
             let ct_idx = chain[0];
@@ -604,25 +588,18 @@ pub(super) fn select_scan_node(
                     let edges = sibling_edges.clone();
                     let trans = *transposed;
 
-                    // Remove old planner-added scan child if present
-                    if has_planner_scan {
-                        let child_idx = optimized_plan.node(ct_idx).child(0).idx();
-                        optimized_plan.node_mut(child_idx).prune();
-                    }
-
-                    // Build scan subtree with optional attr filter
-                    let scan_subtree = make_scan_subtree(&scan_node);
-
-                    let mut op = optimized_plan.node_mut(ct_idx);
-                    *op.data_mut() = IR::CondTraverse {
+                    let new_ct = IR::CondTraverse {
                         relationship: new_rel,
                         emit_relationship: emit,
                         sibling_edges: edges,
                         transposed: trans,
                         chain: Vec::new(),
                     };
-
-                    op.push_child_tree(scan_subtree);
+                    let scan_subtree = make_scan_subtree(&scan_node);
+                    let new_subtree = tree!(new_ct, scan_subtree);
+                    // Atomic swap — prune+mutate would invalidate ct_idx
+                    // under `Auto` memory policy. See branch 1.
+                    optimized_plan.node_mut(ct_idx).replace(new_subtree);
                 }
             }
         }
