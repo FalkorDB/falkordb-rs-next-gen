@@ -60,6 +60,7 @@ pub mod orderset;
 pub mod pending;
 pub mod pool;
 pub mod runtime;
+pub mod string_pool;
 pub mod value;
 pub mod vec_distance;
 pub mod vectorized;
