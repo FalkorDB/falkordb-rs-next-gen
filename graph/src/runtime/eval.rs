@@ -1310,10 +1310,8 @@ pub(crate) fn list_contains(
     match list {
         Value::List(l) => Ok(Contains::contains(l.as_ref(), value)),
         Value::Null => Ok(Value::Null),
-        _ => Err(format!(
-            "Type mismatch: expected List or Null but was {}",
-            list.name()
-        )),
+        // Coerce scalar RHS to a singleton list (Neo4j compatibility).
+        other => Ok(Contains::contains(&thin_vec![other.clone()], value)),
     }
 }
 
