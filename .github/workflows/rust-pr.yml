@@ -9,11 +9,15 @@ on:
     #
     # `feat/docker-release` is included temporarily so this PR
     # (feat/docker-per-class-tests → feat/docker-release) can run its own CI.
-    # Drop the entry before merging back to main.
+    # `feat/docker-per-class-tests` is included so the stacked
+    # runtime-regressions PR (feat/runtime-regressions → feat/docker-per-class-tests)
+    # validates each commit (C0-C4) against the per-class CI infra.
+    # Drop both entries before merging back to main.
     branches:
       - "main"
       - "[0-9]+.[0-9]+"
       - "feat/docker-release"
+      - "feat/docker-per-class-tests"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
