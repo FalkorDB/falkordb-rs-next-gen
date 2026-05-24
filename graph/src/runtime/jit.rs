@@ -854,19 +854,23 @@ unsafe extern "C" fn jit_list(
     0
 }
 
-// Build a Map from `n` (key, value) pairs.
-// `keys` is an array of `*const Arc<String>`; `values` is an array of
-// `*const Value`. Both pointers point into the JIT'd function's stack.
+// Build a Map from `n` (key, value) pairs encoded as a single interleaved
+// array `[k0_ptr, v0_ptr, k1_ptr, v1_ptr, ...]` of length 2*n. Each even
+// slot is `*const Arc<String>`, each odd slot is `*const Value`. Single-array
+// shape matches `jit_list`'s 3-arg ABI, which lowers cleanly on x86_64; the
+// prior two-array (4-arg) shape tripped an ASAN-detected miscompile in
+// cranelift's lowering of `emit_map`.
 unsafe extern "C" fn jit_map(
     n: u32,
-    keys: *const *const Arc<String>,
-    values: *const *const Value,
+    kv: *const *const c_void,
     out: *mut Value,
 ) -> u8 {
     let mut map = OrderMap::default();
     for i in 0..n as usize {
-        let k = (*(*keys.add(i))).clone();
-        let v = (*(*values.add(i))).clone();
+        let k_ptr = *kv.add(2 * i) as *const Arc<String>;
+        let v_ptr = *kv.add(2 * i + 1) as *const Value;
+        let k = (*k_ptr).clone();
+        let v = (*v_ptr).clone();
         map.insert(k, v);
     }
     ptr::write(out, Value::Map(Arc::new(map)));
@@ -1849,17 +1853,6 @@ impl Helpers {
         sig
     }
 
-    /// (n, keys_ptr, values_ptr, out) -> u8
-    fn map_sig(ptr: ir::Type) -> Signature {
-        let mut sig = Signature::new(CallConv::SystemV);
-        sig.params.push(AbiParam::new(types::I32));
-        sig.params.push(AbiParam::new(ptr));
-        sig.params.push(AbiParam::new(ptr));
-        sig.params.push(AbiParam::new(ptr));
-        sig.returns.push(AbiParam::new(types::I8));
-        sig
-    }
-
     /// (arr, start, end, out) -> u8
     fn ternary_sig(ptr: ir::Type) -> Signature {
         let mut sig = Signature::new(CallConv::SystemV);
@@ -2045,7 +2038,7 @@ helper_getter!(
 helper_getter!(get_eq_n, eq_n, "jit_eq_n", Helpers::nary_sig);
 helper_getter!(get_neq_n, neq_n, "jit_neq_n", Helpers::nary_sig);
 helper_getter!(get_list, list, "jit_list", Helpers::nary_sig);
-helper_getter!(get_map, map, "jit_map", Helpers::map_sig);
+helper_getter!(get_map, map, "jit_map", Helpers::nary_sig);
 helper_getter!(
     get_get_element,
     get_element,
@@ -2860,34 +2853,28 @@ fn emit_map(
     }
     let ptr_size = u32::from(state.pointer_type.bytes());
     let n_max = n.max(1) as u32;
-    let keys_array = builder.create_sized_stack_slot(ir::StackSlotData::new(
+    // Single interleaved [k0, v0, k1, v1, ...] array of length 2*n. Matches
+    // jit_list's 3-arg ABI. The previous two-array layout tripped a cranelift
+    // codegen bug.
+    let kv_array = builder.create_sized_stack_slot(ir::StackSlotData::new(
         ir::StackSlotKind::ExplicitSlot,
-        ptr_size * n_max,
-        3,
-    ));
-    let values_array = builder.create_sized_stack_slot(ir::StackSlotData::new(
-        ir::StackSlotKind::ExplicitSlot,
-        ptr_size * n_max,
+        ptr_size * 2 * n_max,
         3,
     ));
     for (i, (key_ptr, value_slot)) in key_ptrs.iter().zip(value_slots.iter()).enumerate() {
-        let off = i32::try_from(i).unwrap() * i32::try_from(ptr_size).unwrap();
+        let key_off = i32::try_from(2 * i).unwrap() * i32::try_from(ptr_size).unwrap();
+        let val_off = i32::try_from(2 * i + 1).unwrap() * i32::try_from(ptr_size).unwrap();
         let key_const = builder.ins().iconst(state.pointer_type, *key_ptr as i64);
-        builder.ins().stack_store(key_const, keys_array, off);
+        builder.ins().stack_store(key_const, kv_array, key_off);
         let val_addr = builder.ins().stack_addr(state.pointer_type, *value_slot, 0);
-        builder.ins().stack_store(val_addr, values_array, off);
+        builder.ins().stack_store(val_addr, kv_array, val_off);
     }
-    let keys_addr = builder.ins().stack_addr(state.pointer_type, keys_array, 0);
-    let values_addr = builder
-        .ins()
-        .stack_addr(state.pointer_type, values_array, 0);
+    let kv_addr = builder.ins().stack_addr(state.pointer_type, kv_array, 0);
     let out_slot = alloc_slot(state, builder);
     let out_addr = builder.ins().stack_addr(state.pointer_type, out_slot, 0);
     let n_const = builder.ins().iconst(types::I32, i64::from(n as u32));
     let helper = get_map(&mut state.helpers, state.module, &mut builder.func);
-    builder
-        .ins()
-        .call(helper, &[n_const, keys_addr, values_addr, out_addr]);
+    builder.ins().call(helper, &[n_const, kv_addr, out_addr]);
     Ok(out_slot)
 }
 
