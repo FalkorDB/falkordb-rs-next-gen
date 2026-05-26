@@ -130,11 +130,16 @@ jobs:
           . /data/venv/bin/activate
           TEST="$TEST_FILE" FAIL_FAST=1 RELEASE=1 ./flow.sh
       - name: Collect coverage (profraw → lcov)
+        id: coverage
         if: ${{ !cancelled() && inputs.collect_coverage }}
         env:
           COV_IMAGE: ${{ inputs.image }}
         run: |
           set -euo pipefail
+          echo "has_coverage=false" >> "$GITHUB_OUTPUT"
+          for cid in $(docker ps --filter "ancestor=$COV_IMAGE" -q); do
+            docker stop --time 10 "$cid" >/dev/null || true
+          done
           CID=$(docker create "$COV_IMAGE")
           docker cp "${CID}:/var/lib/falkordb/bin/falkordb.so" ./libfalkordb-coverage.so
           docker rm "$CID" >/dev/null
@@ -146,8 +151,9 @@ jobs:
           llvm-profdata-22 merge --sparse $PROFRAW -o cov.profdata
           llvm-cov-22 export --format=lcov --instr-profile cov.profdata ./libfalkordb-coverage.so > codecov.txt.all
           lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
+          echo "has_coverage=true" >> "$GITHUB_OUTPUT"
       - name: Upload coverage to Codecov
-        if: ${{ !cancelled() && inputs.collect_coverage }}
+        if: ${{ !cancelled() && inputs.collect_coverage && steps.coverage.outputs.has_coverage == 'true' }}
         uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -215,11 +221,13 @@ jobs:
           . /data/venv/bin/activate
           TEST="$TEST_FILE" FAIL_FAST=1 RELEASE=1 ./flow.sh
       - name: Collect coverage (profraw → lcov)
+        id: coverage
         if: ${{ !cancelled() && inputs.collect_coverage }}
         env:
           COV_IMAGE: ${{ inputs.image }}
         run: |
           set -euo pipefail
+          echo "has_coverage=false" >> "$GITHUB_OUTPUT"
           CID=$(docker create "$COV_IMAGE")
           docker cp "${CID}:/var/lib/falkordb/bin/falkordb.so" ./libfalkordb-coverage.so
           docker rm "$CID" >/dev/null
@@ -231,8 +239,9 @@ jobs:
           llvm-profdata-22 merge --sparse $PROFRAW -o cov.profdata
           llvm-cov-22 export --format=lcov --instr-profile cov.profdata ./libfalkordb-coverage.so > codecov.txt.all
           lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
+          echo "has_coverage=true" >> "$GITHUB_OUTPUT"
       - name: Upload coverage to Codecov
-        if: ${{ !cancelled() && inputs.collect_coverage }}
+        if: ${{ !cancelled() && inputs.collect_coverage && steps.coverage.outputs.has_coverage == 'true' }}
         uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
