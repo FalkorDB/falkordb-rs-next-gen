@@ -106,6 +106,7 @@ class testStressFlow():
     def tearDown(self):
         if self.graph_created:
             self.graph.delete()
+            self.graph_created = False
 
     def start_workers(self, worker_count, task_queue):
         threads = []
