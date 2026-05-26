@@ -5,12 +5,12 @@
 //! [`MIN_LATENCY_MS`] are ignored. Duplicate queries (same command + query
 //! text) update in place rather than creating a new entry.
 
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use parking_lot::Mutex;
 use redis_module::raw;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+
+use crate::telemetry::unix_now_secs;
 
 /// Maximum number of slowlog entries.
 const MAX_ENTRIES: usize = 10;
@@ -53,7 +53,7 @@ struct SlowLogEntry {
     query: String,
     params: Option<String>,
     latency: f64,
-    timestamp: f64,
+    timestamp: i64,
     hash: u64,
 }
 
@@ -186,8 +186,8 @@ impl SlowLog {
         for entry in &inner.entries {
             raw::reply_with_array(ctx, 5);
 
-            // 1. timestamp (double)
-            raw::reply_with_double(ctx, entry.timestamp);
+            // 1. timestamp (integer UNIX seconds)
+            raw::reply_with_long_long(ctx, entry.timestamp);
 
             // 2. command
             raw::reply_with_string_buffer(ctx, entry.cmd.as_ptr().cast(), entry.cmd.len());
@@ -256,10 +256,6 @@ fn format_g(
     }
 }
 
-/// Current time as fractional UNIX seconds.
-fn unix_now() -> f64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs_f64()
+fn unix_now() -> i64 {
+    unix_now_secs()
 }

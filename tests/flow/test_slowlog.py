@@ -58,6 +58,10 @@ class testSlowLog():
         self.env.assertEqual(A, B)
         self.env.assertEqual(len(A), 10)
 
+        timestamp = A[0][0]
+        self.env.assertTrue(isinstance(timestamp, int))
+        self.env.assertGreater(timestamp, 0)
+
         server = self.redis_con.info("Server")
         if Version(server["redis_version"]) < Version("6.2.0"):
             # redis < 6.2.0 not support slowlog time measure
@@ -275,4 +279,3 @@ class testSlowLog():
         queries = [entry[2] for entry in entries]
         self.env.assertContains (q0, queries)
         self.env.assertContains (q1, queries)
-
