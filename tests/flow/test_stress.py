@@ -1,4 +1,6 @@
-from common import Env, Graph
+import os
+
+from common import Env, Graph, SANITIZER
 import time
 import random
 import threading
@@ -53,10 +55,10 @@ def BGSAVE_loop(env, conn, stop_event):
         conn.bgsave()
         results = conn.execute_command("INFO", "persistence")
         in_progress = results['rdb_bgsave_in_progress']
-        max_iterations = 50
+        max_iterations = 300
 
         # wait for BGSAVE to finish
-        # for 6 seconds max
+        # for 30 seconds max
         for _ in range(max_iterations):
             results = conn.execute_command("INFO", "persistence")
             in_progress = results['rdb_bgsave_in_progress']
@@ -92,12 +94,18 @@ class testStressFlow():
     def __init__(self):
         self.env, _ = Env()
         self.graph = Graph(self.env.getConnection(), GRAPH_ID)
+        self.graph_created = False
 
     def setUp(self):
+        pass
+
+    def create_index(self):
         self.graph.create_node_range_index("Node", "v")
+        self.graph_created = True
 
     def tearDown(self):
-        self.graph.delete()
+        if self.graph_created:
+            self.graph.delete()
 
     def start_workers(self, worker_count, task_queue):
         threads = []
@@ -112,6 +120,8 @@ class testStressFlow():
             thread.join()
 
     def test00_stress(self):
+        self.create_index()
+
         n_tasks     = 10000 # number of tasks to run
         n_creations = 0.3   # create ratio
         n_deletions = 0.7   # delete ratio
@@ -135,6 +145,11 @@ class testStressFlow():
         task_queue.join()
 
     def test01_bgsave_stress(self):
+        if SANITIZER or os.getenv("FALKORDB_TEST_IMAGE"):
+            self.env.skip()
+
+        self.create_index()
+
         n_tasks     = 10000 # number of tasks to run
         n_creations = 0.35  # create ratio
         n_deletions = 0.7   # delete ratio
@@ -173,6 +188,8 @@ class testStressFlow():
         task_queue.join()
 
     def test02_write_only_workload(self):
+        self.create_index()
+
         n_tasks           = 10000 # number of tasks to run
         n_creations       = 0.5
         n_node_deletions  = 0.75

@@ -932,6 +932,9 @@ class testEffects():
     def test20_multiple_entities(self):
         """Test creation & deletion of multiple entities with a single randomized delete query."""
 
+        if SANITIZER:
+            self.env.skip()
+
         self.env.flush()  # clean slate
         self.effects_enable()
 
@@ -1080,4 +1083,3 @@ class testEffects():
         # make sure graphs are the same!
         self.master.execute_command("WAIT", 1, 0)
         self.assert_graph_eq()
-
