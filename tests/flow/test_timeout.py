@@ -61,6 +61,9 @@ class testQueryTimeout():
     def test03_timeout_index_scan(self):
         # set timeout to unlimited
         self.db.config_set("timeout", 0)
+        # Disable the implicit result set cap so full scans continue long
+        # enough for timeout enforcement to be exercised.
+        self.db.config_set("RESULTSET_SIZE", -1)
 
         create_node_range_index(self.graph, 'Person', 'age', 'height', 'weight', sync=True)
 
@@ -321,4 +324,3 @@ class testQueryTimeout():
             await pool.aclose()
 
         asyncio.run(query())
-

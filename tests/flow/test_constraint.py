@@ -1017,7 +1017,11 @@ class testConstraintReplication():
             with self.replica.monitor() as m:
                 MONITOR_ATTACHED = True
                 for cmd in m.listen():
-                    if 'GRAPH.CONSTRAINT' in cmd['command']:
+                    command = cmd['command'].upper()
+                    if (
+                        command.startswith('"GRAPH.CONSTRAINT" "CREATE"')
+                        or command.startswith('GRAPH.CONSTRAINT CREATE')
+                    ):
                         self.monitor.append(cmd)
         except:
             pass
