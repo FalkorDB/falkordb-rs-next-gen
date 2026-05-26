@@ -30,12 +30,12 @@ class testConfig(FlowTestsBase):
                 ("TIMEOUT_DEFAULT", 0),
                 ("TIMEOUT_MAX",  0),
                 ("CACHE_SIZE", 25),
-                ("ASYNC_DELETE", [0,1]), # could be either 0 or 1 depending on load time config
+                ("ASYNC_DELETE", 1),
                 ("OMP_THREAD_COUNT", os.cpu_count()),
                 ("THREAD_COUNT", os.cpu_count()),
-                ("RESULTSET_SIZE", -1),
+                ("RESULTSET_SIZE", 10000),
                 ("VKEY_MAX_ENTITY_COUNT", 100000),
-                ("MAX_QUEUED_QUERIES", 4294967295),
+                ("MAX_QUEUED_QUERIES", 25),
                 ("QUERY_MEM_CAPACITY", 0),
                 ("DELTA_MAX_PENDING_CHANGES", 10000),
                 ("NODE_CREATION_BUFFER", 16384),
@@ -99,6 +99,13 @@ class testConfig(FlowTestsBase):
         response = self.db.config_get(config_name)
         expected_response = config_value
         self.env.assertEqual(response, expected_response)
+
+    def test03_config_set_async_delete_rejected(self):
+        try:
+            self.db.config_set("ASYNC_DELETE", 1)
+            assert(False)
+        except redis.ResponseError as e:
+            self.env.assertContains("Failed to set config value ASYNC_DELETE to 1", str(e))
 
     def test04_config_set_multi(self):
         # Set multiple configuration values
@@ -495,4 +502,3 @@ class testLoadTimeConfig(FlowTestsBase):
                 val = False
 
             env.assertEqual(db.config_get(name), val)
-

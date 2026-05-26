@@ -169,7 +169,8 @@ class testTraversalConstruction():
 
         for q in queries:
             plan = self.graph.explain(q)
-            root = plan.structured_plan
+            self.env.assertTrue(plan.structured_plan.name == "Results")
+            root = plan.structured_plan.children[0]
             self.env.assertTrue(root.name == "Project")
 
             child = root.children[0]
@@ -196,7 +197,8 @@ class testTraversalConstruction():
 
         for q in queries:
             plan = self.graph.explain(q)
-            root = plan.structured_plan
+            self.env.assertTrue(plan.structured_plan.name == "Results")
+            root = plan.structured_plan.children[0]
             self.env.assertTrue(root.name == "Project")
 
             child = root.children[0]
@@ -218,7 +220,8 @@ class testTraversalConstruction():
         q = """MATCH (a:A)-[*0]->(b:B) RETURN a, b"""
         plan = self.graph.explain(q)
 
-        root = plan.structured_plan
+        self.env.assertTrue(plan.structured_plan.name == "Results")
+        root = plan.structured_plan.children[0]
         self.env.assertTrue(root.name == "Project")
 
         child = root.children[0]
@@ -250,7 +253,8 @@ class testTraversalConstruction():
         for q in queries:
             plan = self.graph.explain(q)
 
-            root = plan.structured_plan
+            self.env.assertTrue(plan.structured_plan.name == "Results")
+            root = plan.structured_plan.children[0]
             self.env.assertTrue(root.name == "Project")
 
             child = root.children[0]
@@ -270,7 +274,8 @@ class testTraversalConstruction():
         q = """MATCH (a{v:1})-[*0]->(b) RETURN a, b"""
         plan = self.graph.explain(q)
 
-        root = plan.structured_plan
+        self.env.assertTrue(plan.structured_plan.name == "Results")
+        root = plan.structured_plan.children[0]
         self.env.assertTrue(root.name == "Project")
 
         child = root.children[0]
@@ -291,7 +296,8 @@ class testTraversalConstruction():
         q = """MATCH (a)-[*0]->(b{v:1}) RETURN a, b"""
         plan = self.graph.explain(q)
 
-        root = plan.structured_plan
+        self.env.assertTrue(plan.structured_plan.name == "Results")
+        root = plan.structured_plan.children[0]
         self.env.assertTrue(root.name == "Project")
 
         child = root.children[0]
@@ -314,7 +320,8 @@ class testTraversalConstruction():
         q = """MATCH (a{v:1})-[*0]->(b{v:1}) RETURN a, b"""
         plan = self.graph.explain(q)
 
-        root = plan.structured_plan
+        self.env.assertTrue(plan.structured_plan.name == "Results")
+        root = plan.structured_plan.children[0]
         self.env.assertTrue(root.name == "Project")
 
         child = root.children[0]
@@ -341,7 +348,8 @@ class testTraversalConstruction():
         q = """MATCH (a{v:1})-[*0]->(b{v:2}) RETURN a, b"""
         plan = self.graph.explain(q)
 
-        root = plan.structured_plan
+        self.env.assertTrue(plan.structured_plan.name == "Results")
+        root = plan.structured_plan.children[0]
         self.env.assertTrue(root.name == "Project")
 
         child = root.children[0]

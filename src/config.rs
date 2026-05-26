@@ -61,11 +61,11 @@ lazy_static! {
 
 // ── Runtime-configurable atomics ──
 
-pub static MAX_QUEUED_QUERIES: AtomicU64 = AtomicU64::new(u32::MAX as u64);
+pub static MAX_QUEUED_QUERIES: AtomicU64 = AtomicU64::new(25);
 pub static TIMEOUT: AtomicI64 = AtomicI64::new(0);
 pub static TIMEOUT_DEFAULT: AtomicI64 = AtomicI64::new(0);
 pub static TIMEOUT_MAX: AtomicI64 = AtomicI64::new(0);
-pub static RESULTSET_SIZE: AtomicI64 = AtomicI64::new(-1);
+pub static RESULTSET_SIZE: AtomicI64 = AtomicI64::new(10000);
 pub static QUERY_MEM_CAPACITY: AtomicI64 = AtomicI64::new(0);
 pub static DELTA_MAX_PENDING_CHANGES: AtomicI64 = AtomicI64::new(10000);
 pub static EFFECTS_THRESHOLD: AtomicI64 = AtomicI64::new(300);
@@ -73,7 +73,7 @@ pub static EFFECTS_THRESHOLD: AtomicI64 = AtomicI64::new(300);
 // ── Read-only runtime configs ──
 
 pub static OMP_THREAD_COUNT: AtomicI64 = AtomicI64::new(0);
-pub static ASYNC_DELETE: AtomicI64 = AtomicI64::new(0);
+pub static ASYNC_DELETE: AtomicI64 = AtomicI64::new(1);
 pub static MAX_INFO_QUERIES: AtomicI64 = AtomicI64::new(1000);
 pub static BOLT_PORT: AtomicI64 = AtomicI64::new(65535);
 

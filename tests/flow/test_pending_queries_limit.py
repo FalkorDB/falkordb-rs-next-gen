@@ -58,7 +58,7 @@ class testPendingQueryLimit():
     def test_01_query_limit_config(self):
         # read max queued queries config
         max_queued_queries = self.db.config_get("MAX_QUEUED_QUERIES")
-        self.env.assertEqual(max_queued_queries, 4294967295)
+        self.env.assertEqual(max_queued_queries, 25)
 
         # update configuration, set max queued queries
         self.db.config_set("MAX_QUEUED_QUERIES", 10)

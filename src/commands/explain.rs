@@ -39,11 +39,13 @@ pub fn graph_explain(
             .get_plan(query)
             .map_err(RedisError::String)?;
         let ops = plan.root().indices::<Dfs>().collect::<Vec<_>>();
-        raw::reply_with_array(ctx.ctx, ops.len() as _);
+        raw::reply_with_array(ctx.ctx, ops.len() as i64 + 1);
+        let root = "Results";
+        raw::reply_with_string_buffer(ctx.ctx, root.as_ptr().cast::<c_char>(), root.len());
         for idx in ops {
             let node = plan.node(idx);
             let depth = node.depth();
-            let str = format!("{}{}", " ".repeat(depth * 4), plan.node(idx).data());
+            let str = format!("{}{}", " ".repeat((depth + 1) * 4), plan.node(idx).data());
             raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
         }
         RedisResult::Ok(RedisValue::NoReply)

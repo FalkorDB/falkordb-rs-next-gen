@@ -186,8 +186,9 @@ impl SlowLog {
         for entry in &inner.entries {
             raw::reply_with_array(ctx, 5);
 
-            // 1. timestamp (double)
-            raw::reply_with_double(ctx, entry.timestamp);
+            // 1. timestamp (integer Unix seconds as a string)
+            let timestamp = (entry.timestamp as i64).to_string();
+            raw::reply_with_string_buffer(ctx, timestamp.as_ptr().cast(), timestamp.len());
 
             // 2. command
             raw::reply_with_string_buffer(ctx, entry.cmd.as_ptr().cast(), entry.cmd.len());

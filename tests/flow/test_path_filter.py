@@ -259,7 +259,8 @@ class testPathFilter(FlowTestsBase):
 
         plan = self.graph.explain(q)
 
-        op_aggregate = plan.structured_plan
+        self.env.assertEqual(plan.structured_plan.name, 'Results')
+        op_aggregate = plan.structured_plan.children[0]
         self.env.assertEqual(op_aggregate.name, 'Aggregate')
         self.env.assertEqual(len(op_aggregate.children), 1)
 

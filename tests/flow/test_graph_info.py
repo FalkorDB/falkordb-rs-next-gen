@@ -248,17 +248,11 @@ class testGraphInfo():
         stream_name = StreamName(self.graph)
         self.env.assertEqual(self.conn.type(stream_name), "stream")
 
-        # make sure graph is deleted synchronously
-        self.db.config_set("ASYNC_DELETE", "no")
-
         # delete graph
         self.graph.delete()
 
         # validate that stream was deleted
         self.env.assertEqual(self.conn.type(stream_name), "none")
-
-        # restore ASYNC_DELETE
-        self.db.config_set("ASYNC_DELETE", "yes")
 
     def test05_rename_graph(self):
         """make sure reporting stream is renamed when graph is renamed"""
@@ -546,4 +540,3 @@ class testGraphInfoReplication():
            self.replica = t
            self.master_graph  = Graph(self.master, "after_failover")
            self.replica_graph = Graph(self.replica, "after_failover")
-

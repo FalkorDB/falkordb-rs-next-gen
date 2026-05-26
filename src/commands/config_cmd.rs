@@ -108,14 +108,7 @@ fn validate_config_set(
             }
             Ok(ConfigValue::Int(v))
         }
-        "ASYNC_DELETE" => {
-            let v = match value.to_lowercase().as_str() {
-                "yes" | "1" | "true" => 1i64,
-                "no" | "0" | "false" => 0i64,
-                _ => return Err(format!("Failed to set config value {name} to {value}")),
-            };
-            Ok(ConfigValue::Int(v))
-        }
+        "ASYNC_DELETE" => Err(format!("Failed to set config value {name} to {value}")),
         "RESULTSET_SIZE" => {
             let v: i64 = value
                 .parse()

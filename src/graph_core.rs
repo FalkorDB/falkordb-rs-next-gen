@@ -59,7 +59,7 @@ use graph::{
 };
 use orx_tree::{Collection, Dfs, NodeRef};
 use parking_lot::RwLock;
-use redis_module::{Context, ContextFlags, RedisResult, RedisValue, raw};
+use redis_module::{Context, ContextFlags, RedisError, RedisResult, RedisValue, raw};
 use std::{
     collections::HashMap,
     os::raw::{c_char, c_void},
@@ -649,7 +649,19 @@ fn reply_profile(
         .filter(|idx| !matches!(plan.node(**idx).data(), IR::Commit))
         .collect();
     let profile_data = runtime.profile_data.borrow();
-    raw::reply_with_array(ctx.ctx, ops.len() as _);
+    raw::reply_with_array(ctx.ctx, ops.len() as i64 + 1);
+    let (root_records, root_time) = ops
+        .first()
+        .and_then(|idx| profile_data.get(idx).copied())
+        .unwrap_or((0, std::time::Duration::ZERO));
+    let root_time_ms = root_time.as_secs_f64() * 1000.0;
+    let root_line =
+        format!("Results | Records produced: {root_records}, Execution time: {root_time_ms:.6} ms");
+    raw::reply_with_string_buffer(
+        ctx.ctx,
+        root_line.as_ptr().cast::<c_char>(),
+        root_line.len(),
+    );
     for idx in ops {
         let node = plan.node(*idx);
         // Calculate effective depth (subtract number of Commit ancestors).
@@ -668,7 +680,7 @@ fn reply_profile(
         let time_ms = time.as_secs_f64() * 1000.0;
         let line = format!(
             "{}{} | Records produced: {records}, Execution time: {time_ms:.6} ms",
-            "    ".repeat(depth),
+            "    ".repeat(depth + 1),
             node.data()
         );
         raw::reply_with_string_buffer(ctx.ctx, line.as_ptr().cast::<c_char>(), line.len());
@@ -773,16 +785,7 @@ pub fn query_mut(
     // Check pending queries limit before dispatching.
     let max = MAX_QUEUED_QUERIES.load(Ordering::Relaxed) as usize;
     if pending_count() >= max {
-        let bc = BlockedClient {
-            inner: unsafe { ffi::block_client(ctx.ctx) },
-        };
-        let err_ctx = unsafe { ffi::get_thread_safe_context(bc.inner) };
-        let err_ctx = Context::new(err_ctx);
-        let cerr = ffi::sanitise_error("Max pending queries exceeded");
-        unsafe { ffi::reply_error(err_ctx.ctx, cerr.as_ptr()) };
-        drop(bc);
-        unsafe { ffi::free_thread_safe_context(err_ctx.ctx) };
-        return Ok(RedisValue::NoReply);
+        return Err(RedisError::Str("Max pending queries exceeded"));
     }
 
     let bc = unsafe { BlockedClient::new(ctx.ctx) };

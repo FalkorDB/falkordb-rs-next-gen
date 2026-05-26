@@ -441,8 +441,10 @@ class testVariableLengthTraversals(FlowTestsBase):
                    WHERE coalesce(prev(e.v), e.v) <= e.v
                    RETURN p"""
         plan = self.graph.explain(q)
-        self.env.assertEqual(plan.structured_plan.name, "Project")
-        self.env.assertEqual(plan.structured_plan.children[0].name, "Conditional Variable Length Traverse")
+        self.env.assertEqual(plan.structured_plan.name, "Results")
+        project = plan.structured_plan.children[0]
+        self.env.assertEqual(project.name, "Project")
+        self.env.assertEqual(project.children[0].name, "Conditional Variable Length Traverse")
 
         res = self.graph.query(q)
         self.env.assertEqual(len(res.result_set), 2)

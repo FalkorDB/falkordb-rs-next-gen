@@ -11,7 +11,10 @@ class testProfile(FlowTestsBase):
         q = """UNWIND range(1, 3) AS x CREATE (p:Person {v:x})"""
         profile = self.graph.profile(q)
 
-        create_op = profile.structured_plan
+        results_op = profile.structured_plan
+        self.env.assertEqual(results_op.name, 'Results')
+
+        create_op = results_op.children[0]
         self.env.assertEqual(create_op.name, 'Create')
 
         unwind_op = create_op.children[0]
@@ -23,7 +26,10 @@ class testProfile(FlowTestsBase):
         q = "MATCH (p:Person) WHERE p.v > 1 RETURN p"
         profile = self.graph.profile(q)
 
-        project_op = profile.structured_plan
+        results_op = profile.structured_plan
+        self.env.assertEqual(results_op.name, 'Results')
+
+        project_op = results_op.children[0]
         self.env.assertEqual(project_op.name, 'Project')
         self.env.assertEqual(project_op.records_produced, 2)
 
@@ -40,7 +46,10 @@ class testProfile(FlowTestsBase):
         q = """MATCH (a:L)-[*]->() SET a.v = 5"""
         profile = self.graph.profile(q)
 
-        update_op = profile.structured_plan
+        results_op = profile.structured_plan
+        self.env.assertEqual(results_op.name, 'Results')
+
+        update_op = results_op.children[0]
         self.env.assertEqual(update_op.name, 'Update')
         self.env.assertEqual(update_op.records_produced, 0)
 

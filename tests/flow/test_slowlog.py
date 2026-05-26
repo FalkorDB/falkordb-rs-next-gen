@@ -97,7 +97,7 @@ class testSlowLog():
             self.env.assertContains("Unknown subcommand", str(e))
 
         # populate slowlog
-        self.populate_slowlog(36)
+        self.populate_slowlog(20)
         slowlog = self.redis_con.execute_command("GRAPH.SLOWLOG", GRAPH_ID)
         self.env.assertGreater(len(slowlog), 0)
 
@@ -111,7 +111,7 @@ class testSlowLog():
         self.env.assertEqual(len(slowlog), 0)
 
         # make sure slowlog repopulates after RESET
-        self.populate_slowlog(36)
+        self.populate_slowlog(20)
         slowlog = self.redis_con.execute_command("GRAPH.SLOWLOG", GRAPH_ID)
         self.env.assertGreater(len(slowlog), 0)
 
@@ -131,11 +131,14 @@ class testSlowLog():
 
         slowlog = self.graph.slowlog()
         entry = slowlog[0]
+        timestamp = entry[0]
         cmd     = entry[1]
         q       = entry[2]
         latency = entry[3]
         params  = entry[4]
 
+        self.env.assertIsInstance(timestamp, str)
+        self.env.assertTrue(timestamp.isdigit())
         self.env.assertEqual(cmd, "GRAPH.QUERY")
         self.env.assertEqual(params, None)
 
@@ -275,4 +278,3 @@ class testSlowLog():
         queries = [entry[2] for entry in entries]
         self.env.assertContains (q0, queries)
         self.env.assertContains (q1, queries)
-

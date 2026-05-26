@@ -43,9 +43,6 @@ class testInternString():
         self.conn = self.env.getConnection()
         self.graph = self.db.select_graph(GRAPH_ID)
 
-        # Synchronous deletion
-        self.db.config_set('ASYNC_DELETE', 'no')
-
     def tearDown(self):
         # clear DB
         self.conn.flushall()
@@ -381,9 +378,6 @@ class testInternStringPersistency():
         if SANITIZER:
             self.env.skip() # sanitizer is not working correctly with bulk
 
-        # Synchronous deletion
-        self.db.config_set('ASYNC_DELETE', 'no')
-
         # clear DB
         self.conn.flushall()
 
@@ -435,10 +429,6 @@ class testInternStringReplication():
 
         # force effects replication
         self.db.config_set('EFFECTS_THRESHOLD', 0)
-
-        # Synchronous deletion
-        self.source_con.execute_command("GRAPH.CONFIG", "SET", 'ASYNC_DELETE', 'no')
-        self.replica_con.execute_command("GRAPH.CONFIG", "SET", 'ASYNC_DELETE', 'no')
 
         # clear DB
         self.conn.flushall()
@@ -507,4 +497,3 @@ class testInternStringReplication():
 
         assertStringPoolStats(self.source_con, 0, 0)
         assertStringPoolStats(self.replica_con, 0, 0)
-
