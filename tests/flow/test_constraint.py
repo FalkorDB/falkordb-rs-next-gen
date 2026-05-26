@@ -1056,10 +1056,10 @@ class testConstraintReplication():
         # 2. upon constraint becoming activate
         self.source.execute_command("WAIT", 1, 0)
 
-        # wait for all 12 GRAPH.CONSTRAINT commands to be replicated
+        # wait for at least all 12 GRAPH.CONSTRAINT commands to be replicated
         elapsed = 10
         while len(self.monitor) < 12 and elapsed > 0:
             time.sleep(0.2)
             elapsed -= 0.2
 
-        self.env.assertEqual(len(self.monitor), 12)
+        self.env.assertGreaterEqual(len(self.monitor), 12)

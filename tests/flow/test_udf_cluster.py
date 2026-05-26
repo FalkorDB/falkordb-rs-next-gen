@@ -3,6 +3,9 @@ from common import *
 
 class testUDFCluster():
     def __init__(self):
+        if os.getenv("FALKORDB_TEST_IMAGE"):
+            Environment.skip(None)
+
         self.env, self.db = Env(env='oss-cluster', shardsCount=3)
         self.master_1 = self.env.getConnection(shardId=1)
         self.master_2 = self.env.getConnection(shardId=2)

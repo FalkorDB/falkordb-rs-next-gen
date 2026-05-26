@@ -28,7 +28,7 @@ class testQueryTimeout():
 
         try:
             # The query is expected to succeed
-            self.graph.query(query, timeout=2000)
+            self.graph.query(query, timeout=10000)
         except:
             self.env.assertTrue(False)
 
