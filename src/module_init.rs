@@ -24,15 +24,16 @@
 
 use crate::config::{
     CONFIGURATION_JS_HEAP_SIZE, CONFIGURATION_JS_STACK_SIZE, CONFIGURATION_TEMP_FOLDER,
-    OMP_THREAD_COUNT, TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX, get_thread_count,
+    DELTA_MAX_PENDING_CHANGES, EFFECTS_THRESHOLD, MAX_QUEUED_QUERIES, OMP_THREAD_COUNT,
+    QUERY_MEM_CAPACITY, RESULTSET_SIZE, TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX, get_thread_count,
 };
 use crate::redis_type::on_persistence;
 use crate::telemetry;
 use graph::{
     graph::graphblas::matrix::init,
-    index::redisearch::{REDISEARCH_INIT_LIBRARY, RediSearch_Init},
+    index::redisearch::{REDISEARCH_INIT_LIBRARY, RediSearch_CleanupModule, RediSearch_Init},
     runtime::functions::{init_functions, init_udf_functions},
-    threadpool::init_thread_pool,
+    threadpool::{self, init_thread_pool},
     udf,
 };
 use redis_module::{
@@ -40,7 +41,7 @@ use redis_module::{
     RedisModule_Realloc, RedisModule_SubscribeToServerEvent, RedisModuleCtx, RedisModuleEvent,
     Status,
 };
-use std::{os::raw::c_int, os::raw::c_void, panic};
+use std::{os::raw::c_int, os::raw::c_void, panic, sync::atomic::AtomicI64};
 
 /// Redis event ID for FlushDB event (database flush/clear).
 #[allow(non_upper_case_globals)]
@@ -63,6 +64,13 @@ const REDISMODULE_SUBEVENT_LOADING_FAILED: u64 = 4;
 #[allow(non_upper_case_globals)]
 static RedisModuleEvent_ReplicationRoleChanged: RedisModuleEvent =
     RedisModuleEvent { id: 0, dataver: 1 };
+
+/// Redis event ID for shutdown. Only wired up under sanitizer/valgrind
+/// runs (gated by `RS_GLOBAL_DTORS`) so workers join cleanly and per-thread
+/// + module-level RediSearch/LAGraph state is released — otherwise these
+/// allocations are reported as leaks at process exit.
+#[allow(non_upper_case_globals)]
+static RedisModuleEvent_Shutdown: RedisModuleEvent = RedisModuleEvent { id: 5, dataver: 1 };
 
 /// Subevent: this instance is now a replica.
 const REDISMODULE_EVENT_REPLROLECHANGED_NOW_REPLICA: u64 = 1;
@@ -113,9 +121,8 @@ pub fn graph_init(
         std::process::exit(1);
     }));
 
-    // Parse timeout-related module args (TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX).
-    // These are AtomicI64 statics not registered in the redis_module! config section,
-    // so we parse them manually here.
+    // Parse module args for AtomicI64/AtomicU64 statics not registered in the
+    // redis_module! config section.
     {
         let args_str: Vec<String> = args
             .iter()
@@ -123,44 +130,40 @@ pub fn graph_init(
             .collect();
         let mut i = 0;
         while i < args_str.len() {
-            match args_str[i].to_uppercase().as_str() {
-                "TIMEOUT" => {
-                    if i + 1 < args_str.len()
-                        && let Ok(v) = args_str[i + 1].parse::<i64>()
-                    {
-                        TIMEOUT.store(v, std::sync::atomic::Ordering::Relaxed);
-                        i += 2;
-                        continue;
-                    }
-                    ctx.log_warning("Invalid value for TIMEOUT module argument");
-                    return Status::Err;
+            let name = args_str[i].to_uppercase();
+            let target_i64: Option<&AtomicI64> = match name.as_str() {
+                "TIMEOUT" => Some(&TIMEOUT),
+                "TIMEOUT_DEFAULT" => Some(&TIMEOUT_DEFAULT),
+                "TIMEOUT_MAX" => Some(&TIMEOUT_MAX),
+                "RESULTSET_SIZE" => Some(&RESULTSET_SIZE),
+                "QUERY_MEM_CAPACITY" => Some(&QUERY_MEM_CAPACITY),
+                "DELTA_MAX_PENDING_CHANGES" => Some(&DELTA_MAX_PENDING_CHANGES),
+                "EFFECTS_THRESHOLD" => Some(&EFFECTS_THRESHOLD),
+                _ => None,
+            };
+            if let Some(target) = target_i64 {
+                if i + 1 < args_str.len()
+                    && let Ok(v) = args_str[i + 1].parse::<i64>()
+                {
+                    target.store(v, std::sync::atomic::Ordering::Relaxed);
+                    i += 2;
+                    continue;
                 }
-                "TIMEOUT_DEFAULT" => {
-                    if i + 1 < args_str.len()
-                        && let Ok(v) = args_str[i + 1].parse::<i64>()
-                    {
-                        TIMEOUT_DEFAULT.store(v, std::sync::atomic::Ordering::Relaxed);
-                        i += 2;
-                        continue;
-                    }
-                    ctx.log_warning("Invalid value for TIMEOUT_DEFAULT module argument");
-                    return Status::Err;
-                }
-                "TIMEOUT_MAX" => {
-                    if i + 1 < args_str.len()
-                        && let Ok(v) = args_str[i + 1].parse::<i64>()
-                    {
-                        TIMEOUT_MAX.store(v, std::sync::atomic::Ordering::Relaxed);
-                        i += 2;
-                        continue;
-                    }
-                    ctx.log_warning("Invalid value for TIMEOUT_MAX module argument");
-                    return Status::Err;
-                }
-                _ => {
-                    i += 1;
-                }
+                ctx.log_warning(&format!("Invalid value for {name} module argument"));
+                return Status::Err;
             }
+            if name == "MAX_QUEUED_QUERIES" {
+                if i + 1 < args_str.len()
+                    && let Ok(v) = args_str[i + 1].parse::<u64>()
+                {
+                    MAX_QUEUED_QUERIES.store(v, std::sync::atomic::Ordering::Relaxed);
+                    i += 2;
+                    continue;
+                }
+                ctx.log_warning("Invalid value for MAX_QUEUED_QUERIES module argument");
+                return Status::Err;
+            }
+            i += 1;
         }
     }
     unsafe {
@@ -314,6 +317,24 @@ pub fn graph_init(
         }
     }
 
+    // Wire shutdown cleanup only when the runner sets `RS_GLOBAL_DTORS`
+    // (sanitizer/valgrind). The handler joins worker threads, finalizes
+    // LAGraph, and frees module-level RediSearch state — work that is
+    // pointless when the kernel is about to reap the process anyway.
+    if std::env::var_os("RS_GLOBAL_DTORS").is_some() {
+        unsafe {
+            let res = RedisModule_SubscribeToServerEvent.unwrap()(
+                ctx.ctx,
+                RedisModuleEvent_Shutdown,
+                Some(on_shutdown),
+            );
+            if res != REDISMODULE_OK as c_int {
+                eprintln!("FalkorDB: failed to subscribe to shutdown event: code {res}");
+                return Status::Err;
+            }
+        }
+    }
+
     Status::Ok
 }
 
@@ -323,6 +344,26 @@ const unsafe extern "C" fn on_flush(
     _subevent: u64,
     _data: *mut c_void,
 ) {
+}
+
+/// Shutdown event handler — runs only under `RS_GLOBAL_DTORS` (sanitizer
+/// or valgrind). Mirrors the C implementation's `_ShutdownEventHandler`:
+/// join worker threads (so their TLS destructors fire), finalize LAGraph,
+/// then free RediSearch module-level state. Skipped in normal production
+/// runs to avoid spending time on cleanup the kernel will do for us.
+unsafe extern "C" fn on_shutdown(
+    _ctx: *mut RedisModuleCtx,
+    _eid: RedisModuleEvent,
+    _subevent: u64,
+    _data: *mut c_void,
+) {
+    // Stop the telemetry flusher first: it issues RM_Call("XADD") on a
+    // thread-safe context, which races with Redis tearing down server state
+    // and produces a SIGSEGV under ASAN if left running.
+    telemetry::shutdown_flusher_thread();
+    threadpool::shutdown();
+    graph::graph::graphblas::matrix::shutdown();
+    unsafe { RediSearch_CleanupModule() };
 }
 
 unsafe extern "C" fn on_role_change(

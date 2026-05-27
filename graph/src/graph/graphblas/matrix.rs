@@ -59,7 +59,10 @@ use std::{
     mem::{ManuallyDrop, MaybeUninit},
     os::raw::c_void,
     ptr::null_mut,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use parking_lot::Mutex;
@@ -128,7 +131,9 @@ pub fn init(
         }
 
         // Initialize LAGraph after GraphBLAS
-        let mut msg = [0i8; 256];
+        // `c_char` (not `i8`) because char signedness is platform-dependent:
+        // signed on amd64, unsigned on arm64 Linux. LAGraph FFI takes *mut c_char.
+        let mut msg: [std::os::raw::c_char; 256] = [0; 256];
         let rc = LAGraph_Init(msg.as_mut_ptr());
         if rc != 0 {
             return Err(format!(
@@ -171,7 +176,7 @@ pub fn burble(burble: bool) {
 /// Finalizes LAGraph and GraphBLAS, releasing all resources.
 pub fn shutdown() {
     unsafe {
-        let mut msg = [0i8; 256];
+        let mut msg: [std::os::raw::c_char; 256] = [0; 256];
         LAGraph_Finalize(msg.as_mut_ptr());
     }
 }
@@ -284,6 +289,7 @@ impl MaskedElementWiseAdd for Matrix {
             );
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
+        self.has_pending.store(true, Ordering::Relaxed);
     }
 }
 
@@ -391,6 +397,7 @@ impl MaskedElementWiseMultiply for Matrix {
             );
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
+        self.has_pending.store(true, Ordering::Relaxed);
     }
 }
 
@@ -427,6 +434,7 @@ impl MxM for Matrix {
             );
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
+        self.has_pending.store(true, Ordering::Relaxed);
     }
 
     fn rmxm(
@@ -445,6 +453,7 @@ impl MxM for Matrix {
             );
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
+        self.has_pending.store(true, Ordering::Relaxed);
     }
 }
 
@@ -535,6 +544,7 @@ impl Matrix {
         if let Some(ac) = accum {
             self.element_wise_add(None, None, Some(&ac), None);
         }
+        self.has_pending.store(true, Ordering::Relaxed);
     }
 }
 
@@ -544,6 +554,9 @@ pub struct Matrix {
     /// The underlying GraphBLAS matrix.
     m: Arc<GrB_Matrix>,
     lock: Arc<Mutex<()>>,
+    /// Set to `true` by every mutating op; `wait()` short-circuits when `false`
+    /// to skip the lock + GrB_Matrix_wait FFI under read-heavy contention.
+    has_pending: Arc<AtomicBool>,
 }
 
 unsafe impl Send for Matrix {}
@@ -554,6 +567,9 @@ impl Drop for Matrix {
         if let Some(m) = Arc::get_mut(&mut self.m) {
             unsafe {
                 let info = GrB_Matrix_free(m);
+                // debug_assert in Drop: panicking while unwinding aborts the
+                // process. A GrB_*_free failure is logically a leak, not
+                // state corruption — surface in debug, swallow in release.
                 debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             }
         }
@@ -625,6 +641,7 @@ impl Decode<19> for Matrix {
             Ok(Self {
                 m: Arc::new(m),
                 lock: Arc::new(Mutex::new(())),
+                has_pending: Arc::new(AtomicBool::new(false)),
             })
         }
     }
@@ -724,11 +741,19 @@ impl Matrix {
     }
 
     pub fn wait(&self) {
+        if !self.has_pending.load(Ordering::Relaxed) {
+            return;
+        }
         let lock = self.lock.lock();
+        if !self.has_pending.load(Ordering::Relaxed) {
+            drop(lock);
+            return;
+        }
         unsafe {
             let info = GrB_Matrix_wait(*self.m, GrB_WaitMode::GrB_MATERIALIZE as _);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
+        self.has_pending.store(false, Ordering::Relaxed);
         drop(lock);
     }
 
@@ -747,6 +772,7 @@ impl Matrix {
             let info = GrB_Matrix_clear(*self.m);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
+        self.has_pending.store(false, Ordering::Relaxed);
     }
 
     pub fn remove_all(
@@ -757,6 +783,7 @@ impl Matrix {
             let info = GrB_transpose(*self.m, *b.m, null_mut(), *self.m, GrB_DESC_RCT0);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
+        self.has_pending.store(true, Ordering::Relaxed);
     }
 
     pub fn select(
@@ -768,6 +795,7 @@ impl Matrix {
             let info = GrB_transpose(*self.m, *mask.m, null_mut(), *a.m, GrB_DESC_RCT0);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
+        self.has_pending.store(true, Ordering::Relaxed);
     }
 }
 
@@ -799,6 +827,7 @@ impl Size for Matrix {
             let info = GrB_Matrix_resize(*self.m, nrows, ncols);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
+        self.has_pending.store(true, Ordering::Relaxed);
     }
 
     fn nvals(&self) -> u64 {
@@ -834,6 +863,7 @@ impl New for Matrix {
             Self {
                 m: Arc::new(m.assume_init()),
                 lock: Arc::new(Mutex::new(())),
+                has_pending: Arc::new(AtomicBool::new(false)),
             }
         }
     }
@@ -857,6 +887,7 @@ impl Dup<Self> for Matrix {
                 m.assume_init()
             }),
             lock: Arc::new(Mutex::new(())),
+            has_pending: Arc::new(AtomicBool::new(self.has_pending.load(Ordering::Relaxed))),
         }
     }
 }
@@ -879,6 +910,7 @@ impl Matrix {
             Self {
                 m: Arc::new(m.assume_init()),
                 lock: Arc::new(Mutex::new(())),
+                has_pending: Arc::new(AtomicBool::new(false)),
             }
         }
     }
@@ -894,6 +926,7 @@ impl Matrix {
             let info = GrB_Matrix_setElement_UINT64(*self.m, value, i, j);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
+        self.has_pending.store(true, Ordering::Relaxed);
     }
 
     #[must_use]
@@ -927,6 +960,7 @@ impl Remove for Matrix {
             let info = GrB_Matrix_removeElement(*self.m, i, j);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
+        self.has_pending.store(true, Ordering::Relaxed);
     }
 }
 
@@ -969,6 +1003,7 @@ impl Set for Matrix {
             let info = GrB_Matrix_setElement_BOOL(*self.m, value, i, j);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
+        self.has_pending.store(true, Ordering::Relaxed);
     }
 }
 
@@ -997,6 +1032,7 @@ impl Matrix {
             );
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
+        self.has_pending.store(true, Ordering::Relaxed);
     }
 
     /// Bulk-insert UINT64 entries from (row, col, val) arrays. Matrix must be empty and UINT64 typed.
@@ -1023,6 +1059,7 @@ impl Matrix {
             );
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
+        self.has_pending.store(true, Ordering::Relaxed);
     }
 
     /// Bulk-extract all (row, col) entries from a boolean matrix.
@@ -1065,6 +1102,7 @@ where
             let info = GrB_transpose(*transpose.m, null_mut(), null_mut(), *self.m, null_mut());
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
+        transpose.has_pending.store(true, Ordering::Relaxed);
         transpose
     }
 }
@@ -1139,6 +1177,7 @@ impl<E: IterExtract> Drop for Iter<E> {
         unsafe {
             if let Some(m) = Arc::get_mut(&mut self.m) {
                 let info = GrB_Matrix_free(m);
+                // debug_assert: don't panic in Drop (see Matrix::drop above).
                 debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             }
             GxB_Iterator_free(&raw mut self.inner);
