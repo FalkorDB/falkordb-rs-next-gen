@@ -258,6 +258,9 @@ pub(super) fn select_scan_node(
     };
 
     for bottom_idx in bottom_ct_indices {
+        if !optimized_plan.is_node_idx_valid(bottom_idx) {
+            continue;
+        }
         let is_leaf = optimized_plan.node(bottom_idx).num_children() == 0;
         // Detect if the child is a planner-added scan (not an outer-context op).
         let has_planner_scan = !is_leaf && {
@@ -601,5 +604,33 @@ pub(super) fn select_scan_node(
             }
         }
         // else: no swap needed and non-leaf — nothing to do, child already attached.
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::graph::graphblas::{GrB_Mode, GrB_init};
+    use crate::graph::mvcc_graph::MvccGraph;
+    use crate::runtime::functions::init_functions;
+
+    /// Regression test for a fuzz-discovered panic where `select_scan_node`
+    /// accessed a stale NodeIdx after a chain reversal pruned CT nodes that
+    /// appeared in the previously collected `bottom_ct_indices`.
+    #[test]
+    fn test_select_scan_node_no_stale_node_idx_after_chain_reversal() {
+        let _ = unsafe { GrB_init(GrB_Mode::GrB_NONBLOCKING as _) };
+        let _ = init_functions();
+        let g = MvccGraph::new(1024, 1024, 25, "test");
+        // This query produces multiple overlapping CT chains sharing variable
+        // `x`.  Previously, reversing one chain would prune CT nodes whose
+        // NodeIdx had been stored in `bottom_ct_indices`, causing a panic on
+        // the next loop iteration.
+        let query = r#"MATCH (a {name: 'a'}), (b {name: 'b'}), (c {name: 'c'})
+MATCH (b {name: 'b'}), (c {name: 'c'})
+MATCH (a)-->(x), (b)-->(x), (c)-->(xa)-->(x), (b)-->(x), (c)-->(x)
+RETURN x"#;
+        if let Err(err) = g.read().borrow().get_plan(query) {
+            panic!("query should plan without panicking: {err}");
+        }
     }
 }
