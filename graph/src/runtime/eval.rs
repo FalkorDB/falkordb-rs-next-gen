@@ -1311,7 +1311,14 @@ pub(crate) fn list_contains(
         Value::List(l) => Ok(Contains::contains(l.as_ref(), value)),
         Value::Null => Ok(Value::Null),
         // Coerce scalar RHS to a singleton list (Neo4j compatibility).
-        other => Ok(Contains::contains(&thin_vec![other.clone()], value)),
+        other => {
+            let (res, dis) = value.compare_value(other);
+            if dis == DisjointOrNull::ComparedNull {
+                Ok(Value::Null)
+            } else {
+                Ok(Value::Bool(res == Ordering::Equal))
+            }
+        }
     }
 }
 

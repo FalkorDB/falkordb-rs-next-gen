@@ -1247,3 +1247,18 @@ class testIndexScanFlow():
         res = self.graph.query(q).result_set
         # `n.v` is a scalar int, never a list — no row should match.
         self.env.assertEqual(res, [])
+
+    def test_36_in_operator_matches_indexed_scalar_rhs(self):
+        self.graph.query("CREATE (:L {v: 7, name: 'scalar'})")
+        self.graph.query("CREATE (:L {v: [7, 8], name: 'array'})")
+        self.graph.query("CREATE (:L {v: 9, name: 'other'})")
+        self.graph.create_node_range_index('L', 'v')
+        wait_for_indices_to_sync(self.graph)
+
+        q = "MATCH (n:L) WHERE 7 IN n.v RETURN n.name ORDER BY n.name"
+        plan = str(self.graph.explain(q))
+        self.env.assertNotContains('Label Scan', plan)
+        self.env.assertContains('Node By Index Scan', plan)
+
+        res = self.graph.query(q).result_set
+        self.env.assertEqual(res, [['array'], ['scalar']])
