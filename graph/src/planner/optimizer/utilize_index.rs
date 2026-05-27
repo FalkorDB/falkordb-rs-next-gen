@@ -793,7 +793,6 @@ fn try_filter_pushdown<T: IndexSubject>(
             let mut remaining = Vec::new();
             for child in filter.root().children() {
                 let conjunct = child.clone_as_tree();
-                let should_retain = is_value_in_property_filter(subject, &conjunct);
                 if let Some((_, label, query)) = try_single_filter_scan(subject, &conjunct, graph) {
                     merged = Some(match merged {
                         None => (label, query),
@@ -801,7 +800,7 @@ fn try_filter_pushdown<T: IndexSubject>(
                             (prev_label, merge_range_queries(prev_q, query))
                         }
                     });
-                    if should_retain {
+                    if is_value_in_property_filter(subject, &conjunct) {
                         remaining.push(conjunct);
                     }
                 } else {
