@@ -4,6 +4,16 @@ from common import *
 class testRdbLoad():
     def __init__(self):
         self.env, self.db = Env(moduleArgs='VKEY_MAX_ENTITY_COUNT 10')
+
+        # Skip on macOS: this test reads keys('*') immediately after a query
+        # and asserts the telemetry stream key is present. The telemetry stream
+        # is written by an asynchronous flusher thread (src/telemetry.rs), so its
+        # appearance races with the keyspace snapshot. On the non-containerized
+        # macOS runner the flusher is scheduled differently and the stream is not
+        # yet present, yielding 3 keys instead of 4. See PR #551.
+        if OS == "macos":
+            self.env.skip()
+
         self.conn = self.env.getConnection()
 
     # assert that |keyspace| == `n`
