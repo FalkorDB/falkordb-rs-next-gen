@@ -375,6 +375,17 @@ jobs:
       # LIBOMP_PREFIX at it to get the same self-contained dylib Linux builds
       # produce via build/libomp.sh.
       LIBOMP_PREFIX: /opt/homebrew/opt/libomp
+      # Install GraphBLAS into a workspace-local prefix instead of the script's
+      # /usr/local default. Two reasons:
+      #   1. No sudo — actions/cache restores as the unprivileged runner user
+      #      and can't write under /usr/local, so a /usr/local install would
+      #      never restore from cache.
+      #   2. The whole dependency tree (GraphBLAS .a + headers + cmake config)
+      #      lives under one cacheable directory in the workspace.
+      # graphblas.sh reads GRAPHBLAS_INSTALL_PREFIX; graph/build.rs reads
+      # GRAPHBLAS_LIB_DIR to find libgraphblas.a at link time.
+      GRAPHBLAS_INSTALL_PREFIX: ${{ github.workspace }}/.deps/graphblas
+      GRAPHBLAS_LIB_DIR: ${{ github.workspace }}/.deps/graphblas/lib
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
@@ -409,20 +420,27 @@ jobs:
         with:
           shared-key: "macos-release"
 
-      # Cache the two slow native builds (GraphBLAS ~10 min with PreJIT,
-      # RediSearch ~5-7 min on hosted macOS arm64). Key on the script
-      # contents + image label so a Homebrew LLVM bump (which also bumps
-      # the runner image label) busts the cache.
+      # The Linux pipeline bakes GraphBLAS + RediSearch into the
+      # `falkordb-build` Docker toolchain image, so its jobs never rebuild
+      # them. Hosted macOS runners have no Docker, so we rebuild from source
+      # and cache the artefacts here instead. Cache the three outputs the
+      # cargo link step needs:
+      #   * .deps/graphblas         — GraphBLAS install prefix (lib + headers
+      #                               + cmake config), from GRAPHBLAS_INSTALL_PREFIX.
+      #   * lagraph_lib             — LAGraph static archives (graphblas.sh
+      #                               installs them here; build.rs reads
+      #                               ../lagraph_lib).
+      #   * redisearch/RediSearch/bin — RediSearch static build tree.
+      # Key on the script contents + the vendored PreJIT kernels + the runner
+      # image label, so a Homebrew LLVM bump (which also bumps the image label)
+      # busts the cache. On a hit, both build steps below are skipped (~15 min
+      # saved); on a miss we rebuild and repopulate.
       - name: Cache GraphBLAS + RediSearch native builds
         id: native-cache
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: |
-            /usr/local/lib/libgraphblas*
-            /usr/local/lib/liblagraph*
-            /usr/local/include/GraphBLAS*
-            /usr/local/include/LAGraph*
-            /usr/local/include/LAGraphX*
+            .deps/graphblas
             lagraph_lib
             redisearch/RediSearch/bin
           key: macos-native-deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('graphblas.sh', 'redisearch.sh', 'build/graphblas/**') }}-${{ env.ImageVersion }}
@@ -465,6 +483,12 @@ jobs:
         run: |
           . venv/bin/activate
           # flow.sh's Darwin branch picks .dylib and spawns redis locally.
+          # In this local-dev mode it runs RLTest with
+          # `--parallelism $(sysctl -n hw.ncpu)`, so flow tests fan out across
+          # all runner cores — the same per-host parallelism the Linux jobs
+          # get. (Linux additionally shards flow tests across a matrix of
+          # Docker runners; that fan-out isn't available without Docker, so a
+          # single macOS runner executes the whole suite, parallelised by core.)
           RELEASE=1 ./flow.sh
 
       - name: Upload flow logs on failure

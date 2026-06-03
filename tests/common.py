@@ -1,5 +1,6 @@
 import os
 import platform
+import shutil
 import subprocess
 import time
 
@@ -48,8 +49,17 @@ def start_redis(release=None, moduleEnvs=[]):
         shutdown = True
         if os.path.exists("redis-test.log"):
             os.remove("redis-test.log")
+        # Resolve redis-server from PATH so this works regardless of install
+        # prefix: Linux/Intel Homebrew use /usr/local/bin, Apple-silicon
+        # Homebrew uses /opt/homebrew/bin, and distro packages use /usr/bin.
+        # REDIS_SERVER_PATH overrides for non-standard layouts.
+        redis_server_bin = (
+            os.environ.get("REDIS_SERVER_PATH")
+            or shutil.which("redis-server")
+            or "/usr/local/bin/redis-server"
+        )
         redis_server = subprocess.Popen(
-            ["/usr/local/bin/redis-server",
+            [redis_server_bin,
              "--save", "", "--port", str(port), "--logfile", "redis-test.log",
              "--loadmodule", target] + moduleEnvs,
             stdout=subprocess.PIPE)
