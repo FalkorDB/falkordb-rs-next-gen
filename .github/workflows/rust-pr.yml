@@ -412,6 +412,11 @@ jobs:
           echo "${LLVM_PREFIX}/bin"            >> "$GITHUB_PATH"
           echo "CC=${LLVM_PREFIX}/bin/clang"    >> "$GITHUB_ENV"
           echo "CXX=${LLVM_PREFIX}/bin/clang++" >> "$GITHUB_ENV"
+          # Capture the exact Homebrew LLVM version so the native-deps cache key
+          # can bust when clang is upgraded (the C artefacts are ABI-tied to it).
+          # `runner.os` env (ImageVersion) isn't exposed to the `env:` expression
+          # context, so derive a real toolchain fingerprint here instead.
+          echo "BREW_LLVM_VERSION=$(brew list --versions llvm | awk '{print $2}')" >> "$GITHUB_ENV"
 
       - name: Install Rust stable
         run: rustup default stable
@@ -431,19 +436,27 @@ jobs:
       #                               installs them here; build.rs reads
       #                               ../lagraph_lib).
       #   * redisearch/RediSearch/bin — RediSearch static build tree.
-      # Key on the script contents + the vendored PreJIT kernels + the runner
-      # image label, so a Homebrew LLVM bump (which also bumps the image label)
-      # busts the cache. On a hit, both build steps below are skipped (~15 min
+      # Key on the script contents + the vendored PreJIT kernels + the exact
+      # Homebrew LLVM version (captured into BREW_LLVM_VERSION above), so a
+      # clang upgrade — which can change the C ABI of these artefacts — busts
+      # the cache. On a hit, both build steps below are skipped (~15 min
       # saved); on a miss we rebuild and repopulate.
-      - name: Cache GraphBLAS + RediSearch native builds
+      #
+      # Restore/save are split (rather than the all-in-one `actions/cache`) so
+      # the artefacts are saved by the dedicated step below — which runs
+      # `if: always()` right after the builds — instead of in a post-job step
+      # that only fires on overall job success. That means a failing test step
+      # downstream no longer throws away a good native build, so iterating on
+      # test fixes doesn't pay the ~15-min rebuild each time.
+      - name: Restore GraphBLAS + RediSearch native builds
         id: native-cache
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: |
             .deps/graphblas
             lagraph_lib
             redisearch/RediSearch/bin
-          key: macos-native-deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('graphblas.sh', 'redisearch.sh', 'build/graphblas/**') }}-${{ env.ImageVersion }}
+          key: macos-native-deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('graphblas.sh', 'redisearch.sh', 'build/graphblas/**') }}-llvm${{ env.BREW_LLVM_VERSION }}
 
       - name: Build GraphBLAS + LAGraph
         if: steps.native-cache.outputs.cache-hit != 'true'
@@ -452,6 +465,22 @@ jobs:
       - name: Build RediSearch
         if: steps.native-cache.outputs.cache-hit != 'true'
         run: ./redisearch.sh
+
+      # Persist the freshly built native deps as soon as they exist, before the
+      # cargo/pytest/flow steps that might fail. Positioned ahead of the test
+      # steps with default (success-only) semantics: it saves only when the
+      # builds above succeeded — never partial/broken artefacts — yet a later
+      # test failure can't discard the good build. Skipped on a cache hit since
+      # actions/cache/save errors when the key already exists.
+      - name: Save GraphBLAS + RediSearch native builds
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: |
+            .deps/graphblas
+            lagraph_lib
+            redisearch/RediSearch/bin
+          key: ${{ steps.native-cache.outputs.cache-primary-key }}
 
       - name: Build libfalkordb.dylib (release)
         run: cargo build --release
