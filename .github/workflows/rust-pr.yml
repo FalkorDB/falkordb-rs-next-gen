@@ -385,10 +385,6 @@ jobs:
           #            step below). Required for OpenMP in VectorSimilarity.
           # - libomp:  ships libomp.a + libomp.dylib at /opt/homebrew/opt/libomp;
           #            consumed via LIBOMP_PREFIX (see env block).
-          # - make:    GNU make 4.x. macOS ships make 3.81, which RediSearch's
-          #            readies/mk/main aborts on ("GNU Make version is too old").
-          #            Brew installs the new make at libexec/gnubin/make; we
-          #            prepend that to PATH so plain `make` resolves to 4.x.
           # - cmake:   required by GraphBLAS, RediSearch and VecSim.
           # - redis:   provides redis-server for the test suites' local-dev
           #            spawn mode (no FALKORDB_TEST_IMAGE => RLTest spawns a
@@ -397,14 +393,11 @@ jobs:
           #              graph/build.rs links them statically on macOS from
           #              /opt/homebrew/opt/openssl@3/lib.
           # - jq, lcov: already used by existing scripts and a no-op if unused.
-          brew install cmake llvm libomp make redis openssl@3 jq lcov
+          brew install cmake llvm libomp redis openssl@3 jq lcov
 
-      - name: Export Homebrew LLVM and GNU make into PATH/CC/CXX
+      - name: Export Homebrew LLVM into PATH/CC/CXX
         run: |
           LLVM_PREFIX="$(brew --prefix llvm)"
-          MAKE_PREFIX="$(brew --prefix make)"
-          # gnubin first so `make` resolves to brew's 4.x ahead of /usr/bin/make.
-          echo "${MAKE_PREFIX}/libexec/gnubin" >> "$GITHUB_PATH"
           echo "${LLVM_PREFIX}/bin"            >> "$GITHUB_PATH"
           echo "CC=${LLVM_PREFIX}/bin/clang"    >> "$GITHUB_ENV"
           echo "CXX=${LLVM_PREFIX}/bin/clang++" >> "$GITHUB_ENV"
