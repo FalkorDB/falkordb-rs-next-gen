@@ -355,6 +355,133 @@ jobs:
         uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
+  # Native macOS build + test (arm64). No Docker — hosted macOS runners don't
+  # ship docker, so this path doesn't go through the toolchain/RC images that
+  # the Linux pipeline uses. We brew-install the toolchain, build GraphBLAS
+  # and RediSearch via the existing scripts (both already Darwin-aware and
+  # CC/CXX-driven post-#539), then cargo-build libfalkordb.dylib and run
+  # cargo + pytest + TCK + flow tests against a locally spawned Homebrew
+  # redis-server with --loadmodule pointing at the freshly built dylib.
+  # See issue #547.
+  macos:
+    runs-on: macos-latest
+    needs:
+      - check-files
+    if: ${{ !cancelled() }}
+    env:
+      # graph/build.rs (post-#539) static-links libomp when
+      # ${LIBOMP_PREFIX}/lib/libomp.a exists. Brew's `libomp` formula installs
+      # both libomp.a and libomp.dylib under /opt/homebrew/opt/libomp, so point
+      # LIBOMP_PREFIX at it to get the same self-contained dylib Linux builds
+      # produce via build/libomp.sh.
+      LIBOMP_PREFIX: /opt/homebrew/opt/libomp
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Install Homebrew build + test deps
+        run: |
+          # - llvm:    clang (Homebrew LLVM) — graphblas.sh / redisearch.sh
+          #            pass it through via CC/CXX (see "Export Homebrew LLVM"
+          #            step below). Required for OpenMP in VectorSimilarity.
+          # - libomp:  ships libomp.a + libomp.dylib at /opt/homebrew/opt/libomp;
+          #            consumed via LIBOMP_PREFIX (see env block).
+          # - make:    GNU make 4.x. macOS ships make 3.81, which RediSearch's
+          #            readies/mk/main aborts on ("GNU Make version is too old").
+          #            Brew installs the new make at libexec/gnubin/make; we
+          #            prepend that to PATH so plain `make` resolves to 4.x.
+          # - cmake:   required by GraphBLAS, RediSearch and VecSim.
+          # - redis:   provides redis-server for the test suites' local-dev
+          #            spawn mode (no FALKORDB_TEST_IMAGE => RLTest spawns a
+          #            redis with --loadmodule libfalkordb.dylib).
+          # - openssl@3: RediSearch coordinator references libssl/libcrypto;
+          #              graph/build.rs links them statically on macOS from
+          #              /opt/homebrew/opt/openssl@3/lib.
+          # - jq, lcov: already used by existing scripts and a no-op if unused.
+          brew install cmake llvm libomp make redis openssl@3 jq lcov
+
+      - name: Export Homebrew LLVM and GNU make into PATH/CC/CXX
+        run: |
+          LLVM_PREFIX="$(brew --prefix llvm)"
+          MAKE_PREFIX="$(brew --prefix make)"
+          # gnubin first so `make` resolves to brew's 4.x ahead of /usr/bin/make.
+          echo "${MAKE_PREFIX}/libexec/gnubin" >> "$GITHUB_PATH"
+          echo "${LLVM_PREFIX}/bin"            >> "$GITHUB_PATH"
+          echo "CC=${LLVM_PREFIX}/bin/clang"    >> "$GITHUB_ENV"
+          echo "CXX=${LLVM_PREFIX}/bin/clang++" >> "$GITHUB_ENV"
+
+      - name: Install Rust stable
+        run: rustup default stable
+
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: "macos-release"
+
+      # Cache the two slow native builds (GraphBLAS ~10 min with PreJIT,
+      # RediSearch ~5-7 min on hosted macOS arm64). Key on the script
+      # contents + image label so a Homebrew LLVM bump (which also bumps
+      # the runner image label) busts the cache.
+      - name: Cache GraphBLAS + RediSearch native builds
+        id: native-cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: |
+            /usr/local/lib/libgraphblas*
+            /usr/local/lib/liblagraph*
+            /usr/local/include/GraphBLAS*
+            /usr/local/include/LAGraph*
+            /usr/local/include/LAGraphX*
+            lagraph_lib
+            redisearch/RediSearch/bin
+          key: macos-native-deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('graphblas.sh', 'redisearch.sh', 'build/graphblas/**') }}-${{ env.ImageVersion }}
+
+      - name: Build GraphBLAS + LAGraph
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        run: ./graphblas.sh
+
+      - name: Build RediSearch
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        run: ./redisearch.sh
+
+      - name: Build libfalkordb.dylib (release)
+        run: cargo build --release
+
+      - name: Run cargo unit tests
+        run: cargo test --release -p graph
+
+      - name: Set up Python venv
+        run: |
+          python3 -m venv venv
+          . venv/bin/activate
+          pip install --upgrade pip
+          pip install -r tests/requirements.txt
+
+      - name: Run pytest suites
+        run: |
+          . venv/bin/activate
+          # No FALKORDB_TEST_IMAGE / EXISTING_ENV — tests/common.py spawns
+          # a local redis-server (brew, on PATH) with --loadmodule pointing
+          # at target/release/libfalkordb.dylib.
+          pytest tests/test_e2e.py tests/test_functions.py tests/test_mvcc.py tests/test_concurrency.py -vv
+
+      - name: Run TCK tests
+        run: |
+          . venv/bin/activate
+          TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
+
+      - name: Run flow tests
+        run: |
+          . venv/bin/activate
+          # flow.sh's Darwin branch picks .dylib and spawns redis locally.
+          RELEASE=1 ./flow.sh
+
+      - name: Upload flow logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: macos-flow-logs
+          path: tests/flow/logs/
+          if-no-files-found: ignore
+
   fuzz:
     runs-on: ubuntu-latest
     container: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
