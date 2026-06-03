@@ -365,6 +365,7 @@ jobs:
   # See issue #547.
   macos:
     runs-on: macos-latest
+    timeout-minutes: 90
     needs:
       - check-files
     if: ${{ !cancelled() }}
@@ -386,6 +387,12 @@ jobs:
       # GRAPHBLAS_LIB_DIR to find libgraphblas.a at link time.
       GRAPHBLAS_INSTALL_PREFIX: ${{ github.workspace }}/.deps/graphblas
       GRAPHBLAS_LIB_DIR: ${{ github.workspace }}/.deps/graphblas/lib
+      # The concurrency/MVCC pytest suites use multiprocessing.Pool. macOS
+      # defaults to the 'spawn' start method (Linux uses 'fork'); the tests now
+      # force a fork context via common.fork_pool(). macOS aborts fork() in a
+      # process that already initialised ObjC/system frameworks unless this is
+      # set, so disable that guard for the pure-Python redis-client workers.
+      OBJC_DISABLE_INITIALIZE_FORK_SAFETY: "YES"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 

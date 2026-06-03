@@ -1,3 +1,4 @@
+import multiprocessing
 import os
 import platform
 import shutil
@@ -13,6 +14,19 @@ redis_server: subprocess.Popen = None
 client = None
 g = None
 shutdown = False
+
+
+def fork_pool(processes=None):
+    """Return a multiprocessing.Pool that always uses the 'fork' start method.
+
+    macOS (and Windows) default to the 'spawn' start method, under which Pool
+    workers boot a fresh interpreter and re-import the test module — that
+    re-runs pytest collection inside every child and deadlocks. Linux already
+    defaults to 'fork', so this is a no-op there while making the concurrency
+    and MVCC suites work on macOS. The worker functions only open their own
+    redis connections, so the usual fork-after-threads caveats don't apply.
+    """
+    return multiprocessing.get_context("fork").Pool(processes)
 
 
 def start_redis(release=None, moduleEnvs=[]):

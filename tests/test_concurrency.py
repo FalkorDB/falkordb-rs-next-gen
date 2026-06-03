@@ -1,6 +1,5 @@
 import common
 from falkordb import FalkorDB
-from multiprocessing import Pool
 
 
 def setup_module(module):
@@ -27,7 +26,7 @@ def run_write(id):
     return (id, version)
 
 def test_concurrent_writes():
-    with Pool(processes=8) as pool:
+    with common.fork_pool(processes=8) as pool:
         write_results = pool.map(run_write, range(0, 1000))
 
     versions = [version for _, version in write_results]
