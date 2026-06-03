@@ -26,14 +26,6 @@ class testReplicationState():
         if SANITIZER:
             Environment.skip(None) # sanitizer is not working correctly with replication
 
-        # Skip on macOS: master/slave replication on a single non-containerized
-        # host is timing-sensitive. After flushall() the slave key count does not
-        # always settle to 0 within the WAIT bound, so _check(0, 0) intermittently
-        # fails. This is a replication-sync timing race on the macOS runner rather
-        # than a product defect. See PR #551.
-        if OS == "macos":
-            Environment.skip(None)
-
         self.env, self.db = Env(useSlaves=True, env='oss', moduleArgs='VKEY_MAX_ENTITY_COUNT 10')
         self.master = self.env.getConnection()
         self.slave = self.env.getSlaveConnection()
@@ -112,7 +104,7 @@ class testReplicationState():
                 if not self._check(0, 0):
                     print(f"scenario: {scenario}")
                     print(f"connection_permutation: {connection_permutation}")
-                    self.env.assertTrue(False)
+                    self.assertTrue(False)
 
                 self._connection_permutation(connection_permutation, 0)
 
@@ -124,21 +116,21 @@ class testReplicationState():
                 if not self._step(scenario[0], 1):
                     print(f"scenario: {scenario}")
                     print(f"connection_permutation: {connection_permutation}")
-                    self.env.assertTrue(False)
+                    self.assertTrue(False)
 
                 self._connection_permutation(connection_permutation, 2)
 
                 if not self._step(scenario[1], 2):
                     print(f"scenario: {scenario}")
                     print(f"connection_permutation: {connection_permutation}")
-                    self.env.assertTrue(False)
+                    self.assertTrue(False)
 
                 self._connection_permutation(connection_permutation, 3)
 
                 if not self._step(scenario[2], 3):
                     print(f"scenario: {scenario}")
                     print(f"connection_permutation: {connection_permutation}")
-                    self.env.assertTrue(False)
+                    self.assertTrue(False)
 
                 self._connection_permutation(connection_permutation, 4)
 

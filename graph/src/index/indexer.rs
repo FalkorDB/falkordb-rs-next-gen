@@ -384,6 +384,27 @@ impl Indexer {
         self.index.write().remove(label);
     }
 
+    /// Remove the label entry only if it is still empty (no indexed fields).
+    ///
+    /// A background drop (`drop_index_bg`) is scheduled when the last field
+    /// of a label is dropped. If a concurrent `CREATE INDEX` re-adds a field
+    /// before that background task runs, the entry is no longer empty and must
+    /// be preserved — otherwise the stale drop would wipe the freshly created
+    /// index, making it invisible to subsequent DDL ("no such index").
+    ///
+    /// Returns true if the entry was removed.
+    pub fn remove_if_empty(
+        &mut self,
+        label: &Arc<String>,
+    ) -> bool {
+        let mut index = self.index.write();
+        if index.get(label).is_some_and(Index::is_empty) {
+            index.remove(label);
+            return true;
+        }
+        false
+    }
+
     #[must_use]
     pub fn has_field_for_label(
         &self,

@@ -592,7 +592,11 @@ fn drop_index_bg(
             // worker can be mid-batch when we remove the label.
             let lock = node_indexer.write_lock();
             let _guard = lock.lock();
-            node_indexer.remove(&label);
+            // Only remove the label if it is still empty. A concurrent CREATE
+            // INDEX may have re-added a field under this label between the time
+            // this background drop was scheduled and now; in that case the entry
+            // is a newer generation that must be preserved.
+            node_indexer.remove_if_empty(&label);
         },
         Some(0),
     );
