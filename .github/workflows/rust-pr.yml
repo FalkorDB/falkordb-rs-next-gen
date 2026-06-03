@@ -457,7 +457,15 @@ jobs:
         run: cargo build --release
 
       - name: Run cargo unit tests
-        run: cargo test --release -p graph
+        # Disable LTO for the test build (matching the Linux job). With the
+        # release profile's fat LTO on, rustc tries to extract LLVM bitcode
+        # from the GraphBLAS/LAGraph static archives when linking doctests and
+        # fails with "Can't find section __bitcode" — those C libs are plain
+        # Mach-O objects, not bitcode. Linking the shipped dylib (cargo build
+        # --release above) is unaffected; only doctest LTO trips on it.
+        # NB: the Linux job also passes RUSTDOCFLAGS=-Wl,--allow-multiple-definition,
+        # a GNU-ld flag ld64 rejects, so it's omitted here.
+        run: CARGO_PROFILE_RELEASE_LTO=false cargo test --release -p graph
 
       - name: Set up Python venv
         run: |
