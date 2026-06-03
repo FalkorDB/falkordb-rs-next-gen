@@ -487,18 +487,23 @@ Feature: List5 - List Membership Validation - IN Operator
       | true |
     And no side effects
 
-  Scenario Outline: [42] Failing when using IN on a non-list literal
+  Scenario Outline: [42] IN should treat non-list literals as singleton lists
     Given any graph
     When executing query:
       """
-      RETURN 1 IN <invalid>
+      RETURN 1 IN <rhs> AS res
       """
-    Then a SyntaxError should be raised at compile time: InvalidArgumentType
+    Then the result should be, in any order:
+      | res        |
+      | <expected> |
+    And no side effects
 
     Examples:
-      | invalid |
-      | true    |
-      | 123     |
-      | 123.4   |
-      | 'foo'   |
-      | {x: []} |
+      | rhs     | expected |
+      | true    | false    |
+      | 1       | true     |
+      | 1.0     | true     |
+      | 123     | false    |
+      | 123.4   | false    |
+      | 'foo'   | false    |
+      | {x: []} | false    |

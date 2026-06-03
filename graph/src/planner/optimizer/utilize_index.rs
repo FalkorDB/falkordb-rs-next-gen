@@ -611,7 +611,7 @@ fn list_has_nested_list(
 ///
 /// Handles two patterns:
 /// 1. `property IN [list]` — converts to InList index query
-/// 2. `value IN property` — converts to ArrayContains index query
+/// 2. `value IN property` — converts to Equal OR ArrayContains index query
 fn try_in_filter_scan<T: IndexSubject>(
     subject: &T,
     filter: &DynTree<ExprIR<Variable>>,
@@ -658,10 +658,14 @@ fn try_in_filter_scan<T: IndexSubject>(
         }
     } else {
         // Pattern: $x IN p.samples
-        IndexQuery::ArrayContains {
-            key: attr,
-            value: Arc::new(filter.node(expr_side).clone_as_tree()),
-        }
+        let value = Arc::new(filter.node(expr_side).clone_as_tree());
+        IndexQuery::Or(vec![
+            IndexQuery::Equal {
+                key: attr.clone(),
+                value: value.clone(),
+            },
+            IndexQuery::ArrayContains { key: attr, value },
+        ])
     };
 
     Some((subject.clone(), label, query))
@@ -714,6 +718,15 @@ fn try_single_filter_scan<T: IndexSubject>(
         }
         _ => None,
     }
+}
+
+fn is_value_in_property_filter<T: IndexSubject>(
+    subject: &T,
+    filter: &DynTree<ExprIR<Variable>>,
+) -> bool {
+    matches!(filter.root().data(), ExprIR::In)
+        && !subtree_has_property_of(filter, filter.root().child(0).idx(), subject.alias())
+        && subtree_has_property_of(filter, filter.root().child(1).idx(), subject.alias())
 }
 
 /// Checks whether an inline property attribute on a pattern
@@ -788,6 +801,9 @@ fn try_filter_pushdown<T: IndexSubject>(
                             (prev_label, merge_range_queries(prev_q, query))
                         }
                     });
+                    if is_value_in_property_filter(subject, &conjunct) {
+                        remaining.push(conjunct);
+                    }
                 } else {
                     remaining.push(conjunct);
                 }
@@ -813,13 +829,10 @@ fn try_filter_pushdown<T: IndexSubject>(
             })
         }
         _ => try_single_filter_scan(subject, filter, graph).map(|(_, label, q)| {
-            // For "value IN property" (array-contains), keep the filter
-            // as a post-filter — the index may return false positives
-            // for non-indexable array elements.
-            let is_array_contains = matches!(filter.root().data(), ExprIR::In)
-                && !subtree_has_property_of(filter, filter.root().child(0).idx(), subject.alias())
-                && subtree_has_property_of(filter, filter.root().child(1).idx(), subject.alias());
-            if is_array_contains {
+            // For "value IN property", keep the filter as a post-filter —
+            // the index query approximates list/scalar membership and may
+            // fall back for non-indexable values.
+            if is_value_in_property_filter(subject, filter) {
                 (label, q, vec![filter.root().clone_as_tree()])
             } else {
                 (label, q, Vec::new())
