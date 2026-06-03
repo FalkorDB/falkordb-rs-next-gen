@@ -516,7 +516,11 @@ jobs:
           # No FALKORDB_TEST_IMAGE / EXISTING_ENV — tests/common.py spawns
           # a local redis-server (brew, on PATH) with --loadmodule pointing
           # at target/release/libfalkordb.dylib.
-          pytest tests/test_e2e.py tests/test_functions.py tests/test_mvcc.py tests/test_concurrency.py -vv
+          # --timeout bounds any single test (macOS was never exercised before,
+          # so a deadlock would otherwise run until the job timeout); the thread
+          # method dumps a full traceback pinpointing where a test got stuck.
+          pytest tests/test_e2e.py tests/test_functions.py tests/test_mvcc.py tests/test_concurrency.py \
+            -vv --timeout=600 --timeout-method=thread
 
       - name: Run TCK tests
         run: |
