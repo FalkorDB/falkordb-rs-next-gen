@@ -387,6 +387,11 @@ jobs:
       # GRAPHBLAS_LIB_DIR to find libgraphblas.a at link time.
       GRAPHBLAS_INSTALL_PREFIX: ${{ github.workspace }}/.deps/graphblas
       GRAPHBLAS_LIB_DIR: ${{ github.workspace }}/.deps/graphblas/lib
+      # Only the release dylib is built (cargo build --release), so tell
+      # tests/common.py and flow.sh to load target/release/libfalkordb.dylib.
+      # Without this, common.py defaults to the debug path on Darwin, redis
+      # fails to load a non-existent module, and start_redis() would hang.
+      RELEASE: "1"
       # The concurrency/MVCC pytest suites use multiprocessing.Pool. macOS
       # defaults to the 'spawn' start method (Linux uses 'fork'); the tests now
       # force a fork context via common.fork_pool(). macOS aborts fork() in a
@@ -517,10 +522,12 @@ jobs:
           # a local redis-server (brew, on PATH) with --loadmodule pointing
           # at target/release/libfalkordb.dylib.
           # --timeout bounds any single test (macOS was never exercised before,
-          # so a deadlock would otherwise run until the job timeout); the thread
-          # method dumps a full traceback pinpointing where a test got stuck.
+          # so a deadlock would otherwise run until the job timeout). Use the
+          # signal method rather than thread: it doesn't add a watchdog thread
+          # before the multiprocessing suites fork(), avoiding fork-after-thread
+          # issues on macOS, and still dumps a traceback of the stuck test.
           pytest tests/test_e2e.py tests/test_functions.py tests/test_mvcc.py tests/test_concurrency.py \
-            -vv --timeout=600 --timeout-method=thread
+            -vv --timeout=600 --timeout-method=signal
 
       - name: Run TCK tests
         run: |

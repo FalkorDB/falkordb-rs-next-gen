@@ -77,13 +77,37 @@ def start_redis(release=None, moduleEnvs=[]):
              "--save", "", "--port", str(port), "--logfile", "redis-test.log",
              "--loadmodule", target] + moduleEnvs,
             stdout=subprocess.PIPE)
+    # Bounded startup wait: if redis-server exits (e.g. the module fails to
+    # load because `target` doesn't exist or has unresolved symbols) or never
+    # becomes reachable, fail fast with diagnostics instead of spinning here
+    # forever — an unbounded loop turns any startup error into an opaque hang.
+    deadline = time.time() + 60
     while True:
+        exited = redis_server.poll()
+        if exited is not None:
+            log = ""
+            try:
+                with open("redis-test.log") as f:
+                    log = f.read()
+            except OSError:
+                pass
+            raise RuntimeError(
+                f"redis-server exited with code {exited} while loading module "
+                f"{target!r} (exists={os.path.exists(target)}).\n"
+                f"redis-test.log:\n{log}"
+            )
         try:
             r.ping()
             client = FalkorDB(host=host, port=port)
             g = client.select_graph("test")
             return
         except Exception:
+            if time.time() > deadline:
+                raise RuntimeError(
+                    f"redis-server did not become reachable on {host}:{port} "
+                    f"within 60s (module {target!r}, "
+                    f"exists={os.path.exists(target)})"
+                )
             # Backoff so a slow redis startup doesn't peg a CPU core.
             time.sleep(0.05)
 
