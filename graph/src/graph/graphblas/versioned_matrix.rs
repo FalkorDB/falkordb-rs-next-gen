@@ -1,18 +1,33 @@
 //! Copy-on-write sparse matrix with MVCC delta tracking.
 //!
-//! This module provides [`VersionedMatrix`], which wraps a base [`Matrix`] with
+//! This module provides [`VersionedMatrixT`], which wraps a base [`Matrix`] with
 //! two delta matrices to track pending additions and deletions. This is the
 //! building block for snapshot isolation: readers see the committed base state
 //! while writers accumulate changes in separate delta matrices.
 //!
+//! ## Cell type
+//!
+//! The matrix is generic over its cell-value type [`CellValue`]:
+//!
+//! - [`VersionedMatrix`] = `VersionedMatrixT<bool>` — a **presence** matrix. This
+//!   is the engine-wide default (adjacency, label, and tensor matrices, and the
+//!   node index) and the only instantiation the rest of the engine uses, so its
+//!   API is unchanged.
+//! - `VersionedMatrixT<u64>` — a **value-carrying** matrix. The edge index uses
+//!   it to pack each edge's `(src, dst)` endpoints into the cell value, so an
+//!   edge-index scan yields endpoints inline (no separate resolution structure).
+//!
+//! The delta-minus (deletion mask) is always `BOOL` regardless of `V` — it marks
+//! *which* cells are deleted, never a value.
+//!
 //! ## Internal Structure
 //!
 //! ```text
-//!   VersionedMatrix
+//!   VersionedMatrixT<V>
 //!     |
 //!     |-- m   Cow<Matrix>   Base matrix (committed / shared with readers)
 //!     |-- dp  Cow<Matrix>   Delta-plus  (pending additions)
-//!     |-- dm  Cow<Matrix>   Delta-minus (pending deletions)
+//!     |-- dm  Cow<Matrix>   Delta-minus (pending deletions, BOOL)
 //!
 //!   Effective state = (m UNION dp) MINUS dm
 //! ```
@@ -21,68 +36,134 @@
 //! is created via [`Dup`], the `Cow` clones share the underlying `Arc<Matrix>`
 //! until a mutation triggers a deep copy.
 //!
-//! ## Read Path
-//!
-//! ```text
-//!   get(i, j):
-//!     m has (i,j)?
-//!       yes --> dm has (i,j)?  -->  yes: None (deleted)
-//!                                   no:  Some(true)
-//!       no  --> dp has (i,j)?  -->  yes: Some(true)
-//!                                   no:  None
-//! ```
-//!
-//! ## Write Path
-//!
-//! ```text
-//!   set(i, j):
-//!     m has (i,j)?
-//!       yes --> remove (i,j) from dm   (un-delete)
-//!       no  --> add (i,j) to dp        (new addition)
-//!
-//!   remove(i, j):
-//!     m has (i,j)?
-//!       yes --> add (i,j) to dm        (mark deleted)
-//!       no  --> remove (i,j) from dp   (undo pending add)
-//! ```
-//!
 //! ## Flush
 //!
-//! When delta matrices exceed 10,000 entries, [`flush`](VersionedMatrix::flush)
-//! merges them into the base matrix (`dp` via element-wise add, `dm` via
-//! masked removal) and clears the deltas.
+//! When delta matrices exceed 10,000 entries, [`flush`](VersionedMatrixT::flush)
+//! merges them into the base matrix (`dp` via [`CellValue::fold`] — a
+//! value-preserving union — `dm` via masked removal) and clears the deltas.
 //!
-//! ## Iterator
+//! ## Iterators
 //!
-//! [`Iter`] chains the base matrix iterator (skipping entries present in `dm`)
-//! with the delta-plus iterator, producing the effective state without
-//! materializing a merged matrix.
+//! - [`Iter`] (from [`iter`](VersionedMatrixT::iter)) — the **scan** iterator:
+//!   chains the base matrix iterator (skipping entries present in `dm`) with the
+//!   delta-plus iterator, yielding `(row, col)`. Reads no cell value, so it works
+//!   for any `V`.
+//! - [`ValueIter`] (from [`iter_values`](VersionedMatrixT::iter_values), `u64`
+//!   only) — yields `(row, col, value)` for value-carrying matrices.
+
+use std::marker::PhantomData;
 
 use super::{
     GxB_Print_Level,
-    matrix::{self, Dup, Get, MaskedElementWiseAdd, Matrix, New, Remove, Set, Size, Transpose},
+    matrix::{
+        self, Dup, Get, MaskedElementWiseAdd, Matrix, New, Remove, Set, Size, Transpose,
+        Uint64Extract,
+    },
     serialization::{Decode, Encode, Reader, Writer},
 };
 use crate::graph::cow::Cow;
 
-/// A matrix with MVCC delta tracking for snapshot isolation.
-///
-/// Wraps a base matrix with separate matrices for tracking additions
-/// and deletions, enabling concurrent reads during writes.
-#[derive(Clone)]
-pub struct VersionedMatrix {
-    /// Base committed matrix
-    m: Cow<Matrix>,
-    /// Delta-plus: edges added in current transaction
-    dp: Cow<Matrix>,
-    /// Delta-minus: edges removed in current transaction
-    dm: Cow<Matrix>,
+/// The cell-value type of a [`VersionedMatrixT`]. Abstracts the few
+/// GraphBLAS-type-specific operations (base/delta-plus matrix constructor,
+/// element set, and the value-preserving delta-plus fold) so one MVCC
+/// matrix core serves both presence (`bool`) and value-carrying (`u64`) matrices.
+pub trait CellValue: Copy + 'static {
+    /// Construct an empty base / delta-plus matrix of this cell type.
+    fn new_matrix(
+        nrows: u64,
+        ncols: u64,
+    ) -> Matrix;
+    /// Set `(i, j) = value` in a base / delta-plus matrix of this cell type.
+    fn set(
+        m: &mut Matrix,
+        i: u64,
+        j: u64,
+        value: Self,
+    );
+    /// Fold `base = base ∪ delta_plus`, preserving values. `base` and `dp` never
+    /// share a cell (a `set` only writes `dp` when `base` lacks the cell), so
+    /// this is a pure value-preserving copy of `dp`'s entries into `base`.
+    fn fold(
+        base: &mut Matrix,
+        dp: &Matrix,
+    );
 }
 
-unsafe impl Send for VersionedMatrix {}
-unsafe impl Sync for VersionedMatrix {}
+impl CellValue for bool {
+    fn new_matrix(
+        nrows: u64,
+        ncols: u64,
+    ) -> Matrix {
+        Matrix::new(nrows, ncols)
+    }
 
-impl Size for VersionedMatrix {
+    fn set(
+        m: &mut Matrix,
+        i: u64,
+        j: u64,
+        value: bool,
+    ) {
+        m.set(i, j, value);
+    }
+
+    fn fold(
+        base: &mut Matrix,
+        dp: &Matrix,
+    ) {
+        // PAIR/BOOL union — the engine's long-standing presence fold.
+        base.element_wise_add(None, None, Some(dp), None);
+    }
+}
+
+impl CellValue for u64 {
+    fn new_matrix(
+        nrows: u64,
+        ncols: u64,
+    ) -> Matrix {
+        Matrix::new_uint64(nrows, ncols)
+    }
+
+    fn set(
+        m: &mut Matrix,
+        i: u64,
+        j: u64,
+        value: u64,
+    ) {
+        m.set_uint64(i, j, value);
+    }
+
+    fn fold(
+        base: &mut Matrix,
+        dp: &Matrix,
+    ) {
+        // Value-preserving union (ANY/SECOND over UINT64) — see
+        // `Matrix::element_wise_add_uint64`.
+        base.element_wise_add_uint64(dp);
+    }
+}
+
+/// A matrix with MVCC delta tracking for snapshot isolation, generic over the
+/// cell-value type `V`. See the module docs; [`VersionedMatrix`] is the `bool`
+/// alias used throughout the engine.
+#[derive(Clone)]
+pub struct VersionedMatrixT<V: CellValue = bool> {
+    /// Base committed matrix (cell type `V`).
+    m: Cow<Matrix>,
+    /// Delta-plus: entries added in the current transaction (cell type `V`).
+    dp: Cow<Matrix>,
+    /// Delta-minus: entries removed in the current transaction (always `BOOL`).
+    dm: Cow<Matrix>,
+    _v: PhantomData<V>,
+}
+
+/// The engine-wide presence matrix: adjacency, label, tensor, and node-index
+/// matrices. This is the only instantiation the engine outside the index uses.
+pub type VersionedMatrix = VersionedMatrixT<bool>;
+
+unsafe impl<V: CellValue> Send for VersionedMatrixT<V> {}
+unsafe impl<V: CellValue> Sync for VersionedMatrixT<V> {}
+
+impl<V: CellValue> Size for VersionedMatrixT<V> {
     fn nrows(&self) -> u64 {
         self.m.nrows()
     }
@@ -108,20 +189,22 @@ impl Size for VersionedMatrix {
     }
 }
 
-impl New for VersionedMatrix {
+impl<V: CellValue> New for VersionedMatrixT<V> {
     fn new(
         nrows: u64,
         ncols: u64,
     ) -> Self {
         Self {
-            m: Cow::new(Matrix::new(nrows, ncols)),
-            dp: Cow::new(Matrix::new(nrows, ncols)),
+            m: Cow::new(V::new_matrix(nrows, ncols)),
+            dp: Cow::new(V::new_matrix(nrows, ncols)),
+            // Deletion mask is structural: always BOOL.
             dm: Cow::new(Matrix::new(nrows, ncols)),
+            _v: PhantomData,
         }
     }
 }
 
-impl VersionedMatrix {
+impl<V: CellValue> VersionedMatrixT<V> {
     #[must_use]
     pub fn m(&self) -> &Matrix {
         &self.m
@@ -137,37 +220,30 @@ impl VersionedMatrix {
         &self.dm
     }
 
-    /// Wrap an owned `Matrix` as a `VersionedMatrix` with empty delta-plus /
-    /// delta-minus.  Used when callers materialize a merged matrix and then
-    /// want to expose it through the versioned-matrix iter API without the
-    /// dup overhead of re-building inside the versioned wrapper.
-    #[must_use]
-    pub fn from_matrix(m: Matrix) -> Self {
-        let nrows = m.nrows();
-        let ncols = m.ncols();
-        Self {
-            m: Cow::new(m),
-            dp: Cow::new(Matrix::new(nrows, ncols)),
-            dm: Cow::new(Matrix::new(nrows, ncols)),
+    /// Set `(i, j) = value`. If the cell is already in the committed base, this
+    /// only un-deletes it (the index never rewrites an existing cell's value —
+    /// updates tombstone the old cell and add a new one), so the base value is
+    /// authoritative; otherwise the value lands in delta-plus.
+    pub fn set_cell(
+        &mut self,
+        i: u64,
+        j: u64,
+        value: V,
+    ) {
+        debug_assert!(!self.m.pending());
+        if self.m.get(i, j).is_some() {
+            debug_assert!(self.dp.get(i, j).is_none());
+            self.dm.remove(i, j);
+        } else {
+            debug_assert!(self.dm.get(i, j).is_none());
+            V::set(&mut self.dp, i, j, value);
         }
     }
-}
 
-impl Dup<Self> for VersionedMatrix {
-    fn dup(&self) -> Self {
-        Self {
-            m: self.m.new_version(),
-            dp: self.dp.new_version(),
-            dm: self.dm.new_version(),
-        }
-    }
-}
-
-impl VersionedMatrix {
     pub fn flush(&mut self) {
         self.wait();
         if self.dp.nvals() >= 10000 {
-            self.m.element_wise_add(None, None, Some(&self.dp), None);
+            V::fold(&mut self.m, &self.dp);
             self.dp.clear();
         }
         if self.dm.nvals() >= 10000 {
@@ -213,6 +289,83 @@ impl VersionedMatrix {
         Iter::new(self, min_row, max_row)
     }
 
+    pub fn print(
+        &self,
+        level: GxB_Print_Level,
+    ) {
+        self.m.print(level);
+        self.dp.print(level);
+        self.dm.print(level);
+    }
+}
+
+impl<V: CellValue> Dup<Self> for VersionedMatrixT<V> {
+    fn dup(&self) -> Self {
+        Self {
+            m: self.m.new_version(),
+            dp: self.dp.new_version(),
+            dm: self.dm.new_version(),
+            _v: PhantomData,
+        }
+    }
+}
+
+impl<V: CellValue> Remove for VersionedMatrixT<V> {
+    fn remove(
+        &mut self,
+        i: u64,
+        j: u64,
+    ) {
+        if self.m.get(i, j).is_some() {
+            debug_assert!(self.dp.get(i, j).is_none());
+            self.dm.set(i, j, true);
+        } else {
+            self.dp.remove(i, j);
+        }
+    }
+}
+
+impl<V: CellValue> Get for VersionedMatrixT<V> {
+    fn get(
+        &self,
+        i: u64,
+        j: u64,
+    ) -> Option<bool> {
+        self.wait();
+        self.m.get(i, j).map_or_else(
+            || self.dp.get(i, j),
+            |value| {
+                if self.dm.get(i, j).is_some() {
+                    None
+                } else {
+                    Some(value)
+                }
+            },
+        )
+    }
+}
+
+// --- `bool`-only API used by the engine (adjacency / tensor / label matrices).
+// These keep the presence-matrix surface unchanged; the alias `VersionedMatrix`
+// resolves to `VersionedMatrixT<bool>`, so every existing caller is unaffected.
+
+impl VersionedMatrix {
+    /// Wrap an owned `Matrix` as a `VersionedMatrix` with empty delta-plus /
+    /// delta-minus.  Used when callers materialize a merged matrix and then
+    /// want to expose it through the versioned-matrix iter API without the
+    /// dup overhead of re-building inside the versioned wrapper.
+    #[must_use]
+    pub fn from_matrix(m: Matrix) -> Self {
+        let nrows = m.nrows();
+        let ncols = m.ncols();
+        Self {
+            m: Cow::new(m),
+            dp: Cow::new(Matrix::new(nrows, ncols)),
+            dm: Cow::new(Matrix::new(nrows, ncols)),
+            _v: PhantomData,
+        }
+    }
+
     #[must_use]
     pub fn to_matrix(&self) -> Matrix {
         self.wait();
@@ -224,15 +377,6 @@ impl VersionedMatrix {
             m.element_wise_add(None, None, Some(&self.dp), None);
         }
         m
-    }
-
-    pub fn print(
-        &self,
-        level: GxB_Print_Level,
-    ) {
-        self.m.print(level);
-        self.dp.print(level);
-        self.dm.print(level);
     }
 
     #[must_use]
@@ -317,62 +461,7 @@ impl VersionedMatrix {
     pub fn uint64_iter(&self) -> impl Iterator<Item = (u64, u64, u64)> + '_ {
         self.m.uint64_iter().chain(self.dp.uint64_iter())
     }
-}
 
-impl Remove for VersionedMatrix {
-    fn remove(
-        &mut self,
-        i: u64,
-        j: u64,
-    ) {
-        if self.m.get(i, j).is_some() {
-            debug_assert!(self.dp.get(i, j).is_none());
-            self.dm.set(i, j, true);
-        } else {
-            self.dp.remove(i, j);
-        }
-    }
-}
-
-impl Get for VersionedMatrix {
-    fn get(
-        &self,
-        i: u64,
-        j: u64,
-    ) -> Option<bool> {
-        self.wait();
-        self.m.get(i, j).map_or_else(
-            || self.dp.get(i, j),
-            |value| {
-                if self.dm.get(i, j).is_some() {
-                    None
-                } else {
-                    Some(value)
-                }
-            },
-        )
-    }
-}
-
-impl Set for VersionedMatrix {
-    fn set(
-        &mut self,
-        i: u64,
-        j: u64,
-        value: bool,
-    ) {
-        debug_assert!(!self.m.pending());
-        if self.m.get(i, j).is_some() {
-            debug_assert!(self.dp.get(i, j).is_none());
-            self.dm.remove(i, j);
-        } else {
-            debug_assert!(self.dm.get(i, j).is_none());
-            self.dp.set(i, j, value);
-        }
-    }
-}
-
-impl VersionedMatrix {
     /// Set multiple entries, checking dm emptiness once upfront.
     ///
     /// If dm is empty, uses the fast path (1 FFI call per entry).
@@ -387,9 +476,21 @@ impl VersionedMatrix {
             }
         } else {
             for (i, j) in entries {
-                self.set(i, j, true);
+                self.set_cell(i, j, true);
             }
         }
+    }
+}
+
+impl Set for VersionedMatrix {
+    fn set(
+        &mut self,
+        i: u64,
+        j: u64,
+        value: bool,
+    ) {
+        // Engine entry point (`.set(..)`); the typed core lives in `set_cell`.
+        self.set_cell(i, j, value);
     }
 }
 
@@ -406,6 +507,7 @@ where
             m: Cow::new(self.m.transpose()),
             dp: Cow::new(self.dp.transpose()),
             dm: Cow::new(self.dm.transpose()),
+            _v: PhantomData,
         }
     }
 }
@@ -430,10 +532,32 @@ impl Decode<19> for VersionedMatrix {
             m: Cow::new(m),
             dp: Cow::new(dp),
             dm: Cow::new(dm),
+            _v: PhantomData,
         })
     }
 }
 
+// --- `u64`-only API used by the edge index (value-carrying cells).
+
+impl VersionedMatrixT<u64> {
+    /// Iterate the effective `(row, col, value)` triples whose row is in
+    /// `[min_row, max_row]`. The edge index uses this to read each matched
+    /// edge's packed `(src, dst)` endpoints directly from the cell, so a scan
+    /// yields endpoints inline with no separate resolution structure.
+    #[must_use]
+    pub fn iter_values(
+        &self,
+        min_row: u64,
+        max_row: u64,
+    ) -> ValueIter {
+        self.wait();
+        ValueIter::new(self, min_row, max_row)
+    }
+}
+
+/// Scan iterator: chains the base matrix iterator (skipping entries present in
+/// `dm`) with the delta-plus iterator, yielding `(row, col)`. Reads no value, so
+/// it is valid for any cell type.
 pub struct Iter {
     mit: matrix::Iter,
     dpit: matrix::Iter,
@@ -449,15 +573,10 @@ unsafe impl Send for Iter {}
 unsafe impl Sync for Iter {}
 
 impl Iter {
-    /// Creates a new iterator for traversing all elements in a matrix.
-    ///
-    /// # Parameters
-    /// - `m`: The matrix to iterate over.
-    /// - `min_row`: The minimum row index to start iterating from.
-    /// - `max_row`: The maximum row index to stop iterating at.
+    /// Creates a new scan iterator over `[min_row, max_row]`.
     #[must_use]
-    pub fn new(
-        m: &VersionedMatrix,
+    pub fn new<V: CellValue>(
+        m: &VersionedMatrixT<V>,
         min_row: u64,
         max_row: u64,
     ) -> Self {
@@ -489,11 +608,6 @@ impl Iter {
 impl Iterator for Iter {
     type Item = (u64, u64);
 
-    /// Advances the iterator and returns the next element in the matrix.
-    ///
-    /// # Returns
-    /// - `Some((u64, u64))`: The next element in the matrix.
-    /// - `None`: The iterator is depleted.
     fn next(&mut self) -> Option<Self::Item> {
         if self.dm_empty {
             if let Some(item) = self.mit.next() {
@@ -507,6 +621,70 @@ impl Iterator for Iter {
         for (i, j) in &mut self.mit {
             if self.dm.get(i, j).is_none() {
                 return Some((i, j));
+            }
+        }
+        self.dpit.next()
+    }
+}
+
+/// Value-yielding iterator over a `u64` versioned matrix: chains base + delta-plus
+/// `(row, col, value)` triples, skipping entries present in `dm`.
+pub struct ValueIter {
+    mit: matrix::Iter<Uint64Extract>,
+    dpit: matrix::Iter<Uint64Extract>,
+    dm: Cow<Matrix>,
+    dm_empty: bool,
+    dp_empty: bool,
+}
+
+unsafe impl Send for ValueIter {}
+unsafe impl Sync for ValueIter {}
+
+impl ValueIter {
+    #[must_use]
+    fn new(
+        m: &VersionedMatrixT<u64>,
+        min_row: u64,
+        max_row: u64,
+    ) -> Self {
+        let dm_empty = m.dm.nvals() == 0;
+        let dp_empty = m.dp.nvals() == 0;
+        Self {
+            mit: m.m.iter_values(min_row, max_row),
+            dpit: m.dp.iter_values(min_row, max_row),
+            dm: m.dm.clone(),
+            dm_empty,
+            dp_empty,
+        }
+    }
+
+    /// Re-seek both inner iterators to a new row range without re-allocating.
+    pub fn seek(
+        &mut self,
+        min_row: u64,
+        max_row: u64,
+    ) {
+        self.mit.seek(min_row, max_row);
+        self.dpit.seek(min_row, max_row);
+    }
+}
+
+impl Iterator for ValueIter {
+    type Item = (u64, u64, u64);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.dm_empty {
+            if let Some(item) = self.mit.next() {
+                return Some(item);
+            }
+            if self.dp_empty {
+                return None;
+            }
+            return self.dpit.next();
+        }
+        for (i, j, v) in &mut self.mit {
+            if self.dm.get(i, j).is_none() {
+                return Some((i, j, v));
             }
         }
         self.dpit.next()

@@ -89,9 +89,11 @@ use super::{
     GrB_Matrix_get_INT32, GrB_Matrix_ncols, GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals,
     GrB_Matrix_removeElement, GrB_Matrix_resize, GrB_Matrix_setElement_BOOL,
     GrB_Matrix_setElement_UINT64, GrB_Matrix_wait, GrB_Mode, GrB_UINT64, GrB_WaitMode,
-    GrB_finalize, GrB_mxm, GrB_transpose, GxB_ANY_BOOL, GxB_ANY_PAIR_BOOL, GxB_ANY_UINT64,
+    GrB_finalize, GrB_mxm, GrB_transpose, GxB_ANY_BOOL, GxB_ANY_PAIR_BOOL, GxB_ANY_SECOND_UINT64,
+    GxB_ANY_UINT64,
     GxB_Container_free, GxB_Container_new, GxB_Global_Option_set_INT32, GxB_Iterator,
-    GxB_Iterator_free, GxB_Iterator_new, GxB_JIT_Control, GxB_Matrix_fprint,
+    GxB_Iterator_free, GxB_Iterator_get_UINT64, GxB_Iterator_new, GxB_JIT_Control,
+    GxB_Matrix_fprint,
     GxB_Matrix_memoryUsage, GxB_Matrix_type, GxB_NTHREADS, GxB_Option_Field, GxB_Print_Level,
     GxB_init, GxB_load_Matrix_from_Container, GxB_rowIterator_attach, GxB_rowIterator_getColIndex,
     GxB_rowIterator_getRowIndex, GxB_rowIterator_nextCol, GxB_rowIterator_nextRow,
@@ -322,6 +324,37 @@ impl MaskedElementWiseAdd for Matrix {
                 a.map_or(*self.m, |a| *a.m),
                 b.map_or(*self.m, |b| *b.m),
                 descriptor.map_or(null_mut(), std::convert::Into::into),
+            );
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+        self.has_pending.store(true, Ordering::Relaxed);
+    }
+}
+
+impl Matrix {
+    /// Value-preserving union `self = self ∪ other` for **UINT64** matrices,
+    /// used to fold a versioned matrix's delta-plus into its base without
+    /// clobbering the stored values.
+    ///
+    /// The bool [`MaskedElementWiseAdd::element_wise_add`] hardcodes
+    /// `GxB_ANY_PAIR_BOOL`, whose `PAIR` multiply and bool domain typecast every
+    /// cell to `1` — fine for presence matrices, fatal for value-carrying ones.
+    /// Here the additive monoid is `GxB_ANY_UINT64` over the `SECOND` semiring,
+    /// so non-overlapping entries (the only case: `m` and `dp` never share a
+    /// cell) are copied through with their `u64` value intact.
+    pub fn element_wise_add_uint64(
+        &mut self,
+        other: &Matrix,
+    ) {
+        unsafe {
+            let info = GrB_Matrix_eWiseAdd_Semiring(
+                *self.m,
+                null_mut(),
+                GxB_ANY_UINT64,
+                GxB_ANY_SECOND_UINT64,
+                *self.m,
+                *other.m,
+                null_mut(),
             );
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
@@ -1000,6 +1033,18 @@ impl Matrix {
         Iter::new(self, min_row, max_row)
     }
 
+    /// Iterate `(row, col, value)` triples whose row is in `[min_row, max_row]`,
+    /// extracting the UINT64 cell value. The ranged counterpart of
+    /// [`Self::uint64_iter`], used by value-carrying versioned matrices.
+    #[must_use]
+    pub fn iter_values(
+        &self,
+        min_row: u64,
+        max_row: u64,
+    ) -> Iter<Uint64Extract> {
+        Iter::new(self, min_row, max_row)
+    }
+
     pub fn print(
         &self,
         level: GxB_Print_Level,
@@ -1178,9 +1223,10 @@ pub trait IterExtract {
     /// Extract the item from the current iterator position.
     ///
     /// # Safety
-    /// `m` must be a valid `GrB_Matrix` and the iterator must be positioned on a valid entry.
+    /// `iter` must be a valid `GxB_Iterator` positioned on a valid entry; `row`
+    /// and `col` are that entry's coordinates (already read by the caller).
     unsafe fn extract(
-        m: GrB_Matrix,
+        iter: GxB_Iterator,
         row: u64,
         col: u64,
     ) -> Self::Item;
@@ -1193,7 +1239,7 @@ impl IterExtract for BoolExtract {
     type Item = (u64, u64);
 
     unsafe fn extract(
-        _m: GrB_Matrix,
+        _iter: GxB_Iterator,
         row: u64,
         col: u64,
     ) -> Self::Item {
@@ -1208,12 +1254,14 @@ impl IterExtract for Uint64Extract {
     type Item = (u64, u64, u64);
 
     unsafe fn extract(
-        m: GrB_Matrix,
+        iter: GxB_Iterator,
         row: u64,
         col: u64,
     ) -> Self::Item {
-        let mut val: u64 = 0;
-        unsafe { GrB_Matrix_extractElement_UINT64(&raw mut val, m, row, col) };
+        // Read the value at the iterator's current position — O(1), no random
+        // `extractElement` lookup (the difference between a sequential scan and
+        // a random-access one on large matrices).
+        let val = unsafe { GxB_Iterator_get_UINT64(iter) };
         (row, col, val)
     }
 }
@@ -1335,7 +1383,7 @@ impl<E: IterExtract> Iterator for Iter<E> {
         unsafe {
             let row = GxB_rowIterator_getRowIndex(self.inner);
             let col = GxB_rowIterator_getColIndex(self.inner);
-            let item = E::extract(*self.m, row, col);
+            let item = E::extract(self.inner, row, col);
             if GxB_rowIterator_nextCol(self.inner) != GrB_Info::GrB_SUCCESS {
                 let mut info = GxB_rowIterator_nextRow(self.inner);
                 debug_assert!(
