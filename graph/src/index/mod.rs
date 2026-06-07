@@ -48,6 +48,13 @@ pub mod indexer;
 pub mod redisearch;
 pub mod text_index_options;
 pub mod vector_index_options;
+
+/// Native MVCC index subsystem (the RediSearch replacement). Gated behind the
+/// `index-native` Cargo feature (OFF by default), so the default build is
+/// unaffected.
+#[cfg(feature = "index-native")]
+pub mod native;
+
 pub use text_index_options::TextIndexOptions;
 pub use vector_index_options::VectorIndexOptions;
 
