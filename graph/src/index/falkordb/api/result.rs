@@ -3,7 +3,7 @@
 
 use std::sync::{Arc, atomic::AtomicBool};
 
-use crate::index::native::id::DocKey;
+use crate::index::falkordb::id::DocKey;
 
 /// One read result (query-api §1).
 #[derive(Debug, Clone, Copy, PartialEq)]

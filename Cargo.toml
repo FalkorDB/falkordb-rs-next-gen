@@ -49,6 +49,11 @@ lto = true
 
 [features]
 fuzz = []
+# Native MVCC index subsystem (RediSearch replacement). Forwards to the `graph`
+# crate's feature of the same name; OFF by default so the shipped build is
+# unchanged. Build the module with `--features index-falkordb` to route numeric
+# node indexes through the native path.
+index-falkordb = ["graph/index-falkordb"]
 # Drive GraphBLAS at GxB_JIT_ON (full JIT including compile-on-demand) so the
 # JIT cache populates as we exercise the test suite. Consumed by graph's
 # matrix.rs and forwarded by gen_prejit.sh; never enable in shipped builds —

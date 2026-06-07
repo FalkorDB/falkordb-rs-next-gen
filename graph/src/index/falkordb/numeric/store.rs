@@ -1,7 +1,18 @@
 //! In-RAM logical-MVCC store for the numeric POC, built on the engine's
-//! GraphBLAS [`VersionedMatrix`] — the design's shared "matrix core" (R12,
+//! GraphBLAS [`VersionedMatrixT`] — the design's shared "matrix core" (R12,
 //! `01-mvcc-core.md` §2) — using an **order-preserving banded layout** that
 //! maps the encoder's full-`u64` row keys onto legal matrix indices.
+//!
+//! # Typed cells
+//!
+//! The store is generic over the matrix cell type [`CellValue`]:
+//!
+//! - `MatrixStore<bool>` — node indexes. The cell is mere **presence**; a scan
+//!   yields the matching doc (node) id.
+//! - `MatrixStore<u64>` — edge indexes. The cell **packs the edge's `(src, dst)`
+//!   endpoints** ([`compound_key`]); a value scan yields `(edge_id, endpoints)`
+//!   inline, so the index *is* the endpoint store — no second structure, no
+//!   resolution hop.
 //!
 //! # Why banding
 //!
@@ -16,21 +27,17 @@
 //!   row  = key &  ROW_MASK      (the low 60 bits → a legal matrix index)
 //! ```
 //!
-//! Each band is its own [`VersionedMatrix`]; band *b* covers the contiguous key
+//! Each band is its own [`VersionedMatrixT`]; band *b* covers the contiguous key
 //! interval `[b·2^BAND_BITS, (b+1)·2^BAND_BITS)`. Because the row index *is* the
 //! key's low bits, **rows are stored in key order**: a range query is a
 //! contiguous matrix row-sweep (`iter(lo_row, hi_row)`), not a per-value
 //! dictionary lookup. A range that crosses band boundaries fans out to one
 //! contiguous sweep per band it touches (≤ [`NUM_BANDS`] of them).
 //!
-//! `BAND_BITS` is the single knob: `60` gives 16 bands of `2^60` rows (covering
-//! the full `u64`); the row/column matrix dimension is `2^BAND_BITS`, the
-//! smallest power of two that holds every legal row.
-//!
 //! # MVCC
 //!
 //! - The [`NUM_BANDS`] matrices are versioned **together** as one [`Snapshot`]
-//!   (`Arc<[VersionedMatrix; NUM_BANDS]>`). A reader pins the whole array
+//!   (`Arc<[VersionedMatrixT<V>; NUM_BANDS]>`). A reader pins the whole array
 //!   (mechanism A) and never locks during the scan; the writer `dup()`s every
 //!   band (each a cheap Cow `new_version`), mutates the touched ones, and swaps
 //!   the `Arc` — exactly the engine's graph-level isolation pattern. Old readers
@@ -48,9 +55,11 @@ use std::sync::Arc;
 
 use parking_lot::{Mutex, RwLock};
 
-use crate::graph::graphblas::matrix::{Dup, New, Remove, Set};
-use crate::graph::graphblas::versioned_matrix::{Iter as MatrixIter, VersionedMatrix};
-use crate::index::native::id::DocKey;
+use crate::graph::graphblas::matrix::{Dup, New, Remove};
+use crate::graph::graphblas::versioned_matrix::{
+    CellValue, Iter as MatrixIter, ValueIter as MatrixValueIter, VersionedMatrixT,
+};
+use crate::index::falkordb::id::DocKey;
 
 /// Low bits of an encoded key used as the matrix row index. `60` keeps each row
 /// within GraphBLAS's `< 2^60` index limit while needing only the minimum number
@@ -90,23 +99,23 @@ fn row_of(key: u64) -> u64 {
 }
 
 /// The [`NUM_BANDS`] band matrices that make up one logical index version.
-type Bands = [VersionedMatrix; NUM_BANDS];
+type Bands<V> = [VersionedMatrixT<V>; NUM_BANDS];
 
 /// One published, immutable index version — what a reader pins (mechanism A).
 /// All bands are shared behind a single `Arc`, so a snapshot is atomic across
 /// bands; each band's internal `Cow` isolates committed bytes from the writer's
 /// in-progress next version.
-pub(crate) type Snapshot = Arc<Bands>;
+pub(crate) type Snapshot<V> = Arc<Bands<V>>;
 
 /// A fresh, empty set of band matrices, each [`ROW_DIM`] × [`DOC_DIM`]
 /// (hypersparse — no dense allocation).
-fn new_bands() -> Bands {
-    std::array::from_fn(|_| VersionedMatrix::new(ROW_DIM, DOC_DIM))
+fn new_bands<V: CellValue>() -> Bands<V> {
+    std::array::from_fn(|_| VersionedMatrixT::<V>::new(ROW_DIM, DOC_DIM))
 }
 
 /// Copy-on-write dup of every band (each a cheap Cow `new_version`): the next
 /// version shares all committed bytes until a band is mutated.
-fn dup_bands(bands: &Bands) -> Bands {
+fn dup_bands<V: CellValue>(bands: &Bands<V>) -> Bands<V> {
     std::array::from_fn(|i| bands[i].dup())
 }
 
@@ -124,11 +133,12 @@ struct Writer {
 }
 
 /// The numeric POC's logical-MVCC store: a banded, order-preserving
-/// `(row, doc)` matrix set plus writer-only bookkeeping.
-pub(crate) struct MatrixStore {
+/// `(row, doc) → cell` matrix set plus writer-only bookkeeping, generic over the
+/// cell type `V` (presence for nodes, packed endpoints for edges).
+pub(crate) struct MatrixStore<V: CellValue> {
     /// Latest committed band matrices. Swapped per commit; readers clone the
     /// `Arc` to pin their version.
-    committed: RwLock<Snapshot>,
+    committed: RwLock<Snapshot<V>>,
     /// Serialized writer state.
     ///
     /// A commit is a read-modify-write — snapshot the latest version, apply the
@@ -146,17 +156,17 @@ pub(crate) struct MatrixStore {
     writer: Mutex<Writer>,
 }
 
-impl Default for MatrixStore {
+impl<V: CellValue> Default for MatrixStore<V> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl MatrixStore {
+impl<V: CellValue> MatrixStore<V> {
     /// A fresh, empty store at version 0.
     pub(crate) fn new() -> Self {
         Self {
-            committed: RwLock::new(Arc::new(new_bands())),
+            committed: RwLock::new(Arc::new(new_bands::<V>())),
             writer: Mutex::new(Writer {
                 reverse_id_row_mapping: HashMap::new(),
                 version: 0,
@@ -166,7 +176,7 @@ impl MatrixStore {
 
     /// An `Arc` share of the latest committed bands — the immutable view a
     /// reader scans (mechanism A). Cheap: one `Arc` clone, no lock held after.
-    pub(crate) fn snapshot(&self) -> Snapshot {
+    pub(crate) fn snapshot(&self) -> Snapshot<V> {
         Arc::clone(&self.committed.read())
     }
 
@@ -181,20 +191,22 @@ impl MatrixStore {
         self.committed
             .read()
             .iter()
-            .map(VersionedMatrix::memory_usage)
+            .map(VersionedMatrixT::<V>::memory_usage)
             .sum()
     }
 
     /// Apply one commit's mutations, publishing a new immutable version at
-    /// `version`. `adds` are `(doc, encoded row keys)`; `remove` are docs whose
-    /// every cell is cleared. A doc in `adds` is tombstoned first (so
-    /// re-indexing a changed value moves it to its new rows rather than
-    /// accumulating stale ones), making the operation safe whether or not the
-    /// caller also listed it in `remove`.
+    /// `version`. Each add is `(doc, encoded row keys, cell value)`: the cell
+    /// value is presence (`true`) for node indexes and the doc's packed
+    /// endpoints for edge indexes — the same value is written at every one of the
+    /// doc's rows. `remove` are docs whose every cell is cleared. A doc in `adds`
+    /// is tombstoned first (so re-indexing a changed value moves it to its new
+    /// rows rather than accumulating stale ones), making the operation safe
+    /// whether or not the caller also listed it in `remove`.
     pub(crate) fn commit(
         &self,
         version: u64,
-        adds: &[(DocKey, Vec<u64>)],
+        adds: &[(DocKey, Vec<u64>, V)],
         remove: &[DocKey],
     ) {
         // Serialize the whole commit (single writer).
@@ -218,7 +230,7 @@ impl MatrixStore {
         }
 
         // Additions: tombstone the doc's prior placement, then set its new rows.
-        for (doc, keys) in adds {
+        for (doc, keys, cell) in adds {
             if let Some(prev) = w.reverse_id_row_mapping.remove(doc) {
                 for k in prev {
                     next[band_of(k)].remove(row_of(k), *doc);
@@ -228,7 +240,7 @@ impl MatrixStore {
                 continue;
             }
             for &k in keys {
-                next[band_of(k)].set(row_of(k), *doc, true);
+                next[band_of(k)].set_cell(row_of(k), *doc, *cell);
             }
             // Dedup so an array repeating a value records each row once.
             let mut owned = keys.clone();
@@ -249,7 +261,8 @@ impl MatrixStore {
 }
 
 /// A lazy, `Send`, self-contained cursor over the docs whose encoded key falls
-/// in the inclusive range `[lo, hi]` of one pinned snapshot.
+/// in the inclusive range `[lo, hi]` of one pinned snapshot — the **scan** form
+/// (presence only), used by node indexes.
 ///
 /// It **owns** a [`Snapshot`] share (so it is `Send` and reclaims by `Arc`-drop
 /// — no borrow of the store, no lock held). Because rows are key-ordered, the
@@ -258,8 +271,8 @@ impl MatrixStore {
 /// band's slice of the range, and yields each `(row, doc)` cell's doc id. A doc
 /// indexed under several in-range keys (an array property) is yielded once per
 /// occupied row; the scan layer dedups.
-pub(crate) struct MatrixRangeCursor {
-    bands: Snapshot,
+pub(crate) struct MatrixRangeCursor<V: CellValue> {
+    bands: Snapshot<V>,
     lo: u64,
     hi: u64,
     /// First and last band the range touches (inclusive).
@@ -272,11 +285,11 @@ pub(crate) struct MatrixRangeCursor {
     done: bool,
 }
 
-impl MatrixRangeCursor {
+impl<V: CellValue> MatrixRangeCursor<V> {
     /// A cursor over `bands` restricted to the inclusive encoded-key range
     /// `[lo, hi]`. An empty range (`lo > hi`) yields nothing.
     pub(crate) fn new(
-        bands: Snapshot,
+        bands: Snapshot<V>,
         lo: u64,
         hi: u64,
     ) -> Self {
@@ -337,22 +350,95 @@ impl MatrixRangeCursor {
     }
 }
 
+/// The **value** form of [`MatrixRangeCursor`], used by edge indexes: yields
+/// `(doc, cell_value)` so the matched edge's packed `(src, dst)` endpoints come
+/// straight from the index cell — no separate resolution structure. Only
+/// available for `u64` (value-carrying) stores.
+pub(crate) struct ValueRangeCursor {
+    bands: Snapshot<u64>,
+    lo: u64,
+    hi: u64,
+    band_lo: usize,
+    band_hi: usize,
+    band: usize,
+    iter: Option<MatrixValueIter>,
+    done: bool,
+}
+
+impl ValueRangeCursor {
+    pub(crate) fn new(
+        bands: Snapshot<u64>,
+        lo: u64,
+        hi: u64,
+    ) -> Self {
+        let done = lo > hi;
+        let band_lo = band_of(lo);
+        let band_hi = band_of(hi);
+        Self {
+            bands,
+            lo,
+            hi,
+            band_lo,
+            band_hi,
+            band: band_lo,
+            iter: None,
+            done,
+        }
+    }
+
+    /// The next `(doc, value)` in range, or `None` when exhausted.
+    pub(crate) fn next_value(&mut self) -> Option<(DocKey, u64)> {
+        loop {
+            if self.done {
+                return None;
+            }
+            match self.iter.as_mut() {
+                Some(it) => match it.next() {
+                    Some((_row, doc, value)) => return Some((doc, value)),
+                    None => {
+                        self.iter = None;
+                        self.band += 1;
+                    }
+                },
+                None => {
+                    if self.band > self.band_hi {
+                        self.done = true;
+                        return None;
+                    }
+                    let start = if self.band == self.band_lo {
+                        row_of(self.lo)
+                    } else {
+                        0
+                    };
+                    let end = if self.band == self.band_hi {
+                        row_of(self.hi)
+                    } else {
+                        ROW_MASK
+                    };
+                    self.iter = Some(self.bands[self.band].iter_values(start, end));
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Commit `pairs` (doc → encoded keys) at version 1 into a fresh store.
-    fn store_with(pairs: &[(DocKey, &[u64])]) -> MatrixStore {
-        crate::index::native::test_init_graphblas();
-        let s = MatrixStore::new();
-        let adds: Vec<(DocKey, Vec<u64>)> = pairs.iter().map(|(d, ks)| (*d, ks.to_vec())).collect();
+    /// Commit `pairs` (doc → encoded keys) at version 1 into a fresh node store.
+    fn store_with(pairs: &[(DocKey, &[u64])]) -> MatrixStore<bool> {
+        crate::index::falkordb::test_init_graphblas();
+        let s = MatrixStore::<bool>::new();
+        let adds: Vec<(DocKey, Vec<u64>, bool)> =
+            pairs.iter().map(|(d, ks)| (*d, ks.to_vec(), true)).collect();
         s.commit(1, &adds, &[]);
         s
     }
 
     /// Collect, sorted, the docs whose key falls in `[lo, hi]` of `snap`.
     fn collect(
-        snap: &Snapshot,
+        snap: &Snapshot<bool>,
         lo: u64,
         hi: u64,
     ) -> Vec<DocKey> {
@@ -419,7 +505,7 @@ mod tests {
         let s = store_with(&[(7, &[10])]);
         // Re-index doc 7 under a new key; the old row must be vacated even though
         // the caller did not list 7 in `remove`.
-        s.commit(2, &[(7, vec![20])], &[]);
+        s.commit(2, &[(7, vec![20], true)], &[]);
         let snap = s.snapshot();
         assert_eq!(collect(&snap, 10, 10), Vec::<DocKey>::new());
         assert_eq!(collect(&snap, 20, 20), vec![7]);
@@ -429,7 +515,7 @@ mod tests {
     fn reader_snapshot_is_isolated_from_later_commit() {
         let s = store_with(&[(7, &[10])]);
         let old = s.snapshot(); // pin version 1
-        s.commit(2, &[(8, vec![10])], &[]); // add doc 8 at the same key/row
+        s.commit(2, &[(8, vec![10], true)], &[]); // add doc 8 at the same key/row
         let new = s.snapshot();
         assert_eq!(collect(&old, 10, 10), vec![7]); // old reader unaffected
         assert_eq!(collect(&new, 10, 10), vec![7, 8]); // new reader sees add
@@ -440,11 +526,11 @@ mod tests {
     fn interleaved_inserts_preserve_key_order() {
         // Insert out of key order across commits; ranges must still be correct
         // because rows are stored in key order regardless of insertion order.
-        crate::index::native::test_init_graphblas();
-        let s = MatrixStore::new();
-        s.commit(1, &[(1, vec![50])], &[]);
-        s.commit(2, &[(2, vec![10])], &[]);
-        s.commit(3, &[(3, vec![30])], &[]);
+        crate::index::falkordb::test_init_graphblas();
+        let s = MatrixStore::<bool>::new();
+        s.commit(1, &[(1, vec![50], true)], &[]);
+        s.commit(2, &[(2, vec![10], true)], &[]);
+        s.commit(3, &[(3, vec![30], true)], &[]);
         let snap = s.snapshot();
         assert_eq!(collect(&snap, 10, 30), vec![2, 3]);
         assert_eq!(collect(&snap, 0, 100), vec![1, 2, 3]);
@@ -470,4 +556,31 @@ mod tests {
         // Band 0 only (up to its top row).
         assert_eq!(collect(&snap, key(0, 0), key(0, ROW_MASK)), vec![100]);
     }
+
+    /// Edge (`u64`) store: the cell packs an opaque value that a value scan
+    /// returns inline with each matched doc.
+    #[test]
+    fn value_store_yields_packed_cell() {
+        crate::index::falkordb::test_init_graphblas();
+        let s = MatrixStore::<u64>::new();
+        // (doc, keys, packed-endpoints).
+        s.commit(
+            1,
+            &[(5, vec![10], 0xAAAA_BBBB), (9, vec![20], 0x1111_2222)],
+            &[],
+        );
+        let snap = s.snapshot();
+        let mut c = ValueRangeCursor::new(Arc::clone(&snap), 0, 100);
+        let mut got = Vec::new();
+        while let Some(dv) = c.next_value() {
+            got.push(dv);
+        }
+        got.sort_unstable();
+        assert_eq!(got, vec![(5, 0xAAAA_BBBB), (9, 0x1111_2222)]);
+        // Point lookup returns the one doc + its packed value.
+        let mut c = ValueRangeCursor::new(Arc::clone(&snap), 20, 20);
+        assert_eq!(c.next_value(), Some((9, 0x1111_2222)));
+        assert_eq!(c.next_value(), None);
+    }
+
 }

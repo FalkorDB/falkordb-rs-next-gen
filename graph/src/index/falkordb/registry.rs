@@ -5,7 +5,7 @@
 //! [`NullBackend`] + [`AllHot`]. The enterprise repo calls it once at module
 //! init with its disk-backed `FjallBackend` + `TieredResidency` — so the OSS
 //! manifest never names the closed-source crate, and everything stays
-//! statically linked into the single `.so`. The `index-native` Cargo feature
+//! statically linked into the single `.so`. The `index-falkordb` Cargo feature
 //! only decides whether this seam is compiled in; it does not name the impls.
 
 use std::sync::{Arc, OnceLock};

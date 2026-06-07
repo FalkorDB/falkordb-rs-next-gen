@@ -8,7 +8,7 @@
 //! `Box<dyn IndexScan + 'q>`. It never materializes an independent owned result
 //! set; it reads the committed snapshot the query already pins.
 
-use crate::index::native::error::Result;
+use crate::index::falkordb::error::Result;
 
 use super::result::IndexHit;
 

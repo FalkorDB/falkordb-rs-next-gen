@@ -2,7 +2,7 @@
 //! [`Keyspace`]s, and the append-only [`WalRecord`] / [`WalOp`] shapes
 //! (durability §2.2, §6.1).
 
-use crate::index::native::id::DocKey;
+use crate::index::falkordb::id::DocKey;
 
 /// A matrix cell value: membership (`bool`) or a packed scalar (`u64`).
 /// Anything richer lives in the payload store

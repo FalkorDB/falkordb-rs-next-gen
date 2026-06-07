@@ -4,18 +4,26 @@
 //!
 //! [`NumericIndex`] is one structure (index × field × entity-kind) over the
 //! in-RAM [`MatrixStore`] core — an order-preserving banded set of GraphBLAS
-//! `VersionedMatrix`es. It encodes values to sortable `u64` row keys via
+//! `VersionedMatrixT`es. It encodes values to sortable `u64` row keys via
 //! [`NumericEncoder`], applies graph-commit mutations through the store's
 //! copy-on-write `commit`, and answers [`crate::index::IndexQuery`] predicates
 //! by lowering them onto inclusive encoded-key ranges, which the store resolves
-//! to matrix rows scanned by [`MatrixRangeCursor`].
+//! to matrix rows scanned by a cursor.
 //!
-//! Reads follow mechanism A: [`query`](NumericIndex::query) pins an `Arc` share
-//! of the latest committed matrix, then hands back a [`NumericScan`] that owns
-//! the share — `'q`-scoped, `Send`, reclaimed by `Arc`-drop, holding no lock
-//! across the scan. The disk backend (WAL/checkpoint) and RAM↔disk tiering are
-//! enterprise concerns layered on in later milestones; this is the OSS in-RAM
-//! path (rebuilds on restart).
+//! # Typed by entity
+//!
+//! The store's cell type is chosen by entity kind:
+//!
+//! - **Node** indexes use `MatrixStore<bool>` — a presence matrix; a scan yields
+//!   matching node ids ([`NumericScan`]).
+//! - **Edge** indexes use `MatrixStore<u64>` — the cell packs the edge's
+//!   `(src, dst)` endpoints, so a value scan yields the `(src, dst, edge_id)`
+//!   triple inline ([`EdgeScan`]) with no separate endpoint-resolution structure.
+//!
+//! Reads follow mechanism A: the scan pins an `Arc` share of the latest committed
+//! matrix, then hands back an owned, `Send` scan reclaimed by `Arc`-drop, holding
+//! no lock across iteration. The disk backend (WAL/checkpoint) and RAM↔disk
+//! tiering are enterprise concerns layered on later; this is the OSS in-RAM path.
 
 mod encoder;
 mod store;
@@ -30,6 +38,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use roaring::RoaringTreemap;
 
+use crate::graph::graphblas::tensor::compound_key;
 use crate::index::{Field, IndexInfo, IndexQuery, IndexType};
 use crate::runtime::value::Value;
 
@@ -41,17 +50,30 @@ use super::backend::StorageBackend;
 use super::error::{IndexError, Result};
 use super::id::DocKey;
 
-use self::store::{MatrixRangeCursor, MatrixStore, Snapshot};
+use self::store::{MatrixRangeCursor, MatrixStore, ValueRangeCursor};
 
 /// Poll the cancellation flag once every this many yielded hits — coarse enough
 /// not to cost per-hit, fine enough to abort a runaway scan promptly.
 const CANCEL_POLL_INTERVAL: u32 = 1024;
 
+/// Unpack a [`compound_key`] cell value back into `(src, dst)`.
+#[inline]
+fn unpack_endpoints(key: u64) -> (u64, u64) {
+    (key >> 32, key & 0xFFFF_FFFF)
+}
+
+/// The banded store, typed by entity: presence cells for nodes, endpoint-packing
+/// `u64` cells for edges.
+enum Store {
+    Node(MatrixStore<bool>),
+    Edge(MatrixStore<u64>),
+}
+
 /// A numeric/range index structure over the logical-MVCC ordered store.
 pub struct NumericIndex {
     schema: IndexSchema,
     encoder: NumericEncoder,
-    store: MatrixStore,
+    store: Store,
     /// The OSS↔enterprise durable-bytes seam. `NullBackend` in OSS; the WAL/
     /// checkpoint wiring that uses it lands in the enterprise disk milestone.
     _backend: Arc<dyn StorageBackend>,
@@ -61,16 +83,16 @@ pub struct NumericIndex {
 }
 
 impl NumericIndex {
-    /// Lower one query predicate onto the cursors that evaluate it against
-    /// `matrix` (a pinned committed version). Each predicate becomes one or more
-    /// inclusive encoded-key ranges `[lo, hi]`, which the cursor walks as
-    /// contiguous, key-ordered matrix row-sweeps. Multiple cursors (from
-    /// `InList` / `Or`) are unioned by the scan.
-    fn lower(
+    /// Lower one query predicate onto the inclusive encoded-key ranges `[lo, hi]`
+    /// that evaluate it. Each predicate becomes one or more ranges, which a
+    /// cursor walks as contiguous, key-ordered matrix row-sweeps; multiple ranges
+    /// (from `InList` / `Or`) are unioned by the scan. The lowering is
+    /// cell-type-agnostic — node and edge scans share it and only differ in the
+    /// cursor they build from the ranges.
+    fn lower_ranges(
         &self,
         q: &IndexQuery<Value>,
-        matrix: &Snapshot,
-        cursors: &mut Vec<MatrixRangeCursor>,
+        ranges: &mut Vec<(u64, u64)>,
     ) -> Result<()> {
         match q {
             // Equality and array-contains are both point lookups at `encode(v)`:
@@ -78,7 +100,7 @@ impl NumericIndex {
             // exactly the presence of the doc at the row for key `encode(v)`.
             IndexQuery::Equal { value, .. } | IndexQuery::ArrayContains { value, .. } => {
                 if let Some(k) = NumericEncoder::encode_value(value) {
-                    cursors.push(MatrixRangeCursor::new(Arc::clone(matrix), k, k));
+                    ranges.push((k, k));
                 }
                 // Non-numeric value against a numeric index → no matches.
                 Ok(())
@@ -96,7 +118,7 @@ impl NumericIndex {
                 let hi = self
                     .encoder
                     .encode_bound(opt_bound(max.as_ref(), *include_max), BoundSide::Upper);
-                cursors.push(MatrixRangeCursor::new(Arc::clone(matrix), lo, hi));
+                ranges.push((lo, hi));
                 Ok(())
             }
             // `IN [..]` — a union of point lookups, one per numeric element.
@@ -104,16 +126,16 @@ impl NumericIndex {
                 if let Value::List(items) = list {
                     for item in items.iter() {
                         if let Some(k) = NumericEncoder::encode_value(item) {
-                            cursors.push(MatrixRangeCursor::new(Arc::clone(matrix), k, k));
+                            ranges.push((k, k));
                         }
                     }
                 }
                 Ok(())
             }
-            // Disjunction — flatten each arm onto the same cursor union.
+            // Disjunction — flatten each arm onto the same range union.
             IndexQuery::Or(subs) => {
                 for sub in subs {
-                    self.lower(sub, matrix, cursors)?;
+                    self.lower_ranges(sub, ranges)?;
                 }
                 Ok(())
             }
@@ -124,6 +146,78 @@ impl NumericIndex {
                 Err(IndexError::Unsupported("numeric index: Point predicate"))
             }
         }
+    }
+
+    /// Build an owned, `'static` **node** scan: the returned [`NumericScan`] holds
+    /// an `Arc` share of the pinned matrix, so it does not borrow the index and
+    /// can outlive it. The runtime read path needs this (its scan iterators are
+    /// boxed `'static`).
+    pub fn scan_owned(
+        &self,
+        q: &IndexQuery<Value>,
+        opts: ScanOptions,
+    ) -> Result<NumericScan> {
+        let Store::Node(store) = &self.store else {
+            return Err(IndexError::Unsupported(
+                "scan_owned on a non-node index; use scan_edges",
+            ));
+        };
+        let mut ranges = Vec::new();
+        self.lower_ranges(q, &mut ranges)?;
+        let snap = store.snapshot();
+        let cursors = ranges
+            .into_iter()
+            .map(|(lo, hi)| MatrixRangeCursor::new(Arc::clone(&snap), lo, hi))
+            .collect();
+        Ok(NumericScan::new(cursors, opts))
+    }
+
+    /// Build an owned, `'static` **edge** scan: the returned [`EdgeScan`] yields
+    /// `(src, dst, edge_id)` triples by reading each matched cell's packed
+    /// endpoints inline — no separate resolution structure or hop.
+    pub fn scan_edges(
+        &self,
+        q: &IndexQuery<Value>,
+        opts: ScanOptions,
+    ) -> Result<EdgeScan> {
+        let Store::Edge(store) = &self.store else {
+            return Err(IndexError::Unsupported(
+                "scan_edges on a non-edge index; use scan_owned",
+            ));
+        };
+        let mut ranges = Vec::new();
+        self.lower_ranges(q, &mut ranges)?;
+        let snap = store.snapshot();
+        let cursors = ranges
+            .into_iter()
+            .map(|(lo, hi)| ValueRangeCursor::new(Arc::clone(&snap), lo, hi))
+            .collect();
+        Ok(EdgeScan::new(cursors, opts))
+    }
+
+    /// Apply one commit's **edge** mutations at `version`. Each add is
+    /// `(edge_id, value, (src, dst))`: the value encodes to the row key(s), and
+    /// the endpoints are packed ([`compound_key`]) into the cell, so a later scan
+    /// recovers them inline. `remove` are deleted edge ids.
+    pub fn commit_edges(
+        &self,
+        version: u64,
+        add: &[(DocKey, Value, (u64, u64))],
+        remove: &[DocKey],
+    ) -> Result<()> {
+        let Store::Edge(store) = &self.store else {
+            return Err(IndexError::Unsupported(
+                "commit_edges on a non-edge index; use commit",
+            ));
+        };
+        let mut adds: Vec<(DocKey, Vec<u64>, u64)> = Vec::with_capacity(add.len());
+        for (doc, value, (src, dst)) in add {
+            let mut keys = Vec::new();
+            self.encoder.encode(value, &mut keys);
+            adds.push((*doc, keys, compound_key(*src, *dst)));
+        }
+        store.commit(version, &adds, remove);
+        Ok(())
     }
 }
 
@@ -145,10 +239,14 @@ impl Index for NumericIndex {
         schema: &IndexSchema,
         backend: Arc<dyn StorageBackend>,
     ) -> Self {
+        let store = match schema.entity {
+            EntityKind::Node => Store::Node(MatrixStore::<bool>::new()),
+            EntityKind::Edge => Store::Edge(MatrixStore::<u64>::new()),
+        };
         Self {
             schema: schema.clone(),
             encoder: NumericEncoder,
-            store: MatrixStore::new(),
+            store,
             _backend: backend,
             progress: AtomicU64::new(0),
             total: AtomicU64::new(0),
@@ -182,19 +280,26 @@ impl Index for NumericIndex {
         }
     }
 
+    /// Node-index commit (presence cells). Edge indexes pack endpoints, so they
+    /// use [`NumericIndex::commit_edges`] instead.
     fn commit(
         &self,
         version: u64,
         add: &[(DocKey, Value)],
         remove: &[DocKey],
     ) -> Result<()> {
-        let mut adds: Vec<(DocKey, Vec<u64>)> = Vec::with_capacity(add.len());
+        let Store::Node(store) = &self.store else {
+            return Err(IndexError::Unsupported(
+                "commit on a non-node index; use commit_edges",
+            ));
+        };
+        let mut adds: Vec<(DocKey, Vec<u64>, bool)> = Vec::with_capacity(add.len());
         for (doc, value) in add {
             let mut keys = Vec::new();
             self.encoder.encode(value, &mut keys);
-            adds.push((*doc, keys));
+            adds.push((*doc, keys, true));
         }
-        self.store.commit(version, &adds, remove);
+        store.commit(version, &adds, remove);
         Ok(())
     }
 
@@ -203,17 +308,17 @@ impl Index for NumericIndex {
         q: &IndexQuery<Value>,
         opts: ScanOptions,
     ) -> Result<IndexScanIter<'q>> {
-        // Pin the latest committed matrix version; the scan owns the `Arc` share
-        // and never holds a lock across iteration (mechanism A).
-        let matrix = self.store.snapshot();
-        let mut cursors = Vec::new();
-        self.lower(q, &matrix, &mut cursors)?;
-        Ok(Box::new(NumericScan::new(cursors, opts)))
+        // The generic trait read is the node path; edge reads use `scan_edges`.
+        Ok(Box::new(self.scan_owned(q, opts)?))
     }
 
     fn memory_usage(&self) -> MemoryBreakdown {
+        let matrix_bytes = match &self.store {
+            Store::Node(s) => s.memory_usage(),
+            Store::Edge(s) => s.memory_usage(),
+        };
         MemoryBreakdown {
-            matrix_bytes: self.store.memory_usage(),
+            matrix_bytes,
             payload_bytes: 0,
         }
     }
@@ -246,10 +351,11 @@ impl Index for NumericIndex {
     }
 }
 
-/// A `'q`-scoped pull scan over one or more [`RangeCursor`]s, unioning their doc
-/// ids (deduplicated when there is more than one cursor) into [`IndexHit`]s.
+/// A `'static` pull scan over one or more node [`MatrixRangeCursor`]s, unioning
+/// their doc ids (deduplicated when there is more than one cursor) into
+/// [`IndexHit`]s.
 pub struct NumericScan {
-    cursors: Vec<MatrixRangeCursor>,
+    cursors: Vec<MatrixRangeCursor<bool>>,
     idx: usize,
     /// Dedup set across cursors — allocated only when a union can produce the
     /// same doc twice (`InList` / `Or`). A single cursor never repeats a doc.
@@ -263,7 +369,7 @@ pub struct NumericScan {
 
 impl NumericScan {
     fn new(
-        cursors: Vec<MatrixRangeCursor>,
+        cursors: Vec<MatrixRangeCursor<bool>>,
         opts: ScanOptions,
     ) -> Self {
         let seen = (cursors.len() > 1).then(RoaringTreemap::new);
@@ -343,13 +449,93 @@ impl IndexScan for NumericScan {
     }
 }
 
+/// A `'static` pull scan over one or more edge [`ValueRangeCursor`]s, yielding
+/// `(src, dst, edge_id)` triples. The endpoints come from each matched cell's
+/// packed value — the edge index *is* the endpoint store. Deduplicated by edge
+/// id across cursors (`InList` / `Or`).
+pub struct EdgeScan {
+    cursors: Vec<ValueRangeCursor>,
+    idx: usize,
+    seen: Option<RoaringTreemap>,
+    yielded: usize,
+    max_results: Option<usize>,
+    cancel: Option<Arc<AtomicBool>>,
+    cancel_tick: u32,
+    done: bool,
+}
+
+impl EdgeScan {
+    fn new(
+        cursors: Vec<ValueRangeCursor>,
+        opts: ScanOptions,
+    ) -> Self {
+        let seen = (cursors.len() > 1).then(RoaringTreemap::new);
+        Self {
+            cursors,
+            idx: 0,
+            seen,
+            yielded: 0,
+            max_results: opts.max_results,
+            cancel: opts.cancel,
+            cancel_tick: 0,
+            done: false,
+        }
+    }
+
+    fn cancelled(&mut self) -> bool {
+        let Some(flag) = &self.cancel else {
+            return false;
+        };
+        self.cancel_tick = self.cancel_tick.wrapping_add(1);
+        self.cancel_tick.is_multiple_of(CANCEL_POLL_INTERVAL) && flag.load(Ordering::Relaxed)
+    }
+}
+
+impl Iterator for EdgeScan {
+    /// `(src, dst, edge_id)`.
+    type Item = Result<(u64, u64, u64)>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.done {
+            return None;
+        }
+        if self.max_results.is_some_and(|max| self.yielded >= max) {
+            self.done = true;
+            return None;
+        }
+        loop {
+            if self.cancelled() {
+                self.done = true;
+                return Some(Err(IndexError::Cancelled));
+            }
+            let Some(cursor) = self.cursors.get_mut(self.idx) else {
+                self.done = true;
+                return None;
+            };
+            match cursor.next_value() {
+                Some((eid, packed)) => {
+                    if let Some(seen) = &mut self.seen {
+                        if !seen.insert(eid) {
+                            continue;
+                        }
+                    }
+                    let (src, dst) = unpack_endpoints(packed);
+                    self.yielded += 1;
+                    return Some(Ok((src, dst, eid)));
+                }
+                None => self.idx += 1,
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::Arc;
     use thin_vec::ThinVec;
 
-    use crate::index::native::backend::NullBackend;
+    use crate::index::falkordb::backend::NullBackend;
 
     fn key(name: &str) -> Arc<String> {
         Arc::new(name.to_string())
@@ -365,7 +551,7 @@ mod tests {
     }
 
     fn idx() -> NumericIndex {
-        crate::index::native::test_init_graphblas();
+        crate::index::falkordb::test_init_graphblas();
         NumericIndex::create(&schema(), Arc::new(NullBackend))
     }
 
@@ -603,5 +789,93 @@ mod tests {
         index.commit(1, &[(1, Value::Int(10))], &[]).unwrap();
         assert!(index.memory_usage().matrix_bytes >= before);
         assert!(index.memory_usage().matrix_bytes > 0);
+    }
+
+    // --- edge index: endpoints packed into the cell, recovered inline ---
+
+    fn edge_schema() -> IndexSchema {
+        IndexSchema {
+            index_id: 2,
+            entity: EntityKind::Edge,
+            label: key("R"),
+            fields: vec![key("w")],
+        }
+    }
+
+    fn edge_idx() -> NumericIndex {
+        crate::index::falkordb::test_init_graphblas();
+        NumericIndex::create(&edge_schema(), Arc::new(NullBackend))
+    }
+
+    fn edges(
+        index: &NumericIndex,
+        q: &IndexQuery<Value>,
+    ) -> Vec<(u64, u64, u64)> {
+        let scan = index.scan_edges(q, ScanOptions::default()).unwrap();
+        let mut out: Vec<(u64, u64, u64)> = scan.map(|r| r.unwrap()).collect();
+        out.sort_unstable();
+        out
+    }
+
+    #[test]
+    fn edge_scan_recovers_endpoints_from_cell() {
+        let index = edge_idx();
+        // (edge_id, w, (src, dst))
+        index
+            .commit_edges(
+                1,
+                &[
+                    (100, Value::Int(5), (1, 2)),
+                    (200, Value::Int(5), (3, 4)),
+                    (300, Value::Int(9), (10, 20)),
+                ],
+                &[],
+            )
+            .unwrap();
+        // w = 5 → edges 100 and 200, endpoints recovered inline.
+        assert_eq!(
+            edges(&index, &equal(Value::Int(5))),
+            vec![(1, 2, 100), (3, 4, 200)]
+        );
+        assert_eq!(edges(&index, &equal(Value::Int(9))), vec![(10, 20, 300)]);
+        assert_eq!(
+            edges(&index, &equal(Value::Int(7))),
+            Vec::<(u64, u64, u64)>::new()
+        );
+    }
+
+    #[test]
+    fn edge_update_and_remove() {
+        let index = edge_idx();
+        index
+            .commit_edges(1, &[(100, Value::Int(5), (1, 2))], &[])
+            .unwrap();
+        // Re-index edge 100: w 5 -> 8 (endpoints unchanged).
+        index
+            .commit_edges(2, &[(100, Value::Int(8), (1, 2))], &[])
+            .unwrap();
+        assert_eq!(
+            edges(&index, &equal(Value::Int(5))),
+            Vec::<(u64, u64, u64)>::new()
+        );
+        assert_eq!(edges(&index, &equal(Value::Int(8))), vec![(1, 2, 100)]);
+        // Delete edge 100.
+        index.commit_edges(3, &[], &[100]).unwrap();
+        assert_eq!(
+            edges(&index, &equal(Value::Int(8))),
+            Vec::<(u64, u64, u64)>::new()
+        );
+    }
+
+    #[test]
+    fn edge_high_endpoints_round_trip() {
+        // `src` up to the engine's 2^28 tensor ceiling; `dst` up to u32::MAX.
+        let index = edge_idx();
+        let src = (1u64 << 27) | 0x1234;
+        let dst = u64::from(u32::MAX);
+        index
+            .commit_edges(1, &[(7, Value::Int(42), (src, dst))], &[])
+            .unwrap();
+        assert_eq!(edges(&index, &equal(Value::Int(42))), vec![(src, dst, 7)]);
     }
 }

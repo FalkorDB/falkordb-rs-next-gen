@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 /// Whether an index targets nodes or edges (fixed at create time).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EntityKind {
     /// A node index — `DocKey` is the node id.
     Node,

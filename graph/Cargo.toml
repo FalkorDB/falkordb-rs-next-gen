@@ -19,11 +19,11 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin)'] }
 prejit_harvest = []
 
 # Native MVCC index subsystem (replaces RediSearch). Dark-launched: when OFF
-# (the default), none of `index::native` is compiled and behavior is unchanged.
+# (the default), none of `index::falkordb` is compiled and behavior is unchanged.
 # When ON, the trait seams + in-RAM core build; the enterprise repo registers
 # its disk-backed StorageBackend/Residency impls at module init (mechanism A).
 # `dep:thiserror` is pulled in only here, so the default dependency set is unchanged.
-index-native = ["dep:thiserror"]
+index-falkordb = ["dep:thiserror"]
 
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -50,5 +50,5 @@ roaring = "0.11.4"
 rustc-hash = "2"
 simsimd = "6.5"
 thin-vec = "0.2.18"
-# Optional: only compiled for the native MVCC index subsystem (`index-native`).
+# Optional: only compiled for the native MVCC index subsystem (`index-falkordb`).
 thiserror = { version = "2", optional = true }

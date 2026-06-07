@@ -1,7 +1,7 @@
 //! The OSS default [`StorageBackend`]: persists nothing, so restart rebuilds.
 
-use crate::index::native::error::Result;
-use crate::index::native::id::{ShardId, SnapKey};
+use crate::index::falkordb::error::Result;
+use crate::index::falkordb::id::{ShardId, SnapKey};
 
 use super::wal::{Keyspace, WalRecord};
 use super::{BackendSnapshot, BoxIter, StorageBackend};

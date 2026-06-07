@@ -2,7 +2,7 @@
 
 use std::ops::Bound;
 
-use crate::index::native::api::{BoundSide, RowEncoder};
+use crate::index::falkordb::api::{BoundSide, RowEncoder};
 use crate::runtime::value::Value;
 
 /// Numeric / range encoder — the POC kind.

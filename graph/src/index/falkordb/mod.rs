@@ -1,7 +1,7 @@
-//! Native MVCC index subsystem — trait seams + skeleton (milestone **M0**).
+//! FalkorDB MVCC index subsystem — trait seams + skeleton (milestone **M0**).
 //!
 //! This module is the storage-agnostic, logical-MVCC index that replaces
-//! RediSearch. It is gated behind the `index-native` Cargo feature (OFF by
+//! RediSearch. It is gated behind the `index-falkordb` Cargo feature (OFF by
 //! default), so the default build is unaffected and RediSearch stays the active
 //! path. Nothing in the runtime calls into here yet — M0
 //! delivers only the *seams* that later milestones fill in:
@@ -37,6 +37,8 @@ mod residency;
 mod registry;
 // --- the numeric POC kind (the only kind for now) ---
 mod numeric;
+// --- per-graph registry of FalkorDB index structures (shared across versions) ---
+mod manager;
 
 pub use error::{IndexError, Result};
 pub use id::{DocKey, ShardId, SnapKey, StructureId};
@@ -55,11 +57,13 @@ pub use registry::{index_backend, index_residency, register_index_backend};
 
 pub use numeric::{NumericEncoder, NumericIndex, NumericScan};
 
-/// Initialize GraphBLAS once for the native-index unit tests.
+pub use manager::FalkorDbIndexes;
+
+/// Initialize GraphBLAS once for the FalkorDB-index unit tests.
 ///
 /// In production GraphBLAS is initialized on the Redis module-load path
 /// ([`crate::graph::graphblas::matrix::init`], wired from `src/module_init.rs`).
-/// The native-index unit tests, however, construct [`VersionedMatrix`]es
+/// The FalkorDB-index unit tests, however, construct [`VersionedMatrix`]es
 /// directly without that path, so they must initialize GraphBLAS themselves —
 /// otherwise the first `GrB_Matrix_new` aborts with `GrB_PANIC`.
 ///

@@ -1,8 +1,8 @@
 //! The OSS default [`Residency`]: everything is hot, forever.
 
-use crate::index::native::backend::BackendSnapshot;
-use crate::index::native::error::Result;
-use crate::index::native::id::ShardId;
+use crate::index::falkordb::backend::BackendSnapshot;
+use crate::index::falkordb::error::Result;
+use crate::index::falkordb::id::ShardId;
 
 use super::{Residency, ShardGuard};
 
