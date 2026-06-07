@@ -665,6 +665,50 @@ impl<'a> Batch<'a> {
         batch
     }
 
+    /// Creates a columnar batch for an edge scan: the relationship slot holds a
+    /// [`Column::RelTriples`] (which materializes its `Value::Relationship`
+    /// lazily, only when a downstream op reads it), and the endpoint slots hold
+    /// [`Column::NodeIds`]. This is the edge-side mirror of [`Self::from_node_ids`]
+    /// — the late-materialization fast path that skips per-edge `Row`
+    /// construction and the eager `Box<Relationship>` allocation, so `count(e)`
+    /// and other endpoint-agnostic queries pay nothing per edge.
+    ///
+    /// `triples` are `(edge_id, src, dst)` in graph order. `transposed` flips
+    /// which graph-side endpoint binds to `from_alias` vs `to_alias`, matching
+    /// the scan op's row path. Self-loop patterns (`from_alias == to_alias`) are
+    /// not eligible for this path and must use the row builder.
+    #[must_use]
+    pub fn from_edge_triples(
+        from_alias: u32,
+        to_alias: u32,
+        rel_alias: u32,
+        transposed: bool,
+        triples: Vec<(RelationshipId, NodeId, NodeId)>,
+    ) -> Self {
+        let len = triples.len();
+        let mut from_ids = Vec::with_capacity(len);
+        let mut to_ids = Vec::with_capacity(len);
+        for &(_eid, src, dst) in &triples {
+            let (from, to) = if transposed { (dst, src) } else { (src, dst) };
+            from_ids.push(from);
+            to_ids.push(to);
+        }
+        let mut batch = Self {
+            len,
+            selection: None,
+            columns: Vec::new(),
+            origin_rows: None,
+            value_only: BitSet::default(),
+            _marker: PhantomData,
+        };
+        batch.set_column(from_alias, Column::NodeIds(from_ids));
+        if to_alias != from_alias {
+            batch.set_column(to_alias, Column::NodeIds(to_ids));
+        }
+        batch.set_column(rel_alias, Column::RelTriples(triples));
+        batch
+    }
+
     /// Compacts this batch in place by applying its selection vector, yielding
     /// a dense [`Batch`] whose logical rows are exactly the previously-active
     /// rows (in selection order) and whose `selection` is `None`. Typed columns
