@@ -277,6 +277,11 @@ pub struct Graph {
     node_indexer: Indexer,
     /// Index manager for edge property indexes
     edge_indexer: Indexer,
+    /// FalkorDB MVCC index structures (the RediSearch replacement). Gated behind
+    /// the `index-falkordb` feature; shared across graph versions like the
+    /// indexers above, with each index MVCC-versioning its own matrix.
+    #[cfg(feature = "index-falkordb")]
+    falkordb_indexes: crate::index::falkordb::FalkorDbIndexes,
     /// Label names (ID → name mapping)
     node_labels: Vec<Arc<String>>,
     /// Relationship type names (ID → name mapping)
@@ -598,6 +603,32 @@ fn drop_index_bg(
     );
 }
 
+/// The single field a numeric `IndexQuery` references, if it references exactly
+/// one — so a per-field FalkorDB index can serve the whole query. `And`/`Point`
+/// (and `Or` mixing fields) yield `None`, sending the caller to RediSearch.
+#[cfg(feature = "index-falkordb")]
+fn falkordb_query_field(q: &IndexQuery<Value>) -> Option<Arc<String>> {
+    match q {
+        IndexQuery::Equal { key, .. }
+        | IndexQuery::Range { key, .. }
+        | IndexQuery::InList { key, .. }
+        | IndexQuery::ArrayContains { key, .. } => Some(key.clone()),
+        IndexQuery::Or(subs) => {
+            let mut field: Option<Arc<String>> = None;
+            for sub in subs {
+                let f = falkordb_query_field(sub)?;
+                match &field {
+                    None => field = Some(f),
+                    Some(existing) if existing.as_str() == f.as_str() => {}
+                    Some(_) => return None,
+                }
+            }
+            field
+        }
+        IndexQuery::And(_) | IndexQuery::Point { .. } => None,
+    }
+}
+
 impl Graph {
     #[must_use]
     pub fn new(
@@ -628,6 +659,8 @@ impl Graph {
             relationship_attrs: AttributeStore::new(&format!("{name}/relationships"), version),
             node_indexer: Indexer::default(),
             edge_indexer: Indexer::default(),
+            #[cfg(feature = "index-falkordb")]
+            falkordb_indexes: crate::index::falkordb::FalkorDbIndexes::default(),
             node_labels: Vec::new(),
             relationship_types: Vec::new(),
             cache: Arc::new(Mutex::new(LruCache::new(
@@ -687,6 +720,8 @@ impl Graph {
             relationship_attrs,
             node_indexer: Indexer::default(),
             edge_indexer: Indexer::default(),
+            #[cfg(feature = "index-falkordb")]
+            falkordb_indexes: crate::index::falkordb::FalkorDbIndexes::default(),
             node_labels,
             relationship_types,
             cache: Arc::new(Mutex::new(LruCache::new(
@@ -768,6 +803,8 @@ impl Graph {
             relationship_attrs,
             node_indexer: self.node_indexer.clone(),
             edge_indexer: self.edge_indexer.clone(),
+            #[cfg(feature = "index-falkordb")]
+            falkordb_indexes: self.falkordb_indexes.clone(),
             node_labels: self.node_labels.clone(),
             relationship_types: self.relationship_types.clone(),
             cache: self.cache.clone(),
@@ -2403,6 +2440,78 @@ impl Graph {
         self.relationship_attrs.get_all_attrs_by_id(id.0)
     }
 
+    /// Mirror a `Range` `CREATE INDEX` into the FalkorDB numeric registry (a no-op
+    /// for other index types). Numeric fields each get one `NumericIndex`.
+    #[cfg(feature = "index-falkordb")]
+    fn falkordb_create_if_range(
+        &self,
+        index_type: &IndexType,
+        entity_type: &EntityType,
+        label: &Arc<String>,
+        attrs: &[Arc<String>],
+    ) {
+        use crate::index::falkordb::EntityKind;
+        if *index_type != IndexType::Range {
+            return;
+        }
+        let entity = match entity_type {
+            EntityType::Node => EntityKind::Node,
+            EntityType::Relationship => EntityKind::Edge,
+        };
+        self.falkordb_indexes.create_numeric(entity, label, attrs);
+        self.falkordb_backfill(entity, label, attrs);
+    }
+
+    /// Index entities that already exist when a `Range` index is created — the
+    /// FalkorDB parallel to the engine's `populate_index`. Iterates the label's
+    /// nodes / the type's edges and feeds each present value at the current
+    /// graph version.
+    #[cfg(feature = "index-falkordb")]
+    fn falkordb_backfill(
+        &self,
+        entity: crate::index::falkordb::EntityKind,
+        label: &Arc<String>,
+        fields: &[Arc<String>],
+    ) {
+        use crate::index::falkordb::{EntityKind, Index};
+        let version = self.version;
+        for field in fields {
+            let Some(idx) = self.falkordb_indexes.get(entity, label, field) else {
+                continue;
+            };
+            match entity {
+                EntityKind::Node => {
+                    let mut adds: Vec<(u64, Value)> = Vec::new();
+                    if let Some(lm) = self.get_label_matrix(label) {
+                        for (n, _) in lm.iter(0, u64::MAX) {
+                            if let Some(value) = self.node_attrs.get_attr(n, field) {
+                                adds.push((n, value));
+                            }
+                        }
+                    }
+                    if !adds.is_empty() {
+                        let _ = idx.commit(version, &adds, &[]);
+                    }
+                }
+                EntityKind::Edge => {
+                    // Pack each edge's `(src, dst)` into the cell so a scan
+                    // recovers endpoints inline — no separate endpoint store.
+                    let mut adds: Vec<(u64, Value, (u64, u64))> = Vec::new();
+                    if let Some(tensor) = self.get_relationship_matrix(label) {
+                        for (src, dst, eid) in tensor.iter(0, u64::MAX, false) {
+                            if let Some(value) = self.relationship_attrs.get_attr(eid, field) {
+                                adds.push((eid, value, (src, dst)));
+                            }
+                        }
+                    }
+                    if !adds.is_empty() {
+                        let _ = idx.commit_edges(version, &adds, &[]);
+                    }
+                }
+            }
+        }
+    }
+
     pub fn create_index(
         &mut self,
         index_type: &IndexType,
@@ -2436,6 +2545,8 @@ impl Graph {
                 populate_index(IndexKind::Edge, label.clone(), self.edge_indexer.clone());
             }
         }
+        #[cfg(feature = "index-falkordb")]
+        self.falkordb_create_if_range(index_type, entity_type, label, attrs);
         Ok(())
     }
 
@@ -2476,6 +2587,8 @@ impl Graph {
                 }
             }
         }
+        #[cfg(feature = "index-falkordb")]
+        self.falkordb_create_if_range(index_type, entity_type, label, attrs);
         Ok(())
     }
 
@@ -2612,11 +2725,58 @@ impl Graph {
         }
     }
 
+    /// Feed the FalkorDB numeric indexes for this commit's node mutations — the
+    /// parallel to [`Self::commit_index_kind`]'s RediSearch path. Reads the id
+    /// sets without draining (the RediSearch commit that follows still needs
+    /// them). Per FalkorDB-indexed field: an id with a value is (re-)indexed (the
+    /// store tombstones any prior placement), an id whose value is absent is
+    /// removed, and deleted ids are removed.
+    #[cfg(feature = "index-falkordb")]
+    fn falkordb_commit_nodes(
+        &self,
+        add_docs: &FxHashMap<u64, RoaringTreemap>,
+        remove_docs: &FxHashMap<u64, RoaringTreemap>,
+    ) {
+        use crate::index::falkordb::{EntityKind, Index};
+        let version = self.version;
+        let mut batches: HashMap<(Arc<String>, Arc<String>), (Vec<(u64, Value)>, Vec<u64>)> =
+            HashMap::new();
+        for (slot, ids) in add_docs {
+            let name = &self.node_labels[*slot as usize];
+            for field in self.falkordb_indexes.fields(EntityKind::Node, name) {
+                let entry = batches.entry((name.clone(), field.clone())).or_default();
+                for id in ids {
+                    match self.node_attrs.get_attr(id, &field) {
+                        Some(value) => entry.0.push((id, value)),
+                        None => entry.1.push(id),
+                    }
+                }
+            }
+        }
+        for (slot, ids) in remove_docs {
+            let name = &self.node_labels[*slot as usize];
+            for field in self.falkordb_indexes.fields(EntityKind::Node, name) {
+                batches
+                    .entry((name.clone(), field.clone()))
+                    .or_default()
+                    .1
+                    .extend(ids.iter());
+            }
+        }
+        for ((label, field), (adds, removes)) in batches {
+            if let Some(idx) = self.falkordb_indexes.get(EntityKind::Node, &label, &field) {
+                let _ = idx.commit(version, &adds, &removes);
+            }
+        }
+    }
+
     pub fn commit_index(
         &mut self,
         index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
         remove_docs: &mut FxHashMap<u64, RoaringTreemap>,
     ) {
+        #[cfg(feature = "index-falkordb")]
+        self.falkordb_commit_nodes(index_add_docs, remove_docs);
         self.commit_index_kind(IndexKind::Node, index_add_docs, remove_docs);
     }
 
@@ -2627,6 +2787,33 @@ impl Graph {
     ) {
         if index_add_edge_docs.is_empty() && remove_edge_docs.is_empty() {
             return;
+        }
+
+        // The FalkorDB edge index packs each edge's `(src, dst)` endpoints into
+        // its cell value, so it is fed from `commit_edge_index` — where the
+        // engine already resolves endpoints (the per-type tap below) — rather
+        // than from a value-only commit. Cloned handle so the per-type commits
+        // don't borrow `self` while `edge_indexer` is mutably borrowed.
+        #[cfg(feature = "index-falkordb")]
+        let fb = self.falkordb_indexes.clone();
+        #[cfg(feature = "index-falkordb")]
+        let fb_version = self.version;
+
+        // Deleted edges: drop them from every FalkorDB edge index (removal
+        // tombstones by doc id — no endpoints needed). Done before the indexer
+        // lock, reading `remove_edge_docs` without draining it.
+        #[cfg(feature = "index-falkordb")]
+        for (type_id, edges) in remove_edge_docs.iter() {
+            let name = &self.relationship_types[*type_id as usize];
+            let removed: Vec<u64> = edges.keys().copied().collect();
+            if removed.is_empty() {
+                continue;
+            }
+            for field in fb.fields(crate::index::falkordb::EntityKind::Edge, name) {
+                if let Some(idx) = fb.get(crate::index::falkordb::EntityKind::Edge, name, &field) {
+                    let _ = idx.commit_edges(fb_version, &[], &removed);
+                }
+            }
         }
 
         let indexer = &mut self.edge_indexer;
@@ -2657,6 +2844,29 @@ impl Graph {
                             break;
                         }
                     }
+                }
+            }
+
+            // FalkorDB edge indexes: pack `(src, dst)` into the cell so a scan
+            // recovers endpoints inline. Built from the same per-type `endpoints`
+            // the engine just resolved above — no extra tensor scan.
+            #[cfg(feature = "index-falkordb")]
+            for field in fb.fields(crate::index::falkordb::EntityKind::Edge, name) {
+                if let Some(idx) = fb.get(crate::index::falkordb::EntityKind::Edge, name, &field) {
+                    let mut fadds: Vec<(u64, Value, (u64, u64))> = Vec::new();
+                    let mut fremoves: Vec<u64> = Vec::new();
+                    for id in ids.iter() {
+                        match self.relationship_attrs.get_attr(id, &field) {
+                            Some(value) => {
+                                if let Some(&(src, dst)) = endpoints.get(&id) {
+                                    fadds.push((id, value, (src, dst)));
+                                }
+                                // else: edge vanished pre-commit; skip (as below).
+                            }
+                            None => fremoves.push(id),
+                        }
+                    }
+                    let _ = idx.commit_edges(fb_version, &fadds, &fremoves);
                 }
             }
 
@@ -2750,6 +2960,11 @@ impl Graph {
         label: &Arc<String>,
         attrs: &[Arc<String>],
     ) -> Result<usize, String> {
+        // Clone the FalkorDB registry handle up front (cheap Arc share) so the
+        // success branch can drop from it without entangling with the `&mut`
+        // borrow of the engine indexer below.
+        #[cfg(feature = "index-falkordb")]
+        let falkordb_idx = self.falkordb_indexes.clone();
         // Expand an empty `attrs` to the full set of fields of `index_type`
         // (matches the `target_attrs` derivation in `Indexer::drop_index`);
         // otherwise an empty-attr drop would bypass constraint protection.
@@ -2803,6 +3018,15 @@ impl Graph {
                 } else {
                     drop_index_bg(label.clone(), indexer.clone());
                 }
+                #[cfg(feature = "index-falkordb")]
+                if *index_type == IndexType::Range {
+                    use crate::index::falkordb::EntityKind;
+                    let entity = match entity_type {
+                        EntityType::Node => EntityKind::Node,
+                        EntityType::Relationship => EntityKind::Edge,
+                    };
+                    falkordb_idx.drop_fields(entity, label, &effective_attrs);
+                }
                 Ok(dropped)
             }
             _ => {
@@ -2835,7 +3059,29 @@ impl Graph {
         label: &Arc<String>,
         query: IndexQuery<Value>,
     ) -> impl Iterator<Item = NodeId> + use<> {
-        self.node_indexer.query(label, query).map(NodeId)
+        // With the FalkorDB index enabled and covering this query's field, serve
+        // the read from it; otherwise fall back to RediSearch. Both branches box
+        // to a single `'static` iterator type.
+        #[cfg(feature = "index-falkordb")]
+        {
+            use crate::index::falkordb::{EntityKind, ScanOptions};
+            if let Some(field) = falkordb_query_field(&query) {
+                if let Some(idx) = self.falkordb_indexes.get(EntityKind::Node, label, &field) {
+                    if let Ok(scan) = idx.scan_owned(&query, ScanOptions::default()) {
+                        let it: Box<dyn Iterator<Item = NodeId>> =
+                            Box::new(scan.filter_map(Result::ok).map(|h| NodeId(h.id)));
+                        return it;
+                    }
+                }
+            }
+            let it: Box<dyn Iterator<Item = NodeId>> =
+                Box::new(self.node_indexer.query(label, query).map(NodeId));
+            it
+        }
+        #[cfg(not(feature = "index-falkordb"))]
+        {
+            self.node_indexer.query(label, query).map(NodeId)
+        }
     }
 
     #[must_use]
@@ -2853,13 +3099,43 @@ impl Graph {
         label: &Arc<String>,
         query: IndexQuery<Value>,
     ) -> impl Iterator<Item = (NodeId, NodeId, RelationshipId)> + use<> {
-        // Edge index documents carry `(src, dst, edge_id)` in their
-        // 24-byte key (set by `Document::new_edge`), so the result
-        // iterator materializes endpoints directly — no relationship
-        // tensor scan. Matches FalkorDB C's `EdgeIndexKey` layout.
-        self.edge_indexer
-            .query_edges(label, query)
-            .map(|(src, dst, eid)| (NodeId(src), NodeId(dst), RelationshipId(eid)))
+        // With the FalkorDB index enabled and covering this query's field, serve
+        // the read from it; otherwise fall back to RediSearch. Both branches box
+        // to a single iterator type.
+        #[cfg(feature = "index-falkordb")]
+        {
+            use crate::index::falkordb::{EntityKind, ScanOptions};
+            if let Some(field) = falkordb_query_field(&query) {
+                if let Some(idx) = self.falkordb_indexes.get(EntityKind::Edge, label, &field) {
+                    if let Ok(scan) = idx.scan_edges(&query, ScanOptions::default()) {
+                        // The edge index packs `(src, dst)` into the cell, so the
+                        // scan yields the `(src, dst, edge_id)` triple inline —
+                        // no endpoint resolution, no tensor scan, fully lazy.
+                        let it: Box<dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>> =
+                            Box::new(scan.filter_map(Result::ok).map(|(src, dst, eid)| {
+                                (NodeId(src), NodeId(dst), RelationshipId(eid))
+                            }));
+                        return it;
+                    }
+                }
+            }
+            // RediSearch edge documents carry `(src, dst, edge_id)` in their
+            // 24-byte key, so endpoints materialize directly — no tensor scan.
+            let it: Box<dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>> = Box::new(
+                self.edge_indexer
+                    .query_edges(label, query)
+                    .map(|(src, dst, eid)| (NodeId(src), NodeId(dst), RelationshipId(eid))),
+            );
+            it
+        }
+        #[cfg(not(feature = "index-falkordb"))]
+        {
+            // Edge index documents carry `(src, dst, edge_id)` in their 24-byte
+            // key (set by `Document::new_edge`), so endpoints materialize directly.
+            self.edge_indexer
+                .query_edges(label, query)
+                .map(|(src, dst, eid)| (NodeId(src), NodeId(dst), RelationshipId(eid)))
+        }
     }
 
     /// Get all edges of a given type (fallback when index can't be utilized).
