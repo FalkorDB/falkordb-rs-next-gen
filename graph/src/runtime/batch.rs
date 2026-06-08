@@ -872,6 +872,30 @@ impl<'a> Batch<'a> {
         }
     }
 
+    /// Count active rows whose `var_id` column holds a non-null value **without
+    /// materializing any [`Value`]** — the structural backing for the keyless
+    /// `count(var)` fast path.
+    ///
+    /// `NodeIds` / `RelTriples` columns never carry a Cypher null, so the count
+    /// is simply the active-row count — and crucially this avoids the per-row
+    /// `Value::Relationship(Box::new(..))` that materializing a `RelTriples`
+    /// column would cost (the dominant cost of `count(e)` over an edge scan).
+    /// `Unbound` is all-null → 0. For `Values` / `Ints` / `Floats` (which may
+    /// carry nulls that aren't readable from the column alone) it returns `None`,
+    /// signalling the caller to fall back to the materializing count path.
+    #[must_use]
+    pub fn count_non_null_structural(
+        &self,
+        var_id: u32,
+        active: &[usize],
+    ) -> Option<i64> {
+        match self.column(var_id) {
+            Column::Unbound => Some(0),
+            Column::NodeIds(_) | Column::RelTriples(_) => Some(active.len() as i64),
+            Column::Ints(_) | Column::Floats(_) | Column::Values(_) => None,
+        }
+    }
+
     /// Returns the per-row correlation tag for `row`. Defaults to `0` when no
     /// origin has been assigned (uncorrelated plans).
     #[must_use]

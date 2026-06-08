@@ -358,6 +358,55 @@ impl<'a> AggregateOp<'a> {
                 continue;
             }
 
+            // --- Fast path: keyless `count` only (count(*) / count(var)) ---
+            // Count non-null entries straight from the batch columns, with no
+            // Value materialization — so `count(e)` over an edge scan never
+            // allocates a `Value::Relationship(Box)` per edge (its dominant
+            // cost). Only taken when every aggregate is a non-DISTINCT `count`
+            // and every input is `*` or a variable whose column is structurally
+            // non-null (`NodeIds`/`RelTriples`); otherwise it falls through to
+            // the materializing path below, unchanged.
+            if self.keys.is_empty()
+                && self.copy_from_parent.is_empty()
+                && !analysis.agg_kinds.is_empty()
+                && analysis.agg_kinds.iter().all(|a| {
+                    a.distinct_idx.is_none() && a.func.name.eq_ignore_ascii_case("count")
+                })
+            {
+                let mut counts: Vec<i64> = Vec::with_capacity(analysis.agg_kinds.len());
+                for agg in &analysis.agg_kinds {
+                    let c = match &agg.input {
+                        None => Some(num_active as i64), // count(*)
+                        Some(AggInputKind::Variable(var)) => {
+                            batch.count_non_null_structural(var.id, &active)
+                        }
+                        // count(n.prop) needs the property column; let the
+                        // generic path handle it.
+                        Some(AggInputKind::Property { .. }) => None,
+                    };
+                    match c {
+                        Some(c) => counts.push(c),
+                        // A column kind we can't structurally count (Values /
+                        // Ints / Floats may carry nulls) — fall back.
+                        None => {
+                            counts.clear();
+                            break;
+                        }
+                    }
+                }
+                if counts.len() == analysis.agg_kinds.len() {
+                    let acc = &mut groups.get_mut(&GroupKey(vec![])).unwrap().1;
+                    for (agg, added) in analysis.agg_kinds.iter().zip(counts) {
+                        let prev = match acc.take(&agg.acc_var) {
+                            Some(Value::Int(n)) => n,
+                            _ => 0,
+                        };
+                        acc.insert(&agg.acc_var, Value::Int(prev + added));
+                    }
+                    continue;
+                }
+            }
+
             // --- Phase 1: Extract key columns in bulk ---
             let Ok(key_columns) =
                 Self::extract_key_columns(self.runtime, &batch, &active, &analysis.key_kinds)
