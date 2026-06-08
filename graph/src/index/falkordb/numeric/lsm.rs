@@ -25,7 +25,6 @@
 //!   `O(log N)` (bounded read amplification) and gives amortized `O(N log N)`
 //!   ingest, insert-order-independent.
 
-use std::iter::Peekable;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
@@ -299,6 +298,15 @@ impl<V: LsmCell> LsmMatrix<V> {
         *self.committed.write() = Arc::new(next);
     }
 
+    /// Collapse all segments into a single tombstone-free base (see
+    /// [`major_compact_layers`]). Publishes a new version; pinned readers keep
+    /// their old segments.
+    pub(crate) fn major_compact(&self) {
+        let cur = self.committed.read().clone();
+        let next = major_compact_layers::<V>(&cur);
+        *self.committed.write() = Arc::new(next);
+    }
+
     /// Number of live segments. Bounded to `O(log N)` by compaction.
     #[cfg(test)]
     pub(crate) fn seg_count(&self) -> usize {
@@ -414,50 +422,111 @@ fn compact<V: LsmCell>(segs: &mut Vec<Segment>) {
     }
 }
 
-/// One merge source: a peekable stream of `(row, col, Option<value>)` —
-/// `Some(value)` for an add run, `None` for a tombstone — tagged with the
-/// segment's version for newest-wins resolution.
-struct Src<V: LsmCell> {
-    it: Peekable<Box<dyn Iterator<Item = (u64, u64, Option<V>)> + Send>>,
-    version: u64,
+/// **Major compaction**: collapse a band's entire segment list into a single
+/// tombstone-free base. Where [`compact`] (minor, per-commit) only bounds the run
+/// count to `O(log N)` — leaving several matrices per band (k-way read merge) —
+/// this folds *everything* into one matrix: all tombstones applied and dropped,
+/// superseded cells resolved.
+///
+/// Implemented as **one k-way merge**, not a pairwise fold: the [`LsmCursor`]
+/// already merges all segments newest-wins and applies tombstones, yielding the
+/// effective live cells in `(row, col)` order in `O(N log K)` (`K` = segment
+/// count); we collect them and `build` one matrix in `O(N)`. (A naive
+/// fold-into-a-growing-accumulator would be `O(N·K)` — quadratic in the segment
+/// count, catastrophic when compaction was deferred during a bulk load.)
+///
+/// MVCC-safe: returns a new immutable [`Layers`]; readers pinned to the old
+/// snapshot keep their segments until they drop.
+pub(crate) fn major_compact_layers<V: LsmCell>(snap: &Snapshot<V>) -> Layers<V> {
+    // Already a single tombstone-free base (or empty) — nothing to gain.
+    if snap.segs.len() <= 1 && snap.segs.first().is_none_or(|s| s.tombs.is_none()) {
+        return Layers {
+            segs: clone_segs(&snap.segs),
+            _v: PhantomData,
+        };
+    }
+    let version = snap.segs.last().map_or(0, |s| s.version);
+    let mut cursor = LsmCursor::new(Arc::clone(snap), 0, DIM - 1);
+    let (mut rows, mut cols, mut vals) = (Vec::new(), Vec::new(), Vec::new());
+    while let Some((r, c, v)) = cursor.next_cell() {
+        rows.push(r);
+        cols.push(c);
+        vals.push(v);
+    }
+    let segs = if rows.is_empty() {
+        Vec::new()
+    } else {
+        let weight = rows.len() as u64;
+        vec![Segment {
+            version,
+            adds: Some(Arc::new(V::build_run(&rows, &cols, &vals))),
+            tombs: None,
+            weight,
+        }]
+    };
+    Layers {
+        segs,
+        _v: PhantomData,
+    }
 }
 
-/// Build the merge sources for a `[lo, hi]` row scan over a pinned snapshot: one
-/// add-source and/or one tomb-source per segment.
-fn sources<V: LsmCell>(
-    snap: &Snapshot<V>,
-    lo: u64,
-    hi: u64,
-) -> Vec<Src<V>> {
-    let mut srcs: Vec<Src<V>> = Vec::with_capacity(snap.segs.len());
-    for seg in &snap.segs {
-        if let Some(m) = &seg.adds {
-            let it: Box<dyn Iterator<Item = (u64, u64, Option<V>)> + Send> =
-                Box::new(V::scan(m, lo, hi).map(|(r, c, v)| (r, c, Some(v))));
-            srcs.push(Src {
-                it: it.peekable(),
-                version: seg.version,
-            });
-        }
-        if let Some(m) = &seg.tombs {
-            let it: Box<dyn Iterator<Item = (u64, u64, Option<V>)> + Send> =
-                Box::new(<bool as LsmCell>::scan(m, lo, hi).map(|(r, c, _)| (r, c, None)));
-            srcs.push(Src {
-                it: it.peekable(),
-                version: seg.version,
-            });
-        }
+/// One source's current front in the merge heap: the smallest `(row, col)` it
+/// has not yet emitted, tagged with the segment's `version` (for newest-wins) and
+/// the source index `src` (to advance it after popping). `value` is `Some` for an
+/// add run, `None` for a tombstone. Ordered by `(row, col)` only — `version`/
+/// `value` are resolved when popping equal cells, so they're excluded from `Ord`.
+struct Entry<V> {
+    row: u64,
+    col: u64,
+    version: u64,
+    value: Option<V>,
+    src: usize,
+}
+
+impl<V> PartialEq for Entry<V> {
+    fn eq(
+        &self,
+        other: &Self,
+    ) -> bool {
+        (self.row, self.col) == (other.row, other.col)
     }
-    srcs
+}
+impl<V> Eq for Entry<V> {}
+impl<V> PartialOrd for Entry<V> {
+    fn partial_cmp(
+        &self,
+        other: &Self,
+    ) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl<V> Ord for Entry<V> {
+    fn cmp(
+        &self,
+        other: &Self,
+    ) -> std::cmp::Ordering {
+        (self.row, self.col).cmp(&(other.row, other.col))
+    }
 }
 
 /// Lazy k-way merge over one band's segments for the inclusive row range
-/// `[lo, hi]`. For each `(row, col)`, the **newest** source wins: an add-source
-/// yields the cell live, a tombstone source suppresses it. Owns the pinned
-/// [`Snapshot`] (so it is `Send` and reclaims by `Arc`-drop).
+/// `[lo, hi]`. For each `(row, col)` the **newest** source wins: an add yields the
+/// cell live, a tombstone suppresses it.
+///
+/// Uses a **binary min-heap** keyed by `(row, col)`: each step pops the smallest
+/// cell and re-pushes the advanced source's next front — `O(log K)` per emitted
+/// cell (`K` = live segment streams), versus a linear scan of all `K` fronts
+/// (`O(K)`). This keeps reads cheap even with many segments, which is what lets
+/// compaction be less aggressive. Owns the pinned [`Snapshot`] (so it is `Send`
+/// and reclaims by `Arc`-drop).
 pub(crate) struct LsmCursor<V: LsmCell> {
     _snap: Snapshot<V>,
-    srcs: Vec<Src<V>>,
+    /// One boxed iterator per source (add or tomb run), indexed by `src`.
+    iters: Vec<Box<dyn Iterator<Item = (u64, u64, Option<V>)> + Send>>,
+    /// Segment version of each source (parallel to `iters`).
+    versions: Vec<u64>,
+    /// Min-heap of each source's current front (`Reverse` flips the max-heap).
+    heap: std::collections::BinaryHeap<std::cmp::Reverse<Entry<V>>>,
 }
 
 unsafe impl<V: LsmCell> Send for LsmCursor<V> {}
@@ -468,43 +537,83 @@ impl<V: LsmCell> LsmCursor<V> {
         lo: u64,
         hi: u64,
     ) -> Self {
-        let srcs = if lo > hi {
-            Vec::new()
-        } else {
-            sources(&snap, lo, hi)
-        };
-        Self { _snap: snap, srcs }
+        let mut iters: Vec<Box<dyn Iterator<Item = (u64, u64, Option<V>)> + Send>> = Vec::new();
+        let mut versions: Vec<u64> = Vec::new();
+        if lo <= hi {
+            for seg in &snap.segs {
+                if let Some(m) = &seg.adds {
+                    iters.push(Box::new(V::scan(m, lo, hi).map(|(r, c, v)| (r, c, Some(v)))));
+                    versions.push(seg.version);
+                }
+                if let Some(m) = &seg.tombs {
+                    iters.push(Box::new(
+                        <bool as LsmCell>::scan(m, lo, hi).map(|(r, c, _)| (r, c, None)),
+                    ));
+                    versions.push(seg.version);
+                }
+            }
+        }
+        let mut heap = std::collections::BinaryHeap::with_capacity(iters.len());
+        for src in 0..iters.len() {
+            if let Some((row, col, value)) = iters[src].next() {
+                heap.push(std::cmp::Reverse(Entry {
+                    row,
+                    col,
+                    version: versions[src],
+                    value,
+                    src,
+                }));
+            }
+        }
+        Self {
+            _snap: snap,
+            iters,
+            versions,
+            heap,
+        }
+    }
+
+    /// Pull the next item from source `src` and re-push its front onto the heap.
+    fn advance(
+        &mut self,
+        src: usize,
+    ) {
+        if let Some((row, col, value)) = self.iters[src].next() {
+            self.heap.push(std::cmp::Reverse(Entry {
+                row,
+                col,
+                version: self.versions[src],
+                value,
+                src,
+            }));
+        }
     }
 
     /// The next live cell `(row, col, value)` in range, or `None` when exhausted.
     pub(crate) fn next_cell(&mut self) -> Option<(u64, u64, V)> {
         loop {
-            // Pass 1: smallest (row, col) currently peeked across all sources.
-            let mut min_rc: Option<(u64, u64)> = None;
-            for s in &mut self.srcs {
-                if let Some(&(r, c, _)) = s.it.peek() {
-                    if min_rc.is_none_or(|m| (r, c) < m) {
-                        min_rc = Some((r, c));
-                    }
-                }
-            }
-            let rc = min_rc?;
+            // Pop the globally smallest (row, col).
+            let std::cmp::Reverse(first) = self.heap.pop()?;
+            let (row, col) = (first.row, first.col);
+            let mut best_ver = first.version;
+            let mut best_val = first.value;
+            self.advance(first.src);
 
-            // Pass 2: among sources at `rc`, the newest version wins; advance them.
-            let mut best: Option<(u64, Option<V>)> = None;
-            for s in &mut self.srcs {
-                if let Some(&(r, c, v)) = s.it.peek() {
-                    if (r, c) == rc {
-                        if best.is_none_or(|(bv, _)| s.version >= bv) {
-                            best = Some((s.version, v));
-                        }
-                        s.it.next();
-                    }
+            // Resolve all other sources at the same cell: newest version wins.
+            while let Some(&std::cmp::Reverse(Entry { row: pr, col: pc, .. })) = self.heap.peek() {
+                if (pr, pc) != (row, col) {
+                    break;
                 }
+                let std::cmp::Reverse(e) = self.heap.pop().unwrap();
+                if e.version >= best_ver {
+                    best_ver = e.version;
+                    best_val = e.value;
+                }
+                self.advance(e.src);
             }
-            // `best` is Some because `rc` came from a peeked source.
-            if let Some((_, Some(val))) = best {
-                return Some((rc.0, rc.1, val));
+
+            if let Some(val) = best_val {
+                return Some((row, col, val));
             }
             // Newest was a tombstone → cell is dead; keep merging.
         }
@@ -752,6 +861,40 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Major compaction collapses many segments into one tombstone-free base
+    /// without changing scan results, and a reader pinned before it is unaffected.
+    #[test]
+    fn major_compaction_collapses_and_preserves() {
+        init();
+        let m = LsmMatrix::<u64>::new();
+        let mut version = 0u64;
+        let mut cur_row: Vec<u64> = (0..40).collect();
+        version += 1;
+        let adds: Vec<_> = (0..40u64).map(|d| (cur_row[d as usize], d, d | 1)).collect();
+        m.commit(version, &adds, &[]);
+        for round in 1..60u64 {
+            version += 1;
+            let new_row: Vec<u64> = (0..40).map(|d| 1000 + round * 40 + d).collect();
+            let adds: Vec<_> = (0..40u64).map(|d| (new_row[d as usize], d, d | 1)).collect();
+            let tombs: Vec<_> = (0..40u64).map(|d| (cur_row[d as usize], d)).collect();
+            m.commit(version, &adds, &tombs);
+            cur_row = new_row;
+        }
+        let before = scan(&m.snapshot(), 0, u64::MAX >> 4);
+        assert_eq!(before.len(), 40);
+        let pinned = m.snapshot(); // pin pre-compaction
+        let pinned_before = scan(&pinned, 0, u64::MAX >> 4);
+
+        m.major_compact();
+
+        assert_eq!(m.seg_count(), 1, "major compaction must collapse to one segment");
+        assert_eq!(scan(&m.snapshot(), 0, u64::MAX >> 4), before);
+        assert_eq!(scan(&pinned, 0, u64::MAX >> 4), pinned_before); // MVCC
+        m.major_compact(); // idempotent
+        assert_eq!(m.seg_count(), 1);
+        assert_eq!(scan(&m.snapshot(), 0, u64::MAX >> 4), before);
     }
 
     /// Concurrent MVCC: many reader threads scan while a writer commits +

@@ -199,6 +199,16 @@ impl NumericIndex {
         Ok(EdgeScan::new(cursors, opts))
     }
 
+    /// Major-compact the store: collapse each band's segments into a single
+    /// tombstone-free base (minimizes resident matrices + read amplification).
+    /// Safe to call concurrently with reads/writes; publishes one atomic snapshot.
+    pub fn major_compact(&self) {
+        match &self.store {
+            Store::Node(store) => store.major_compact(),
+            Store::Edge(store) => store.major_compact(),
+        }
+    }
+
     /// Apply one commit's **edge** mutations at `version`. Each add is
     /// `(edge_id, value, (src, dst))`: the value encodes to the row key(s), and
     /// the endpoints are packed ([`compound_key`]) into the cell, so a later scan

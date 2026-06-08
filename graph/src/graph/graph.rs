@@ -2442,6 +2442,16 @@ impl Graph {
 
     /// Mirror a `Range` `CREATE INDEX` into the FalkorDB numeric registry (a no-op
     /// for other index types). Numeric fields each get one `NumericIndex`.
+    /// Major-compact every native FalkorDB index (collapse each band's LSM
+    /// segments into a single tombstone-free base). On-demand maintenance that
+    /// reclaims segment-fragmentation memory and removes k-way read overhead.
+    /// Returns the number of indexes compacted. Each index is internally
+    /// synchronized, so this is safe to call while reads/writes proceed.
+    #[cfg(feature = "index-falkordb")]
+    pub fn falkordb_compact_indexes(&self) -> usize {
+        self.falkordb_indexes.compact_all()
+    }
+
     #[cfg(feature = "index-falkordb")]
     fn falkordb_create_if_range(
         &self,

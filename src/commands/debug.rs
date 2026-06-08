@@ -14,10 +14,42 @@ pub fn graph_debug(
 
     match subcmd.to_uppercase().as_str() {
         "AUX" => debug_aux(ctx, args_iter),
+        // `GRAPH.DEBUG COMPACT <key>` — major-compact the native FalkorDB indexes
+        // of <key> (collapse each band's LSM segments into one base). Returns the
+        // number of indexes compacted. On-demand maintenance / benchmarking lever.
+        "COMPACT" => debug_compact(ctx, args_iter),
         _ => Err(RedisError::String(format!(
             "Unknown DEBUG subcommand: {subcmd}"
         ))),
     }
+}
+
+#[cfg(feature = "index-falkordb")]
+fn debug_compact(
+    ctx: &Context,
+    mut args: impl Iterator<Item = RedisString>,
+) -> RedisResult {
+    use crate::{graph_core::ThreadedGraph, redis_type::GRAPH_TYPE};
+    use parking_lot::RwLock;
+    use std::sync::Arc;
+
+    let key_name = args.next_arg()?;
+    let key = ctx.open_key(&key_name);
+    let g = key
+        .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)?
+        .ok_or(RedisError::Str("Graph does not exist"))?;
+    let compacted = g.read().graph.read().borrow().falkordb_compact_indexes();
+    Ok(RedisValue::Integer(compacted as i64))
+}
+
+#[cfg(not(feature = "index-falkordb"))]
+fn debug_compact(
+    _ctx: &Context,
+    _args: impl Iterator<Item = RedisString>,
+) -> RedisResult {
+    Err(RedisError::Str(
+        "GRAPH.DEBUG COMPACT requires the index-falkordb feature",
+    ))
 }
 
 fn debug_aux(

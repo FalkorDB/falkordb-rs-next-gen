@@ -112,4 +112,17 @@ impl FalkorDbIndexes {
             .map(Arc::clone)
     }
 
+    /// Major-compact every index (collapse each band's segments into one base).
+    /// Returns the number of indexes compacted. An on-demand maintenance op — each
+    /// index publishes its own atomic snapshot, so reads/writes are unaffected.
+    pub fn compact_all(&self) -> usize {
+        // Snapshot the handles under a short read lock, then compact without
+        // holding it (each index is internally synchronized).
+        let indexes: Vec<Arc<NumericIndex>> =
+            self.inner.indexes.read().values().map(Arc::clone).collect();
+        for idx in &indexes {
+            idx.major_compact();
+        }
+        indexes.len()
+    }
 }

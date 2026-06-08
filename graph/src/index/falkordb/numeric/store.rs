@@ -57,7 +57,7 @@ use std::sync::Arc;
 
 use parking_lot::{Mutex, RwLock};
 
-use super::lsm::{Layers, LsmCell, LsmCursor, commit_layers};
+use super::lsm::{Layers, LsmCell, LsmCursor, commit_layers, major_compact_layers};
 use crate::index::falkordb::id::DocKey;
 
 /// Low bits of an encoded key used as the matrix row index. `60` keeps each row
@@ -266,6 +266,19 @@ impl<V: LsmCell> MatrixStore<V> {
         // Publish atomically, then advance the version.
         *self.committed.write() = Arc::new(next);
         w.version = version;
+    }
+
+    /// **Major compaction**: collapse every band's segments into a single
+    /// tombstone-free base, minimizing resident matrices (fragmentation) and read
+    /// amplification. A logical no-op (same data), so it keeps the committed
+    /// version; serialized with `commit` via the writer lock and published as one
+    /// atomic snapshot swap, so concurrent readers and writers are unaffected.
+    pub(crate) fn major_compact(&self) {
+        let _w = self.writer.lock();
+        let cur = self.committed.read().clone();
+        let next: Bands<V> =
+            std::array::from_fn(|b| Arc::new(major_compact_layers::<V>(&cur[b])));
+        *self.committed.write() = Arc::new(next);
     }
 }
 
