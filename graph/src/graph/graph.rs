@@ -2530,6 +2530,11 @@ impl Graph {
                 for attr in attrs {
                     self.add_node_attribute_name(attr);
                 }
+                // The RediSearch schema is kept (the planner emits index scans
+                // from it), but under the native feature RediSearch does no
+                // document indexing — `falkordb_create_if_range` below backfills
+                // the native index instead.
+                #[cfg(not(feature = "index-falkordb"))]
                 populate_index(IndexKind::Node, label.clone(), self.node_indexer.clone());
             }
             EntityType::Relationship => {
@@ -2542,6 +2547,7 @@ impl Graph {
                 for attr in attrs {
                     self.add_rel_attribute_name(attr);
                 }
+                #[cfg(not(feature = "index-falkordb"))]
                 populate_index(IndexKind::Edge, label.clone(), self.edge_indexer.clone());
             }
         }
@@ -2775,8 +2781,17 @@ impl Graph {
         index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
         remove_docs: &mut FxHashMap<u64, RoaringTreemap>,
     ) {
+        // With the FalkorDB native index enabled it is the *sole* index backend
+        // (a true RediSearch replacement, not a dark-launch shadow): native does
+        // the indexing and RediSearch does none. We still drain the doc maps here
+        // because the RediSearch commit that used to drain them is gated off.
         #[cfg(feature = "index-falkordb")]
-        self.falkordb_commit_nodes(index_add_docs, remove_docs);
+        {
+            self.falkordb_commit_nodes(index_add_docs, remove_docs);
+            index_add_docs.clear();
+            remove_docs.clear();
+        }
+        #[cfg(not(feature = "index-falkordb"))]
         self.commit_index_kind(IndexKind::Node, index_add_docs, remove_docs);
     }
 
@@ -2816,13 +2831,22 @@ impl Graph {
             }
         }
 
+        // Under the native feature, RediSearch indexes nothing (true
+        // replacement, not a dark-launch shadow): only the FalkorDB native path
+        // below runs. These RediSearch builders are compiled only when it is the
+        // active backend.
+        #[cfg(not(feature = "index-falkordb"))]
         let indexer = &mut self.edge_indexer;
+        #[cfg(not(feature = "index-falkordb"))]
         let lock = indexer.write_lock();
+        #[cfg(not(feature = "index-falkordb"))]
         let _guard = lock.lock();
-
+        #[cfg(not(feature = "index-falkordb"))]
         let mut add_docs: HashMap<Arc<String>, Vec<Document>> = HashMap::new();
+
         for (type_id, ids) in index_add_edge_docs.drain() {
             let name = &self.relationship_types[type_id as usize];
+            #[cfg(not(feature = "index-falkordb"))]
             let fields = indexer.get_fields(name);
 
             // Resolve `(src, dst)` only for the edge ids we actually
@@ -2870,43 +2894,55 @@ impl Graph {
                 }
             }
 
-            let mut docs = Vec::with_capacity(ids.len() as usize);
-            for id in ids {
-                let Some(&(src, dst)) = endpoints.get(&id) else {
-                    // Edge vanished between track time and commit;
-                    // nothing to index.
-                    continue;
-                };
-                let mut doc = Document::new_edge(src, dst, id);
-                for (key, fields) in &fields {
-                    if let Some(value) = self.relationship_attrs.get_attr(id, key) {
-                        for field in fields {
-                            doc.set(field, &value);
+            #[cfg(not(feature = "index-falkordb"))]
+            {
+                let mut docs = Vec::with_capacity(ids.len() as usize);
+                for id in ids {
+                    let Some(&(src, dst)) = endpoints.get(&id) else {
+                        // Edge vanished between track time and commit;
+                        // nothing to index.
+                        continue;
+                    };
+                    let mut doc = Document::new_edge(src, dst, id);
+                    for (key, fields) in &fields {
+                        if let Some(value) = self.relationship_attrs.get_attr(id, key) {
+                            for field in fields {
+                                doc.set(field, &value);
+                            }
                         }
                     }
+                    docs.push(doc);
                 }
-                docs.push(doc);
+                add_docs.insert(name.clone(), docs);
             }
-            add_docs.insert(name.clone(), docs);
         }
 
-        // Removes: (src, dst) captured at delete time lets us
-        // reconstruct the 24-byte `[src, dst, edge_id]` RediSearch key
-        // — matches FalkorDB C's `Index_RemoveEdge` in
+        // RediSearch removes (gated off under the native feature). (src, dst)
+        // captured at delete time reconstructs the 24-byte `[src, dst, edge_id]`
+        // key — matches FalkorDB C's `Index_RemoveEdge` in
         // `src/index/index_edge.c`.
-        let mut remove: HashMap<Arc<String>, HashMap<u64, (u64, u64)>> = HashMap::new();
-        for (type_id, edges) in remove_edge_docs.drain() {
-            let name = &self.relationship_types[type_id as usize];
-            remove.insert(name.clone(), edges.into_iter().collect());
+        #[cfg(not(feature = "index-falkordb"))]
+        {
+            let mut remove: HashMap<Arc<String>, HashMap<u64, (u64, u64)>> = HashMap::new();
+            for (type_id, edges) in remove_edge_docs.drain() {
+                let name = &self.relationship_types[type_id as usize];
+                remove.insert(name.clone(), edges.into_iter().collect());
+            }
+            indexer.commit_edge(&mut add_docs, &mut remove);
         }
 
-        indexer.commit_edge(&mut add_docs, &mut remove);
+        // Native is the sole backend: drain the remove map ourselves (the
+        // RediSearch remove path above, which used to drain it, is gated off).
+        #[cfg(feature = "index-falkordb")]
+        remove_edge_docs.clear();
     }
 
     /// Shared body for `commit_index` / `commit_edge_index`: resolve the
     /// id sets (keyed by label or type id) into `Document`s against the
     /// matching attribute store, then hand them to the underlying
-    /// `Indexer::commit`.
+    /// `Indexer::commit`. RediSearch-only — gated off when the native FalkorDB
+    /// index replaces it.
+    #[cfg(not(feature = "index-falkordb"))]
     fn commit_index_kind(
         &mut self,
         kind: IndexKind,
