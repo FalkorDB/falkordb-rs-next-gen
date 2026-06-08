@@ -176,6 +176,75 @@ pub(crate) struct Layers<V: LsmCell> {
 unsafe impl<V: LsmCell> Send for Layers<V> {}
 unsafe impl<V: LsmCell> Sync for Layers<V> {}
 
+impl<V: LsmCell> Layers<V> {
+    /// An empty band version (no segments).
+    pub(crate) fn empty() -> Self {
+        Layers {
+            segs: Vec::new(),
+            _v: PhantomData,
+        }
+    }
+
+    /// Approximate resident bytes across this band's segment matrices.
+    pub(crate) fn memory_usage(&self) -> usize {
+        self.segs
+            .iter()
+            .map(|s| {
+                s.adds.as_ref().map_or(0, |m| m.memory_usage())
+                    + s.tombs.as_ref().map_or(0, |m| m.memory_usage())
+            })
+            .sum()
+    }
+}
+
+/// Apply one commit's changes to a band, returning the new immutable version:
+/// append a segment for `(adds, tombs)` and compact. Pure (no lock) so the
+/// multi-band store can drive all bands under its own single lock. `adds` are
+/// `(row, col, value)` cells; `tombs` are `(row, col)` cells to suppress. The
+/// result shares all untouched old segments with `cur` by `Arc`.
+pub(crate) fn commit_layers<V: LsmCell>(
+    cur: &Layers<V>,
+    version: u64,
+    adds: &[(u64, u64, V)],
+    tombs: &[(u64, u64)],
+) -> Layers<V> {
+    let adds_m = (!adds.is_empty()).then(|| {
+        let mut rows = Vec::with_capacity(adds.len());
+        let mut cols = Vec::with_capacity(adds.len());
+        let mut vals = Vec::with_capacity(adds.len());
+        for &(r, c, v) in adds {
+            rows.push(r);
+            cols.push(c);
+            vals.push(v);
+        }
+        Arc::new(V::build_run(&rows, &cols, &vals))
+    });
+    let tombs_m = (!tombs.is_empty()).then(|| {
+        let mut rows = Vec::with_capacity(tombs.len());
+        let mut cols = Vec::with_capacity(tombs.len());
+        for &(r, c) in tombs {
+            rows.push(r);
+            cols.push(c);
+        }
+        Arc::new(<bool as LsmCell>::build_run(&rows, &cols, &[]))
+    });
+
+    let mut segs = clone_segs(&cur.segs);
+    if adds_m.is_some() || tombs_m.is_some() {
+        segs.push(Segment {
+            version,
+            adds: adds_m,
+            tombs: tombs_m,
+            weight: adds.len() as u64 + tombs.len() as u64,
+        });
+        compact::<V>(&mut segs);
+    }
+    Layers {
+        segs,
+        _v: PhantomData,
+    }
+}
+
 /// A published snapshot of one band — what a reader pins (mechanism A).
 pub(crate) type Snapshot<V> = Arc<Layers<V>>;
 
@@ -222,43 +291,12 @@ impl<V: LsmCell> LsmMatrix<V> {
         adds: &[(u64, u64, V)],
         tombs: &[(u64, u64)],
     ) {
-        let adds_m = (!adds.is_empty()).then(|| {
-            let mut rows = Vec::with_capacity(adds.len());
-            let mut cols = Vec::with_capacity(adds.len());
-            let mut vals = Vec::with_capacity(adds.len());
-            for &(r, c, v) in adds {
-                rows.push(r);
-                cols.push(c);
-                vals.push(v);
-            }
-            Arc::new(V::build_run(&rows, &cols, &vals))
-        });
-        let tombs_m = (!tombs.is_empty()).then(|| {
-            let mut rows = Vec::with_capacity(tombs.len());
-            let mut cols = Vec::with_capacity(tombs.len());
-            for &(r, c) in tombs {
-                rows.push(r);
-                cols.push(c);
-            }
-            Arc::new(<bool as LsmCell>::build_run(&rows, &cols, &[]))
-        });
-        if adds_m.is_none() && tombs_m.is_none() {
+        if adds.is_empty() && tombs.is_empty() {
             return; // empty commit — nothing to publish
         }
-
         let cur = self.committed.read().clone();
-        let mut segs = clone_segs(&cur.segs);
-        segs.push(Segment {
-            version,
-            adds: adds_m,
-            tombs: tombs_m,
-            weight: adds.len() as u64 + tombs.len() as u64,
-        });
-        compact::<V>(&mut segs);
-        *self.committed.write() = Arc::new(Layers {
-            segs,
-            _v: PhantomData,
-        });
+        let next = commit_layers::<V>(&cur, version, adds, tombs);
+        *self.committed.write() = Arc::new(next);
     }
 
     /// Number of live segments. Bounded to `O(log N)` by compaction.

@@ -27,21 +27,23 @@
 //!   row  = key &  ROW_MASK      (the low 60 bits → a legal matrix index)
 //! ```
 //!
-//! Each band is its own [`VersionedMatrixT`]; band *b* covers the contiguous key
-//! interval `[b·2^BAND_BITS, (b+1)·2^BAND_BITS)`. Because the row index *is* the
-//! key's low bits, **rows are stored in key order**: a range query is a
+//! Each band is its own log-structured matrix ([`Layers`]); band *b* covers the
+//! contiguous key interval `[b·2^BAND_BITS, (b+1)·2^BAND_BITS)`. Because the row
+//! index *is* the key's low bits, **rows are stored in key order**: a range query
+//! is a
 //! contiguous matrix row-sweep (`iter(lo_row, hi_row)`), not a per-value
 //! dictionary lookup. A range that crosses band boundaries fans out to one
 //! contiguous sweep per band it touches (≤ [`NUM_BANDS`] of them).
 //!
 //! # MVCC
 //!
-//! - The [`NUM_BANDS`] matrices are versioned **together** as one [`Snapshot`]
-//!   (`Arc<[VersionedMatrixT<V>; NUM_BANDS]>`). A reader pins the whole array
-//!   (mechanism A) and never locks during the scan; the writer `dup()`s every
-//!   band (each a cheap Cow `new_version`), mutates the touched ones, and swaps
-//!   the `Arc` — exactly the engine's graph-level isolation pattern. Old readers
-//!   keep their `Arc`; reclamation is `Arc`-drop.
+//! - The [`NUM_BANDS`] bands are versioned **together** as one [`Snapshot`]
+//!   (`Arc<[Arc<Layers<V>>; NUM_BANDS]>`). A reader pins the whole array
+//!   (mechanism A) and never locks during the scan; the writer appends an
+//!   immutable segment to each touched band ([`commit_layers`] — build + compact,
+//!   no growing copy), `Arc`-shares the untouched bands, and swaps the outer
+//!   `Arc`. Old readers keep their `Arc` (and the immutable segments it points
+//!   at, even across later compactions); reclamation is `Arc`-drop.
 //! - There is **no dictionary**: the key → (band, row) map is pure arithmetic
 //!   and identical for every reader, so nothing about ordering is versioned.
 //! - The **`reverse_id_row_mapping`** (`doc → encoded keys`) is writer-only. Writes are
@@ -50,15 +52,12 @@
 //!   `remove` (the [`super::Index::commit`] shape) clear every cell of a doc
 //!   without scanning or knowing the doc's old value.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use parking_lot::{Mutex, RwLock};
 
-use crate::graph::graphblas::matrix::{Dup, New, Remove};
-use crate::graph::graphblas::versioned_matrix::{
-    CellValue, Iter as MatrixIter, ValueIter as MatrixValueIter, VersionedMatrixT,
-};
+use super::lsm::{Layers, LsmCell, LsmCursor, commit_layers};
 use crate::index::falkordb::id::DocKey;
 
 /// Low bits of an encoded key used as the matrix row index. `60` keeps each row
@@ -71,20 +70,13 @@ const BAND_BITS: u64 = 60;
 const NUM_BANDS: usize = 1 << (u64::BITS as u64 - BAND_BITS);
 
 /// Mask selecting the low [`BAND_BITS`] of a key (the within-band row index).
+///
+/// Each band matrix is `2^BAND_BITS × 2^BAND_BITS` (rows = a key's low
+/// `BAND_BITS`; columns = the doc-id space, capped at GraphBLAS's
+/// `GrB_INDEX_MAX`). That dimension is a *logical* bound, not an allocation:
+/// GraphBLAS matrices are hypersparse, so memory scales with the stored entries,
+/// not with `nrows × ncols`. The LSM owns this dimension internally (its `DIM`).
 const ROW_MASK: u64 = (1u64 << BAND_BITS) - 1;
-
-/// Row dimension of each band matrix: `2^BAND_BITS`, the smallest value that
-/// admits every legal banded row `[0, ROW_MASK]` (the low `BAND_BITS` of a key).
-const ROW_DIM: u64 = 1u64 << BAND_BITS;
-
-/// Column dimension of each band matrix: the doc-id space. Doc ids (node / edge
-/// ids) are capped by the engine at GraphBLAS's `GrB_INDEX_MAX`, so the column
-/// axis must reach the same ceiling. This is a *logical* bound, not an
-/// allocation: GraphBLAS matrices are hypersparse, so memory scales with the
-/// stored entries, not with `nrows × ncols`. A real graph holds far fewer ids
-/// than this; the ceiling only guarantees any valid doc id is in range without a
-/// resize.
-const DOC_DIM: u64 = 1u64 << BAND_BITS;
 
 /// The band a key falls in (its high bits).
 #[inline]
@@ -98,25 +90,20 @@ fn row_of(key: u64) -> u64 {
     key & ROW_MASK
 }
 
-/// The [`NUM_BANDS`] band matrices that make up one logical index version.
-type Bands<V> = [VersionedMatrixT<V>; NUM_BANDS];
+/// The [`NUM_BANDS`] log-structured bands that make up one logical index version.
+/// Each band is an `Arc<Layers<V>>` so an untouched band is shared by `Arc` across
+/// versions; only touched bands get a fresh [`Layers`] on commit.
+type Bands<V> = [Arc<Layers<V>>; NUM_BANDS];
 
 /// One published, immutable index version — what a reader pins (mechanism A).
-/// All bands are shared behind a single `Arc`, so a snapshot is atomic across
-/// bands; each band's internal `Cow` isolates committed bytes from the writer's
-/// in-progress next version.
+/// All bands are shared behind a single outer `Arc`, so a snapshot is atomic
+/// across bands; each band's segments are immutable, isolating committed state
+/// from the writer's next version and from later compactions.
 pub(crate) type Snapshot<V> = Arc<Bands<V>>;
 
-/// A fresh, empty set of band matrices, each [`ROW_DIM`] × [`DOC_DIM`]
-/// (hypersparse — no dense allocation).
-fn new_bands<V: CellValue>() -> Bands<V> {
-    std::array::from_fn(|_| VersionedMatrixT::<V>::new(ROW_DIM, DOC_DIM))
-}
-
-/// Copy-on-write dup of every band (each a cheap Cow `new_version`): the next
-/// version shares all committed bytes until a band is mutated.
-fn dup_bands<V: CellValue>(bands: &Bands<V>) -> Bands<V> {
-    std::array::from_fn(|i| bands[i].dup())
+/// A fresh, empty set of bands (no segments — hypersparse, no allocation).
+fn new_bands<V: LsmCell>() -> Bands<V> {
+    std::array::from_fn(|_| Arc::new(Layers::<V>::empty()))
 }
 
 /// Writer-only state. Commits are serialized through this mutex, so it always
@@ -135,8 +122,8 @@ struct Writer {
 /// The numeric POC's logical-MVCC store: a banded, order-preserving
 /// `(row, doc) → cell` matrix set plus writer-only bookkeeping, generic over the
 /// cell type `V` (presence for nodes, packed endpoints for edges).
-pub(crate) struct MatrixStore<V: CellValue> {
-    /// Latest committed band matrices. Swapped per commit; readers clone the
+pub(crate) struct MatrixStore<V: LsmCell> {
+    /// Latest committed bands. Swapped per commit; readers clone the
     /// `Arc` to pin their version.
     committed: RwLock<Snapshot<V>>,
     /// Serialized writer state.
@@ -156,13 +143,13 @@ pub(crate) struct MatrixStore<V: CellValue> {
     writer: Mutex<Writer>,
 }
 
-impl<V: CellValue> Default for MatrixStore<V> {
+impl<V: LsmCell> Default for MatrixStore<V> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<V: CellValue> MatrixStore<V> {
+impl<V: LsmCell> MatrixStore<V> {
     /// A fresh, empty store at version 0.
     pub(crate) fn new() -> Self {
         Self {
@@ -191,7 +178,7 @@ impl<V: CellValue> MatrixStore<V> {
         self.committed
             .read()
             .iter()
-            .map(VersionedMatrixT::<V>::memory_usage)
+            .map(|b| b.memory_usage())
             .sum()
     }
 
@@ -212,47 +199,69 @@ impl<V: CellValue> MatrixStore<V> {
         // Serialize the whole commit (single writer).
         let mut w = self.writer.lock();
 
-        // Build the next version off the committed bands (Cow `new_version`):
-        // mutating a dup deep-copies only the touched bands, leaving older
-        // readers' shares untouched.
-        let mut next = {
-            let cur = self.committed.read();
-            dup_bands(&cur)
-        };
+        // Group this commit's cells per band: add cells `(row, col, value)` and
+        // tombstone cells `(row, col)`. The LSM never mutates published state, so
+        // a doc delete/update is resolved here (via `reverse_id_row_mapping`) into
+        // the exact old cells to tombstone.
+        let mut band_adds: [Vec<(u64, u64, V)>; NUM_BANDS] = std::array::from_fn(|_| Vec::new());
+        let mut band_tombs: [Vec<(u64, u64)>; NUM_BANDS] = std::array::from_fn(|_| Vec::new());
 
-        // Value-less removals: clear each doc's currently occupied rows.
+        // Value-less removals: tombstone each doc's currently occupied cells.
         for &doc in remove {
             if let Some(keys) = w.reverse_id_row_mapping.remove(&doc) {
                 for k in keys {
-                    next[band_of(k)].remove(row_of(k), doc);
+                    band_tombs[band_of(k)].push((row_of(k), doc));
                 }
             }
         }
 
-        // Additions: tombstone the doc's prior placement, then set its new rows.
+        // Additions: tombstone the doc's prior placement, then add its new rows.
         for (doc, keys, cell) in adds {
             if let Some(prev) = w.reverse_id_row_mapping.remove(doc) {
                 for k in prev {
-                    next[band_of(k)].remove(row_of(k), *doc);
+                    band_tombs[band_of(k)].push((row_of(k), *doc));
                 }
             }
             if keys.is_empty() {
                 continue;
             }
-            for &k in keys {
-                next[band_of(k)].set_cell(row_of(k), *doc, *cell);
-            }
             // Dedup so an array repeating a value records each row once.
             let mut owned = keys.clone();
             owned.sort_unstable();
             owned.dedup();
+            for &k in &owned {
+                band_adds[band_of(k)].push((row_of(k), *doc, *cell));
+            }
             w.reverse_id_row_mapping.insert(*doc, owned);
         }
 
-        // Fold deltas into each base when they grow large (engine threshold).
-        for band in &mut next {
-            band.flush();
+        // A cell re-added this commit (e.g. an update that keeps a row, or a
+        // remove+re-add of the same doc) must NOT be tombstoned this commit:
+        // both runs carry the same version, so drop the superseded tombstone.
+        for b in 0..NUM_BANDS {
+            if band_tombs[b].is_empty() || band_adds[b].is_empty() {
+                continue;
+            }
+            let added: HashSet<(u64, u64)> =
+                band_adds[b].iter().map(|&(r, c, _)| (r, c)).collect();
+            band_tombs[b].retain(|rc| !added.contains(rc));
         }
+
+        // Build the next version: untouched bands are shared by `Arc`; touched
+        // bands get a fresh `Layers` (append + compact, no growing copy).
+        let cur = self.committed.read().clone();
+        let next: Bands<V> = std::array::from_fn(|b| {
+            if band_adds[b].is_empty() && band_tombs[b].is_empty() {
+                Arc::clone(&cur[b])
+            } else {
+                Arc::new(commit_layers::<V>(
+                    &cur[b],
+                    version,
+                    &band_adds[b],
+                    &band_tombs[b],
+                ))
+            }
+        });
 
         // Publish atomically, then advance the version.
         *self.committed.write() = Arc::new(next);
@@ -271,21 +280,21 @@ impl<V: CellValue> MatrixStore<V> {
 /// band's slice of the range, and yields each `(row, doc)` cell's doc id. A doc
 /// indexed under several in-range keys (an array property) is yielded once per
 /// occupied row; the scan layer dedups.
-pub(crate) struct MatrixRangeCursor<V: CellValue> {
+pub(crate) struct MatrixRangeCursor<V: LsmCell> {
     bands: Snapshot<V>,
     lo: u64,
     hi: u64,
     /// First and last band the range touches (inclusive).
     band_lo: usize,
     band_hi: usize,
-    /// Band whose iterator is currently open (or next to open).
+    /// Band whose cursor is currently open (or next to open).
     band: usize,
-    /// Iterator over the current band's in-range rows.
-    iter: Option<MatrixIter>,
+    /// LSM merge cursor over the current band's in-range rows.
+    cursor: Option<LsmCursor<V>>,
     done: bool,
 }
 
-impl<V: CellValue> MatrixRangeCursor<V> {
+impl<V: LsmCell> MatrixRangeCursor<V> {
     /// A cursor over `bands` restricted to the inclusive encoded-key range
     /// `[lo, hi]`. An empty range (`lo > hi`) yields nothing.
     pub(crate) fn new(
@@ -303,25 +312,25 @@ impl<V: CellValue> MatrixRangeCursor<V> {
             band_lo,
             band_hi,
             band: band_lo,
-            iter: None,
+            cursor: None,
             done,
         }
     }
 
     /// The next doc id in range, or `None` when exhausted. Walks each band's
-    /// contiguous in-range row slice, advancing to the next band when one is
-    /// drained.
+    /// contiguous in-range row slice (one LSM merge cursor per band), advancing to
+    /// the next band when one is drained.
     pub(crate) fn next_id(&mut self) -> Option<DocKey> {
         loop {
             if self.done {
                 return None;
             }
-            match self.iter.as_mut() {
-                // Drain the current band's iterator.
-                Some(it) => match it.next() {
-                    Some((_row, doc)) => return Some(doc),
+            match self.cursor.as_mut() {
+                // Drain the current band's merge cursor.
+                Some(c) => match c.next_cell() {
+                    Some((_row, doc, _value)) => return Some(doc),
                     None => {
-                        self.iter = None;
+                        self.cursor = None;
                         self.band += 1;
                     }
                 },
@@ -343,7 +352,7 @@ impl<V: CellValue> MatrixRangeCursor<V> {
                     } else {
                         ROW_MASK
                     };
-                    self.iter = Some(self.bands[self.band].iter(start, end));
+                    self.cursor = Some(LsmCursor::new(Arc::clone(&self.bands[self.band]), start, end));
                 }
             }
         }
@@ -361,7 +370,7 @@ pub(crate) struct ValueRangeCursor {
     band_lo: usize,
     band_hi: usize,
     band: usize,
-    iter: Option<MatrixValueIter>,
+    cursor: Option<LsmCursor<u64>>,
     done: bool,
 }
 
@@ -381,7 +390,7 @@ impl ValueRangeCursor {
             band_lo,
             band_hi,
             band: band_lo,
-            iter: None,
+            cursor: None,
             done,
         }
     }
@@ -392,11 +401,11 @@ impl ValueRangeCursor {
             if self.done {
                 return None;
             }
-            match self.iter.as_mut() {
-                Some(it) => match it.next() {
+            match self.cursor.as_mut() {
+                Some(c) => match c.next_cell() {
                     Some((_row, doc, value)) => return Some((doc, value)),
                     None => {
-                        self.iter = None;
+                        self.cursor = None;
                         self.band += 1;
                     }
                 },
@@ -415,7 +424,7 @@ impl ValueRangeCursor {
                     } else {
                         ROW_MASK
                     };
-                    self.iter = Some(self.bands[self.band].iter_values(start, end));
+                    self.cursor = Some(LsmCursor::new(Arc::clone(&self.bands[self.band]), start, end));
                 }
             }
         }
