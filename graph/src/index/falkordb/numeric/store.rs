@@ -583,4 +583,126 @@ mod tests {
         assert_eq!(c.next_value(), None);
     }
 
+    /// Scaling probe (run with `--release --nocapture`): does the banded
+    /// `VersionedMatrix` index degrade with scale and/or out-of-order inserts?
+    /// Ingests N records in commit-batches (like the engine) with row keys
+    /// either ascending (`in_order`) or uniformly random (`random`), then times
+    /// a 10% range scan — against a `BTreeMap` baseline (an order-independent
+    /// tree, like a classic numeric index). The ingest `us/rec` trend across N
+    /// exposes super-linear cost (the per-commit `element_wise_add` fold).
+    #[test]
+    #[ignore = "scaling probe; run explicitly with --release --nocapture"]
+    fn scaling_in_order_vs_random() {
+        crate::index::falkordb::test_init_graphblas();
+        // splitmix64 — deterministic pseudo-random keys, no rand dep.
+        fn sm64(mut z: u64) -> u64 {
+            z = z.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            z ^ (z >> 31)
+        }
+        let batch = 10_000u64;
+        let sizes = [1_000_000u64, 2_000_000, 4_000_000, 8_000_000];
+
+        eprintln!("\n=== MatrixStore<u64> — commit batches of {batch} ===");
+        for &n in &sizes {
+            let keyspace = n;
+            for order in ["in_order", "random"] {
+                let store = MatrixStore::<u64>::new();
+                let t0 = std::time::Instant::now();
+                let (mut i, mut ver) = (0u64, 0u64);
+                while i < n {
+                    ver += 1;
+                    let end = (i + batch).min(n);
+                    let adds: Vec<(DocKey, Vec<u64>, u64)> = (i..end)
+                        .map(|d| {
+                            let key = if order == "in_order" { d } else { sm64(d) % keyspace };
+                            (d, vec![key], d)
+                        })
+                        .collect();
+                    store.commit(ver, &adds, &[]);
+                    i = end;
+                }
+                let ingest_ms = t0.elapsed().as_secs_f64() * 1000.0;
+                let snap = store.snapshot();
+                let t1 = std::time::Instant::now();
+                let mut c = ValueRangeCursor::new(Arc::clone(&snap), 0, keyspace / 10);
+                let mut cnt = 0u64;
+                while c.next_value().is_some() {
+                    cnt += 1;
+                }
+                let scan_ms = t1.elapsed().as_secs_f64() * 1000.0;
+                eprintln!(
+                    "N={n:>9} {order:<9} ingest={ingest_ms:>9.0}ms ({:>6.2} us/rec)  scan10%={scan_ms:>8.2}ms ({cnt} matched)",
+                    ingest_ms * 1000.0 / n as f64,
+                );
+            }
+        }
+
+        eprintln!("=== BTreeMap<(key,doc)> baseline (order-independent tree) ===");
+        use std::collections::BTreeMap;
+        for &n in &sizes {
+            let keyspace = n;
+            for order in ["in_order", "random"] {
+                let mut m: BTreeMap<(u64, u64), ()> = BTreeMap::new();
+                let t0 = std::time::Instant::now();
+                for d in 0..n {
+                    let key = if order == "in_order" { d } else { sm64(d) % keyspace };
+                    m.insert((key, d), ());
+                }
+                let ingest_ms = t0.elapsed().as_secs_f64() * 1000.0;
+                let t1 = std::time::Instant::now();
+                let cnt = m.range((0, 0)..(keyspace / 10, u64::MAX)).count();
+                let scan_ms = t1.elapsed().as_secs_f64() * 1000.0;
+                eprintln!(
+                    "N={n:>9} {order:<9} ingest={ingest_ms:>9.0}ms ({:>6.2} us/rec)  scan10%={scan_ms:>8.2}ms ({cnt} matched)",
+                    ingest_ms * 1000.0 / n as f64,
+                );
+            }
+        }
+    }
+
+    /// Amortization probe (run with `--release --nocapture`): at fixed N, sweep
+    /// the commit-batch size. Bigger batches = fewer per-commit MVCC copies +
+    /// delta assemblies; a single commit is full deferral (one fold). If ingest
+    /// falls sharply as the batch grows, the quadratic floor is per-commit
+    /// versioned-delta work (copy + assemble), not the data structure itself.
+    #[test]
+    #[ignore = "amortization probe; run explicitly with --release --nocapture"]
+    fn batch_amortization_sweep() {
+        crate::index::falkordb::test_init_graphblas();
+        fn sm64(mut z: u64) -> u64 {
+            z = z.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            z ^ (z >> 31)
+        }
+        let n = 4_000_000u64;
+        let keyspace = n;
+        eprintln!("\n=== N={n}: ingest vs commit-batch size (MatrixStore<u64>) ===");
+        for &batch in &[10_000u64, 100_000, 1_000_000, 4_000_000] {
+            for order in ["in_order", "random"] {
+                let store = MatrixStore::<u64>::new();
+                let t0 = std::time::Instant::now();
+                let (mut i, mut ver) = (0u64, 0u64);
+                while i < n {
+                    ver += 1;
+                    let end = (i + batch).min(n);
+                    let adds: Vec<(DocKey, Vec<u64>, u64)> = (i..end)
+                        .map(|d| {
+                            let key = if order == "in_order" { d } else { sm64(d) % keyspace };
+                            (d, vec![key], d)
+                        })
+                        .collect();
+                    store.commit(ver, &adds, &[]);
+                    i = end;
+                }
+                let ms = t0.elapsed().as_secs_f64() * 1000.0;
+                eprintln!(
+                    "batch={batch:>9} {order:<9} ingest={ms:>8.0}ms ({:>5.2} us/rec, {ver} commits)",
+                    ms * 1000.0 / n as f64,
+                );
+            }
+        }
+    }
 }
