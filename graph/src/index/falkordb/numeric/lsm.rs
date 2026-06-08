@@ -1,24 +1,29 @@
-//! Log-structured matrix store — the LSM core (milestone **M1**).
+//! Log-structured matrix store — the LSM core + compaction (milestones **M1/M2**).
 //!
 //! Replaces the single copy-on-write delta of [`super::store`] (which re-copies a
 //! growing delta on every commit → super-linear ingest) with an **append-only
-//! list of immutable run matrices**. A commit *appends* a small immutable run; it
-//! never mutates or copies anything that grows. MVCC isolation comes from
-//! immutability: published runs/base are frozen and `Arc`-shared, so a reader's
-//! pinned snapshot is stable while later commits add new runs.
+//! list of immutable segments**. A commit *appends* one small immutable segment;
+//! it never mutates or copies anything that grows. MVCC isolation comes from
+//! immutability: published segments are frozen and `Arc`-shared, so a reader's
+//! pinned snapshot is stable while later commits add (or compact) segments.
 //!
 //! ```text
-//!   one band (rows = encoded-key low 60 bits, cols = doc id)
-//!     base   : Arc<Matrix>            folded live cells (cell type V)
-//!     runs   : [(ver, Arc<Matrix>)]   immutable add-runs, ascending version
-//!     tombs  : [(ver, Arc<Matrix>)]   immutable tombstone runs (BOOL)
+//!   one band (rows = encoded-key low 60 bits, cols = doc id), newest segment last
+//!     Segment { adds: Matrix<V>,  tombs: Matrix<bool>,  version, weight }   ...
 //!
-//!   effective = (base ∪ ⋃ runs) − ⋃ tombs        (newest version wins per cell)
+//!   effective = ⋃ seg.adds  −  ⋃ seg.tombs            (newest version wins per cell)
 //! ```
 //!
-//! Reads are a k-way merge over `base + runs − tombs` (see [`LsmCursor`]).
-//! Compaction (bounding the run count) lands in M2; this milestone only appends,
-//! so the run list grows — enough to prove correctness + MVCC in isolation.
+//! The oldest segment (`segs[0]`) is the "base": tombstones there suppress nothing
+//! older, so a bottom-merge **drops** them (tombstone GC).
+//!
+//! - **Reads** (M1) — a lazy k-way merge over the segments with newest-wins per
+//!   cell (see [`LsmCursor`]); this is `(⋃ adds) − (⋃ tombs)`, the generalization
+//!   of the old `(m ∪ dp) − dm`.
+//! - **Compaction** (M2) — after each append, adjacent segments closer than a
+//!   geometric factor `F` are merged ([`compact`]). This keeps the segment count
+//!   `O(log N)` (bounded read amplification) and gives amortized `O(N log N)`
+//!   ingest, insert-order-independent.
 
 use std::iter::Peekable;
 use std::marker::PhantomData;
@@ -26,7 +31,7 @@ use std::sync::Arc;
 
 use parking_lot::RwLock;
 
-use crate::graph::graphblas::matrix::{Matrix, New};
+use crate::graph::graphblas::matrix::{Dup, MaskedElementWiseAdd, Matrix, New, Size};
 
 /// One band's matrix dimension: `2^60`. Rows are an encoded key's low 60 bits,
 /// columns are doc ids — both `< 2^60` (GraphBLAS's index ceiling). Banding (the
@@ -34,11 +39,19 @@ use crate::graph::graphblas::matrix::{Matrix, New};
 /// [`LsmMatrix`] is one band.
 const DIM: u64 = 1 << 60;
 
+/// Compaction fan-out: adjacent segments are merged while the older is no more
+/// than `F×` the newer (i.e. they are within the same size tier). Stable state
+/// therefore has each segment `> F×` the next-newer one, so weights grow
+/// geometrically and the segment count is `O(log_F N)`. `F = 2` balances read
+/// amplification (segment count) against write amplification (merge work);
+/// tunable in M4.
+const F: u64 = 2;
+
 /// Cell type of an LSM matrix: presence (`bool`, node indexes) or value-carrying
-/// (`u64`, edge indexes packing endpoints). Provides the two type-specific
-/// primitives the LSM needs — bulk-build an immutable run, and scan a run's row
-/// range yielding the cell value. Local to the index (the engine's `CellValue`
-/// is untouched).
+/// (`u64`, edge indexes packing endpoints). Provides the type-specific GraphBLAS
+/// primitives the LSM needs — build a run, scan it, an empty matrix, and a
+/// value-preserving union. Local to the index (the engine's `CellValue` is
+/// untouched).
 pub(crate) trait LsmCell: Copy + Send + Sync + 'static {
     /// Bulk-build an immutable run matrix from `(rows, cols, vals)`. Entries are
     /// unique per run (a doc is added once per row in a commit), so no dup
@@ -57,6 +70,16 @@ pub(crate) trait LsmCell: Copy + Send + Sync + 'static {
         lo: u64,
         hi: u64,
     ) -> Box<dyn Iterator<Item = (u64, u64, Self)> + Send>;
+
+    /// An empty matrix of this cell type, full band dimensions.
+    fn empty() -> Matrix;
+
+    /// `dst = dst ∪ src`, preserving values; on a cell conflict `src` (the newer
+    /// run) wins. Used to fold a newer segment's adds into an older one.
+    fn union_into(
+        dst: &mut Matrix,
+        src: &Matrix,
+    );
 }
 
 impl LsmCell for bool {
@@ -78,6 +101,18 @@ impl LsmCell for bool {
         hi: u64,
     ) -> Box<dyn Iterator<Item = (u64, u64, Self)> + Send> {
         Box::new(m.iter(lo, hi).map(|(r, c)| (r, c, true)))
+    }
+
+    fn empty() -> Matrix {
+        Matrix::new(DIM, DIM)
+    }
+
+    fn union_into(
+        dst: &mut Matrix,
+        src: &Matrix,
+    ) {
+        // PAIR/BOOL presence union — value is always `true`, so newer-wins is moot.
+        dst.element_wise_add(None, None, Some(src), None);
     }
 }
 
@@ -101,17 +136,37 @@ impl LsmCell for u64 {
     ) -> Box<dyn Iterator<Item = (u64, u64, Self)> + Send> {
         Box::new(m.iter_values(lo, hi))
     }
+
+    fn empty() -> Matrix {
+        Matrix::new_uint64(DIM, DIM)
+    }
+
+    fn union_into(
+        dst: &mut Matrix,
+        src: &Matrix,
+    ) {
+        // ANY/SECOND over UINT64: `src` is the second operand, so it wins on a
+        // conflicting cell — i.e. the newer run's value is kept.
+        dst.element_wise_add_uint64(src);
+    }
 }
 
-/// One published, immutable version of a band: a base plus version-tagged add and
-/// tombstone runs. Everything is `Arc`-shared and never mutated after publish, so
-/// a reader holding this is fully isolated from later commits.
+/// One immutable segment: a commit's (or a merge's) net add/tombstone runs.
+/// `adds`/`tombs` are `None` when empty. `weight ≈ nnz(adds) + nnz(tombs)` drives
+/// the compaction tiering. `version` orders segments for newest-wins reads.
+struct Segment {
+    version: u64,
+    adds: Option<Arc<Matrix>>,
+    tombs: Option<Arc<Matrix>>,
+    weight: u64,
+}
+
+/// One published, immutable version of a band: a version-ordered segment list
+/// (oldest first; `segs[0]` is the base). Everything is `Arc`-shared and never
+/// mutated after publish, so a reader holding this is fully isolated from later
+/// commits and compactions.
 pub(crate) struct Layers<V: LsmCell> {
-    base: Arc<Matrix>,
-    /// Add-runs, ascending version (newest last). `base` is logically version 0.
-    runs: Vec<(u64, Arc<Matrix>)>,
-    /// Tombstone runs (always `BOOL`), ascending version.
-    tombs: Vec<(u64, Arc<Matrix>)>,
+    segs: Vec<Segment>,
     _v: PhantomData<V>,
 }
 
@@ -126,8 +181,8 @@ pub(crate) type Snapshot<V> = Arc<Layers<V>>;
 
 /// One band's log-structured matrix: a single published [`Layers`] swapped under
 /// a lock on commit. Readers clone the `Arc` (lock-free after); the writer builds
-/// a new immutable run and publishes a new `Layers` that shares the old base +
-/// runs by `Arc`.
+/// new immutable segments and publishes a new `Layers` that shares the untouched
+/// old segments by `Arc`.
 pub(crate) struct LsmMatrix<V: LsmCell> {
     committed: RwLock<Snapshot<V>>,
 }
@@ -139,13 +194,11 @@ impl<V: LsmCell> Default for LsmMatrix<V> {
 }
 
 impl<V: LsmCell> LsmMatrix<V> {
-    /// An empty band at version 0.
+    /// An empty band.
     pub(crate) fn new() -> Self {
         Self {
             committed: RwLock::new(Arc::new(Layers {
-                base: Arc::new(V::build_run(&[], &[], &[])),
-                runs: Vec::new(),
-                tombs: Vec::new(),
+                segs: Vec::new(),
                 _v: PhantomData,
             })),
         }
@@ -156,19 +209,20 @@ impl<V: LsmCell> LsmMatrix<V> {
         Arc::clone(&self.committed.read())
     }
 
-    /// Append one commit's changes as immutable runs and publish a new version.
-    /// `adds` are `(row, col, value)` cells; `tombs` are `(row, col)` cells to
-    /// suppress (the caller — the store — resolves doc deletes/updates into the
-    /// exact old cells). The new version shares the old base + existing runs by
-    /// `Arc`; only the (small) run lists are cloned. No growing structure is
-    /// copied, so a commit is `O(this commit's changes)`.
+    /// Append one commit's changes as a new immutable segment, run compaction,
+    /// and publish. `adds` are `(row, col, value)` cells; `tombs` are
+    /// `(row, col)` cells to suppress (the caller — the store — resolves doc
+    /// deletes/updates into the exact old cells). The new version shares all
+    /// untouched old segments by `Arc`; only the small segment list is cloned, so
+    /// a quiet commit is `O(this commit's changes)` and a compacting commit pays
+    /// `O(merged nnz)` (amortized `O(log N)` per element).
     pub(crate) fn commit(
         &self,
         version: u64,
         adds: &[(u64, u64, V)],
         tombs: &[(u64, u64)],
     ) {
-        let add_run = (!adds.is_empty()).then(|| {
+        let adds_m = (!adds.is_empty()).then(|| {
             let mut rows = Vec::with_capacity(adds.len());
             let mut cols = Vec::with_capacity(adds.len());
             let mut vals = Vec::with_capacity(adds.len());
@@ -179,7 +233,7 @@ impl<V: LsmCell> LsmMatrix<V> {
             }
             Arc::new(V::build_run(&rows, &cols, &vals))
         });
-        let tomb_run = (!tombs.is_empty()).then(|| {
+        let tombs_m = (!tombs.is_empty()).then(|| {
             let mut rows = Vec::with_capacity(tombs.len());
             let mut cols = Vec::with_capacity(tombs.len());
             for &(r, c) in tombs {
@@ -188,76 +242,181 @@ impl<V: LsmCell> LsmMatrix<V> {
             }
             Arc::new(<bool as LsmCell>::build_run(&rows, &cols, &[]))
         });
+        if adds_m.is_none() && tombs_m.is_none() {
+            return; // empty commit — nothing to publish
+        }
 
         let cur = self.committed.read().clone();
-        let mut runs = cur.runs.clone();
-        let mut tombs_v = cur.tombs.clone();
-        if let Some(r) = add_run {
-            runs.push((version, r));
-        }
-        if let Some(t) = tomb_run {
-            tombs_v.push((version, t));
-        }
-        let next = Layers {
-            base: Arc::clone(&cur.base),
-            runs,
-            tombs: tombs_v,
+        let mut segs = clone_segs(&cur.segs);
+        segs.push(Segment {
+            version,
+            adds: adds_m,
+            tombs: tombs_m,
+            weight: adds.len() as u64 + tombs.len() as u64,
+        });
+        compact::<V>(&mut segs);
+        *self.committed.write() = Arc::new(Layers {
+            segs,
             _v: PhantomData,
-        };
-        *self.committed.write() = Arc::new(next);
+        });
     }
 
-    /// Number of live runs (excludes the base). Used by tests / future compaction.
+    /// Number of live segments. Bounded to `O(log N)` by compaction.
     #[cfg(test)]
-    pub(crate) fn run_count(&self) -> usize {
-        self.committed.read().runs.len()
+    pub(crate) fn seg_count(&self) -> usize {
+        self.committed.read().segs.len()
+    }
+
+    /// Sum of segment weights — a proxy for resident cells (memory). Used by the
+    /// tombstone-GC test to confirm churn doesn't grow the structure unboundedly.
+    #[cfg(test)]
+    pub(crate) fn total_weight(&self) -> u64 {
+        self.committed.read().segs.iter().map(|s| s.weight).sum()
     }
 }
 
-/// Build the source iterators for a `[lo, hi]` row scan over a pinned snapshot:
-/// base (version 0) + each add-run (`Some(value)`) + each tomb-run (`None`),
-/// each peekable and version-tagged.
-fn sources<V: LsmCell>(
-    snap: &Snapshot<V>,
-    lo: u64,
-    hi: u64,
-) -> Vec<Src<V>> {
-    let mut srcs: Vec<Src<V>> = Vec::with_capacity(1 + snap.runs.len() + snap.tombs.len());
-    let add = |m: &Matrix| -> Peekable<Box<dyn Iterator<Item = (u64, u64, Option<V>)> + Send>> {
-        let it: Box<dyn Iterator<Item = (u64, u64, Option<V>)> + Send> =
-            Box::new(V::scan(m, lo, hi).map(|(r, c, v)| (r, c, Some(v))));
-        it.peekable()
+/// Shallow-clone the segment list (each `Segment` shares its matrices by `Arc`).
+fn clone_segs(segs: &[Segment]) -> Vec<Segment> {
+    segs.iter()
+        .map(|s| Segment {
+            version: s.version,
+            adds: s.adds.clone(),
+            tombs: s.tombs.clone(),
+            weight: s.weight,
+        })
+        .collect()
+}
+
+/// Merge two adjacent segments `a` (older) and `b` (newer) into one, applying
+/// newest-wins:
+///
+/// ```text
+///   adds  = (a.adds ∪ b.adds[newer wins]) − b.tombs
+///   tombs = (a.tombs ∪ b.tombs)           − b.adds      (dropped if `bottom`)
+/// ```
+///
+/// `a.adds`/`a.tombs` are `Arc`-shared and never mutated — we `dup` `a` and fold
+/// `b` into the copy, leaving the originals intact for older readers. When `a` is
+/// the bottom segment (`segs[0]`), its merged tombstones suppress nothing older,
+/// so they are GC'd (`bottom = true`).
+fn merge_segments<V: LsmCell>(
+    a: &Segment,
+    b: &Segment,
+    bottom: bool,
+) -> Segment {
+    // adds = (a.adds ∪ b.adds) − b.tombs
+    let mut add = a.adds.as_ref().map_or_else(V::empty, |m| m.dup());
+    if let Some(ba) = &b.adds {
+        V::union_into(&mut add, ba);
+    }
+    if let Some(bt) = &b.tombs {
+        add.remove_all(bt);
+    }
+    let add_n = add.nvals();
+    let adds = (add_n > 0).then(|| Arc::new(add));
+
+    // tombs = (a.tombs ∪ b.tombs) − b.adds ; dropped at the bottom (nothing older).
+    let (tombs, tomb_n) = if bottom {
+        (None, 0)
+    } else {
+        let mut t = a
+            .tombs
+            .as_ref()
+            .map_or_else(|| Matrix::new(DIM, DIM), |m| m.dup());
+        if let Some(bt) = &b.tombs {
+            t.element_wise_add(None, None, Some(bt), None);
+        }
+        if let Some(ba) = &b.adds {
+            t.remove_all(ba);
+        }
+        let n = t.nvals();
+        ((n > 0).then(|| Arc::new(t)), n)
     };
-    srcs.push(Src {
-        it: add(&snap.base),
-        version: 0,
-    });
-    for (ver, m) in &snap.runs {
-        srcs.push(Src {
-            it: add(m),
-            version: *ver,
-        });
+
+    Segment {
+        version: b.version,
+        adds,
+        tombs,
+        weight: add_n + tomb_n,
     }
-    for (ver, m) in &snap.tombs {
-        let it: Box<dyn Iterator<Item = (u64, u64, Option<V>)> + Send> =
-            Box::new(<bool as LsmCell>::scan(m, lo, hi).map(|(r, c, _)| (r, c, None)));
-        srcs.push(Src {
-            it: it.peekable(),
-            version: *ver,
-        });
-    }
-    srcs
 }
 
+/// Size-tiered compaction. After an append, repeatedly merge the newest adjacent
+/// pair whose older segment is within `F×` the newer (same tier), restarting
+/// after each merge. Stable state has strictly `> F×` growth oldest→newest, so
+/// the segment count is `O(log_F N)`. Merging the bottom pair GC's tombstones and
+/// can drop a fully-cancelled (empty) segment.
+fn compact<V: LsmCell>(segs: &mut Vec<Segment>) {
+    loop {
+        let n = segs.len();
+        if n < 2 {
+            return;
+        }
+        let mut merged = false;
+        // Scan newest pair → oldest; merge the first that is within a tier.
+        let mut i = n - 1;
+        while i >= 1 {
+            if segs[i - 1].weight <= F.saturating_mul(segs[i].weight) {
+                let bottom = i == 1;
+                let m = merge_segments::<V>(&segs[i - 1], &segs[i], bottom);
+                let replacement = if m.adds.is_some() || m.tombs.is_some() {
+                    vec![m]
+                } else {
+                    Vec::new() // both runs fully cancelled — drop the segment
+                };
+                segs.splice(i - 1..=i, replacement);
+                merged = true;
+                break;
+            }
+            i -= 1;
+        }
+        if !merged {
+            return;
+        }
+    }
+}
+
+/// One merge source: a peekable stream of `(row, col, Option<value>)` —
+/// `Some(value)` for an add run, `None` for a tombstone — tagged with the
+/// segment's version for newest-wins resolution.
 struct Src<V: LsmCell> {
     it: Peekable<Box<dyn Iterator<Item = (u64, u64, Option<V>)> + Send>>,
     version: u64,
 }
 
-/// Lazy k-way merge over one band's `base + runs − tombs` for the inclusive row
-/// range `[lo, hi]`. For each `(row, col)`, the **newest** source wins: an
-/// add-source yields the cell live, a tombstone source suppresses it. Owns the
-/// pinned [`Snapshot`] (so it is `Send` and reclaims by `Arc`-drop).
+/// Build the merge sources for a `[lo, hi]` row scan over a pinned snapshot: one
+/// add-source and/or one tomb-source per segment.
+fn sources<V: LsmCell>(
+    snap: &Snapshot<V>,
+    lo: u64,
+    hi: u64,
+) -> Vec<Src<V>> {
+    let mut srcs: Vec<Src<V>> = Vec::with_capacity(snap.segs.len());
+    for seg in &snap.segs {
+        if let Some(m) = &seg.adds {
+            let it: Box<dyn Iterator<Item = (u64, u64, Option<V>)> + Send> =
+                Box::new(V::scan(m, lo, hi).map(|(r, c, v)| (r, c, Some(v))));
+            srcs.push(Src {
+                it: it.peekable(),
+                version: seg.version,
+            });
+        }
+        if let Some(m) = &seg.tombs {
+            let it: Box<dyn Iterator<Item = (u64, u64, Option<V>)> + Send> =
+                Box::new(<bool as LsmCell>::scan(m, lo, hi).map(|(r, c, _)| (r, c, None)));
+            srcs.push(Src {
+                it: it.peekable(),
+                version: seg.version,
+            });
+        }
+    }
+    srcs
+}
+
+/// Lazy k-way merge over one band's segments for the inclusive row range
+/// `[lo, hi]`. For each `(row, col)`, the **newest** source wins: an add-source
+/// yields the cell live, a tombstone source suppresses it. Owns the pinned
+/// [`Snapshot`] (so it is `Send` and reclaims by `Arc`-drop).
 pub(crate) struct LsmCursor<V: LsmCell> {
     _snap: Snapshot<V>,
     srcs: Vec<Src<V>>,
@@ -271,7 +430,11 @@ impl<V: LsmCell> LsmCursor<V> {
         lo: u64,
         hi: u64,
     ) -> Self {
-        let srcs = if lo > hi { Vec::new() } else { sources(&snap, lo, hi) };
+        let srcs = if lo > hi {
+            Vec::new()
+        } else {
+            sources(&snap, lo, hi)
+        };
         Self { _snap: snap, srcs }
     }
 
@@ -349,7 +512,10 @@ mod tests {
         m.commit(1, &[(10, 100, true), (20, 200, true), (10, 101, true)], &[]);
         let s = m.snapshot();
         assert_eq!(scan(&s, 10, 10), vec![(10, 100, true), (10, 101, true)]);
-        assert_eq!(scan(&s, 0, 100), vec![(10, 100, true), (10, 101, true), (20, 200, true)]);
+        assert_eq!(
+            scan(&s, 0, 100),
+            vec![(10, 100, true), (10, 101, true), (20, 200, true)]
+        );
         assert_eq!(scan(&s, 11, 19), vec![]);
     }
 
@@ -387,17 +553,20 @@ mod tests {
     }
 
     #[test]
-    fn many_runs_merge() {
+    fn compaction_merges_and_preserves_results() {
         init();
         let m = LsmMatrix::<bool>::new();
-        // out-of-order commits across many runs (no compaction yet).
+        // out-of-order commits; compaction merges them into the base.
         m.commit(1, &[(50, 1, true)], &[]);
         m.commit(2, &[(10, 2, true)], &[]);
         m.commit(3, &[(30, 3, true)], &[]);
-        assert_eq!(m.run_count(), 3);
+        assert_eq!(m.seg_count(), 1, "equal-weight commits collapse to one segment");
         let s = m.snapshot();
         assert_eq!(scan(&s, 10, 30), vec![(10, 2, true), (30, 3, true)]);
-        assert_eq!(scan(&s, 0, 100), vec![(10, 2, true), (30, 3, true), (50, 1, true)]);
+        assert_eq!(
+            scan(&s, 0, 100),
+            vec![(10, 2, true), (30, 3, true), (50, 1, true)]
+        );
     }
 
     #[test]
@@ -415,14 +584,94 @@ mod tests {
         assert_eq!(scan(&new, 0, 100), vec![(20, 2, true)]);
     }
 
+    /// Compaction keeps the segment count logarithmic in the number of commits.
+    #[test]
+    fn compaction_bounds_segment_count() {
+        init();
+        let m = LsmMatrix::<bool>::new();
+        const N: u64 = 4_096; // 2^12 equal-weight commits
+        for v in 1..=N {
+            m.commit(v, &[(v, v, true)], &[]);
+        }
+        // 2^12 unit segments → binary-counter merges → ~log2(N) segments.
+        assert!(
+            m.seg_count() <= 16,
+            "segment count {} not bounded ~log2({N})",
+            m.seg_count()
+        );
+        // All cells still present and correct.
+        assert_eq!(scan(&m.snapshot(), 1, N).len(), N as usize);
+    }
+
+    /// Update churn on a fixed doc set: each round tombstones old cells and adds
+    /// new ones. Tombstones must be GC'd by bottom-merges, so the resident weight
+    /// stays bounded (≈ live set), not growing with the number of rounds.
+    #[test]
+    fn tombstone_gc_under_churn() {
+        init();
+        let m = LsmMatrix::<u64>::new();
+        const DOCS: u64 = 64;
+        let mut version = 0u64;
+        // round 0: initial placement at row = doc.
+        let mut cur_row: Vec<u64> = (0..DOCS).collect();
+        version += 1;
+        let adds: Vec<_> = (0..DOCS).map(|d| (cur_row[d as usize], d, version)).collect();
+        m.commit(version, &adds, &[]);
+
+        for round in 1..200u64 {
+            version += 1;
+            let new_row: Vec<u64> = (0..DOCS).map(|d| 1000 + round * DOCS + d).collect();
+            let adds: Vec<_> = (0..DOCS).map(|d| (new_row[d as usize], d, version)).collect();
+            let tombs: Vec<_> = (0..DOCS).map(|d| (cur_row[d as usize], d)).collect();
+            m.commit(version, &adds, &tombs);
+            cur_row = new_row;
+        }
+
+        // Live set is exactly DOCS cells regardless of how many rounds ran.
+        let live = scan(&m.snapshot(), 0, u64::MAX >> 4);
+        assert_eq!(live.len(), DOCS as usize, "live set must equal doc count");
+        for d in 0..DOCS {
+            assert_eq!(live[d as usize].1, d);
+            assert_eq!(live[d as usize].0, cur_row[d as usize]);
+        }
+        // Resident weight stays small — tombstones GC'd, not accumulated over 200
+        // rounds × 64 docs (= 12.8k churned cells).
+        assert!(
+            m.total_weight() < 4 * DOCS,
+            "resident weight {} should stay ≈ live set, not grow with churn",
+            m.total_weight()
+        );
+    }
+
+    /// A reader pinned before a burst of commits + compactions still scans its
+    /// original version correctly — its segments stay `Arc`-alive even as
+    /// compaction replaces the live segment list (MVCC reclamation).
+    #[test]
+    fn reader_survives_compaction() {
+        init();
+        let m = LsmMatrix::<u64>::new();
+        for v in 1..=10u64 {
+            m.commit(v, &[(v, v, v)], &[]);
+        }
+        let pinned = m.snapshot();
+        let before = scan(&pinned, 0, 1000);
+        assert_eq!(before.len(), 10);
+        // Heavy churn + compaction after the pin.
+        for v in 11..=2_000u64 {
+            m.commit(v, &[(v, v, v)], &[(v - 10, v - 10)]);
+        }
+        // The pinned snapshot is byte-for-byte unchanged.
+        assert_eq!(scan(&pinned, 0, 1000), before);
+    }
+
     /// Differential fuzz: random add/tomb commits vs a reference model
-    /// (`(row,col) → (version, Option<value>)`, newest wins). After each commit,
-    /// random range scans must match the reference's live cells.
+    /// (`(row,col) → (version, Option<value>)`, newest wins). Compaction runs on
+    /// every commit, so this also validates that compaction is semantics-
+    /// preserving across hundreds of merges.
     #[test]
     fn differential_fuzz_vs_reference() {
         init();
         let m = LsmMatrix::<u64>::new();
-        // reference: latest (version, value-or-tombstone) per cell.
         let mut model: BTreeMap<(u64, u64), (u64, Option<u64>)> = BTreeMap::new();
         const ROWS: u64 = 200; // small key space → lots of collisions/updates
         const COLS: u64 = 50;
@@ -445,12 +694,9 @@ mod tests {
                     model.insert((row, col), (version, None));
                 }
             }
-            // Dedup within-commit cell collisions (a run can't hold a dup cell);
-            // keep the last op for each cell this commit, matching `model`.
             dedup_last(&mut adds, &mut tombs);
             m.commit(version, &adds, &tombs);
 
-            // Check a few random ranges against the reference.
             if step % 7 == 0 {
                 let s = m.snapshot();
                 for q in 0..4u64 {
@@ -470,11 +716,11 @@ mod tests {
         }
     }
 
-    /// Concurrent MVCC: many reader threads scan while a writer commits. Each
-    /// commit `v` appends exactly one new cell `(v, v, v)`, so any consistent
-    /// snapshot must observe a *contiguous* doc prefix `{1..k}` — a gap would be
-    /// a torn / non-isolated read. Also exercises the lock-free `Arc` snapshot +
-    /// `Arc`-swap commit path under contention (no UB / panics).
+    /// Concurrent MVCC: many reader threads scan while a writer commits +
+    /// compacts. Each commit `v` appends exactly one new cell `(v, v, v)`, so any
+    /// consistent snapshot must observe a *contiguous* doc prefix `{1..k}` — a gap
+    /// would be a torn / non-isolated read. Exercises the lock-free `Arc`
+    /// snapshot + compacting-commit path under contention (no UB / panics).
     #[test]
     fn concurrent_readers_during_commits() {
         use std::sync::atomic::{AtomicBool, Ordering};
@@ -494,12 +740,10 @@ mod tests {
                     while !done.load(Ordering::Relaxed) {
                         let snap = m.snapshot();
                         let cells = scan(&snap, 0, N);
-                        // Docs must be exactly the contiguous prefix {1..k}.
                         for (i, &(r, c, v)) in cells.iter().enumerate() {
                             assert_eq!(c, i as u64 + 1, "non-contiguous snapshot → torn read");
                             assert_eq!((r, v), (c, c), "cell row/value inconsistent with commit");
                         }
-                        // A reader's observed version only moves forward.
                         let k = cells.len() as u64;
                         assert!(k >= max_seen, "snapshot regressed: {k} < {max_seen}");
                         max_seen = k;
