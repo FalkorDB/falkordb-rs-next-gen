@@ -26,6 +26,10 @@
 //! tiering are enterprise concerns layered on later; this is the OSS in-RAM path.
 
 mod encoder;
+// Log-structured matrix store (M1). Standalone core — not wired into the index
+// path yet (that's M3), so its items are dead in non-test builds.
+#[allow(dead_code)]
+mod lsm;
 mod store;
 
 pub use encoder::NumericEncoder;
