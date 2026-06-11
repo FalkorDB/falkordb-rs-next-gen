@@ -30,10 +30,10 @@ mod id;
 
 // --- the storage-agnostic index contract the runtime calls + each kind implements ---
 mod api;
-// --- the two OSS↔enterprise seams + their OSS defaults ---
+// --- the index's per-store durable backend seam + its OSS default (NullBackend).
+// The shared registry + residency pool live in `crate::storage`, not here. ---
 mod backend;
-mod residency;
-// --- runtime injection that wires the seams (defaults to the OSS impls) ---
+// --- thin shim over `crate::storage`'s shared registry (StoreKind::Index) ---
 mod registry;
 // --- the numeric POC kind (the only kind for now) ---
 mod numeric;
@@ -51,7 +51,9 @@ pub use api::{
 pub use backend::wal::{Cell, Keyspace, WalOp, WalRecord};
 pub use backend::{BackendSnapshot, BoxIter, NullBackend, StorageBackend};
 
-pub use residency::{AllHot, Residency, ShardGuard};
+// The residency pool + its trait are shared infrastructure in `crate::storage`;
+// re-exported here for continuity of the `index::falkordb` surface.
+pub use crate::storage::{AllHot, Residency, ResidentId, ShardGuard};
 
 pub use registry::{index_backend, index_residency, register_index_backend};
 

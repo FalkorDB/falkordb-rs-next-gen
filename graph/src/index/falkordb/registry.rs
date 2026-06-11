@@ -1,64 +1,42 @@
-//! The OSS↔enterprise injection point (mechanism A,
-//! poc-plan §2).
+//! The index subsystem's view of the shared storage seam
+//! ([`crate::storage`]).
 //!
-//! The OSS core exposes [`register_index_backend`] and **defaults** to
-//! [`NullBackend`] + [`AllHot`]. The enterprise repo calls it once at module
-//! init with its disk-backed `FjallBackend` + `TieredResidency` — so the OSS
-//! manifest never names the closed-source crate, and everything stays
-//! statically linked into the single `.so`. The `index-falkordb` Cargo feature
-//! only decides whether this seam is compiled in; it does not name the impls.
+//! The registry itself, the [`Residency`] trait, and the one shared residency
+//! pool now live in [`crate::storage`] so the index and the (future) attribute
+//! store share them. These thin wrappers preserve the index's existing
+//! `index_backend()` / `register_index_backend()` API over that shared, per-store
+//! registry: the index registers its [`StorageBackend`] under [`StoreKind::Index`]
+//! and supplies the OSS default ([`NullBackend`]) when the enterprise crate has
+//! not registered a disk-backed backend.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
-use parking_lot::RwLock;
+use crate::storage::{self, Residency, StoreKind};
 
 use super::backend::{NullBackend, StorageBackend};
-use super::residency::{AllHot, Residency};
 
-/// The currently-installed backend + residency. Replaced wholesale by
-/// [`register_index_backend`]; read (as cheap `Arc` clones) by the index core.
-struct Registry {
-    backend: Arc<dyn StorageBackend>,
-    residency: Arc<dyn Residency>,
-}
-
-impl Default for Registry {
-    fn default() -> Self {
-        Self {
-            backend: Arc::new(NullBackend),
-            residency: Arc::new(AllHot),
-        }
-    }
-}
-
-fn registry() -> &'static RwLock<Registry> {
-    static REGISTRY: OnceLock<RwLock<Registry>> = OnceLock::new();
-    REGISTRY.get_or_init(|| RwLock::new(Registry::default()))
-}
-
-/// Install the durable backend + residency controller. Call once at startup,
-/// before any index is created. In OSS this is never called and the defaults
-/// (`NullBackend` + `AllHot`) stand; the enterprise repo calls it with its
-/// disk-backed impls.
+/// Install the index's durable backend + the shared residency pool. OSS never
+/// calls this (the defaults stand: `NullBackend` + `AllHot`); the enterprise repo
+/// calls it once at module init with its `FjallBackend` + tiered residency.
 pub fn register_index_backend(
     backend: Arc<dyn StorageBackend>,
     residency: Arc<dyn Residency>,
 ) {
-    let mut reg = registry().write();
-    reg.backend = backend;
-    reg.residency = residency;
+    storage::register_backend(StoreKind::Index, backend);
+    storage::register_residency(residency);
 }
 
-/// The installed [`StorageBackend`] (an `Arc` clone). Defaults to
-/// [`NullBackend`] until [`register_index_backend`] runs.
+/// The index's [`StorageBackend`] (an `Arc` clone). Falls back to [`NullBackend`]
+/// until [`register_index_backend`] runs.
 #[must_use]
 pub fn index_backend() -> Arc<dyn StorageBackend> {
-    registry().read().backend.clone()
+    storage::backend::<dyn StorageBackend>(StoreKind::Index)
+        .unwrap_or_else(|| Arc::new(NullBackend))
 }
 
-/// The installed [`Residency`] controller (an `Arc` clone). Defaults to
-/// [`AllHot`] until [`register_index_backend`] runs.
+/// The shared [`Residency`] controller (an `Arc` clone). Defaults to `AllHot`
+/// until [`register_index_backend`] runs.
 #[must_use]
 pub fn index_residency() -> Arc<dyn Residency> {
-    registry().read().residency.clone()
+    storage::residency()
 }
