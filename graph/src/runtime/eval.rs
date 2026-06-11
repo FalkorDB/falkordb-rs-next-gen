@@ -52,10 +52,9 @@ use thin_vec::{ThinVec, thin_vec};
 use crate::{
     parser::ast::{ExprIR, QuantifierType, Variable},
     runtime::{
-        env::Env,
         functions::{FnType, apply_pow},
         ordermap::OrderMap,
-        pool::Pool,
+        row::RowView,
         runtime::Runtime,
         value::{CompareValue, Contains, DisjointOrNull, Value},
     },
@@ -64,6 +63,10 @@ use crate::{
 // ---------------------------------------------------------------------------
 // ValueIter
 // ---------------------------------------------------------------------------
+
+/// Convenience `None` for the `env` argument of [`ExprEval::eval`] in
+/// constant-evaluation contexts, where the row type cannot be inferred.
+pub const NO_ROW: Option<&'static crate::runtime::row::Row> = None;
 
 pub enum ValueIter {
     Empty,
@@ -105,38 +108,88 @@ impl Iterator for ValueIter {
 // ExprEval
 // ---------------------------------------------------------------------------
 
-/// Lazily yields the out-neighbours of a node by scanning a single row of a
-/// GraphBLAS adjacency matrix on demand, reusing one row iterator and one
-/// scratch buffer across calls.
+/// Lazily yields the neighbours of a node by scanning single rows of the
+/// graph's *versioned* adjacency / relationship matrices on demand, reusing
+/// row iterators and one scratch buffer across calls.
 ///
 /// Used by the `shortestPath` BFS so the per-query cost is proportional to the
 /// edges actually traversed by the search rather than the whole graph's edge
-/// count (the previous implementation materialized the full adjacency list for
-/// every call). Correct because BFS visits each node at most once, so every
-/// row is scanned at most once.
+/// count. Scanning the versioned matrices directly (base + delta-plus, minus
+/// delta-minus) avoids materializing a merged adjacency matrix per call —
+/// `VersionedMatrix::to_matrix()` duplicates the entire base matrix, which
+/// dominated the shortestPath profile. Correct because BFS visits each node at
+/// most once, so every row is scanned at most once.
 struct NeighborIter {
-    iter: crate::graph::graphblas::matrix::Iter,
+    /// Forward (src → dst) row iterators, one per source matrix.
+    fwd: Vec<crate::graph::graphblas::versioned_matrix::Iter>,
+    /// Backward (dst → src) row iterators; empty for directed traversal.
+    bwd: Vec<crate::graph::graphblas::versioned_matrix::Iter>,
+    /// True when neighbours can repeat across iterators (multiple relationship
+    /// types, or undirected traversal with reciprocal edges) and the buffer
+    /// must be deduplicated.
+    dedup: bool,
     buf: Vec<u64>,
 }
 
 impl NeighborIter {
-    fn new(adj: &crate::graph::graphblas::matrix::Matrix) -> Self {
+    fn new(
+        g: &crate::graph::graph::Graph,
+        rel_types: &[Arc<String>],
+        directed: bool,
+    ) -> Self {
+        let mut fwd = Vec::new();
+        let mut bwd = Vec::new();
+        if rel_types.is_empty() {
+            // The adjacency matrix is the pair-level union of all relationship
+            // types, so a single forward iterator suffices.
+            fwd.push(g.adjacency_matrix().iter(0, 0));
+            if !directed {
+                for t in g.relationship_matrices_iter() {
+                    bwd.push(t.matrix_t().iter(0, 0));
+                }
+            }
+        } else {
+            for t in rel_types
+                .iter()
+                .filter_map(|t| g.get_relationship_matrix(t))
+            {
+                fwd.push(t.matrix().iter(0, 0));
+                if !directed {
+                    bwd.push(t.matrix_t().iter(0, 0));
+                }
+            }
+        }
+        let dedup = fwd.len() + bwd.len() > 1;
         Self {
-            iter: adj.iter(0, 0),
+            fwd,
+            bwd,
+            dedup,
             buf: Vec::new(),
         }
     }
 
-    /// Returns the out-neighbours of `node`. The returned slice is valid until
+    /// Returns the neighbours of `node`. The returned slice is valid until
     /// the next call to `neighbors`.
     fn neighbors(
         &mut self,
         node: u64,
     ) -> &[u64] {
         self.buf.clear();
-        self.iter.seek(node, node);
-        for (_, col) in self.iter.by_ref() {
-            self.buf.push(col);
+        for it in &mut self.fwd {
+            it.seek(node, node);
+            for (_, col) in it.by_ref() {
+                self.buf.push(col);
+            }
+        }
+        for it in &mut self.bwd {
+            it.seek(node, node);
+            for (_, col) in it.by_ref() {
+                self.buf.push(col);
+            }
+        }
+        if self.dedup {
+            self.buf.sort_unstable();
+            self.buf.dedup();
         }
         &self.buf
     }
@@ -147,28 +200,19 @@ pub struct ExprEval<'a> {
     /// Full runtime context. `None` when evaluating constant expressions at
     /// plan time (optimizer).
     runtime: Option<&'a Runtime<'a>>,
-    /// Value pool for reusable stack buffers and env cloning. `None` in
-    /// constant-evaluation mode.
-    pool: Option<&'a Pool<Value>>,
 }
 
 impl<'a> ExprEval<'a> {
     /// Full evaluation context backed by a [`Runtime`].
     pub const fn from_runtime(rt: &'a Runtime<'a>) -> Self {
-        Self {
-            runtime: Some(rt),
-            pool: Some(rt.env_pool),
-        }
+        Self { runtime: Some(rt) }
     }
 
     /// Constant-only evaluation — no graph, no env, no functions.
     /// Any non-constant branch returns `Err`.
     #[must_use]
     pub const fn constant() -> Self {
-        Self {
-            runtime: None,
-            pool: None,
-        }
+        Self { runtime: None }
     }
 
     /// Convenience: unwrap the runtime or return a descriptive error.
@@ -177,40 +221,24 @@ impl<'a> ExprEval<'a> {
             .ok_or_else(|| String::from("not a constant expression"))
     }
 
-    /// Clone an environment using the pool (required for Quantifier /
-    /// ListComprehension).
-    fn clone_env<'b>(
-        &self,
-        env: &Env<'b>,
-    ) -> Result<Env<'b>, String>
-    where
-        'a: 'b,
-    {
-        let pool = self
-            .pool
-            .ok_or_else(|| String::from("not a constant expression"))?;
-        Ok(env.clone_pooled(pool))
-    }
-
     /// Resolve an environment variable.
-    fn resolve_var(
-        env: Option<&Env<'_>>,
+    fn resolve_var<R: RowView + ?Sized>(
+        env: Option<&R>,
         x: &Variable,
     ) -> Result<Value, String> {
-        env.and_then(|e| e.get(x))
+        env.and_then(|e| e.value_at(x.id))
             .ok_or_else(|| format!("Variable {} not found", x.as_str()))
-            .cloned()
     }
 
     // -------------------------------------------------------------------
     // Main evaluator
     // -------------------------------------------------------------------
 
-    pub fn eval(
+    pub fn eval<R: RowView + ?Sized>(
         &self,
         ir: &DynTree<ExprIR<Variable>>,
         idx: NodeIdx<Dyn<ExprIR<Variable>>>,
-        env: Option<&Env<'_>>,
+        env: Option<&R>,
         agg_group_key: Option<u64>,
     ) -> Result<Value, String> {
         // Fast-path early returns for leaf / simple nodes.
@@ -268,16 +296,9 @@ impl<'a> ExprEval<'a> {
             _ => {}
         }
 
-        // Stack-based iterative evaluation. When a pool is available, use a
-        // Pooled handle so early-return paths (errors, breaks) recycle the
-        // buffer via Pooled's Drop. Constant-only eval has no pool — fall
-        // back to a heap Vec.
-        let mut res_pooled = self.pool.map(|pool| pool.acquire(0));
+        // Stack-based iterative evaluation scratch buffer.
         let mut res_owned: Vec<Value> = Vec::new();
-        let res: &mut Vec<Value> = match res_pooled.as_mut() {
-            Some(p) => &mut *p,
-            None => &mut res_owned,
-        };
+        let res: &mut Vec<Value> = &mut res_owned;
         res.clear();
 
         let mut stack = thin_vec![(idx, false)];
@@ -607,8 +628,9 @@ impl<'a> ExprEval<'a> {
                         } = &func.fn_type
                         && let ExprIR::Variable(key) = node.child(node.num_children() - 1).data()
                     {
-                        let e = env.ok_or_else(|| String::from("Variable not found"))?;
-                        let acc = e.get(key).unwrap().clone();
+                        let acc = env
+                            .and_then(|e| e.value_at(key.id))
+                            .ok_or_else(|| String::from("Variable not found"))?;
 
                         return match finalize {
                             Some(func) => Ok((func)(acc)),
@@ -714,17 +736,17 @@ impl<'a> ExprEval<'a> {
                     match list {
                         Value::List(values) => {
                             let e = env.ok_or_else(|| String::from("Variable not found"))?;
-                            let mut env = self.clone_env(e)?;
+                            let mut row = e.to_owned_row();
                             let mut t = 0;
                             let mut f = 0;
                             let mut n = 0;
                             for value in values.iter().cloned() {
-                                env.insert(var, value);
+                                row.insert(var, value);
 
                                 match self.eval(
                                     ir,
                                     node.child(1).idx(),
-                                    Some(&env),
+                                    Some(&row),
                                     agg_group_key,
                                 )? {
                                     Value::Bool(true) => t += 1,
@@ -753,15 +775,15 @@ impl<'a> ExprEval<'a> {
                 ExprIR::ListComprehension(var) => {
                     let e = env.ok_or_else(|| String::from("Variable not found"))?;
                     let iter = self.eval_iter_expr(ir, node.child(0).idx(), env)?;
-                    let mut env = self.clone_env(e)?;
+                    let mut row = e.to_owned_row();
                     let mut acc = thin_vec![];
                     for value in iter {
-                        env.insert(var, value);
-                        match self.eval(ir, node.child(1).idx(), Some(&env), agg_group_key)? {
+                        row.insert(var, value);
+                        match self.eval(ir, node.child(1).idx(), Some(&row), agg_group_key)? {
                             Value::Bool(true) => {}
                             _ => continue,
                         }
-                        acc.push(self.eval(ir, node.child(2).idx(), Some(&env), agg_group_key)?);
+                        acc.push(self.eval(ir, node.child(2).idx(), Some(&row), agg_group_key)?);
                     }
 
                     res.push(Value::List(Arc::new(acc)));
@@ -776,13 +798,13 @@ impl<'a> ExprEval<'a> {
                     match list {
                         Value::List(values) => {
                             let e = env.ok_or_else(|| String::from("Variable not found"))?;
-                            let mut env = self.clone_env(e)?;
+                            let mut row = e.to_owned_row();
                             let mut accumulator = init;
                             for value in values.iter().cloned() {
-                                env.insert(acc_var, accumulator);
-                                env.insert(iter_var, value);
+                                row.insert(acc_var, accumulator);
+                                row.insert(iter_var, value);
                                 accumulator =
-                                    self.eval(ir, node.child(2).idx(), Some(&env), agg_group_key)?;
+                                    self.eval(ir, node.child(2).idx(), Some(&row), agg_group_key)?;
                             }
                             res.push(accumulator);
                         }
@@ -818,11 +840,11 @@ impl<'a> ExprEval<'a> {
     // Companion methods
     // -------------------------------------------------------------------
 
-    pub fn eval_iter_expr(
+    pub fn eval_iter_expr<R: RowView + ?Sized>(
         &self,
         ir: &DynTree<ExprIR<Variable>>,
         idx: NodeIdx<Dyn<ExprIR<Variable>>>,
-        env: Option<&Env<'_>>,
+        env: Option<&R>,
     ) -> Result<ValueIter, String> {
         match ir.node(idx).data() {
             ExprIR::FuncInvocation(func) if func.name == "range" => {
@@ -890,11 +912,11 @@ impl<'a> ExprEval<'a> {
     /// Children: [source_var_expr, dest_var_expr]
     /// Returns a `Path` value (alternating nodes and edges) or `Null`.
     #[allow(clippy::too_many_arguments)]
-    fn eval_shortest_path(
+    fn eval_shortest_path<R: RowView + ?Sized>(
         &self,
         ir: &DynTree<ExprIR<Variable>>,
         idx: NodeIdx<Dyn<ExprIR<Variable>>>,
-        env: Option<&Env<'_>>,
+        env: Option<&R>,
         agg_group_key: Option<u64>,
         rel_types: &[Arc<String>],
         min_hops: u32,
@@ -931,27 +953,16 @@ impl<'a> ExprEval<'a> {
             return Ok(Value::Path(Arc::new(path)));
         }
 
-        // Build adjacency matrix filtered by rel_types. For undirected
-        // traversal use the symmetric (A + Aᵀ) matrix so a single row scan
-        // yields neighbours in both directions, already deduplicated by
-        // GraphBLAS (avoids the per-row sort/dedup the old transpose-merge
-        // path required).
-        let adj = if directed {
-            g.build_adjacency_matrix(rel_types)
-        } else {
-            g.build_symmetric_adjacency_matrix(rel_types)
-        };
-
+        // Fetch neighbours lazily, one matrix row at a time, scanning the
+        // versioned adjacency / relationship matrices directly. This avoids
+        // materializing a merged adjacency matrix per call (a full duplicate
+        // of the base matrix) and keeps the per-query cost proportional to
+        // the edges actually traversed by the search. For undirected
+        // traversal the backward (transposed) tensor matrices supply incoming
+        // neighbours; duplicates are removed in NeighborIter.
         let max_level = max_hops.map_or(u64::MAX, |m| m as u64);
         let node_cap = g.node_cap();
-
-        // Fetch neighbours lazily, one matrix row at a time, instead of
-        // materializing the entire adjacency list up front. BFS visits each
-        // node at most once, so every row is scanned at most once; this turns
-        // the per-query cost from O(E) (build the full adjacency list for the
-        // whole graph) into O(edges actually traversed by the search), which
-        // dominated the profile for dense graphs.
-        let mut neighbors = NeighborIter::new(&adj);
+        let mut neighbors = NeighborIter::new(&g, rel_types, directed);
 
         if all_paths {
             // All shortest paths: BFS to find distance, then enumerate
@@ -1193,11 +1204,11 @@ impl<'a> ExprEval<'a> {
         Value::List(Arc::new(result))
     }
 
-    pub(crate) fn eval_map_projection(
+    pub(crate) fn eval_map_projection<R: RowView + ?Sized>(
         &self,
         ir: &DynTree<ExprIR<Variable>>,
         idx: NodeIdx<Dyn<ExprIR<Variable>>>,
-        env: Option<&Env<'_>>,
+        env: Option<&R>,
         agg_group_key: Option<u64>,
     ) -> Result<Value, String> {
         let rt = self.rt()?;
