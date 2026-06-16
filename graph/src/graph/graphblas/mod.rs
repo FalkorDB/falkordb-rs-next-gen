@@ -62,29 +62,18 @@ pub mod vector;
 pub mod versioned_matrix;
 
 /// Initialize GraphBLAS once for unit tests that build matrices directly,
-/// outside the Redis module-load path that normally calls [`matrix::init`].
-/// Without it the first `GrB_Matrix_new` aborts with `GrB_PANIC`. Non-blocking
-/// mode, built-in ANSI-C allocators, JIT disabled (its `dlopen` path is slow and
-/// fork-unsafe; the generic kernels suffice). The [`Once`](std::sync::Once)
-/// guard makes it idempotent across the many tests that call it.
+/// outside the Redis module-load path. Delegates to [`matrix::init`] with the
+/// built-in ANSI-C allocators (the module-load path passes Redis's instead).
+/// Without it the first `GrB_Matrix_new` aborts with `GrB_PANIC`. The
+/// [`Once`](std::sync::Once) guard makes it idempotent across the many tests
+/// that call it.
 #[cfg(test)]
 pub(crate) fn test_init_graphblas() {
     use std::sync::Once;
 
     static INIT: Once = Once::new();
-    INIT.call_once(|| unsafe {
-        let info = GrB_init(GrB_Mode::GrB_NONBLOCKING as _);
-        assert_eq!(info, GrB_Info::GrB_SUCCESS, "GrB_init failed: {info:?}");
-        let info = GrB_Global_set_INT32(
-            GrB_GLOBAL,
-            GxB_JIT_Control::GxB_JIT_OFF as i32,
-            GxB_Option_Field::GxB_JIT_C_CONTROL as _,
-        );
-        assert_eq!(
-            info,
-            GrB_Info::GrB_SUCCESS,
-            "GraphBLAS JIT-off failed: {info:?}"
-        );
+    INIT.call_once(|| {
+        matrix::init(None, None, None, None).expect("GraphBLAS test init failed");
     });
 }
 

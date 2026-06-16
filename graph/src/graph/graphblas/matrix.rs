@@ -89,9 +89,10 @@ use super::{
     GrB_Matrix_get_INT32, GrB_Matrix_ncols, GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals,
     GrB_Matrix_removeElement, GrB_Matrix_resize, GrB_Matrix_setElement_BOOL,
     GrB_Matrix_setElement_UINT64, GrB_Matrix_wait, GrB_Mode, GrB_UINT64, GrB_WaitMode,
-    GrB_finalize, GrB_mxm, GrB_transpose, GxB_ANY_BOOL, GxB_ANY_PAIR_BOOL, GxB_ANY_SECOND_UINT64,
-    GxB_ANY_UINT64, GxB_Container_free, GxB_Container_new, GxB_Global_Option_set_INT32,
-    GxB_Iterator, GxB_Iterator_free, GxB_Iterator_get_UINT64, GxB_Iterator_new, GxB_JIT_Control,
+    GrB_finalize, GrB_init, GrB_mxm, GrB_transpose, GxB_ANY_BOOL, GxB_ANY_PAIR_BOOL,
+    GxB_ANY_SECOND_UINT64, GxB_ANY_UINT64, GxB_Container_free, GxB_Container_new,
+    GxB_Global_Option_set_INT32, GxB_HYPERSPARSE, GxB_Iterator, GxB_Iterator_free,
+    GxB_Iterator_new, GxB_JIT_Control, GxB_Matrix_Option_get_INT32, GxB_Matrix_Option_set_INT32,
     GxB_Matrix_fprint, GxB_Matrix_memoryUsage, GxB_Matrix_type, GxB_NTHREADS, GxB_Option_Field,
     GxB_Print_Level, GxB_init, GxB_load_Matrix_from_Container, GxB_rowIterator_attach,
     GxB_rowIterator_getColIndex, GxB_rowIterator_getRowIndex, GxB_rowIterator_nextCol,
@@ -100,12 +101,15 @@ use super::{
 
 /// Initializes the GraphBLAS library in non-blocking mode.
 ///
-/// Custom allocators can be provided to integrate with Redis memory management.
-/// This ensures GraphBLAS memory counts toward Redis limits.
+/// Custom allocators can be provided to integrate with Redis memory management,
+/// so GraphBLAS memory counts toward Redis limits. Passing `None` for the
+/// malloc function selects GraphBLAS's built-in ANSI-C allocators via
+/// `GrB_init` (the unit-test path, which has no Redis allocators to install);
+/// the production module-load path passes Redis's.
 ///
 /// # Errors
 ///
-/// Returns `Err` with a descriptive message if `GxB_init` or `LAGraph_Init`
+/// Returns `Err` with a descriptive message if init or `LAGraph_Init`
 /// fail. The caller (Redis module-load path) should propagate this as
 /// `Status::Err` so Redis refuses to load the module rather than aborting
 /// the whole server process.
@@ -119,15 +123,20 @@ pub fn init(
     user_free_function: Option<unsafe extern "C" fn(arg1: *mut c_void)>,
 ) -> Result<(), String> {
     unsafe {
-        let info = GxB_init(
-            GrB_Mode::GrB_NONBLOCKING as _,
-            user_malloc_function,
-            user_calloc_function,
-            user_realloc_function,
-            user_free_function,
-        );
+        // `GxB_init` requires non-null malloc/free; with no custom allocators
+        // fall back to `GrB_init`, which wires up GraphBLAS's built-in ones.
+        let info = match user_malloc_function {
+            Some(_) => GxB_init(
+                GrB_Mode::GrB_NONBLOCKING as _,
+                user_malloc_function,
+                user_calloc_function,
+                user_realloc_function,
+                user_free_function,
+            ),
+            None => GrB_init(GrB_Mode::GrB_NONBLOCKING as _),
+        };
         if info != GrB_Info::GrB_SUCCESS {
-            return Err(format!("GraphBLAS GxB_init failed: {info:?}"));
+            return Err(format!("GraphBLAS init failed: {info:?}"));
         }
 
         // Pick GraphBLAS JIT control level:
@@ -330,29 +339,46 @@ impl MaskedElementWiseAdd for Matrix {
 }
 
 impl Matrix {
-    /// Value-preserving union `self = self ∪ other` for **UINT64** matrices,
-    /// used to fold a versioned matrix's delta-plus into its base without
-    /// clobbering the stored values.
+    /// Value-preserving masked union `self = (a ∪ b) [− mask]` for **UINT64**
+    /// matrices, written into `self` from inputs `a` and `b`. `self` is
+    /// overwritten (the descriptor replaces it), so the caller seeds it as empty
+    /// — no `dup` of a (possibly large) base, which `a` being `Arc`-shared and
+    /// immutable would otherwise force. A `None` operand defaults to `self`: with
+    /// `self` empty that side contributes nothing (`x ∪ ∅ = x`), exactly as the
+    /// bool [`MaskedElementWiseAdd::element_wise_add`] handles a missing operand.
     ///
-    /// The bool [`MaskedElementWiseAdd::element_wise_add`] hardcodes
-    /// `GxB_ANY_PAIR_BOOL`, whose `PAIR` multiply and bool domain typecast every
-    /// cell to `1` — fine for presence matrices, fatal for value-carrying ones.
-    /// Here the additive monoid is `GxB_ANY_UINT64` over the `SECOND` semiring,
-    /// so non-overlapping entries (the only case: `m` and `dp` never share a
-    /// cell) are copied through with their `u64` value intact.
+    /// That bool method hardcodes `GxB_ANY_PAIR_BOOL`, whose `PAIR` multiply and
+    /// bool domain typecast every cell to `1` — fine for presence matrices, fatal
+    /// for value-carrying ones. Here the monoid is `GxB_ANY_UINT64` (the `SECOND`
+    /// semiring), so values are carried through intact.
+    ///
+    /// On a cell present in **both** `a` and `b` the monoid is `ANY`, so the
+    /// surviving value is one of the two, chosen arbitrarily. That is safe for
+    /// the only caller (the LSM merge): a cell is `(value, doc)` and a doc's
+    /// value at a given row is fixed, so the two values are always **identical**
+    /// — the pick is immaterial. (It is *not* a general-purpose merge of
+    /// differing values.)
+    ///
+    /// `mask`, when given, is applied as a **structural complement**: cells
+    /// present in it are dropped from the result in the same pass — used to apply
+    /// a segment's tombstones while folding it in, fusing union + removal into
+    /// one GraphBLAS op.
     pub fn element_wise_add_uint64(
         &mut self,
-        other: &Matrix,
+        a: Option<&Matrix>,
+        b: Option<&Matrix>,
+        mask: Option<&Matrix>,
     ) {
         unsafe {
+            let (mask, desc) = mask.map_or((null_mut(), null_mut()), |m| (*m.m, GrB_DESC_RSC));
             let info = GrB_Matrix_eWiseAdd_Semiring(
                 *self.m,
-                null_mut(),
+                mask,
                 GxB_ANY_UINT64,
                 GxB_ANY_SECOND_UINT64,
-                *self.m,
-                *other.m,
-                null_mut(),
+                a.map_or(*self.m, |a| *a.m),
+                b.map_or(*self.m, |b| *b.m),
+                desc,
             );
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
@@ -841,6 +867,39 @@ impl Matrix {
         }
     }
 
+    /// The matrix's current GraphBLAS storage format (`GxB_SPARSITY_STATUS`):
+    /// one of [`GxB_HYPERSPARSE`], [`GxB_SPARSE`], [`GxB_BITMAP`], [`GxB_FULL`].
+    /// At the LSM's `2^60` dimensions only hypersparse is viable — the other
+    /// formats allocate per-row or per-cell storage over the full dimension.
+    #[must_use]
+    pub fn sparsity_status(&self) -> i32 {
+        unsafe {
+            let mut status: i32 = 0;
+            let info = GxB_Matrix_Option_get_INT32(
+                *self.m,
+                GxB_Option_Field::GxB_SPARSITY_STATUS as i32,
+                &raw mut status,
+            );
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            status
+        }
+    }
+
+    /// Pin the matrix to **hypersparse** only (`GxB_SPARSITY_CONTROL =
+    /// GxB_HYPERSPARSE`), so GraphBLAS never auto-converts it to sparse, bitmap,
+    /// or full. Required for the LSM's `2^60`-dimension matrices, where any other
+    /// format would allocate per-row/per-cell storage over the full dimension.
+    pub fn pin_hypersparse(&mut self) {
+        unsafe {
+            let info = GxB_Matrix_Option_set_INT32(
+                *self.m,
+                GxB_Option_Field::GxB_SPARSITY_CONTROL as i32,
+                GxB_HYPERSPARSE as i32,
+            );
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+    }
+
     pub fn clear(&mut self) {
         unsafe {
             let info = GrB_Matrix_clear(*self.m);
@@ -1218,13 +1277,13 @@ where
 pub trait IterExtract {
     type Item;
 
-    /// Extract the item from the current iterator position.
+    /// Extract the item at `(row, col)` from the matrix `m`.
     ///
     /// # Safety
-    /// `iter` must be a valid `GxB_Iterator` positioned on a valid entry; `row`
-    /// and `col` are that entry's coordinates (already read by the caller).
+    /// `m` must be a valid `GrB_Matrix`; `(row, col)` must be an entry present in
+    /// it (the caller read those coordinates from the row iterator).
     unsafe fn extract(
-        iter: GxB_Iterator,
+        m: GrB_Matrix,
         row: u64,
         col: u64,
     ) -> Self::Item;
@@ -1237,7 +1296,7 @@ impl IterExtract for BoolExtract {
     type Item = (u64, u64);
 
     unsafe fn extract(
-        _iter: GxB_Iterator,
+        _m: GrB_Matrix,
         row: u64,
         col: u64,
     ) -> Self::Item {
@@ -1252,14 +1311,14 @@ impl IterExtract for Uint64Extract {
     type Item = (u64, u64, u64);
 
     unsafe fn extract(
-        iter: GxB_Iterator,
+        m: GrB_Matrix,
         row: u64,
         col: u64,
     ) -> Self::Item {
-        // Read the value at the iterator's current position — O(1), no random
-        // `extractElement` lookup (the difference between a sequential scan and
-        // a random-access one on large matrices).
-        let val = unsafe { GxB_Iterator_get_UINT64(iter) };
+        // Look the value up by coordinate, so the result is the value at exactly
+        // `(row, col)` regardless of any iterator's current position.
+        let mut val: u64 = 0;
+        unsafe { GrB_Matrix_extractElement_UINT64(&raw mut val, m, row, col) };
         (row, col, val)
     }
 }
@@ -1381,7 +1440,7 @@ impl<E: IterExtract> Iterator for Iter<E> {
         unsafe {
             let row = GxB_rowIterator_getRowIndex(self.inner);
             let col = GxB_rowIterator_getColIndex(self.inner);
-            let item = E::extract(self.inner, row, col);
+            let item = E::extract(*self.m, row, col);
             if GxB_rowIterator_nextCol(self.inner) != GrB_Info::GrB_SUCCESS {
                 let mut info = GxB_rowIterator_nextRow(self.inner);
                 debug_assert!(

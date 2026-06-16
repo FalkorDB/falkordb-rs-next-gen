@@ -52,7 +52,8 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use parking_lot::{Mutex, RwLock};
+use arc_swap::ArcSwap;
+use parking_lot::Mutex;
 
 use super::{Layers, LsmCell, LsmCursor, commit_layers, major_compact_layers};
 
@@ -119,9 +120,9 @@ struct Writer {
 /// `(row, id) → cell` matrix set plus writer-only bookkeeping, generic over the
 /// cell type `V` (a `bool` presence cell, or a `u64` caller payload cell).
 pub(crate) struct BandedLsmStore<V: LsmCell> {
-    /// Latest committed bands. Swapped per commit; readers clone the
-    /// `Arc` to pin their version.
-    committed: RwLock<Snapshot<V>>,
+    /// Latest committed bands, published as one atomic snapshot. Swapped per
+    /// commit; readers `load` the `Arc` lock-free to pin their version.
+    committed: ArcSwap<Bands<V>>,
     /// Serialized writer state.
     ///
     /// A commit is a read-modify-write — snapshot the latest version, apply the
@@ -149,7 +150,7 @@ impl<V: LsmCell> BandedLsmStore<V> {
     /// A fresh, empty store at version 0.
     pub(crate) fn new() -> Self {
         Self {
-            committed: RwLock::new(Arc::new(new_bands::<V>())),
+            committed: ArcSwap::from_pointee(new_bands::<V>()),
             writer: Mutex::new(Writer {
                 reverse_id_row_mapping: HashMap::new(),
                 version: 0,
@@ -158,9 +159,9 @@ impl<V: LsmCell> BandedLsmStore<V> {
     }
 
     /// An `Arc` share of the latest committed bands — the immutable view a
-    /// reader scans. Cheap: one `Arc` clone, no lock held after.
+    /// reader scans. Lock-free: an atomic load plus an `Arc` bump.
     pub(crate) fn snapshot(&self) -> Snapshot<V> {
-        Arc::clone(&self.committed.read())
+        self.committed.load_full()
     }
 
     /// The committed logical version.
@@ -171,7 +172,7 @@ impl<V: LsmCell> BandedLsmStore<V> {
 
     /// Approximate resident bytes across all band matrices.
     pub(crate) fn memory_usage(&self) -> usize {
-        self.committed.read().iter().map(|b| b.memory_usage()).sum()
+        self.committed.load().iter().map(|b| b.memory_usage()).sum()
     }
 
     /// Apply one commit's mutations, publishing a new immutable version at
@@ -191,18 +192,25 @@ impl<V: LsmCell> BandedLsmStore<V> {
         // Serialize the whole commit (single writer).
         let mut w = self.writer.lock();
 
-        // Group this commit's cells per band: add cells `(row, col, value)` and
-        // tombstone cells `(row, col)`. The LSM never mutates published state, so
-        // an id delete/update is resolved here (via `reverse_id_row_mapping`) into
-        // the exact old cells to tombstone.
-        let mut band_adds: [Vec<(u64, u64, V)>; NUM_BANDS] = std::array::from_fn(|_| Vec::new());
-        let mut band_tombs: [Vec<(u64, u64)>; NUM_BANDS] = std::array::from_fn(|_| Vec::new());
+        // Group this commit's cells per band as structure-of-arrays — parallel
+        // `rows`/`cols` (and `vals` for adds) built directly, so `commit_layers`
+        // hands them to the matrix builder without an array-of-structs rebuild.
+        // The LSM never mutates published state, so an id delete/update is
+        // resolved here (via `reverse_id_row_mapping`) into the exact old cells
+        // to tombstone.
+        let mut add_rows: [Vec<u64>; NUM_BANDS] = std::array::from_fn(|_| Vec::new());
+        let mut add_cols: [Vec<u64>; NUM_BANDS] = std::array::from_fn(|_| Vec::new());
+        let mut add_vals: [Vec<V>; NUM_BANDS] = std::array::from_fn(|_| Vec::new());
+        let mut tomb_rows: [Vec<u64>; NUM_BANDS] = std::array::from_fn(|_| Vec::new());
+        let mut tomb_cols: [Vec<u64>; NUM_BANDS] = std::array::from_fn(|_| Vec::new());
 
         // Value-less removals: tombstone each id's currently occupied cells.
         for &doc in remove {
             if let Some(keys) = w.reverse_id_row_mapping.remove(&doc) {
                 for k in keys {
-                    band_tombs[band_of(k)].push((row_of(k), doc));
+                    let b = band_of(k);
+                    tomb_rows[b].push(row_of(k));
+                    tomb_cols[b].push(doc);
                 }
             }
         }
@@ -211,7 +219,9 @@ impl<V: LsmCell> BandedLsmStore<V> {
         for (doc, keys, cell) in adds {
             if let Some(prev) = w.reverse_id_row_mapping.remove(doc) {
                 for k in prev {
-                    band_tombs[band_of(k)].push((row_of(k), *doc));
+                    let b = band_of(k);
+                    tomb_rows[b].push(row_of(k));
+                    tomb_cols[b].push(*doc);
                 }
             }
             if keys.is_empty() {
@@ -222,7 +232,10 @@ impl<V: LsmCell> BandedLsmStore<V> {
             owned.sort_unstable();
             owned.dedup();
             for &k in &owned {
-                band_adds[band_of(k)].push((row_of(k), *doc, *cell));
+                let b = band_of(k);
+                add_rows[b].push(row_of(k));
+                add_cols[b].push(*doc);
+                add_vals[b].push(cell.clone());
             }
             w.reverse_id_row_mapping.insert(*doc, owned);
         }
@@ -230,32 +243,49 @@ impl<V: LsmCell> BandedLsmStore<V> {
         // A cell re-added this commit (e.g. an update that keeps a row, or a
         // remove+re-add of the same id) must NOT be tombstoned this commit:
         // both runs carry the same version, so drop the superseded tombstone.
+        // Filter the parallel tomb arrays in lockstep, in place.
         for b in 0..NUM_BANDS {
-            if band_tombs[b].is_empty() || band_adds[b].is_empty() {
+            if tomb_rows[b].is_empty() || add_rows[b].is_empty() {
                 continue;
             }
-            let added: HashSet<(u64, u64)> = band_adds[b].iter().map(|&(r, c, _)| (r, c)).collect();
-            band_tombs[b].retain(|rc| !added.contains(rc));
+            let added: HashSet<(u64, u64)> = add_rows[b]
+                .iter()
+                .zip(&add_cols[b])
+                .map(|(&r, &c)| (r, c))
+                .collect();
+            let mut keep = 0;
+            for i in 0..tomb_rows[b].len() {
+                if !added.contains(&(tomb_rows[b][i], tomb_cols[b][i])) {
+                    tomb_rows[b][keep] = tomb_rows[b][i];
+                    tomb_cols[b][keep] = tomb_cols[b][i];
+                    keep += 1;
+                }
+            }
+            tomb_rows[b].truncate(keep);
+            tomb_cols[b].truncate(keep);
         }
 
         // Build the next version: untouched bands are shared by `Arc`; touched
         // bands get a fresh `Layers` (append + compact, no growing copy).
-        let cur = self.committed.read().clone();
+        let cur = self.committed.load_full();
         let next: Bands<V> = std::array::from_fn(|b| {
-            if band_adds[b].is_empty() && band_tombs[b].is_empty() {
+            if add_rows[b].is_empty() && tomb_rows[b].is_empty() {
                 Arc::clone(&cur[b])
             } else {
                 Arc::new(commit_layers::<V>(
                     &cur[b],
                     version,
-                    &band_adds[b],
-                    &band_tombs[b],
+                    &add_rows[b],
+                    &add_cols[b],
+                    &add_vals[b],
+                    &tomb_rows[b],
+                    &tomb_cols[b],
                 ))
             }
         });
 
         // Publish atomically, then advance the version.
-        *self.committed.write() = Arc::new(next);
+        self.committed.store(Arc::new(next));
         w.version = version;
     }
 
@@ -266,9 +296,9 @@ impl<V: LsmCell> BandedLsmStore<V> {
     /// atomic snapshot swap, so concurrent readers and writers are unaffected.
     pub(crate) fn major_compact(&self) {
         let _w = self.writer.lock();
-        let cur = self.committed.read().clone();
+        let cur = self.committed.load_full();
         let next: Bands<V> = std::array::from_fn(|b| Arc::new(major_compact_layers::<V>(&cur[b])));
-        *self.committed.write() = Arc::new(next);
+        self.committed.store(Arc::new(next));
     }
 }
 
