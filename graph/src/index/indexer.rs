@@ -847,7 +847,7 @@ impl Indexer {
     }
 
     pub fn set_graph(
-        &mut self,
+        &self,
         graph: Arc<AtomicRefCell<Graph>>,
     ) {
         *self.graph.lock() = Some(graph);
