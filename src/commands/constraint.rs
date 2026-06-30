@@ -170,19 +170,28 @@ pub fn graph_constraint(
             // query worker — that would block unrelated reads queued behind
             // it on the shared MPMC dispatch.
             //
-            // Two-phase under different locks: the long-running validation
-            // runs under a *read* lock on the outer `RwLock<ThreadedGraph>`,
-            // so concurrent `db.constraints()` queries continue to see the
-            // constraint in UNDER CONSTRUCTION state. The outer write lock is
-            // taken only briefly at the end to commit the status update.
+            // Two-phase under different locks:
+            //   1. The outer read lock is held only long enough to clone the
+            //      Arc to the committed snapshot; it is released *before* the
+            //      long-running node scan begins. Holding the read lock for
+            //      the entire scan would block all write queries for the
+            //      duration (parking_lot RwLock is write-preferring: once a
+            //      writer is waiting, new readers also block), which caused a
+            //      server-hang / crash under concurrent workloads.
+            //   2. The outer write lock is taken only briefly at the end to
+            //      commit the validation result.
             if needs_async_validation {
                 let graph_clone = graph.clone();
                 std::thread::spawn(move || {
-                    let results = {
+                    // Clone the committed-graph Arc under a brief read lock,
+                    // then release the lock before starting the (potentially
+                    // seconds-long) validation scan.
+                    let g = {
                         let tg = graph_clone.read();
-                        let g = tg.graph.read();
-                        g.borrow().compute_pending_constraint_results()
+                        tg.graph.read()
                     };
+                    let results = g.borrow().compute_pending_constraint_results();
+                    drop(g);
                     let mut tg = graph_clone.write();
                     if let Some(g_arc) = tg.graph.write() {
                         g_arc
