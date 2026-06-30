@@ -667,7 +667,20 @@ impl Decode<19> for Matrix {
             let m = m.assume_init();
 
             let info = GxB_load_Matrix_from_Container(m, container, null_mut());
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            // The container is built entirely from attacker-controlled bytes
+            // (`GRAPH.RESTORE`). A `debug_assert` is compiled out in release,
+            // letting a malformed payload yield a half-initialized matrix; with
+            // the process-exiting panic hook a stray panic here is also a DoS.
+            // Propagate the failure after releasing both handles instead.
+            if info != GrB_Info::GrB_SUCCESS {
+                let mut c = container;
+                let _ = GxB_Container_free(&raw mut c);
+                let mut mm = m;
+                let _ = GrB_Matrix_free(&raw mut mm);
+                return Err(format!(
+                    "Matrix decode: GxB_load_Matrix_from_Container failed: {info:?}"
+                ));
+            }
 
             let mut c = container;
             let info = GxB_Container_free(&raw mut c);

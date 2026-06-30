@@ -473,6 +473,33 @@ pub fn graph_bulk_insert(
         ));
     }
 
+    // Guard against malicious counts: `node_count`/`edge_count` drive up-front
+    // ID reservations (and a `Vec` of that many IDs). Each created entity needs
+    // at least one byte in its token payload, so a declared count can never
+    // legitimately exceed the total payload size. Rejecting the inverse caps the
+    // reservation to the input size and prevents a capacity-overflow / OOM panic.
+    let node_payload_bytes: usize = token_strings
+        .iter()
+        .take(node_token_count)
+        .map(|t| t.as_slice().len())
+        .sum();
+    let edge_payload_bytes: usize = token_strings
+        .iter()
+        .skip(node_token_count)
+        .take(rel_token_count)
+        .map(|t| t.as_slice().len())
+        .sum();
+    if node_count > node_payload_bytes {
+        return Err(redis_module::RedisError::Str(
+            "Bulk insert format error, node count exceeds payload size.",
+        ));
+    }
+    if edge_count > edge_payload_bytes {
+        return Err(redis_module::RedisError::Str(
+            "Bulk insert format error, relation count exceeds payload size.",
+        ));
+    }
+
     // Inside MULTI/EXEC: blocking commands are not allowed, run synchronously
     // with RM_Yield to let Redis process PING between operations.
     if ctx.get_flags().contains(ContextFlags::MULTI) {

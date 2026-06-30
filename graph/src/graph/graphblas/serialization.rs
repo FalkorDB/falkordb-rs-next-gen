@@ -198,7 +198,9 @@ impl Decode<19> for RoaringTreemap {
         count: u64,
     ) -> Result<(), String> {
         let bytes = r.read_buffer()?;
-        let expected_len = count as usize * 8;
+        let expected_len = (count as usize)
+            .checked_mul(8)
+            .ok_or("deleted entities count overflows buffer length")?;
         if bytes.len() != expected_len {
             return Err(format!(
                 "deleted entities buffer length mismatch: got {} bytes, expected {} bytes",

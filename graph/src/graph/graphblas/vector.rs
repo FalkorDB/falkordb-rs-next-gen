@@ -181,11 +181,12 @@ impl Decode<19> for Vector<u64> {
                 blob.len() as u64,
                 null_mut(),
             );
-            assert_eq!(
-                info,
-                GrB_Info::GrB_SUCCESS,
-                "GxB_Vector_deserialize failed: {info:?}"
-            );
+            // The blob is attacker-controlled via `GRAPH.RESTORE`; a panic here
+            // would crash the whole server (the panic hook calls `process::exit`),
+            // so surface a decode failure as an error instead of asserting.
+            if info != GrB_Info::GrB_SUCCESS {
+                return Err(format!("GxB_Vector_deserialize failed: {info:?}"));
+            }
             Ok(Self::from(v.assume_init()))
         }
     }
@@ -281,6 +282,18 @@ impl Decode<19> for Vector<bool> {
             return Err(format!(
                 "Vector decode: declared byte length {n_bytes} does not match buffer length {}",
                 arr_data.len()
+            ));
+        }
+        // `n_entries` is decoded independently of `n_bytes`. Every GraphBLAS
+        // serialization format stores at least one byte per logical entry
+        // (the value array element size is >= 1, plus any index/bitmap bytes),
+        // so a valid payload always has `n_entries <= n_bytes`. Rejecting the
+        // inverse closes the integer-overflow bypass where a huge `n_entries`
+        // combined with a small, length-matched `n_bytes` drives an
+        // out-of-bounds read inside `GxB_Vector_load`.
+        if n_entries > n_bytes {
+            return Err(format!(
+                "Vector decode: entry count {n_entries} exceeds byte length {n_bytes}"
             ));
         }
         // `GxB_Type_from_name` reads `type_name` as a NUL-terminated C string.

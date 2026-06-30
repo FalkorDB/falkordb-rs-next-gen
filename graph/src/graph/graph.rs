@@ -866,6 +866,11 @@ impl Graph {
     }
 
     #[must_use]
+    pub const fn relationship_cap(&self) -> u64 {
+        self.relationship_cap
+    }
+
+    #[must_use]
     pub const fn labels_count(&self) -> usize {
         self.node_labels.len()
     }

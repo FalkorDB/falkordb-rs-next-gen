@@ -60,7 +60,15 @@ pub struct Binder {
     /// property access like `r.prop` is allowed (per-edge predicate)
     /// whereas it is rejected on named-path Path variables.
     varlen_rel_var_ids: std::collections::HashSet<(u32, u32)>,
+    /// Current expression-recursion depth while binding, used to reject
+    /// pathologically nested expressions before they overflow the call stack.
+    bind_depth: usize,
 }
+
+/// Maximum expression nesting depth accepted by the binder. Mirrors the
+/// parser's `MAX_EXPR_DEPTH`; a deeply nested AST would otherwise recurse
+/// through `bind_expr_node` until the thread stack overflows.
+const MAX_BIND_DEPTH: usize = 512;
 
 impl Default for Binder {
     fn default() -> Self {
@@ -71,6 +79,7 @@ impl Default for Binder {
             copy_from_parent: HashMap::new(),
             node_labels: HashMap::new(),
             varlen_rel_var_ids: std::collections::HashSet::new(),
+            bind_depth: 0,
         }
     }
 }
@@ -805,6 +814,7 @@ impl Binder {
                         copy_from_parent: HashMap::new(),
                         node_labels: HashMap::new(),
                         varlen_rel_var_ids: std::collections::HashSet::new(),
+                        bind_depth: 0,
                     };
 
                     // Build bound clauses: explicit import WITH + remaining
@@ -1630,6 +1640,22 @@ impl Binder {
         clippy::needless_pass_by_value
     )]
     fn bind_expr_node(
+        &mut self,
+        expr: &DynTree<ExprIR<Arc<String>>>,
+        node_ref: &DynNode<ExprIR<Arc<String>>>,
+        locals: &mut Vec<HashMap<Arc<String>, Variable>>,
+    ) -> Result<DynTree<ExprIR<Variable>>, String> {
+        self.bind_depth += 1;
+        if self.bind_depth > MAX_BIND_DEPTH {
+            self.bind_depth -= 1;
+            return Err("expression nesting too deep".to_string());
+        }
+        let result = self.bind_expr_node_inner(expr, node_ref, locals);
+        self.bind_depth -= 1;
+        result
+    }
+
+    fn bind_expr_node_inner(
         &mut self,
         expr: &DynTree<ExprIR<Arc<String>>>,
         node_ref: &DynNode<ExprIR<Arc<String>>>,

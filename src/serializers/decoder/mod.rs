@@ -37,7 +37,8 @@ pub fn rdb_load_graph(
 
     // --- Key Schema (payload directory) ---
     let payload_count = r.read_unsigned()?;
-    let mut payloads = Vec::with_capacity(payload_count as usize);
+    let mut payloads =
+        Vec::with_capacity((payload_count as usize).min(crate::serializers::MAX_DECODE_PREALLOC));
     for _ in 0..payload_count {
         let state = r.read_unsigned()?;
         let count = r.read_unsigned()?;
@@ -409,7 +410,8 @@ fn load_graph_from_reader(
     let schema = Schema::decode(r)?;
 
     let payload_count = r.read_unsigned()?;
-    let mut payloads = Vec::with_capacity(payload_count as usize);
+    let mut payloads =
+        Vec::with_capacity((payload_count as usize).min(crate::serializers::MAX_DECODE_PREALLOC));
     for _ in 0..payload_count {
         let state = r.read_unsigned()?;
         let count = r.read_unsigned()?;

@@ -1502,17 +1502,19 @@ pub fn read_string(
     buf: &[u8],
     offset: &mut usize,
 ) -> Result<Arc<String>, String> {
-    if *offset + 8 > buf.len() {
-        return Err("effects buffer truncated".to_string());
-    }
-    let len = u64::from_le_bytes(buf[*offset..*offset + 8].try_into().unwrap()) as usize;
-    *offset += 8;
-    if *offset + len > buf.len() {
-        return Err("effects buffer truncated".to_string());
-    }
-    let s = std::str::from_utf8(&buf[*offset..*offset + len])
+    let hdr_end = offset
+        .checked_add(8)
+        .filter(|&end| end <= buf.len())
+        .ok_or("effects buffer truncated")?;
+    let len = u64::from_le_bytes(buf[*offset..hdr_end].try_into().unwrap()) as usize;
+    *offset = hdr_end;
+    let str_end = offset
+        .checked_add(len)
+        .filter(|&end| end <= buf.len())
+        .ok_or("effects buffer truncated")?;
+    let s = std::str::from_utf8(&buf[*offset..str_end])
         .map_err(|e| format!("invalid utf8 in effects buffer: {e}"))?;
-    *offset += len;
+    *offset = str_end;
     Ok(Arc::new(s.to_string()))
 }
 
@@ -1520,11 +1522,12 @@ pub fn read_u16(
     buf: &[u8],
     offset: &mut usize,
 ) -> Result<u16, String> {
-    if *offset + 2 > buf.len() {
-        return Err("effects buffer truncated".to_string());
-    }
-    let v = u16::from_le_bytes(buf[*offset..*offset + 2].try_into().unwrap());
-    *offset += 2;
+    let end = offset
+        .checked_add(2)
+        .filter(|&end| end <= buf.len())
+        .ok_or("effects buffer truncated")?;
+    let v = u16::from_le_bytes(buf[*offset..end].try_into().unwrap());
+    *offset = end;
     Ok(v)
 }
 
@@ -1532,11 +1535,12 @@ pub fn read_u64(
     buf: &[u8],
     offset: &mut usize,
 ) -> Result<u64, String> {
-    if *offset + 8 > buf.len() {
-        return Err("effects buffer truncated".to_string());
-    }
-    let v = u64::from_le_bytes(buf[*offset..*offset + 8].try_into().unwrap());
-    *offset += 8;
+    let end = offset
+        .checked_add(8)
+        .filter(|&end| end <= buf.len())
+        .ok_or("effects buffer truncated")?;
+    let v = u64::from_le_bytes(buf[*offset..end].try_into().unwrap());
+    *offset = end;
     Ok(v)
 }
 
@@ -1591,7 +1595,11 @@ pub fn read_value(
         }
         VALUE_LIST => {
             let len = read_u64(buf, offset)? as usize;
-            let mut items = thin_vec::ThinVec::with_capacity(len);
+            // `len` is attacker-controlled; cap the pre-allocation so a bogus
+            // length cannot trigger a capacity-overflow panic or huge alloc.
+            // Each element consumes at least one byte, so `push` growth stays
+            // bounded by the remaining buffer.
+            let mut items = thin_vec::ThinVec::with_capacity(len.min(1024));
             for _ in 0..len {
                 items.push(read_value(buf, offset)?);
             }
@@ -1673,5 +1681,51 @@ pub fn read_value(
             Ok(Value::Duration(dur))
         }
         _ => Err(format!("unknown value tag in effects buffer: {tag}")),
+    }
+}
+
+#[cfg(test)]
+mod effects_read_guard_tests {
+    use super::{read_string, read_u16, read_u64};
+
+    #[test]
+    fn read_u64_rejects_truncated_buffer() {
+        let buf = [0u8; 4];
+        let mut offset = 0;
+        assert!(read_u64(&buf, &mut offset).is_err());
+    }
+
+    #[test]
+    fn read_u16_rejects_truncated_buffer() {
+        let buf = [0u8; 1];
+        let mut offset = 0;
+        assert!(read_u16(&buf, &mut offset).is_err());
+    }
+
+    #[test]
+    fn read_u64_roundtrips_and_advances_offset() {
+        let buf = 42u64.to_le_bytes();
+        let mut offset = 0;
+        assert_eq!(read_u64(&buf, &mut offset).unwrap(), 42);
+        assert_eq!(offset, 8);
+    }
+
+    #[test]
+    fn read_string_rejects_overflowing_length() {
+        // 8-byte length prefix of u64::MAX with no payload: the old
+        // `*offset + len` arithmetic would overflow; the checked version
+        // must return an error instead of panicking.
+        let buf = [0xFFu8; 8];
+        let mut offset = 0;
+        assert!(read_string(&buf, &mut offset).is_err());
+    }
+
+    #[test]
+    fn read_string_roundtrips() {
+        let mut buf = 5u64.to_le_bytes().to_vec();
+        buf.extend_from_slice(b"hello");
+        let mut offset = 0;
+        assert_eq!(read_string(&buf, &mut offset).unwrap().as_str(), "hello");
+        assert_eq!(offset, 13);
     }
 }

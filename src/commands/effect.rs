@@ -87,6 +87,29 @@ pub fn graph_effect(
     }
 }
 
+/// Reject an entity id read from an attacker-controlled effects buffer that is
+/// so large it would force the graph to grow its matrices / endpoint vector to
+/// an absurd size (an OOM / capacity-overflow DoS — fatal given the
+/// process-exiting panic hook). Effect ids are densely assigned by the primary,
+/// so a valid id always sits within a small multiple of the current capacity
+/// plus the buffer length (an upper bound on how many entities a single buffer
+/// can create).
+fn check_effect_id(
+    id: u64,
+    cap: u64,
+    buf_len: usize,
+    what: &str,
+) -> Result<(), String> {
+    let limit = cap
+        .saturating_mul(2)
+        .saturating_add(buf_len as u64)
+        .saturating_add(64);
+    if id >= limit {
+        return Err(format!("effects buffer: {what} id {id} out of range"));
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_lines)]
 fn apply_effects(
     g: &mut Graph,
@@ -117,6 +140,7 @@ fn apply_effects(
         match effect_type {
             EFFECT_CREATE_NODE => {
                 let node_id_raw = read_u64(buf, &mut offset)?;
+                check_effect_id(node_id_raw, g.node_cap(), buf.len(), "node")?;
                 g.inc_reserved_node_count();
 
                 // Labels
@@ -155,6 +179,10 @@ fn apply_effects(
                 let src_id = read_u64(buf, &mut offset)?;
                 let dst_id = read_u64(buf, &mut offset)?;
                 let type_name = read_string(buf, &mut offset)?;
+
+                check_effect_id(rel_id_raw, g.relationship_cap(), buf.len(), "relationship")?;
+                check_effect_id(src_id, g.node_cap(), buf.len(), "edge source")?;
+                check_effect_id(dst_id, g.node_cap(), buf.len(), "edge destination")?;
 
                 g.inc_reserved_relationship_count();
 

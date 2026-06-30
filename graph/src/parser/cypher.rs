@@ -154,7 +154,16 @@ pub struct Parser<'a> {
     lexer: Lexer<'a>,
     /// Counter for generating unique anonymous variable names
     anon_counter: u32,
+    /// Current expression-recursion depth, used to reject pathologically
+    /// nested expressions before they overflow the (native) call stack.
+    expr_depth: usize,
 }
+
+/// Maximum nesting depth for expression parsing. Real queries nest only a
+/// handful of levels; a hostile query of the form `[[[[...]]]]` or
+/// `((((...))))` can otherwise recurse until the thread stack overflows,
+/// which — given the process-exiting panic hook — takes down the whole server.
+const MAX_EXPR_DEPTH: usize = 512;
 
 impl<'a> Parser<'a> {
     /// Creates a new parser for the given query string.
@@ -163,6 +172,7 @@ impl<'a> Parser<'a> {
         Self {
             lexer: Lexer::new(str),
             anon_counter: 0,
+            expr_depth: 0,
         }
     }
 
@@ -1610,6 +1620,20 @@ impl<'a> Parser<'a> {
         &mut self,
         allow_pattern_predicate: bool,
     ) -> Result<(DynTree<ExprIR<Arc<String>>>, bool), String> {
+        self.expr_depth += 1;
+        if self.expr_depth > MAX_EXPR_DEPTH {
+            self.expr_depth -= 1;
+            return Err("expression nesting too deep".to_string());
+        }
+        let result = self.parse_primary_expr_inner(allow_pattern_predicate);
+        self.expr_depth -= 1;
+        result
+    }
+
+    fn parse_primary_expr_inner(
+        &mut self,
+        allow_pattern_predicate: bool,
+    ) -> Result<(DynTree<ExprIR<Arc<String>>>, bool), String> {
         match self.lexer.current()? {
             Token::IdentifierOrKeyword {
                 keyword: Some(Keyword::Case),
@@ -2967,5 +2991,31 @@ impl<'a> Parser<'a> {
             }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod recursion_guard_tests {
+    use super::*;
+
+    #[test]
+    fn rejects_deeply_nested_expression() {
+        // Nested maps recurse through `parse_primary_expr` on the native stack;
+        // without the depth guard this overflows the stack and (via the
+        // process-exiting panic hook) crashes the whole server.
+        let depth = MAX_EXPR_DEPTH + 100;
+        let query = format!("RETURN {}1{}", "{a:".repeat(depth), "}".repeat(depth));
+        let mut parser = Parser::new(&query);
+        let result = parser.parse();
+        assert!(
+            result.is_err(),
+            "deeply nested expression should be rejected, not crash the stack"
+        );
+    }
+
+    #[test]
+    fn accepts_moderately_nested_expression() {
+        let mut parser = Parser::new("RETURN [[1, 2], [3, [4, 5]]], {a: {b: {c: 1}}}");
+        assert!(parser.parse().is_ok());
     }
 }

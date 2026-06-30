@@ -61,6 +61,24 @@ pub fn value_to_js<'js>(
     graph: &Arc<AtomicRefCell<Graph>>,
     runtime: Option<&Runtime<'_>>,
 ) -> Result<JsValue<'js>, String> {
+    value_to_js_depth(ctx, value, graph, runtime, 0)
+}
+
+/// Maximum nesting depth for converting values between FalkorDB and JS. UDF
+/// inputs/outputs can be arbitrarily nested lists/maps; without a cap a hostile
+/// (or accidentally cyclic-shaped) value recurses until the stack overflows.
+const MAX_JS_CONVERSION_DEPTH: usize = 128;
+
+fn value_to_js_depth<'js>(
+    ctx: &Ctx<'js>,
+    value: &Value,
+    graph: &Arc<AtomicRefCell<Graph>>,
+    runtime: Option<&Runtime<'_>>,
+    depth: usize,
+) -> Result<JsValue<'js>, String> {
+    if depth > MAX_JS_CONVERSION_DEPTH {
+        return Err("UDF Exception: value nesting too deep".to_string());
+    }
     match value {
         Value::Null => Ok(JsValue::new_null(ctx.clone())),
         Value::Bool(b) => b
@@ -90,7 +108,7 @@ pub fn value_to_js<'js>(
             let arr =
                 Array::new(ctx.clone()).map_err(|e| format!("JS array creation error: {e}"))?;
             for (i, item) in items.iter().enumerate() {
-                let js_val = value_to_js(ctx, item, graph, runtime)?;
+                let js_val = value_to_js_depth(ctx, item, graph, runtime, depth + 1)?;
                 arr.set(i, js_val)
                     .map_err(|e| format!("JS array set error: {e}"))?;
             }
@@ -100,7 +118,7 @@ pub fn value_to_js<'js>(
             let obj =
                 Object::new(ctx.clone()).map_err(|e| format!("JS object creation error: {e}"))?;
             for (key, val) in map.iter() {
-                let js_val = value_to_js(ctx, val, graph, runtime)?;
+                let js_val = value_to_js_depth(ctx, val, graph, runtime, depth + 1)?;
                 // Escape keys that start with "__falkor_" to avoid collision
                 // with internal metadata properties.
                 let js_key = if key.starts_with("__falkor_") {
@@ -183,6 +201,16 @@ pub fn value_to_js<'js>(
 
 /// Convert a JavaScript value back to a FalkorDB Value.
 pub fn js_to_value(val: JsValue<'_>) -> Result<Value, String> {
+    js_to_value_depth(val, 0)
+}
+
+fn js_to_value_depth(
+    val: JsValue<'_>,
+    depth: usize,
+) -> Result<Value, String> {
+    if depth > MAX_JS_CONVERSION_DEPTH {
+        return Err("UDF Exception: value nesting too deep".to_string());
+    }
     if val.is_null() || val.is_undefined() {
         return Ok(Value::Null);
     }
@@ -246,7 +274,7 @@ pub fn js_to_value(val: JsValue<'_>) -> Result<Value, String> {
         let mut items = Vec::with_capacity(arr.len());
         for i in 0..arr.len() {
             let item: JsValue = arr.get(i).map_err(|e| format!("Array item error: {e}"))?;
-            items.push(js_to_value(item)?);
+            items.push(js_to_value_depth(item, depth + 1)?);
         }
         return Ok(Value::List(Arc::new(items.into())));
     }
@@ -281,7 +309,7 @@ pub fn js_to_value(val: JsValue<'_>) -> Result<Value, String> {
                     let mut path_values = Vec::with_capacity(n_nodes + n_rels);
                     for i in 0..n_nodes {
                         let node_val: JsValue = nodes_arr.get(i).map_err(|e| format!("{e}"))?;
-                        let node = js_to_value(node_val)?;
+                        let node = js_to_value_depth(node_val, depth + 1)?;
                         if !matches!(node, Value::Node(_)) {
                             return Err(format!(
                                 "Invalid path: element at node position {i} is not a Node"
@@ -290,7 +318,7 @@ pub fn js_to_value(val: JsValue<'_>) -> Result<Value, String> {
                         path_values.push(node);
                         if i < n_rels {
                             let rel_val: JsValue = rels_arr.get(i).map_err(|e| format!("{e}"))?;
-                            let rel = js_to_value(rel_val)?;
+                            let rel = js_to_value_depth(rel_val, depth + 1)?;
                             if !matches!(rel, Value::Relationship(_)) {
                                 return Err(format!(
                                     "Invalid path: element at relationship position {i} is not a Relationship"
@@ -365,7 +393,7 @@ pub fn js_to_value(val: JsValue<'_>) -> Result<Value, String> {
             } else {
                 key
             };
-            map.push((Arc::new(original_key), js_to_value(v)?));
+            map.push((Arc::new(original_key), js_to_value_depth(v, depth + 1)?));
         }
         return Ok(Value::Map(Arc::new(map.into_iter().collect())));
     }

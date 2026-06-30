@@ -23,6 +23,13 @@ use crate::graph_core::ThreadedGraph;
 #[allow(dead_code)]
 pub const ENCODING_VERSION: u64 = 19;
 
+/// Upper bound on how many elements we will pre-allocate from a length read out
+/// of an (attacker-controlled) RDB/RESTORE stream. The decode loops always grow
+/// the collection with `push`, so a larger real count is still handled
+/// correctly; this only prevents a bogus count from triggering a
+/// capacity-overflow panic or a multi-gigabyte up-front allocation.
+pub(crate) const MAX_DECODE_PREALLOC: usize = 1 << 16;
+
 /// Global state for virtual key management during RDB save.
 pub static VKEY_STATE: std::sync::LazyLock<Mutex<VirtualKeyState>> =
     std::sync::LazyLock::new(|| Mutex::new(VirtualKeyState::new()));
@@ -157,7 +164,8 @@ impl Decode<19> for Header {
         let label_count = r.read_unsigned()?;
         let relationship_count = r.read_unsigned()?;
 
-        let mut multi_edge = Vec::with_capacity(relationship_count as usize);
+        let mut multi_edge =
+            Vec::with_capacity((relationship_count as usize).min(MAX_DECODE_PREALLOC));
         for _ in 0..relationship_count {
             let flag = r.read_unsigned()?;
             multi_edge.push(flag != 0);
@@ -420,7 +428,8 @@ impl Decode<19> for Schema {
     fn decode(r: &mut dyn Reader) -> Result<Self, String> {
         // --- Attribute keys ---
         let attr_count = r.read_unsigned()?;
-        let mut attribute_names = Vec::with_capacity(attr_count as usize);
+        let mut attribute_names =
+            Vec::with_capacity((attr_count as usize).min(MAX_DECODE_PREALLOC));
         for _ in 0..attr_count {
             let buf = r.read_buffer()?;
             attribute_names.push(Arc::new(strip_null_terminator(&buf)));
@@ -428,7 +437,8 @@ impl Decode<19> for Schema {
 
         // --- Node schemas ---
         let node_schema_count = r.read_unsigned()?;
-        let mut node_labels = Vec::with_capacity(node_schema_count as usize);
+        let mut node_labels =
+            Vec::with_capacity((node_schema_count as usize).min(MAX_DECODE_PREALLOC));
         let mut indexes = Vec::new();
         let mut constraints = Vec::new();
         for _ in 0..node_schema_count {
@@ -452,7 +462,8 @@ impl Decode<19> for Schema {
         // `rebuild_indexes` calls `create_index_sync` with the right
         // entity type.
         let rel_schema_count = r.read_unsigned()?;
-        let mut relationship_types = Vec::with_capacity(rel_schema_count as usize);
+        let mut relationship_types =
+            Vec::with_capacity((rel_schema_count as usize).min(MAX_DECODE_PREALLOC));
         for _ in 0..rel_schema_count {
             let (type_name, info, mut schema_constraints) =
                 decode_schema_entry(r, &attribute_names)?;
@@ -494,7 +505,7 @@ fn decode_schema_entry(
         let language = strip_null_terminator(&lang_buf);
 
         let sw_count = r.read_unsigned()?;
-        let mut stopwords = Vec::with_capacity(sw_count as usize);
+        let mut stopwords = Vec::with_capacity((sw_count as usize).min(MAX_DECODE_PREALLOC));
         for _ in 0..sw_count {
             let sw_buf = r.read_buffer()?;
             stopwords.push(Arc::new(strip_null_terminator(&sw_buf)));
@@ -535,7 +546,7 @@ fn decode_schema_entry(
     };
 
     let constraint_count = r.read_unsigned()?;
-    let mut constraints = Vec::with_capacity(constraint_count as usize);
+    let mut constraints = Vec::with_capacity((constraint_count as usize).min(MAX_DECODE_PREALLOC));
     for _ in 0..constraint_count {
         let constraint_type_id = r.read_unsigned()?;
         let ct = match constraint_type_id {
@@ -549,7 +560,7 @@ fn decode_schema_entry(
             _ => ConstraintStatus::Operational,
         };
         let fields_count = r.read_unsigned()?;
-        let mut properties = Vec::with_capacity(fields_count as usize);
+        let mut properties = Vec::with_capacity((fields_count as usize).min(MAX_DECODE_PREALLOC));
         for _ in 0..fields_count {
             let attr_id = r.read_unsigned()? as usize;
             let prop_name = if attr_id < attribute_names.len() {
