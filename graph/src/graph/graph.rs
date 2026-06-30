@@ -3424,7 +3424,7 @@ impl Graph {
     }
 
     pub fn set_indexer_graph(
-        &mut self,
+        &self,
         graph: Arc<AtomicRefCell<Self>>,
     ) {
         self.node_indexer.set_graph(graph.clone());
