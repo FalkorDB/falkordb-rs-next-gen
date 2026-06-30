@@ -866,11 +866,6 @@ impl Graph {
     }
 
     #[must_use]
-    pub const fn relationship_cap(&self) -> u64 {
-        self.relationship_cap
-    }
-
-    #[must_use]
     pub const fn labels_count(&self) -> usize {
         self.node_labels.len()
     }
@@ -1254,11 +1249,15 @@ impl Graph {
 
         // Ensure capacity covers the highest node ID (effects replay may
         // insert IDs above the current count when applied one-by-one).
+        // `saturating_*` keeps an out-of-range ID from a malformed effects
+        // buffer from integer-overflowing the `+ 1` / `*= 2` (a panic, which —
+        // given the process-exiting panic hook — would crash the server);
+        // legitimate IDs are unaffected.
         if let Some(max_id) = nodes.max() {
-            let needed = max_id + 1;
+            let needed = max_id.saturating_add(1);
             if needed > self.node_cap {
                 while needed > self.node_cap {
-                    self.node_cap *= 2;
+                    self.node_cap = self.node_cap.saturating_mul(2);
                 }
                 self.resize_node_matrices();
             }
@@ -1797,10 +1796,10 @@ impl Graph {
         }
 
         if let Some(&max_id) = rel_ids.iter().max() {
-            let needed = max_id + 1;
+            let needed = max_id.saturating_add(1);
             if needed > self.relationship_cap {
                 while needed > self.relationship_cap {
-                    self.relationship_cap *= 2;
+                    self.relationship_cap = self.relationship_cap.saturating_mul(2);
                 }
                 self.resize_relationship_matrices();
             }
@@ -1819,7 +1818,7 @@ impl Graph {
 
         // Maintain the graph-wide reverse index alongside the tensor edges.
         if let Some(&max_id) = rel_ids.iter().max() {
-            let needed = max_id as usize + 1;
+            let needed = (max_id as usize).saturating_add(1);
             if needed > self.edge_endpoints.len() {
                 self.edge_endpoints.resize(needed, EDGE_NO_ENDPOINT);
             }
