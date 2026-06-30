@@ -12,6 +12,18 @@ from time import sleep, time
 GRAPH_ID = "index_create"
 
 
+def _create_large_graph(graph, q, min_v, max_v, batch_size=100_000):
+    """Create nodes in batches to prevent a single O(N) query from timing out
+    under coverage / sanitizer builds, which run 3-5x slower than release.
+    Each batch issues 'UNWIND range($min_v, $max_v) AS x ...' over a sub-range
+    so no individual query exceeds the socket read deadline."""
+    start = min_v
+    while start <= max_v:
+        end = min(start + batch_size - 1, max_v)
+        graph.query(q, {"min_v": start, "max_v": end})
+        start += batch_size
+
+
 class testIndexCreationFlow:
     def __init__(self):
         self.env, self.db = Env()
@@ -378,7 +390,7 @@ class testIndexCreationFlow:
         # -----------------------------------------------------------------------
 
         q = "UNWIND range($min_v, $max_v) AS x CREATE (:L {v:x})"
-        g.query(q, {"min_v": min_node_v, "max_v": max_node_v})
+        _create_large_graph(g, q, min_node_v, max_node_v)
 
         # -----------------------------------------------------------------------
         # create an index
@@ -497,7 +509,7 @@ class testIndexCreationFlow:
         # -----------------------------------------------------------------------
 
         q = "UNWIND range($min_v, $max_v) AS x CREATE (:L {h:toString(x)})"
-        self.graph.query(q, {"min_v": min_node_v, "max_v": max_node_v})
+        _create_large_graph(self.graph, q, min_node_v, max_node_v)
 
         # -----------------------------------------------------------------------
         # create a fulltext index
@@ -596,7 +608,7 @@ class testIndexCreationFlow:
         # -----------------------------------------------------------------------
 
         q = "UNWIND range($min_v, $max_v) AS x CREATE (:L {v:x})"
-        self.graph.query(q, {"min_v": min_node_v, "max_v": max_node_v})
+        _create_large_graph(self.graph, q, min_node_v, max_node_v)
 
         # -----------------------------------------------------------------------
         # create an index
@@ -638,7 +650,7 @@ class testIndexCreationFlow:
         # -----------------------------------------------------------------------
 
         q = "UNWIND range($min_v, $max_v) AS x CREATE (:L {v:toString(x)})"
-        self.graph.query(q, {"min_v": min_node_v, "max_v": max_node_v})
+        _create_large_graph(self.graph, q, min_node_v, max_node_v)
 
         # -----------------------------------------------------------------------
         # create an index
@@ -680,7 +692,7 @@ class testIndexCreationFlow:
         # -----------------------------------------------------------------------
 
         q = "UNWIND range($min_v, $max_v) AS x CREATE (:L {v:x, a:x, b:x})"
-        self.graph.query(q, {"min_v": min_node_v, "max_v": max_node_v})
+        _create_large_graph(self.graph, q, min_node_v, max_node_v)
 
         # -----------------------------------------------------------------------
         # create an index
@@ -754,7 +766,7 @@ class testIndexCreationFlow:
         # -----------------------------------------------------------------------
 
         q = "UNWIND range($min_v, $max_v) AS x CREATE (:L {v:toString(x), a:toString(x), b:toString(x)})"
-        self.graph.query(q, {"min_v": min_node_v, "max_v": max_node_v})
+        _create_large_graph(self.graph, q, min_node_v, max_node_v)
 
         # -----------------------------------------------------------------------
         # create an index
