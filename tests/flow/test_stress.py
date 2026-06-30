@@ -50,17 +50,21 @@ def merge_nodes_and_edges(g, i):
 # this function is run on a separate thread
 def BGSAVE_loop(env, conn, stop_event):
     while not stop_event.is_set():
-        conn.bgsave()
-        results = conn.execute_command("INFO", "persistence")
-        in_progress = results['rdb_bgsave_in_progress']
+        try:
+            conn.bgsave()
+        except Exception:
+            # Ignore "Background save already in progress" errors that can occur
+            # under heavy load when the previous BGSAVE is still finishing.
+            pass
+
         # Under ASAN/coverage instrumentation the parallel stress workload
         # slows the server ~3-5x; the default 50×100ms=5s wait is too tight
         # and surfaces as a hard-to-diagnose "True == False" assertion at
-        # line 67. Bump the polling budget to 60s on instrumented builds.
+        # line 71. Bump the polling budget to 60s on instrumented builds.
         max_iterations = 600 if (SANITIZER or CODE_COVERAGE) else 50
 
         # wait for BGSAVE to finish
-        # for 6 seconds max (60 seconds under ASAN/coverage)
+        # for 5 seconds max (60 seconds under ASAN/coverage)
         for _ in range(max_iterations):
             results = conn.execute_command("INFO", "persistence")
             in_progress = results['rdb_bgsave_in_progress']
@@ -170,9 +174,13 @@ class testStressFlow():
         # start and wait for all tasks to complete
         self.join_workers(self.start_workers(16, task_queue))
 
-        # Stop BGSAVE thread
+        # Stop BGSAVE thread.
+        # Under coverage/ASAN the BGSAVE wait loop may run up to 60s per cycle,
+        # so the join timeout must exceed that budget to avoid a false "thread
+        # still alive" assertion.
         stop_event.set()
-        bgsave_thread.join(timeout=10)
+        join_timeout = 70 if (SANITIZER or CODE_COVERAGE) else 10
+        bgsave_thread.join(timeout=join_timeout)
         self.env.assertFalse(bgsave_thread.is_alive())
         task_queue.join()
 
