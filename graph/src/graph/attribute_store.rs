@@ -252,20 +252,16 @@ impl AttributeStore {
         &self,
         key: u64,
     ) -> impl Iterator<Item = Arc<String>> + '_ {
-        let attrs = if self.pending_deletes.contains(key) {
-            EMPTY_ATTRS.clone()
-        } else {
-            self.storage
-                .get_entity(key, self.version)
-                .unwrap_or_else(|| EMPTY_ATTRS.clone())
-        };
-        // `attrs` owns its columns (refcounted), so move it into the iterator to
-        // yield names lazily without collecting an intermediate `Vec`.
-        let names = &self.attrs_name;
-        (0..attrs.len()).filter_map(move |i| {
-            let idx = attrs.indices()[i] as usize;
-            names.get(idx).cloned()
-        })
+        let mut out: Vec<Arc<String>> = Vec::new();
+        if !self.pending_deletes.contains(key) {
+            let names = &self.attrs_name;
+            self.storage.for_each_attr(key, |idx, _| {
+                if let Some(n) = names.get(idx as usize) {
+                    out.push(n.clone());
+                }
+            });
+        }
+        out.into_iter()
     }
 
     #[must_use]
@@ -276,19 +272,15 @@ impl AttributeStore {
         if self.pending_deletes.contains(key) {
             return Vec::new();
         }
-        let cached = self.storage.get_entity(key, self.version);
-        let attrs = cached.unwrap_or_else(|| EMPTY_ATTRS.clone());
-        attrs
-            .iter()
-            .filter_map(move |(idx, value)| {
-                let i = idx as usize;
-                if i < self.attrs_name.len() {
-                    Some((self.attrs_name[i].clone(), value.clone()))
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>()
+        // Gather pairs directly into the output — no intermediate `AttrArray`.
+        let mut out: Vec<(Arc<String>, Value)> = Vec::new();
+        let names = &self.attrs_name;
+        self.storage.for_each_attr(key, |idx, v| {
+            if let Some(n) = names.get(idx as usize) {
+                out.push((n.clone(), v.clone()));
+            }
+        });
+        out
     }
 
     pub fn get_all_attrs_by_id(
@@ -522,17 +514,23 @@ impl AttributeStore {
 
             w.write_unsigned(id);
 
-            let props = self.get_all_attrs_by_id(id);
-            w.write_unsigned(props.len() as u64);
-
-            for (local_attr_id, value) in props.iter() {
-                let global_attr_id = if (local_attr_id as usize) < remap.len() {
-                    remap[local_attr_id as usize]
-                } else {
-                    local_attr_id
-                };
-                w.write_unsigned(global_attr_id as u64);
-                value.encode(w);
+            if self.pending_deletes.contains(id) {
+                w.write_unsigned(0);
+            } else {
+                // Two cheap column scans (count, then encode) avoid allocating a
+                // per-entity snapshot for every entity in the graph.
+                let mut n_props = 0u64;
+                self.storage.for_each_attr(id, |_, _| n_props += 1);
+                w.write_unsigned(n_props);
+                self.storage.for_each_attr(id, |local_attr_id, value| {
+                    let global_attr_id = if (local_attr_id as usize) < remap.len() {
+                        remap[local_attr_id as usize]
+                    } else {
+                        local_attr_id
+                    };
+                    w.write_unsigned(global_attr_id as u64);
+                    value.encode(w);
+                });
             }
 
             encoded += 1;
@@ -752,7 +750,11 @@ impl Column {
         id: u64,
     ) -> Option<&Value> {
         let cid = (id >> CHUNK_SHIFT) as usize;
-        self.get_at(cid >> PAGE_SHIFT, cid & PAGE_MASK, (id & CHUNK_MASK) as usize)
+        self.get_at(
+            cid >> PAGE_SHIFT,
+            cid & PAGE_MASK,
+            (id & CHUNK_MASK) as usize,
+        )
     }
 
     /// Lookup with a pre-decomposed id (`page`, `chunk-in-page`, `value slot`).
@@ -768,7 +770,11 @@ impl Column {
         let page = self.pages.get(pidx)?.as_ref()?;
         let chunk = page.chunks[cin].as_ref()?;
         let v = &chunk.values[slot];
-        if matches!(v, Value::Null) { None } else { Some(v) }
+        if matches!(v, Value::Null) {
+            None
+        } else {
+            Some(v)
+        }
     }
 
     /// Set `id`'s value. Returns whether a non-null value was already present.
@@ -994,25 +1000,38 @@ impl AttributeStorage {
         entity_id: u64,
         _version: u64,
     ) -> Option<AttrArray> {
-        // Decompose the id once; every column shares the same page/chunk/slot.
-        let cid = (entity_id >> CHUNK_SHIFT) as usize;
-        let pidx = cid >> PAGE_SHIFT;
-        let cin = cid & PAGE_MASK;
-        let slot = (entity_id & CHUNK_MASK) as usize;
         let cap = self.columns.len();
         let mut indices: Vec<u16> = Vec::with_capacity(cap);
         let mut values: Vec<Value> = Vec::with_capacity(cap);
-        for (idx, col) in self.columns.iter().enumerate() {
-            if let Some(v) = col.get_at(pidx, cin, slot) {
-                indices.push(idx as u16);
-                values.push(v.clone());
-            }
-        }
+        self.for_each_attr(entity_id, |idx, v| {
+            indices.push(idx);
+            values.push(v.clone());
+        });
         if indices.is_empty() {
             None
         } else {
             // Columns iterate in ascending index order, so `indices` is sorted.
             Some(AttrArray::from_columns(indices, values))
+        }
+    }
+
+    /// Visit each present `(attr_idx, &Value)` for an entity in ascending index
+    /// order, without allocating a snapshot. The id is decomposed once and the
+    /// page/chunk/slot indices are reused across every column.
+    #[inline]
+    fn for_each_attr(
+        &self,
+        entity_id: u64,
+        mut f: impl FnMut(u16, &Value),
+    ) {
+        let cid = (entity_id >> CHUNK_SHIFT) as usize;
+        let pidx = cid >> PAGE_SHIFT;
+        let cin = cid & PAGE_MASK;
+        let slot = (entity_id & CHUNK_MASK) as usize;
+        for (idx, col) in self.columns.iter().enumerate() {
+            if let Some(v) = col.get_at(pidx, cin, slot) {
+                f(idx as u16, v);
+            }
         }
     }
 
