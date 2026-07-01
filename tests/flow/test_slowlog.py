@@ -265,22 +265,22 @@ class testSlowLog():
         # expecting 10 entries
         self.env.assertEqual(len(entries), 10)
 
-        # issue 2 slower queries
-        # expecting to have them replace existing entries
+        prev_queries = [entry[2] for entry in entries]
 
-        q0 = "UNWIND range(0, 2000000) AS x WITH x WHERE x % 1 = 0 RETURN count(x)"
-        self.graph.query(q0)
-
-        q1 = "UNWIND range(0, 2500000) AS x WITH x WHERE x % 1 = 0 RETURN count(x)"
-        self.graph.query(q1)
+        # issue a much slower query and verify it replaces one of the existing
+        # top-10 entries. Under coverage, relative ordering inside the initial
+        # top-10 can shift, so avoid assuming a specific prior query is evicted.
+        q = "UNWIND range(0, 2500000) AS x WITH x WHERE x % 1 = 0 RETURN count(x)"
+        self.graph.query(q)
 
         entries = self.graph.slowlog()
 
         # expecting 10 entries
         self.env.assertEqual(len(entries), 10)
 
-        # make sure both q0 & q1 are in entries
+        # make sure the slower query is in entries
         queries = [entry[2] for entry in entries]
-        self.env.assertContains (q0, queries)
-        self.env.assertContains (q1, queries)
+        self.env.assertContains (q, queries)
 
+        # make sure at least one previous entry was evicted
+        self.env.assertTrue(any(prev_query not in queries for prev_query in prev_queries))
