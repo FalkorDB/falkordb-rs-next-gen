@@ -131,9 +131,6 @@ pub struct AttributeStore {
     /// MVCC version of this store's snapshot (informational; visibility is
     /// enforced structurally by copy-on-write, not by version comparison).
     version: u64,
-    /// Entity IDs pending full deletion: masked from reads immediately and
-    /// physically cleared from every column on `commit`.
-    pending_deletes: RoaringTreemap,
 }
 
 impl AttributeStore {
@@ -143,7 +140,6 @@ impl AttributeStore {
             attrs_name: AttrNameMap::default(),
             storage: AttributeStorage::new(),
             version,
-            pending_deletes: RoaringTreemap::new(),
         }
     }
 
@@ -158,7 +154,6 @@ impl AttributeStore {
             attrs_name: self.attrs_name.clone(),
             storage: self.storage.clone(),
             version,
-            pending_deletes: RoaringTreemap::new(),
         }
     }
 
@@ -180,22 +175,13 @@ impl AttributeStore {
         key: u64,
         attr_idx: u16,
     ) -> Option<Value> {
-        if self.pending_deletes.contains(key) {
-            return None;
-        }
-        // 1. Check cache.
-        if let Some(result) = self.storage.get_attr(key, attr_idx, self.version) {
-            return result;
-        }
-        // 2. Storage miss — entity has no attributes.
-        None
+        // A miss (outer or inner `None`) means the entity has no such attribute.
+        self.storage.get_attr(key, attr_idx, self.version).flatten()
     }
 
     /// Batch variant of `get_attr_by_idx` for a list of keys with the same
-    /// `attr_idx`. Avoids re-doing the per-call setup (function dispatch,
-    /// `pending_deletes` check) for every key when the deletion set is empty.
-    /// Pushes one `Value` per key into `out`, substituting `default` for
-    /// missing or pending-deleted entries.
+    /// `attr_idx`. A single contiguous column walk; each absent key carries
+    /// `default`.
     pub fn get_attrs_by_idx_batch_into(
         &self,
         keys: &[u64],
@@ -204,32 +190,9 @@ impl AttributeStore {
         out: &mut Vec<Value>,
     ) {
         out.reserve(keys.len());
-        let version = self.version;
-        if self.pending_deletes.is_empty() {
-            // Hot read path: fused single pass that writes `Value`s directly
-            // into `out`, avoiding the intermediate `Vec<Option<Option<_>>>`
-            // and a second pass. `missing` stays empty when every key hits the
-            // cache (the common case), so no cold-store work is done.
-            // Cache is the sole store: misses already carry `default`, so the
-            // single cache pass fully populates `out`.
-            let mut missing: Vec<usize> = Vec::new();
-            self.storage
-                .get_attrs_batch_into(keys, attr_idx, version, default, out, &mut missing);
-            return;
-        }
-        // Slow path: some entities are pending deletion, so a cache hit must be
-        // overridden with `default`. Fall back to the two-pass logic.
-        let mut cache_results: Vec<Option<Option<Value>>> = Vec::with_capacity(keys.len());
+        let mut missing: Vec<usize> = Vec::new();
         self.storage
-            .get_attrs_batch(keys, attr_idx, version, &mut cache_results);
-        for (i, &key) in keys.iter().enumerate() {
-            if self.pending_deletes.contains(key) {
-                out.push(default.clone());
-                continue;
-            }
-            let v = cache_results[i].take().unwrap_or(None);
-            out.push(v.unwrap_or_else(|| default.clone()));
-        }
+            .get_attrs_batch_into(keys, attr_idx, self.version, default, out, &mut missing);
     }
 
     #[must_use]
@@ -237,15 +200,7 @@ impl AttributeStore {
         &self,
         key: u64,
     ) -> bool {
-        // Entity pending full deletion has no attributes.
-        if self.pending_deletes.contains(key) {
-            return false;
-        }
-        if let Some(has) = self.storage.has_entity(key, self.version) {
-            return has;
-        }
-        // Storage miss — entity has no attributes.
-        false
+        self.storage.has_entity(key, self.version).unwrap_or(false)
     }
 
     pub fn get_attrs(
@@ -253,14 +208,12 @@ impl AttributeStore {
         key: u64,
     ) -> impl Iterator<Item = Arc<String>> + '_ {
         let mut out: Vec<Arc<String>> = Vec::new();
-        if !self.pending_deletes.contains(key) {
-            let names = &self.attrs_name;
-            self.storage.for_each_attr(key, |idx, _| {
-                if let Some(n) = names.get(idx as usize) {
-                    out.push(n.clone());
-                }
-            });
-        }
+        let names = &self.attrs_name;
+        self.storage.for_each_attr(key, |idx, _| {
+            if let Some(n) = names.get(idx as usize) {
+                out.push(n.clone());
+            }
+        });
         out.into_iter()
     }
 
@@ -269,9 +222,6 @@ impl AttributeStore {
         &self,
         key: u64,
     ) -> Vec<(Arc<String>, Value)> {
-        if self.pending_deletes.contains(key) {
-            return Vec::new();
-        }
         // Gather pairs directly into the output — no intermediate `AttrArray`.
         let mut out: Vec<(Arc<String>, Value)> = Vec::new();
         let names = &self.attrs_name;
@@ -283,13 +233,11 @@ impl AttributeStore {
         out
     }
 
+    #[must_use]
     pub fn get_all_attrs_by_id(
         &self,
         key: u64,
     ) -> AttrArray {
-        if self.pending_deletes.contains(key) {
-            return EMPTY_ATTRS.clone();
-        }
         self.storage
             .get_entity(key, self.version)
             .unwrap_or_else(|| EMPTY_ATTRS.clone())
@@ -312,9 +260,10 @@ impl AttributeStore {
         &mut self,
         keys: &RoaringTreemap,
     ) {
-        // Mask from reads now; physically cleared from every column on commit.
-        // Copy-on-write makes rollback free (the discarded version is dropped).
-        self.pending_deletes |= keys;
+        // Clear every column at these ids immediately. Copy-on-write means this
+        // only touches this version's chunks; a failed transaction is discarded
+        // by dropping the version, so no deferred delete bookkeeping is needed.
+        self.storage.invalidate_batch(keys);
     }
 
     /// Batch insert/update multiple attributes for entities.
@@ -449,33 +398,6 @@ impl AttributeStore {
         self.storage.structural_memory_usage()
     }
 
-    /// Apply pending deletions physically: clear every column at the deleted
-    /// ids so recycled ids don't resurface stale values. The writes themselves
-    /// already live in this version's columns (copy-on-write), so nothing else
-    /// is needed — the graph swap publishes this version.
-    pub fn commit(&mut self) -> Result<(), String> {
-        if !self.pending_deletes.is_empty() {
-            self.storage.invalidate_batch(&self.pending_deletes);
-            self.pending_deletes.clear();
-        }
-        Ok(())
-    }
-
-    /// No rollback bookkeeping is retained under copy-on-write; this only
-    /// clears the transient delete mask.
-    pub fn clear_rollback_state(&mut self) {
-        self.pending_deletes.clear();
-    }
-
-    // ---- rollback -------------------------------------------------------
-
-    /// Discard a failed write transaction's changes. Under copy-on-write the
-    /// mutated chunks live only in this (about-to-be-dropped) version, so the
-    /// parent version is already intact; we just drop the delete mask.
-    pub fn rollback_cache(&mut self) {
-        self.pending_deletes.clear();
-    }
-
     /// Encode a range of entities, reading attributes from the in-memory cache.
     pub fn encode_with_range(
         &self,
@@ -514,24 +436,20 @@ impl AttributeStore {
 
             w.write_unsigned(id);
 
-            if self.pending_deletes.contains(id) {
-                w.write_unsigned(0);
-            } else {
-                // Two cheap column scans (count, then encode) avoid allocating a
-                // per-entity snapshot for every entity in the graph.
-                let mut n_props = 0u64;
-                self.storage.for_each_attr(id, |_, _| n_props += 1);
-                w.write_unsigned(n_props);
-                self.storage.for_each_attr(id, |local_attr_id, value| {
-                    let global_attr_id = if (local_attr_id as usize) < remap.len() {
-                        remap[local_attr_id as usize]
-                    } else {
-                        local_attr_id
-                    };
-                    w.write_unsigned(global_attr_id as u64);
-                    value.encode(w);
-                });
-            }
+            // Two cheap column scans (count, then encode) avoid allocating a
+            // per-entity snapshot for every entity in the graph.
+            let mut n_props = 0u64;
+            self.storage.for_each_attr(id, |_, _| n_props += 1);
+            w.write_unsigned(n_props);
+            self.storage.for_each_attr(id, |local_attr_id, value| {
+                let global_attr_id = if (local_attr_id as usize) < remap.len() {
+                    remap[local_attr_id as usize]
+                } else {
+                    local_attr_id
+                };
+                w.write_unsigned(global_attr_id as u64);
+                value.encode(w);
+            });
 
             encoded += 1;
             if encoded >= count {
@@ -951,22 +869,6 @@ impl AttributeStorage {
         self.column(attr_idx)?
             .get(entity_id)
             .map(|v| Some(v.clone()))
-    }
-
-    /// Batch lookup for many ids sharing one `attr_idx`.
-    pub fn get_attrs_batch(
-        &self,
-        keys: &[u64],
-        attr_idx: u16,
-        _version: u64,
-        out: &mut Vec<Option<Option<Value>>>,
-    ) {
-        out.clear();
-        let col = self.column(attr_idx);
-        out.extend(
-            keys.iter()
-                .map(|&id| col.and_then(|c| c.get(id)).map(|v| Some(v.clone()))),
-        );
     }
 
     /// Fused batch lookup that writes resolved `Value`s straight into `out`,

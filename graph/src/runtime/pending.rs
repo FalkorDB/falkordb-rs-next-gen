@@ -897,14 +897,8 @@ impl Pending {
         // which already has the dirty mutations from this transaction.
         self.enforce_constraints(g)?;
 
-        // Commit attribute changes after constraint validation passes.
-        // Index operations are deferred — they will be applied only after
-        // the full query succeeds to avoid stale RediSearch entries on
-        // rollback.
-        {
-            let mut g = g.borrow_mut();
-            g.commit_attrs()?;
-        }
+        // Index operations are deferred — they are applied only after the full
+        // query succeeds, to avoid stale RediSearch entries on rollback.
 
         // Accumulate index operations into deferred fields.
         for (k, v) in self.index_add_docs.drain() {
