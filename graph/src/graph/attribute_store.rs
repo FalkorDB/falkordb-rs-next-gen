@@ -570,16 +570,17 @@ const PAGE_MASK: usize = PAGE_LEN - 1;
 /// an emptied chunk can be reclaimed in O(1).
 #[derive(Clone)]
 struct Chunk {
-    values: Box<[Value]>,
+    values: Box<[Value; CHUNK_LEN]>,
     count: u32,
 }
 
 impl Chunk {
     fn new() -> Self {
-        Self {
-            values: vec![Value::Null; CHUNK_LEN].into_boxed_slice(),
-            count: 0,
-        }
+        let values: Box<[Value; CHUNK_LEN]> = vec![Value::Null; CHUNK_LEN]
+            .into_boxed_slice()
+            .try_into()
+            .unwrap_or_else(|_| unreachable!("vec built with exactly CHUNK_LEN elements"));
+        Self { values, count: 0 }
     }
 }
 
