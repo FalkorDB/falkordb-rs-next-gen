@@ -27,7 +27,7 @@ use crate::parser::ast::{ExprIR, QueryExpr, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
 use crate::runtime::{
-    batch::{Batch, BatchOp},
+    batch::{Batch, BatchOp, BatchRow},
     runtime::Runtime,
     value::{DeletedNode, DeletedRelationship, Value},
 };
@@ -95,15 +95,14 @@ impl Runtime<'_> {
             // Collect all node IDs and relationship tuples for bulk deletion
             let mut node_ids = Vec::new();
             let mut rel_ids = Vec::new();
-            let rows = batch.read_columns(&var_ids);
-            for row in rows {
-                for val in row {
-                    match val {
-                        Value::Node(id) => node_ids.push(*id),
-                        Value::Relationship(rel) => rel_ids.push(**rel),
-                        _ => {
+            for row in batch.active_indices() {
+                for &id in &var_ids {
+                    match batch.value_at(id, row).unwrap_or(Value::Null) {
+                        Value::Node(id) => node_ids.push(id),
+                        Value::Relationship(rel) => rel_ids.push(rel),
+                        val => {
                             // Paths, etc. go through per-entity path
-                            self.delete_entity(val)?;
+                            self.delete_entity(&val)?;
                         }
                     }
                 }
@@ -119,12 +118,12 @@ impl Runtime<'_> {
         // Slow path: evaluate remaining expression trees via env_ref
         if !expr_trees.is_empty() {
             for row in batch.active_indices() {
-                let env = batch.env_ref(row);
+                let env = BatchRow::new(batch, row);
                 for tree in &expr_trees {
                     let value = ExprEval::from_runtime(self).eval(
                         tree,
                         tree.root().idx(),
-                        Some(env),
+                        Some(&env),
                         None,
                     )?;
                     self.delete_entity(&value)?;
@@ -188,9 +187,10 @@ impl Runtime<'_> {
                     }
                     let type_name = self.get_relationship_type(rel).unwrap();
                     let attrs = self.get_relationship_attrs(rel);
+                    let (src, dst) = (src_node, dest_node);
                     self.deleted_relationships
                         .borrow_mut()
-                        .insert(rel, DeletedRelationship::new(type_name, attrs));
+                        .insert(rel, DeletedRelationship::new(src, dst, type_name, attrs));
                 }
             }
         }
@@ -207,12 +207,13 @@ impl Runtime<'_> {
                         .pending
                         .borrow_mut()
                         .remove_pending_relationships_for_node(id);
-                    for (rel_id, _src, _dest, type_name, attrs) in pending_rels {
+                    for (rel_id, src, dest, type_name, attrs) in pending_rels {
                         let attrs = attrs.unwrap_or_default();
                         self.g.borrow_mut().return_relationship_id(rel_id);
-                        self.deleted_relationships
-                            .borrow_mut()
-                            .insert(rel_id, DeletedRelationship::new(type_name, attrs));
+                        self.deleted_relationships.borrow_mut().insert(
+                            rel_id,
+                            DeletedRelationship::new(src, dest, type_name, attrs),
+                        );
                     }
                     self.pending.borrow_mut().deleted_node(id);
                 }
@@ -247,7 +248,7 @@ impl Runtime<'_> {
     /// for type lookups and reduces RefCell borrow overhead.
     fn delete_relationships_bulk(
         &self,
-        rels: &[(RelationshipId, NodeId, NodeId)],
+        rels: &[RelationshipId],
     ) -> Result<(), String> {
         if rels.is_empty() {
             return Ok(());
@@ -260,25 +261,25 @@ impl Runtime<'_> {
         {
             let pending = self.pending.borrow();
             let g = self.g.borrow();
-            for &(rel_id, src, dst) in rels {
+            for rel_id in rels {
                 if !seen.insert(rel_id) {
                     continue;
                 }
-                if pending.is_relationship_deleted(rel_id, src, dst) {
+                if pending.is_relationship_deleted(*rel_id) {
                     continue;
                 }
-                if pending.is_relationship_created(rel_id) {
+                if pending.is_relationship_created(*rel_id) {
                     // Created in this txn — use per-entity path
-                    pending_created.push((rel_id, src, dst));
-                } else if !g.is_relationship_deleted(rel_id) {
-                    committed.push((rel_id, src, dst));
+                    pending_created.push(*rel_id);
+                } else if !g.is_relationship_deleted(*rel_id) {
+                    committed.push(*rel_id);
                 }
             }
         }
 
         // Handle pending-created relationships via the per-entity path
-        for (rel_id, src, dst) in pending_created {
-            self.delete_entity(&Value::Relationship(Box::new((rel_id, src, dst))))?;
+        for rel_id in pending_created {
+            self.delete_entity(&Value::Relationship(rel_id))?;
         }
 
         if committed.is_empty() {
@@ -297,23 +298,15 @@ impl Runtime<'_> {
                 // Build edge_id -> type_id mapping using a single type matrix scan
                 // instead of N individual GraphBLAS iterators.
                 let edge_set: rustc_hash::FxHashSet<u64> =
-                    committed.iter().map(|(r, _, _)| u64::from(*r)).collect();
+                    committed.iter().map(|r| u64::from(*r)).collect();
                 let mut edge_type_map: rustc_hash::FxHashMap<u64, usize> =
                     rustc_hash::FxHashMap::with_capacity_and_hasher(
                         committed.len(),
                         rustc_hash::FxBuildHasher,
                     );
                 let g = self.g.borrow();
-                let min_id = committed
-                    .iter()
-                    .map(|(r, _, _)| u64::from(*r))
-                    .min()
-                    .unwrap();
-                let max_id = committed
-                    .iter()
-                    .map(|(r, _, _)| u64::from(*r))
-                    .max()
-                    .unwrap();
+                let min_id = committed.iter().map(|r| u64::from(*r)).min().unwrap();
+                let max_id = committed.iter().map(|r| u64::from(*r)).max().unwrap();
                 #[allow(clippy::cast_possible_truncation)]
                 for (row, col) in g.relationship_type_matrix_iter(min_id, max_id) {
                     if edge_set.contains(&row) {
@@ -322,7 +315,7 @@ impl Runtime<'_> {
                 }
 
                 let mut deleted_rels = self.deleted_relationships.borrow_mut();
-                for &(rel_id, src, dst) in &committed {
+                for &rel_id in &committed {
                     let type_idx = edge_type_map
                         .get(&u64::from(rel_id))
                         .expect("relationship must have a type");
@@ -332,10 +325,14 @@ impl Runtime<'_> {
                     let mut actual = crate::runtime::ordermap::OrderMap::from_vec(
                         g.get_relationship_all_attrs(rel_id),
                     );
+                    let (src, dst) = g.get_relationship_endpoints(rel_id);
                     pending.update_relationship_attrs(rel_id, &mut actual);
 
-                    pending.deleted_relationship(rel_id, src, dst);
-                    deleted_rels.insert(rel_id, DeletedRelationship::new(type_name, actual));
+                    pending.deleted_relationship(rel_id);
+                    deleted_rels.insert(
+                        rel_id,
+                        DeletedRelationship::new(src, dst, type_name, actual),
+                    );
                 }
             }
         }
@@ -370,7 +367,7 @@ impl Runtime<'_> {
                     );
                 } else if !self.g.borrow().is_node_deleted(id) {
                     // Snapshot committed relationships for effects/replication
-                    for (src, _dest, rel_id) in self.g.borrow().get_node_relationships(id) {
+                    for (src, dest, rel_id) in self.g.borrow().get_node_relationships(id) {
                         // Skip edges whose other endpoint is already being
                         // deleted — they will be discovered from that node's
                         // perspective too. Only snapshot once.
@@ -379,21 +376,24 @@ impl Runtime<'_> {
                         }
                         let type_name = self.get_relationship_type(rel_id).unwrap();
                         let attrs = self.get_relationship_attrs(rel_id);
-                        self.deleted_relationships
-                            .borrow_mut()
-                            .insert(rel_id, DeletedRelationship::new(type_name, attrs));
+                        let (src_node, dest_node) = (src, dest);
+                        self.deleted_relationships.borrow_mut().insert(
+                            rel_id,
+                            DeletedRelationship::new(src_node, dest_node, type_name, attrs),
+                        );
                     }
                     // Cascade-delete pending-created relationships incident on this node
                     let pending_rels = self
                         .pending
                         .borrow_mut()
                         .remove_pending_relationships_for_node(id);
-                    for (rel_id, _src, _dest, type_name, attrs) in pending_rels {
+                    for (rel_id, src, dest, type_name, attrs) in pending_rels {
                         let attrs = attrs.unwrap_or_default();
                         self.g.borrow_mut().return_relationship_id(rel_id);
-                        self.deleted_relationships
-                            .borrow_mut()
-                            .insert(rel_id, DeletedRelationship::new(type_name, attrs));
+                        self.deleted_relationships.borrow_mut().insert(
+                            rel_id,
+                            DeletedRelationship::new(src, dest, type_name, attrs),
+                        );
                     }
                     // Mark as implicit — edge cleanup deferred to commit time
                     self.pending.borrow_mut().deleted_node(id);
@@ -407,24 +407,18 @@ impl Runtime<'_> {
                 }
             }
             Value::Relationship(rel) => {
-                let (rel_id, src, dest) = **rel;
-                if self
-                    .pending
-                    .borrow()
-                    .is_relationship_deleted(rel_id, src, dest)
-                {
+                if self.pending.borrow().is_relationship_deleted(*rel) {
                     // Already pending deletion, nothing to do
-                } else if !self.g.borrow().is_relationship_deleted(rel_id) {
+                } else if !self.g.borrow().is_relationship_deleted(*rel) {
                     // Snapshot attrs BEFORE marking as deleted so pending data
                     // is still accessible via get_relationship_attrs.
-                    let type_name = self.get_relationship_type(rel_id).unwrap();
-                    let attrs = self.get_relationship_attrs(rel_id);
-                    self.pending
-                        .borrow_mut()
-                        .deleted_relationship(rel_id, src, dest);
+                    let type_name = self.get_relationship_type(*rel).unwrap();
+                    let attrs = self.get_relationship_attrs(*rel);
+                    let (src, dst) = self.get_relationship_endpoints(*rel);
+                    self.pending.borrow_mut().deleted_relationship(*rel);
                     self.deleted_relationships
                         .borrow_mut()
-                        .insert(rel_id, DeletedRelationship::new(type_name, attrs));
+                        .insert(*rel, DeletedRelationship::new(src, dst, type_name, attrs));
                 }
             }
             Value::Path(values) => {

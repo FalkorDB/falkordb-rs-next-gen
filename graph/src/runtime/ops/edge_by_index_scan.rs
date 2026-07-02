@@ -22,7 +22,6 @@
 //!             output rows with edge + endpoint IDs
 //! ```
 
-use std::collections::VecDeque;
 use std::sync::Arc;
 
 use crate::graph::graph::{NodeId, RelationshipId};
@@ -31,8 +30,8 @@ use crate::parser::ast::{QueryExpr, QueryRelationship, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
 use crate::runtime::{
-    batch::{BATCH_SIZE, Batch, BatchOp},
-    env::Env,
+    batch::{Batch, BatchOp, BatchRow},
+    row::RowView,
     runtime::Runtime,
     value::Value,
 };
@@ -40,6 +39,8 @@ use crate::runtime::{
 // trait import — it appears unused in signatures but removing it
 // breaks `value.root().idx()` etc.
 use orx_tree::{Dyn, NodeIdx, NodeRef};
+
+use super::batched_result_emitter::{BatchedResultEmitter, EdgeEndpoints, RowIter};
 
 /// Invariant: `relationship.from` is always the bound endpoint of the
 /// edge scan; `transposed` flips which graph-side endpoint the edge
@@ -53,10 +54,12 @@ pub struct EdgeByIndexScanOp<'a> {
     relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
     query: &'a IndexQuery<QueryExpr<Variable>>,
     transposed: bool,
-    pending: VecDeque<(
-        Env<'a>,
-        Box<dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>>,
-    )>,
+    /// Holds the parent batch being expanded and the per-row edge iterators, and
+    /// performs the shared pack-and-gather emit. Each pushed iterator yields
+    /// `(src, dst, edge)` in graph-tensor order; the emitter's binding maps the
+    /// graph sides onto the pattern's from/to endpoints (honoring `transposed`)
+    /// and skips the second endpoint for self-loop patterns.
+    emitter: BatchedResultEmitter<'a, (NodeId, NodeId, RelationshipId)>,
     /// Lazily-populated cache of all edges of `relationship_pattern.types[0]`
     /// for the non-indexable-runtime-value fallback. Materialized once
     /// on the first fallback and shared across subsequent input rows
@@ -76,22 +79,32 @@ impl<'a> EdgeByIndexScanOp<'a> {
         transposed: bool,
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
+        // Self-loop patterns like `MATCH (n)-[r:T]->(n)` share one alias on both
+        // endpoints; bind it once (via `from`) and skip the `to` column so the
+        // second insert can't overwrite the first.
+        let to = (relationship_pattern.to.alias != relationship_pattern.from.alias)
+            .then_some(relationship_pattern.to.alias.id);
         Self {
             runtime,
             child,
+            emitter: BatchedResultEmitter::with_binding(EdgeEndpoints {
+                from: relationship_pattern.from.alias.id,
+                to,
+                edge: relationship_pattern.alias.id,
+                transposed,
+            }),
             relationship_pattern,
             query,
             transposed,
-            pending: VecDeque::new(),
             all_edges_cache: std::cell::RefCell::new(None),
             idx,
         }
     }
 
-    fn evaluate_index_query(
+    fn evaluate_index_query<R: crate::runtime::row::RowView + ?Sized>(
         runtime: &Runtime,
         query: &IndexQuery<QueryExpr<Variable>>,
-        vars: &Env<'_>,
+        vars: &R,
     ) -> Result<IndexQuery<Value>, String> {
         match query {
             IndexQuery::Equal { key, value } => {
@@ -277,72 +290,21 @@ impl<'a> EdgeByIndexScanOp<'a> {
             _ => true,
         }
     }
-
-    /// Drains rows from `self.pending` into `envs` until `BATCH_SIZE` is reached.
-    fn drain_pending(
-        &mut self,
-        envs: &mut Vec<Env<'a>>,
-    ) {
-        let rp = self.relationship_pattern;
-        while envs.len() < BATCH_SIZE {
-            let Some((env, iter)) = self.pending.front_mut() else {
-                break;
-            };
-            if let Some((src, dst, edge_id)) = iter.next() {
-                let mut row = env.clone_pooled(self.runtime.env_pool);
-                // Bind from/to nodes according to transposed flag
-                let (from_node, to_node) = if self.transposed {
-                    (dst, src)
-                } else {
-                    (src, dst)
-                };
-                row.insert(&rp.from.alias, Value::Node(from_node));
-                // Self-loop patterns share the same alias on both
-                // endpoints; the second `insert` would overwrite the
-                // first with the (equal, per the filter above)
-                // destination value. Skip when aliases are the same
-                // to avoid redundant work and to preserve the
-                // semantics that the single variable is bound once.
-                if rp.to.alias != rp.from.alias {
-                    row.insert(&rp.to.alias, Value::Node(to_node));
-                }
-                // Relationship value always stores (edge_id, src, dst) in graph order
-                row.insert(
-                    &rp.alias,
-                    Value::Relationship(Box::new((edge_id, src, dst))),
-                );
-                envs.push(row);
-            } else {
-                self.pending.pop_front();
-            }
-        }
-    }
 }
 
 impl<'a> Iterator for EdgeByIndexScanOp<'a> {
     type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut envs = Vec::with_capacity(BATCH_SIZE);
-
-        // Drain leftover scans from previous call.
-        self.drain_pending(&mut envs);
-
-        while envs.len() < BATCH_SIZE {
-            let batch = match self.child.next() {
-                Some(Ok(b)) => b,
-                Some(Err(e)) => return Some(Err(e)),
-                None => break,
-            };
-
+        loop {
+            // One (endpoint-filtered) edge iterator per active parent row, built
+            // lazily one row at a time. When the batch is exhausted (`Ok(None)`),
+            // pull and seed the next child batch.
             let label = &self.relationship_pattern.types[0];
             let rp = self.relationship_pattern;
-
-            for vars in batch.active_env_iter() {
-                let q = match Self::evaluate_index_query(self.runtime, self.query, vars) {
-                    Ok(q) => q,
-                    Err(e) => return Some(Err(e)),
-                };
+            match self.emitter.emit_lazy(|b, row| {
+                let view = BatchRow::new(b, row);
+                let q = Self::evaluate_index_query(self.runtime, self.query, &view)?;
 
                 // Stream results instead of collecting: the child
                 // batch may have many rows and each row would
@@ -386,14 +348,14 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                 // Self-loop patterns like `MATCH (n)-[r:T]->(n)` have
                 // `rp.from.alias == rp.to.alias`. Without filtering
                 // for `from_id == to_id`, non-loop edges leak through
-                // and `drain_pending`'s second `row.insert(to.alias)`
-                // overwrites the `from.alias` binding.
-                let bound_from = match vars.get(&rp.from.alias) {
-                    Some(Value::Node(id)) => Some(*id),
+                // and the emitter (which binds the single shared
+                // alias once, via `from`) would surface them.
+                let bound_from = match view.value_at(rp.from.alias.id) {
+                    Some(Value::Node(id)) => Some(id),
                     _ => None,
                 };
-                let bound_to = match vars.get(&rp.to.alias) {
-                    Some(Value::Node(id)) => Some(*id),
+                let bound_to = match view.value_at(rp.to.alias.id) {
+                    Some(Value::Node(id)) => Some(id),
                     _ => None,
                 };
                 let transposed = self.transposed;
@@ -413,18 +375,16 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                     } else {
                         base
                     };
-
-                self.pending
-                    .push_back((vars.clone_pooled(self.runtime.env_pool), edges));
+                Ok(Some(RowIter::many(edges)))
+            }) {
+                Ok(Some(out)) => return Some(Ok(out)),
+                Ok(None) => match self.child.next() {
+                    Some(Ok(batch)) => self.emitter.seed(batch),
+                    Some(Err(e)) => return Some(Err(e)),
+                    None => return None,
+                },
+                Err(e) => return Some(Err(e)),
             }
-
-            self.drain_pending(&mut envs);
-        }
-
-        if envs.is_empty() {
-            None
-        } else {
-            Some(Ok(Batch::from_envs(envs)))
         }
     }
 }

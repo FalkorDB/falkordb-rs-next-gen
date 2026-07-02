@@ -83,7 +83,7 @@ use roaring::RoaringTreemap;
 use crate::{
     entity_type::EntityType,
     graph::{
-        attribute_store::AttributeStore,
+        attribute_store::{AttrArray, AttributeStore},
         constraint::{Constraint, ConstraintStatus, ConstraintType},
         graphblas::{
             matrix::{
@@ -91,7 +91,7 @@ use crate::{
                 New, Remove, Set, Size, Transpose,
             },
             serialization::{Encode, EncodeState, PayloadEntry, Writer},
-            tensor::Tensor,
+            tensor::{Tensor, compound_key},
             versioned_matrix::{self, VersionedMatrix},
         },
     },
@@ -216,13 +216,6 @@ pub struct MemoryUsageReport {
     pub indices_sz: usize,
 }
 
-/// Pre-built attribute snapshots for RDB save.
-/// Built before Redis forks so the child never accesses fjall.
-pub struct RdbSnapshots {
-    pub nodes: FxHashMap<u64, Arc<Vec<(u16, Value)>>>,
-    pub relationships: FxHashMap<u64, Arc<Vec<(u16, Value)>>>,
-}
-
 /// The main graph data structure.
 ///
 /// Stores nodes, relationships, labels, and properties using sparse matrices
@@ -236,6 +229,13 @@ pub struct RdbSnapshots {
 ///
 /// The Graph is `Send + Sync` but not internally synchronized. Use [`MvccGraph`]
 /// for concurrent access with proper read/write isolation.
+/// Sentinel for an empty/deleted slot in [`Graph::edge_endpoints`].
+///
+/// Equals `compound_key(u32::MAX, u32::MAX)`, which would only collide with a
+/// real edge whose endpoints are both node id `u32::MAX` (4.29 billion) — not
+/// reachable in practice, since the tensor compound key caps node ids at u32.
+const EDGE_NO_ENDPOINT: u64 = u64::MAX;
+
 pub struct Graph {
     /// Graph name (Redis key name)
     name: String,
@@ -269,6 +269,13 @@ pub struct Graph {
     labels_matices: Vec<VersionedMatrix>,
     /// Per-type relationship tensors (type ID → src×dst×edge_id)
     relationship_matrices: Vec<Tensor>,
+    /// Graph-wide reverse index: `edge_id` → `compound_key(src, dst)` for O(1)
+    /// endpoint lookup, stored as a dense vector indexed by edge id. Edge IDs
+    /// are densely allocated, so a `Vec` is far more compact than a hash map
+    /// (8 B/edge vs ~31 B with control bytes + load-factor slack) and clones
+    /// faster across MVCC versions. Empty/deleted slots hold
+    /// [`EDGE_NO_ENDPOINT`].
+    edge_endpoints: Vec<u64>,
     /// Node property storage
     node_attrs: AttributeStore,
     /// Relationship property storage
@@ -624,8 +631,9 @@ impl Graph {
             all_nodes_matrix: VersionedMatrix::new(n, n),
             labels_matices: Vec::new(),
             relationship_matrices: Vec::new(),
-            node_attrs: AttributeStore::new(&format!("{name}/nodes"), version),
-            relationship_attrs: AttributeStore::new(&format!("{name}/relationships"), version),
+            edge_endpoints: Vec::new(),
+            node_attrs: AttributeStore::new(version),
+            relationship_attrs: AttributeStore::new(version),
             node_indexer: Indexer::default(),
             edge_indexer: Indexer::default(),
             node_labels: Vec::new(),
@@ -663,6 +671,19 @@ impl Graph {
         node_attrs: AttributeStore,
         relationship_attrs: AttributeStore,
     ) -> Self {
+        // Rebuild the graph-wide reverse index after RDB load to ensure
+        // complete sync with the decoded edges.
+        let mut edge_endpoints: Vec<u64> = Vec::new();
+        for tensor in &relationship_matrices {
+            for (key, edge_id) in tensor.edge_iter(0, u64::MAX) {
+                let idx = edge_id as usize;
+                if idx >= edge_endpoints.len() {
+                    edge_endpoints.resize(idx + 1, EDGE_NO_ENDPOINT);
+                }
+                edge_endpoints[idx] = key;
+            }
+        }
+
         let node_cap = node_count + deleted_nodes.len();
         let relationship_cap = relationship_count + deleted_relationships.len();
         let schema_version = (node_labels.len() + relationship_types.len()) as u64;
@@ -683,6 +704,7 @@ impl Graph {
             all_nodes_matrix,
             labels_matices,
             relationship_matrices,
+            edge_endpoints,
             node_attrs,
             relationship_attrs,
             node_indexer: Indexer::default(),
@@ -743,6 +765,12 @@ impl Graph {
         debug_assert_eq!(self.reserved_relationship_count, 0);
         let node_attrs = self.node_attrs.new_version(self.version + 1);
         let relationship_attrs = self.relationship_attrs.new_version(self.version + 1);
+
+        // Tensor::dup() is copy-on-write; the graph-wide edge_endpoints vec is
+        // cloned once below.
+        let relationship_matrices: Vec<Tensor> =
+            self.relationship_matrices.iter().map(Tensor::dup).collect();
+
         Self {
             name: self.name.clone(),
             node_cap: self.node_cap,
@@ -763,7 +791,8 @@ impl Graph {
                 .iter()
                 .map(VersionedMatrix::dup)
                 .collect(),
-            relationship_matrices: self.relationship_matrices.iter().map(Tensor::dup).collect(),
+            relationship_matrices,
+            edge_endpoints: self.edge_endpoints.clone(),
             node_attrs,
             relationship_attrs,
             node_indexer: self.node_indexer.clone(),
@@ -1587,10 +1616,22 @@ impl Graph {
         min_row: u64,
     ) -> Box<dyn Iterator<Item = NodeId>> {
         if labels.is_empty() {
+            // Full scan: live node IDs are exactly `0..=max_node_id` minus the
+            // deleted set, identical to the diagonal of `all_nodes_matrix`.
+            // A range walk with a roaring-bitmap membership check avoids the
+            // per-element GraphBLAS row-iterator overhead, which dominates the
+            // cost of unfiltered `MATCH (n)` scans.
+            if self.node_count == 0 {
+                return Box::new(std::iter::empty());
+            }
+            let max_id = self.max_node_id();
+            if self.deleted_nodes.is_empty() {
+                return Box::new((min_row..=max_id).map(NodeId));
+            }
+            let deleted = self.deleted_nodes.clone();
             return Box::new(
-                self.all_nodes_matrix
-                    .iter(min_row, u64::MAX)
-                    .map(|(id, _)| NodeId(id)),
+                (min_row..=max_id)
+                    .filter_map(move |id| (!deleted.contains(id)).then_some(NodeId(id))),
             );
         }
         if labels.len() == 1 {
@@ -1771,6 +1812,17 @@ impl Graph {
 
         self.relationship_matrices[type_idx].set_all_from_slices(srcs, dsts, rel_ids);
 
+        // Maintain the graph-wide reverse index alongside the tensor edges.
+        if let Some(&max_id) = rel_ids.iter().max() {
+            let needed = max_id as usize + 1;
+            if needed > self.edge_endpoints.len() {
+                self.edge_endpoints.resize(needed, EDGE_NO_ENDPOINT);
+            }
+        }
+        for ((&src, &dst), &id) in srcs.iter().zip(dsts.iter()).zip(rel_ids.iter()) {
+            self.edge_endpoints[id as usize] = compound_key(src, dst);
+        }
+
         self.adjacancy_matrix
             .set_all(srcs.iter().copied().zip(dsts.iter().copied()));
 
@@ -1887,64 +1939,85 @@ impl Graph {
 
     pub fn delete_relationships(
         &mut self,
-        rels: &FxHashMap<RelationshipId, (NodeId, NodeId)>,
-        // Must carry `(src, dst)` per edge because deletion removes the
-        // edge from the tensor before `commit_edge_index` runs — the
-        // 24-byte index document key can't be reconstructed later.
+        rels: &RoaringTreemap,
         index_remove_edge_docs: &mut FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
-    ) -> Result<(), String> {
-        self.deleted_relationships
-            .extend(rels.keys().map(|id| id.0));
-        self.relationship_count -= rels.len() as u64;
-
-        // Batch remove from relationship_attrs: collect all edge IDs at once
-        let del_keys: RoaringTreemap = rels.keys().map(|id| id.0).collect();
-        self.relationship_attrs.remove_all(&del_keys);
-
-        // Build edge_id -> type_id mapping using a single type matrix scan.
-        // Use the rels HashMap directly instead of building a separate FxHashSet.
-        let min_id = del_keys.min().unwrap_or(0);
-        let max_id = del_keys.max().unwrap_or(0);
+    ) -> Result<Vec<(RelationshipId, NodeId, NodeId)>, String> {
+        if rels.is_empty() {
+            return Ok(Vec::new());
+        }
         let num_types = self.relationship_matrices.len();
+
+        // --- Phase 1: resolve (type, src, dst) per edge without mutating state ---
+        // Endpoints come from the graph-wide reverse index (O(1)); the type from
+        // a single re-seekable iterator over `relationship_type_matrix`. Walking
+        // `rels` (O(deleted)) with per-edge seeks avoids scanning every edge in
+        // the [min, max] id range. Only edges that resolve to both endpoints and
+        // a type are recorded in `resolved`; stale/non-existent ids are skipped
+        // so they can't corrupt counters or bitmaps in phase 2.
         let mut by_type: Vec<Vec<(u64, u64, u64)>> = vec![Vec::new(); num_types];
-        #[allow(clippy::cast_possible_truncation)]
-        for (edge_id, type_idx) in self.relationship_type_matrix.iter(min_id, max_id) {
-            if let Some(&(src, dst)) = rels.get(&RelationshipId::from(edge_id)) {
-                by_type[type_idx as usize].push((edge_id, src.0, dst.0));
+        let mut resolved = RoaringTreemap::new();
+        {
+            let min_id = rels.min().expect("rels is non-empty");
+            let mut type_iter = self.relationship_type_matrix.iter(min_id, min_id);
+            #[allow(clippy::cast_possible_truncation)]
+            for edge_id in rels {
+                let Some((src, dst)) = self.endpoints_for_edge(edge_id) else {
+                    continue;
+                };
+                type_iter.seek(edge_id, edge_id);
+                if let Some((_, type_idx)) = type_iter.next() {
+                    by_type[type_idx as usize].push((edge_id, src, dst));
+                    resolved.insert(edge_id);
+                }
             }
         }
 
-        // Track (src, dst) pairs that were emptied from at least one tensor —
-        // only these are candidates for adjacency matrix removal.
+        // --- Phase 2: mutate state for the actually-resolved edges only ---
+        self.deleted_relationships |= &resolved;
+        self.relationship_count -= resolved.len();
+        self.relationship_attrs.remove_all(&resolved);
+
+        let mut endpoints: Vec<(RelationshipId, NodeId, NodeId)> =
+            Vec::with_capacity(resolved.len() as usize);
+        // (edge_id, type_id) pairs for a single bulk removal from the type matrix.
+        let mut tm_rows: Vec<u64> = Vec::with_capacity(endpoints.capacity());
+        let mut tm_cols: Vec<u64> = Vec::with_capacity(endpoints.capacity());
+        // (src, dst) pairs emptied from a tensor — candidates for adjacency removal.
         let mut adj_candidates: Vec<(u64, u64)> = Vec::new();
 
         for (type_idx, type_rels) in by_type.iter().enumerate() {
             if type_rels.is_empty() {
                 continue;
             }
-
-            // Stage index document removals for indexed relationship types
             let type_id = type_idx as u64;
-            let type_name = &self.relationship_types[type_idx];
-            if self.edge_indexer.has_index(type_name) {
+
+            // Stage index document removals for indexed relationship types.
+            if self
+                .edge_indexer
+                .has_index(&self.relationship_types[type_idx])
+            {
+                let docs = index_remove_edge_docs.entry(type_id).or_default();
                 for &(edge_id, src, dst) in type_rels {
-                    index_remove_edge_docs
-                        .entry(type_id)
-                        .or_default()
-                        .insert(edge_id, (src, dst));
+                    docs.insert(edge_id, (src, dst));
                 }
             }
 
-            // Batch remove from relationship_type_matrix using bulk build_bool
-            let tm_rows: Vec<u64> = type_rels.iter().map(|&(id, _, _)| id).collect();
-            let tm_cols: Vec<u64> = vec![type_id; type_rels.len()];
+            for &(edge_id, src, dst) in type_rels {
+                tm_rows.push(edge_id);
+                tm_cols.push(type_id);
+                endpoints.push((RelationshipId(edge_id), NodeId(src), NodeId(dst)));
+                self.clear_edge_endpoint(edge_id);
+            }
+
+            adj_candidates.extend(self.relationship_matrices[type_idx].remove_all(type_rels));
+        }
+
+        // Remove every deleted edge from relationship_type_matrix in one masked op.
+        if !tm_rows.is_empty() {
             let mut type_mask =
                 Matrix::new(self.relationship_cap, self.relationship_types.len() as u64);
             type_mask.build_bool(&tm_rows, &tm_cols);
             self.relationship_type_matrix.remove_mask(&type_mask);
-
-            let emptied = self.relationship_matrices[type_idx].remove_all(type_rels);
-            adj_candidates.extend(emptied);
         }
 
         // Update adjacancy_matrix for pairs that lost all edges.
@@ -1968,7 +2041,7 @@ impl Graph {
             }
         }
 
-        Ok(())
+        Ok(endpoints)
     }
 
     ///
@@ -1985,10 +2058,7 @@ impl Graph {
     pub fn delete_implicit_edges(
         &mut self,
         deleted_nodes: &RoaringTreemap,
-        explicit_rels: &FxHashMap<RelationshipId, (NodeId, NodeId)>,
-        // Same contract as in `delete_relationships`: carries `(src, dst)`
-        // per edge because the 24-byte RediSearch key can't be
-        // reconstructed after the tensor is cleared.
+        explicit_rels: &RoaringTreemap,
         index_remove_edge_docs: &mut FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
     ) -> Result<Vec<(RelationshipId, NodeId, NodeId)>, String> {
         if self.relationship_matrices.is_empty() {
@@ -2009,7 +2079,7 @@ impl Graph {
                 for (src, dst, edge_id) in
                     self.relationship_matrices[type_idx].iter(node_id, node_id, false)
                 {
-                    if !explicit_rels.contains_key(&RelationshipId(edge_id)) {
+                    if !explicit_rels.contains(edge_id) {
                         rels.push((edge_id, src, dst));
                     }
                 }
@@ -2021,7 +2091,7 @@ impl Graph {
                 {
                     if src != node_id
                         && !deleted_nodes.contains(src)
-                        && !explicit_rels.contains_key(&RelationshipId(edge_id))
+                        && !explicit_rels.contains(edge_id)
                     {
                         rels.push((edge_id, src, dst));
                     }
@@ -2059,6 +2129,11 @@ impl Graph {
             }
             self.relationship_type_matrix.remove_mask(&type_mask);
             self.relationship_attrs.remove_all(&del_keys);
+
+            // Drop deleted edges from the graph-wide reverse index.
+            for &(edge_id, _, _) in &rels {
+                self.clear_edge_endpoint(edge_id);
+            }
 
             // Batch-remove from tensor — remove_all uses bulk mask operations
             let emptied = self.relationship_matrices[type_idx].remove_all(&rels);
@@ -2255,6 +2330,43 @@ impl Graph {
             .expect("relationship must have a type in type_matrix")
     }
 
+    /// Decode the (src, dst) endpoints for an edge from the graph-wide reverse
+    /// index. Returns None if the edge_id is not present.
+    #[must_use]
+    fn endpoints_for_edge(
+        &self,
+        edge_id: u64,
+    ) -> Option<(u64, u64)> {
+        self.edge_endpoints
+            .get(edge_id as usize)
+            .filter(|&&key| key != EDGE_NO_ENDPOINT)
+            .map(|&key| (key >> 32, key & 0xFFFF_FFFF))
+    }
+
+    /// Clear an edge's endpoint slot in the reverse index (on deletion).
+    /// Leaves the slot as a tombstone; the vector never shrinks.
+    fn clear_edge_endpoint(
+        &mut self,
+        edge_id: u64,
+    ) {
+        if let Some(slot) = self.edge_endpoints.get_mut(edge_id as usize) {
+            *slot = EDGE_NO_ENDPOINT;
+        }
+    }
+
+    /// Returns (src, dst) for an edge via the maintained reverse index.
+    #[must_use]
+    pub fn get_relationship_endpoints(
+        &self,
+        id: RelationshipId,
+    ) -> (NodeId, NodeId) {
+        if let Some((src, dst)) = self.endpoints_for_edge(id.0) {
+            return (NodeId(src), NodeId(dst));
+        }
+
+        panic!("relationship {} not found", id.0);
+    }
+
     /// Iterate the relationship type matrix over a range of edge IDs.
     /// Returns `(edge_id, type_index)` pairs.
     pub fn relationship_type_matrix_iter(
@@ -2365,7 +2477,7 @@ impl Graph {
     pub fn get_node_all_attrs_by_id(
         &self,
         id: NodeId,
-    ) -> Arc<Vec<(u16, Value)>> {
+    ) -> AttrArray {
         self.node_attrs.get_all_attrs_by_id(id.0)
     }
 
@@ -2387,7 +2499,7 @@ impl Graph {
     pub fn get_relationship_all_attrs_by_id(
         &self,
         id: RelationshipId,
-    ) -> Arc<Vec<(u16, Value)>> {
+    ) -> AttrArray {
         self.relationship_attrs.get_all_attrs_by_id(id.0)
     }
 
@@ -2566,38 +2678,6 @@ impl Graph {
     pub fn clear_rollback_state(&mut self) {
         self.node_attrs.clear_rollback_state();
         self.relationship_attrs.clear_rollback_state();
-    }
-
-    /// Flush dirty cache entries to fjall and evict clean entries if over budget.
-    pub fn maybe_flush_caches(&self) -> Result<(), String> {
-        const FLUSH_BATCH: usize = 1024;
-        if self.node_attrs.cache().over_budget() {
-            self.node_attrs.flush_dirty_to_fjall(FLUSH_BATCH)?;
-        }
-        if self.relationship_attrs.cache().over_budget() {
-            self.relationship_attrs.flush_dirty_to_fjall(FLUSH_BATCH)?;
-        }
-        Ok(())
-    }
-
-    /// Returns `true` if any attribute store has cold data in fjall that
-    /// would be unsafe to read from a fork child.
-    pub fn needs_rdb_snapshot(&self) -> bool {
-        self.node_attrs.has_fjall_data() || self.relationship_attrs.has_fjall_data()
-    }
-
-    /// Pre-populate attribute caches from fjall for RDB save.
-    pub fn build_rdb_snapshots(&self) -> RdbSnapshots {
-        let node_snap = self
-            .node_attrs
-            .build_rdb_snapshot(&self.deleted_nodes, self.max_node_id());
-        let rel_snap = self
-            .relationship_attrs
-            .build_rdb_snapshot(&self.deleted_relationships, self.max_relationship_id());
-        RdbSnapshots {
-            nodes: node_snap,
-            relationships: rel_snap,
-        }
     }
 
     pub fn commit_index(
@@ -3343,13 +3423,6 @@ impl Graph {
         self.edge_indexer.cancel();
     }
 
-    /// Delete fjall keyspaces for both node and relationship attribute stores.
-    /// Called during graph destruction to release persisted attribute data.
-    pub fn delete_keyspaces(&self) {
-        self.node_attrs.delete_keyspace();
-        self.relationship_attrs.delete_keyspace();
-    }
-
     pub fn set_indexer_graph(
         &mut self,
         graph: Arc<AtomicRefCell<Self>>,
@@ -3428,6 +3501,8 @@ impl Graph {
             size += relationship_matrix.memory_usage();
         }
         size += self.node_attrs.memory_usage();
+        // Graph-wide edge_id → compound_key reverse index: one u64 per edge slot.
+        size += self.edge_endpoints.capacity() * std::mem::size_of::<u64>();
         // size += self.relationship_attrs.memory_usage();
         // size += self.node_indexer.memory_usage();
         size
@@ -3462,8 +3537,11 @@ impl Graph {
             self.node_attrs.structural_memory_usage() + self.deleted_nodes.serialized_size();
 
         // --- edge block storage ---
+        // Includes the graph-wide edge_id → compound_key reverse index, a dense
+        // vector holding one u64 per edge slot.
         let edge_block_storage_sz: usize = self.relationship_attrs.structural_memory_usage()
-            + self.deleted_relationships.serialized_size();
+            + self.deleted_relationships.serialized_size()
+            + self.edge_endpoints.capacity() * std::mem::size_of::<u64>();
 
         // --- node attributes by label (sampling) ---
         let mut node_attr_by_label: Vec<(Arc<String>, usize)> = Vec::new();
@@ -3602,7 +3680,6 @@ impl Graph {
         w: &mut dyn Writer,
         p: &PayloadEntry,
         global_attrs: &[Arc<String>],
-        snapshots: Option<&RdbSnapshots>,
     ) {
         match p.state {
             EncodeState::Nodes => {
@@ -3613,7 +3690,6 @@ impl Graph {
                     global_attrs,
                     p.count,
                     p.offset,
-                    snapshots.map(|s| &s.nodes),
                 );
             }
             EncodeState::DeletedNodes => {
@@ -3627,7 +3703,6 @@ impl Graph {
                     global_attrs,
                     p.count,
                     p.offset,
-                    snapshots.map(|s| &s.relationships),
                 );
             }
             EncodeState::DeletedEdges => {

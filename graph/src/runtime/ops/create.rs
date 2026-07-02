@@ -33,7 +33,7 @@ use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
 use crate::runtime::ordermap::OrderMap;
 use crate::runtime::{
-    batch::{Batch, BatchOp},
+    batch::{Batch, BatchOp, BatchRow},
     runtime::Runtime,
     value::Value,
 };
@@ -113,11 +113,11 @@ impl Runtime<'_> {
             // so we cannot hold pending.borrow_mut() across eval calls.
             let mut all_attrs: Vec<OrderMap<Arc<String>, Value>> = Vec::with_capacity(active_len);
             for row in batch.active_indices() {
-                let env = batch.env_ref(row);
+                let env = BatchRow::new(batch, row);
                 let attrs = ExprEval::from_runtime(self).eval(
                     &node.attrs,
                     node.attrs.root().idx(),
-                    Some(env),
+                    Some(&env),
                     None,
                 )?;
                 match attrs {
@@ -143,48 +143,45 @@ impl Runtime<'_> {
             batch.write_column(node.alias.id, values);
         }
 
-        // Process relationships: read endpoints via read_columns, write back via write_column
+        // Process relationships: read endpoints columnar, write back via write_column
         for rel in pattern.relationships() {
-            // Read endpoint IDs using read_columns
-            let endpoint_rows = batch.read_columns(&[rel.from.alias.id, rel.to.alias.id]);
-
             // Extract endpoints — skip validation when both endpoints were
             // created in this same CREATE pattern (guaranteed valid).
             let skip_validation = created_aliases.contains(&rel.from.alias.id)
                 && created_aliases.contains(&rel.to.alias.id);
 
-            let mut endpoints = Vec::with_capacity(endpoint_rows.len());
+            let mut endpoints = Vec::with_capacity(batch.active_len());
             if skip_validation {
-                for row_vals in &endpoint_rows {
-                    let Value::Node(from_id) = row_vals[0] else {
+                for row in batch.active_indices() {
+                    let Some(Value::Node(from_id)) = batch.value_at(rel.from.alias.id, row) else {
                         return Err(String::from("Invalid node id"));
                     };
-                    let Value::Node(to_id) = row_vals[1] else {
+                    let Some(Value::Node(to_id)) = batch.value_at(rel.to.alias.id, row) else {
                         return Err(String::from("Invalid node id"));
                     };
-                    endpoints.push((*from_id, *to_id));
+                    endpoints.push((from_id, to_id));
                 }
             } else {
                 let g = self.g.borrow();
                 let pending = self.pending.borrow();
-                for row_vals in &endpoint_rows {
-                    let Value::Node(from_id) = row_vals[0] else {
+                for row in batch.active_indices() {
+                    let Some(Value::Node(from_id)) = batch.value_at(rel.from.alias.id, row) else {
                         return Err(String::from("Invalid node id"));
                     };
-                    let Value::Node(to_id) = row_vals[1] else {
+                    let Some(Value::Node(to_id)) = batch.value_at(rel.to.alias.id, row) else {
                         return Err(String::from("Invalid node id"));
                     };
 
-                    if (g.is_node_deleted(*from_id) && !pending.is_node_created(*from_id))
-                        || pending.is_node_deleted(*from_id)
-                        || (g.is_node_deleted(*to_id) && !pending.is_node_created(*to_id))
-                        || pending.is_node_deleted(*to_id)
+                    if (g.is_node_deleted(from_id) && !pending.is_node_created(from_id))
+                        || pending.is_node_deleted(from_id)
+                        || (g.is_node_deleted(to_id) && !pending.is_node_created(to_id))
+                        || pending.is_node_deleted(to_id)
                     {
                         return Err(String::from(
                             "Failed to create relationship; endpoint was not found.",
                         ));
                     }
-                    endpoints.push((*from_id, *to_id));
+                    endpoints.push((from_id, to_id));
                 }
                 drop(g);
                 drop(pending);
@@ -195,11 +192,6 @@ impl Runtime<'_> {
 
             // Record all created relationships directly into pending (no intermediate Vec)
             let type_name = rel.types.first().unwrap().clone();
-            let rel_ids: Vec<_> = ids
-                .iter()
-                .zip(endpoints.iter())
-                .map(|(id, (from, to))| (*id, *from, *to))
-                .collect();
             {
                 let mut pending = self.pending.borrow_mut();
                 for (&id, &(from, to)) in ids.iter().zip(endpoints.iter()) {
@@ -210,13 +202,13 @@ impl Runtime<'_> {
             // Evaluate relationship attributes per row, then batch-insert.
             // Same as nodes: eval() may borrow pending, so separate eval from insert.
             let mut all_rel_attrs: Vec<OrderMap<Arc<String>, Value>> =
-                Vec::with_capacity(rel_ids.len());
+                Vec::with_capacity(ids.len());
             for row in batch.active_indices() {
-                let env = batch.env_ref(row);
+                let env = BatchRow::new(batch, row);
                 let attrs = ExprEval::from_runtime(self).eval(
                     &rel.attrs,
                     rel.attrs.root().idx(),
-                    Some(env),
+                    Some(&env),
                     None,
                 )?;
                 match attrs {
@@ -229,15 +221,12 @@ impl Runtime<'_> {
             {
                 let mut pending = self.pending.borrow_mut();
                 for (i, attrs) in all_rel_attrs.into_iter().enumerate() {
-                    pending.set_relationship_attributes(rel_ids[i].0, attrs)?;
+                    pending.set_relationship_attributes(ids[i], attrs)?;
                 }
             }
 
             // Write relationship values back using write_column
-            let values: Vec<Value> = rel_ids
-                .into_iter()
-                .map(|(id, from, to)| Value::Relationship(Box::new((id, from, to))))
-                .collect();
+            let values: Vec<Value> = ids.into_iter().map(Value::Relationship).collect();
             batch.write_column(rel.alias.id, values);
         }
 

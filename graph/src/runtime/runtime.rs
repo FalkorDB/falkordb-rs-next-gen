@@ -18,7 +18,7 @@
 //! │ NodeScan │               │  NodeByLabelScan  │◄── produces BATCH_SIZE rows
 //! └──────────┘               └──────────────────┘
 //!
-//!  query() drives the root BatchOp, collecting Env rows into ResultSummary.
+//!  query() drives the root BatchOp, collecting result rows into ResultSummary.
 //! ```
 //!
 //! ## Key Types
@@ -26,8 +26,7 @@
 //! - [`Runtime`]: Main execution context (carries `Pool`, graph ref, plan)
 //! - [`ResultSummary`]: Query result with collected rows and statistics
 //! - [`BatchOp`]: Enum-dispatch operator tree (28+ variants)
-//! - [`Batch`]: Columnar/env-backed batch of up to 1024 rows
-//! - [`Env`]: Tuple of variable bindings (pool-backed)
+//! - [`Batch`]: Columnar batch of up to 1024 rows
 //!
 //! ## Write Operations
 //!
@@ -44,9 +43,7 @@ use crate::{
     parser::ast::{ExprIR, QueryExpr, Variable},
     planner::IR,
     runtime::{
-        batch::{Batch, BatchOp, Column, NullBitmap, classify_column},
-        bitset::BitSet,
-        env::Env,
+        batch::{Batch, BatchBuilder, BatchOp, BatchRow, Column, NullBitmap, classify_column},
         ops::{
             AggregateOp, AllShortestPathsOp, ApplyOp, CartesianProductOp, CommitOp, CondTraverseOp,
             CondVarLenTraverseOp, CreateOp, DeleteOp, DistinctOp, EdgeByFulltextScanOp,
@@ -59,7 +56,7 @@ use crate::{
         ordermap::OrderMap,
         orderset::OrderSet,
         pending::Pending,
-        pool::Pool,
+        row::{Row, RowView},
         value::{DeletedNode, DeletedRelationship, Value, ValuesDeduper},
     },
 };
@@ -71,12 +68,10 @@ use roaring::RoaringTreemap;
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
-    fmt::Debug,
+    marker::PhantomData,
     sync::Arc,
     time::{Duration, Instant},
 };
-
-pub use super::eval::ValueIter;
 
 /// Query result containing statistics and returned tuples.
 pub struct ResultSummary<'a> {
@@ -144,7 +139,7 @@ pub struct Runtime<'a> {
     /// Debug mode: record operator execution
     pub inspect: bool,
     /// Debug records of operator execution
-    pub record: RefCell<Vec<(NodeIdx<Dyn<IR>>, Result<(Vec<Value>, BitSet), String>)>>,
+    pub record: RefCell<Vec<(NodeIdx<Dyn<IR>>, Result<Row, String>)>>,
     /// Folder for LOAD CSV operations
     pub import_folder: String,
     /// Cache of deleted nodes for result consistency
@@ -153,9 +148,6 @@ pub struct Runtime<'a> {
     pub deleted_relationships: RefCell<HashMap<RelationshipId, DeletedRelationship>>,
     /// Cache for MERGE pattern matching — stores only the created entity bindings (variable id → value)
     pub merge_pattern_cache: RefCell<HashMap<u64, Vec<(u32, Value)>>>,
-    /// Per-query object pool for Env backing Vec<Value> buffers.
-    /// Owned externally and borrowed here to avoid self-referential lifetimes.
-    pub env_pool: &'a Pool<Value>,
     /// Maximum number of result rows to return. Negative means unlimited.
     pub result_set_size: i64,
     /// Effects buffer built before commit, for replication.
@@ -178,6 +170,8 @@ pub struct Runtime<'a> {
     pub mem_capacity: i64,
     /// Function pointer to read the current thread's net memory usage.
     pub current_usage_fn: Option<fn() -> usize>,
+    /// Preserves the `'a` lifetime parameter used by borrowing methods.
+    _marker: PhantomData<&'a ()>,
 }
 
 pub trait GetVariables {
@@ -338,15 +332,6 @@ impl ReturnNames for DynNode<'_, IR> {
     }
 }
 
-impl Debug for Env<'_> {
-    fn fmt(
-        &self,
-        f: &mut std::fmt::Formatter<'_>,
-    ) -> std::fmt::Result {
-        f.debug_list().entries(self.as_ref().iter()).finish()
-    }
-}
-
 impl<'a> Runtime<'a> {
     #[inline]
     pub fn inspect_batch(
@@ -358,8 +343,8 @@ impl<'a> Runtime<'a> {
             match result {
                 Ok(batch) => {
                     let mut record = self.record.borrow_mut();
-                    for env in batch.active_env_iter() {
-                        record.push((idx, Ok(env.to_raw())));
+                    for row in batch.active_indices() {
+                        record.push((idx, Ok(BatchRow::new(batch, row).to_owned_row())));
                     }
                 }
                 Err(err) => {
@@ -378,7 +363,6 @@ impl<'a> Runtime<'a> {
         plan: Arc<DynTree<IR>>,
         inspect: bool,
         import_folder: String,
-        env_pool: &'a Pool<Value>,
         result_set_size: i64,
         profile: bool,
         timeout_ms: Option<u64>,
@@ -405,7 +389,6 @@ impl<'a> Runtime<'a> {
             deleted_nodes: RefCell::new(HashMap::new()),
             deleted_relationships: RefCell::new(HashMap::new()),
             merge_pattern_cache: RefCell::new(HashMap::new()),
-            env_pool,
             result_set_size,
             effects_buffer: RefCell::new(None),
             effects_count: Cell::new(0),
@@ -416,6 +399,7 @@ impl<'a> Runtime<'a> {
             deadline: timeout_ms.map(|ms| Instant::now() + Duration::from_millis(ms)),
             mem_capacity,
             current_usage_fn,
+            _marker: PhantomData,
         }
     }
 
@@ -499,8 +483,9 @@ impl<'a> Runtime<'a> {
 
     /// Creates a single-row default batch.
     fn default_batch(&self) -> Batch<'_> {
-        let envs = vec![Env::new(self.env_pool)];
-        Batch::from_envs(envs)
+        let mut builder = BatchBuilder::new();
+        builder.push_row(&Row::new());
+        builder.finish()
     }
 
     /// Walk IR ancestors from `idx` upward to find the effective limit.
@@ -516,9 +501,8 @@ impl<'a> Runtime<'a> {
         while let Some(parent) = self.plan.node(cur).parent() {
             match parent.data() {
                 IR::Limit(expr) => {
-                    let env = Env::new(self.env_pool);
                     let val = super::eval::ExprEval::from_runtime(self)
-                        .eval(expr, expr.root().idx(), Some(&env), None)
+                        .eval(expr, expr.root().idx(), super::eval::NO_ROW, None)
                         .ok()?;
                     return match val {
                         Value::Int(n) if n >= 0 => Some(n as usize),
@@ -552,9 +536,8 @@ impl<'a> Runtime<'a> {
         while let Some(parent) = self.plan.node(cur).parent() {
             match parent.data() {
                 IR::Skip(expr) => {
-                    let env = Env::new(self.env_pool);
                     let val = super::eval::ExprEval::from_runtime(self)
-                        .eval(expr, expr.root().idx(), Some(&env), None)
+                        .eval(expr, expr.root().idx(), super::eval::NO_ROW, None)
                         .ok();
                     return match val {
                         Some(Value::Int(n)) if n >= 0 => n as usize,
@@ -704,8 +687,12 @@ impl<'a> Runtime<'a> {
                 let Value::Int(skip) = {
                     let this = &self;
                     let idx = skip.root().idx();
-                    let env: &Env<'_> = &Env::new(self.env_pool);
-                    super::eval::ExprEval::from_runtime(this).eval(skip, idx, Some(env), None)
+                    super::eval::ExprEval::from_runtime(this).eval(
+                        skip,
+                        idx,
+                        super::eval::NO_ROW,
+                        None,
+                    )
                 }?
                 else {
                     return Err(String::from("Skip operator requires an integer argument"));
@@ -725,8 +712,12 @@ impl<'a> Runtime<'a> {
                 let Value::Int(limit) = {
                     let this = &self;
                     let idx = limit.root().idx();
-                    let env: &Env<'_> = &Env::new(self.env_pool);
-                    super::eval::ExprEval::from_runtime(this).eval(limit, idx, Some(env), None)
+                    super::eval::ExprEval::from_runtime(this).eval(
+                        limit,
+                        idx,
+                        super::eval::NO_ROW,
+                        None,
+                    )
                 }?
                 else {
                     return Err(String::from("Limit operator requires an integer argument"));
@@ -782,12 +773,18 @@ impl<'a> Runtime<'a> {
                 expr: list,
                 var: name,
             } => {
+                // A downstream Skip/Limit bounds how many expanded rows are
+                // needed; pass it through so packing stays lazy under `LIMIT`.
+                let record_cap = self
+                    .effective_limit(idx)
+                    .map(|l| l.saturating_add(self.effective_skip(idx)));
                 let child = pop_or_once(&mut children);
                 Ok(BatchOp::Unwind(UnwindOp::new(
                     self,
                     Box::new(child),
                     list,
                     name,
+                    record_cap,
                     idx,
                 )))
             }
@@ -802,7 +799,7 @@ impl<'a> Runtime<'a> {
                 // enough rows for a downstream SkipOp + LimitOp pipeline.
                 let record_cap = self
                     .effective_limit(idx)
-                    .map(|l| l + self.effective_skip(idx));
+                    .map(|l| l.saturating_add(self.effective_skip(idx)));
                 let child = pop_or_once(&mut children);
                 Ok(BatchOp::CondTraverse(CondTraverseOp::new(
                     self,
@@ -825,7 +822,7 @@ impl<'a> Runtime<'a> {
                 // enough rows for a downstream SkipOp + LimitOp pipeline.
                 let record_cap = self
                     .effective_limit(idx)
-                    .map(|l| l + self.effective_skip(idx));
+                    .map(|l| l.saturating_add(self.effective_skip(idx)));
                 let child = pop_or_once(&mut children);
                 Ok(BatchOp::ExpandInto(ExpandIntoOp::new(
                     self,
@@ -1115,6 +1112,7 @@ impl<'a> Runtime<'a> {
             IR::CondVarLenTraverse {
                 relationship: relationship_pattern,
                 edge_filter,
+                emit_path,
             } => {
                 let child = pop_or_once(&mut children);
                 Ok(BatchOp::CondVarLenTraverse(CondVarLenTraverseOp::new(
@@ -1122,6 +1120,7 @@ impl<'a> Runtime<'a> {
                     Box::new(child),
                     relationship_pattern,
                     edge_filter.as_ref(),
+                    *emit_path,
                     idx,
                 )))
             }
@@ -1161,11 +1160,10 @@ impl<'a> Runtime<'a> {
                         let val = {
                             let this = &self;
                             let idx = expr.root().idx();
-                            let env: &Env<'_> = &Env::new(self.env_pool);
                             super::eval::ExprEval::from_runtime(this).eval(
                                 expr,
                                 idx,
-                                Some(env),
+                                super::eval::NO_ROW,
                                 None,
                             )
                         }?;
@@ -1208,19 +1206,10 @@ impl<'a> Runtime<'a> {
         }
     }
 
-    pub fn run_iter_expr(
-        &self,
-        ir: &DynTree<ExprIR<Variable>>,
-        idx: NodeIdx<Dyn<ExprIR<Variable>>>,
-        env: &Env<'_>,
-    ) -> Result<ValueIter, String> {
-        super::eval::ExprEval::from_runtime(self).eval_iter_expr(ir, idx, Some(env))
-    }
-
-    pub fn evaluate_id_filter(
+    pub fn evaluate_id_filter<R: super::row::RowView + ?Sized>(
         &self,
         filter: &Vec<(QueryExpr<Variable>, ExprIR<Variable>)>,
-        vars: &Env<'_>,
+        vars: &R,
     ) -> Result<Option<RoaringTreemap>, String> {
         let mut min = 0u64;
         let mut max = self.g.borrow().max_node_id();
@@ -1351,6 +1340,20 @@ impl<'a> Runtime<'a> {
         node_ids: &[NodeId],
         attr: &Arc<String>,
     ) -> (Column, NullBitmap) {
+        classify_column(self.materialize_node_property_values(node_ids, attr))
+    }
+
+    /// Like [`materialize_node_property`](Self::materialize_node_property) but
+    /// returns the raw per-node values without classifying them into a typed
+    /// column. Callers that must preserve exact value types — e.g. join-key
+    /// evaluation, where coercing a mixed int/float column to all-float would
+    /// lose integer precision past 2^53 and change which keys compare equal —
+    /// use this and classify losslessly themselves.
+    pub fn materialize_node_property_values(
+        &self,
+        node_ids: &[NodeId],
+        attr: &Arc<String>,
+    ) -> Vec<Value> {
         let g = self.g.borrow();
         let attr_idx = g.get_node_attribute_id(attr).map(|i| i as u16);
 
@@ -1387,7 +1390,7 @@ impl<'a> Runtime<'a> {
         drop(deleted);
         drop(pending);
 
-        classify_column(values)
+        values
     }
 
     pub fn get_node_labels(
@@ -1438,6 +1441,19 @@ impl<'a> Runtime<'a> {
             .borrow()
             .update_relationship_attrs(id, &mut actual);
         actual
+    }
+
+    pub fn get_relationship_endpoints(
+        &self,
+        id: RelationshipId,
+    ) -> (NodeId, NodeId) {
+        if let Some(dr) = self.deleted_relationships.borrow().get(&id) {
+            return (dr.src, dr.dst);
+        }
+        if let Some(endpoints) = self.pending.borrow().get_created_relationship_endpoints(id) {
+            return endpoints;
+        }
+        self.g.borrow().get_relationship_endpoints(id)
     }
 
     pub fn get_relationship_type(

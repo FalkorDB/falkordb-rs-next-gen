@@ -34,9 +34,9 @@ use crate::graph::graph::{NodeId, RelationshipId};
 use crate::parser::ast::{QueryExpr, QueryRelationship, Variable};
 use crate::planner::IR;
 use crate::runtime::{
-    batch::{BATCH_SIZE, Batch, BatchOp},
-    env::Env,
+    batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow},
     eval::ExprEval,
+    row::{Row, RowView},
     runtime::Runtime,
     value::Value,
 };
@@ -47,10 +47,14 @@ use thin_vec::ThinVec;
 pub struct CondVarLenTraverseOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Box<BatchOp<'a>>,
-    pending: VecDeque<Env<'a>>,
+    pending: VecDeque<Row>,
     relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
     /// Optional per-hop edge filter expression (absorbed from WHERE clause by the optimizer).
     edge_filter: Option<&'a QueryExpr<Variable>>,
+    /// When false, the path/relationship-list binding is never read downstream,
+    /// so `expand_row` skips building the per-row `Value::Path` (see the
+    /// `reduce_var_len_path` optimizer pass).
+    emit_path: bool,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
@@ -60,6 +64,7 @@ impl<'a> CondVarLenTraverseOp<'a> {
         child: Box<BatchOp<'a>>,
         relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
         edge_filter: Option<&'a QueryExpr<Variable>>,
+        emit_path: bool,
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
         Self {
@@ -68,14 +73,15 @@ impl<'a> CondVarLenTraverseOp<'a> {
             pending: VecDeque::new(),
             relationship_pattern,
             edge_filter,
+            emit_path,
             idx,
         }
     }
 
     fn expand_row(
         &self,
-        vars: &Env<'a>,
-        out: &mut Vec<Env<'a>>,
+        vars: &Row,
+        out: &mut Vec<Row>,
     ) -> Result<(), String> {
         let relationship_pattern = self.relationship_pattern;
 
@@ -89,21 +95,21 @@ impl<'a> CondVarLenTraverseOp<'a> {
         let has_edge_filter = matches!(&filter_attrs, Value::Map(m) if !m.is_empty());
 
         let from_id = vars
-            .get(&relationship_pattern.from.alias)
+            .get_by_id(relationship_pattern.from.alias.id)
             .and_then(|v| match v {
                 Value::Node(id) => Some(*id),
                 _ => None,
             });
-        if from_id.is_none() && vars.is_bound(&relationship_pattern.from.alias) {
+        if from_id.is_none() && vars.is_bound_by_id(relationship_pattern.from.alias.id) {
             return Ok(());
         }
         let to_id = vars
-            .get(&relationship_pattern.to.alias)
+            .get_by_id(relationship_pattern.to.alias.id)
             .and_then(|v| match v {
                 Value::Node(id) => Some(*id),
                 _ => None,
             });
-        if to_id.is_none() && vars.is_bound(&relationship_pattern.to.alias) {
+        if to_id.is_none() && vars.is_bound_by_id(relationship_pattern.to.alias.id) {
             return Ok(());
         }
 
@@ -150,15 +156,17 @@ impl<'a> CondVarLenTraverseOp<'a> {
                         .iter()
                         .all(|l| g.get_node_labels(start_node).any(|nl| nl == *l)))
             {
-                let mut env = vars.clone_pooled(self.runtime.env_pool);
+                let mut env = vars.clone();
                 env.insert(&relationship_pattern.from.alias, Value::Node(start_node));
                 env.insert(&relationship_pattern.to.alias, Value::Node(start_node));
-                let mut path_elems = ThinVec::new();
-                path_elems.push(Value::Node(start_node));
-                env.insert(
-                    &relationship_pattern.alias,
-                    Value::Path(Arc::new(path_elems)),
-                );
+                if self.emit_path {
+                    let mut path_elems = ThinVec::new();
+                    path_elems.push(Value::Node(start_node));
+                    env.insert(
+                        &relationship_pattern.alias,
+                        Value::Path(Arc::new(path_elems)),
+                    );
+                }
                 out.push(env);
             }
 
@@ -180,8 +188,12 @@ impl<'a> CondVarLenTraverseOp<'a> {
             let mut stack: Vec<(NodeId, ThinVec<Value>, RoaringTreemap, RoaringTreemap)> =
                 Vec::new();
             {
+                // The path is only materialized when consumed downstream;
+                // otherwise it stays empty (hop-counting uses `nodes_in_path`).
                 let mut initial_path = ThinVec::new();
-                initial_path.push(Value::Node(start_node));
+                if self.emit_path {
+                    initial_path.push(Value::Node(start_node));
+                }
                 let mut initial_nodes = RoaringTreemap::new();
                 initial_nodes.insert(u64::from(start_node));
                 stack.push((
@@ -193,9 +205,11 @@ impl<'a> CondVarLenTraverseOp<'a> {
             }
 
             while let Some((current, mut path, mut used_edges, mut nodes_in_path)) = stack.pop() {
-                // path is in alternating format: [Node, Rel, Node, Rel, ...Node]
-                // Number of hops so far = number of Relationship elements = (path.len() - 1) / 2
-                let hops_so_far = (path.len() as u32).saturating_sub(1) / 2;
+                // Hops so far = distinct nodes visited - 1. Derived from
+                // `nodes_in_path` (always maintained for cycle detection) rather
+                // than `path.len()`, so path materialization can be skipped
+                // entirely when `emit_path` is false.
+                let hops_so_far = (nodes_in_path.len() as u32).saturating_sub(1);
                 let hop = hops_so_far + 1;
                 if hop > max_hops {
                     continue;
@@ -247,11 +261,9 @@ impl<'a> CondVarLenTraverseOp<'a> {
 
                         // Check WHERE-clause edge filter (absorbed by optimizer)
                         if let Some(edge_filter) = self.edge_filter {
-                            let mut filter_env = vars.clone_pooled(self.runtime.env_pool);
-                            filter_env.insert(
-                                &relationship_pattern.alias,
-                                Value::Relationship(Box::new((edge_id, current, dest))),
-                            );
+                            let mut filter_env = vars.clone();
+                            filter_env
+                                .insert(&relationship_pattern.alias, Value::Relationship(edge_id));
                             let result = ExprEval::from_runtime(self.runtime).eval(
                                 edge_filter,
                                 edge_filter.root().idx(),
@@ -289,19 +301,22 @@ impl<'a> CondVarLenTraverseOp<'a> {
                         continue;
                     }
 
-                    // Build the new path: reuse `path` for the last neighbor, clone otherwise
+                    // Build the new path: reuse `path` for the last neighbor,
+                    // clone otherwise. When `emit_path` is false the path is
+                    // never read, so `path` stays empty and these clones and
+                    // pushes are no-ops.
                     let mut new_path = if is_last {
                         std::mem::replace(&mut path, ThinVec::new())
                     } else {
                         path.clone()
                     };
-                    new_path.push(Value::Relationship(Box::new((edge_id, current, dest))));
-                    new_path.push(Value::Node(dest));
+                    if self.emit_path {
+                        new_path.push(Value::Relationship(edge_id));
+                        new_path.push(Value::Node(dest));
+                    }
 
                     if will_emit && will_continue {
-                        // Both emit and continue: wrap in Arc to share, avoid double clone
-                        let shared = Arc::new(new_path);
-                        let mut env = vars.clone_pooled(self.runtime.env_pool);
+                        let mut env = vars.clone();
                         if reversed {
                             env.insert(&relationship_pattern.from.alias, Value::Node(dest));
                             env.insert(&relationship_pattern.to.alias, Value::Node(start_node));
@@ -309,10 +324,19 @@ impl<'a> CondVarLenTraverseOp<'a> {
                             env.insert(&relationship_pattern.from.alias, Value::Node(start_node));
                             env.insert(&relationship_pattern.to.alias, Value::Node(dest));
                         }
-                        env.insert(&relationship_pattern.alias, Value::Path(shared.clone()));
+                        // The path feeds both the emitted row and the stack
+                        // continuation. Clone once for the output `Value::Path`
+                        // and move the original onto the stack below. When the
+                        // path isn't emitted, the (empty) `new_path` moves
+                        // straight onto the stack with no clone.
+                        if self.emit_path {
+                            env.insert(
+                                &relationship_pattern.alias,
+                                Value::Path(Arc::new(new_path.clone())),
+                            );
+                        }
+                        let owned = new_path;
                         out.push(env);
-                        // Unwrap Arc for stack push — if ref count is 1, no clone needed
-                        let owned = Arc::try_unwrap(shared).unwrap_or_else(|arc| (*arc).clone());
                         let mut next_used = if is_last {
                             std::mem::replace(&mut used_edges, RoaringTreemap::new())
                         } else {
@@ -328,7 +352,7 @@ impl<'a> CondVarLenTraverseOp<'a> {
                         stack.push((dest, owned, next_used, next_nodes));
                     } else if will_emit {
                         // Emit only — move path directly into Arc
-                        let mut env = vars.clone_pooled(self.runtime.env_pool);
+                        let mut env = vars.clone();
                         if reversed {
                             env.insert(&relationship_pattern.from.alias, Value::Node(dest));
                             env.insert(&relationship_pattern.to.alias, Value::Node(start_node));
@@ -336,7 +360,12 @@ impl<'a> CondVarLenTraverseOp<'a> {
                             env.insert(&relationship_pattern.from.alias, Value::Node(start_node));
                             env.insert(&relationship_pattern.to.alias, Value::Node(dest));
                         }
-                        env.insert(&relationship_pattern.alias, Value::Path(Arc::new(new_path)));
+                        if self.emit_path {
+                            env.insert(
+                                &relationship_pattern.alias,
+                                Value::Path(Arc::new(new_path)),
+                            );
+                        }
                         out.push(env);
                     } else if will_continue {
                         // Continue only — move path to stack
@@ -366,37 +395,38 @@ impl<'a> Iterator for CondVarLenTraverseOp<'a> {
     type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut envs = Vec::with_capacity(BATCH_SIZE);
+        let mut builder = BatchBuilder::new();
 
         // Drain leftover rows from previous call.
-        super::drain_pending(&mut self.pending, &mut envs);
+        super::drain_pending(&mut self.pending, &mut builder);
 
-        while envs.len() < BATCH_SIZE {
+        while builder.len() < BATCH_SIZE {
             let batch = match self.child.next() {
                 Some(Ok(b)) => b,
                 Some(Err(e)) => return Some(Err(e)),
                 None => break,
             };
 
-            for vars in batch.active_env_iter() {
+            for row in batch.active_indices() {
+                let vars = BatchRow::new(&batch, row).to_owned_row();
                 let mut expanded = Vec::new();
-                if let Err(e) = self.expand_row(vars, &mut expanded) {
+                if let Err(e) = self.expand_row(&vars, &mut expanded) {
                     return Some(Err(e));
                 }
                 self.pending.extend(expanded);
 
-                super::drain_pending(&mut self.pending, &mut envs);
+                super::drain_pending(&mut self.pending, &mut builder);
 
-                if envs.len() >= BATCH_SIZE {
+                if builder.len() >= BATCH_SIZE {
                     break;
                 }
             }
         }
 
-        if envs.is_empty() {
+        if builder.is_empty() {
             None
         } else {
-            Some(Ok(Batch::from_envs(envs)))
+            Some(Ok(builder.finish()))
         }
     }
 }

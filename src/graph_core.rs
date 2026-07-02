@@ -52,7 +52,6 @@ use graph::{
         pending::{
             EFFECT_CREATE_INDEX, EFFECT_DROP_INDEX, EFFECTS_VERSION, write_string, write_u16,
         },
-        pool::Pool,
         runtime::Runtime,
     },
     threadpool::{pending_count, spawn},
@@ -380,7 +379,6 @@ impl ThreadedGraph {
         } else {
             self.graph.read()
         };
-        let env_pool = Pool::new();
         let timeout_ms = compute_effective_timeout(per_query_timeout, is_write)?;
         let runtime = Runtime::new(
             g,
@@ -389,7 +387,6 @@ impl ThreadedGraph {
             plan,
             false,
             (*CONFIGURATION_IMPORT_FOLDER.lock(ctx)).clone(),
-            &env_pool,
             RESULTSET_SIZE.load(Ordering::Relaxed),
             false,
             timeout_ms,
@@ -452,7 +449,6 @@ impl ThreadedGraph {
             .graph
             .write()
             .expect("MVCC write slot busy: single-writer invariant violated");
-        let env_pool = Pool::new();
         let timeout_ms = compute_effective_timeout(per_query_timeout, true)?;
         let runtime = Runtime::new(
             g.clone(),
@@ -461,7 +457,6 @@ impl ThreadedGraph {
             plan,
             false,
             (*CONFIGURATION_IMPORT_FOLDER.lock(ctx)).clone(),
-            &env_pool,
             RESULTSET_SIZE.load(Ordering::Relaxed),
             false,
             timeout_ms,
@@ -557,7 +552,6 @@ impl ThreadedGraph {
             return Ok(true);
         }
         let g = self.graph.read();
-        let env_pool = Pool::new();
         let timeout_ms = compute_effective_timeout(per_query_timeout, false)?;
         let runtime = Runtime::new(
             g,
@@ -566,7 +560,6 @@ impl ThreadedGraph {
             plan.clone(),
             false,
             String::new(),
-            &env_pool,
             -1,
             true,
             timeout_ms,
@@ -599,7 +592,6 @@ impl ThreadedGraph {
             .graph
             .write()
             .expect("MVCC write slot busy: single-writer invariant violated");
-        let env_pool = Pool::new();
         let timeout_ms = compute_effective_timeout(per_query_timeout, true)?;
         let runtime = Runtime::new(
             g.clone(),
@@ -608,7 +600,6 @@ impl ThreadedGraph {
             plan.clone(),
             false,
             String::new(),
-            &env_pool,
             -1,
             true,
             timeout_ms,
@@ -980,11 +971,6 @@ fn query_sync(
                         if wq.modified {
                             replicate_effects(ctx, key_name, wq.effects_buffer, query);
                         }
-                        // Flush dirty cache entries to fjall if over budget.
-                        let value = g.graph.read().borrow().maybe_flush_caches();
-                        if let Err(e) = value {
-                            ctx.log_warning(&format!("FalkorDB: cache flush failed: {e}"));
-                        }
                         // Write telemetry
                         let query_text = &query[wq.params_offset..];
                         let params_text = &query[..wq.params_offset];
@@ -1089,10 +1075,6 @@ pub fn profile_mut(
                         match res {
                             Ok(wq) => {
                                 graph_write.graph.commit(wq.graph);
-                                let value = graph_write.graph.read().borrow().maybe_flush_caches();
-                                if let Err(e) = value {
-                                    ctx2.log_warning(&format!("FalkorDB: cache flush failed: {e}"));
-                                }
                             }
                             Err(err) => {
                                 let cerr = ffi::sanitise_error(err);
@@ -1147,10 +1129,6 @@ fn profile_sync(
                 match res {
                     Ok(wq) => {
                         g.graph.commit(wq.graph);
-                        let value = g.graph.read().borrow().maybe_flush_caches();
-                        if let Err(e) = value {
-                            ctx.log_warning(&format!("FalkorDB: cache flush failed: {e}"));
-                        }
                     }
                     Err(err) => {
                         g.graph.rollback();
@@ -1284,12 +1262,6 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
                     // Enqueue telemetry entry for background flusher
                     telemetry::enqueue_entry(&key_name, entry);
                     drop(bc);
-                    let value = g.graph.read().borrow().maybe_flush_caches();
-                    if let Err(e) = value {
-                        redis_module::logging::log_warning(format!(
-                            "FalkorDB: cache flush failed: {e}"
-                        ));
-                    }
                 }
                 Err(err) => {
                     g.graph.rollback();
