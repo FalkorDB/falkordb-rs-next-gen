@@ -1016,7 +1016,7 @@ impl Pending {
                     for prop in &constraint.properties {
                         let has_prop = attrs
                             .iter_named()
-                            .any(|(name, val)| name == prop && !matches!(val, Value::Null));
+                            .any(|(name, val)| name == prop && !matches!(*val, Value::Null));
                         if !has_prop {
                             return Err(format!(
                                 "mandatory constraint violation: node with label {label} missing property {prop}"
@@ -1076,7 +1076,7 @@ impl Pending {
                     for prop in &constraint.properties {
                         let has_prop = attrs
                             .iter_named()
-                            .any(|(name, val)| name == prop && !matches!(val, Value::Null));
+                            .any(|(name, val)| name == prop && !matches!(*val, Value::Null));
                         if !has_prop {
                             return Err(format!(
                                 "mandatory constraint violation: edge with relationship-type {type_name} missing property {prop}"

@@ -179,6 +179,12 @@ impl Point {
 /// to minimize copying during query execution.
 #[derive(Clone, Debug, Default)]
 pub enum Value {
+    // NOTE: variant order is deliberate. All heap-owning (`Arc`-backed) variants
+    // are grouped last (`String`..=`VecF32`) so the compiler can lower `Value`'s
+    // drop glue to a single discriminant range check — dropping a scalar value
+    // (the common case, e.g. a packed attribute read) then costs almost nothing.
+    // Serialization, hashing and ordering all use explicit tags, so this order
+    // is not observable outside memory layout.
     /// Cypher NULL value - represents missing or unknown data
     #[default]
     Null,
@@ -188,21 +194,11 @@ pub enum Value {
     Int(i64),
     /// 64-bit floating point
     Float(f64),
-    /// Unicode string (shared via Arc for efficiency)
-    String(Arc<String>),
-    /// Ordered list of values (Arc-wrapped for O(1) clone)
-    List(Arc<ThinVec<Self>>),
-    /// Key-value map with string keys (Arc-wrapped for O(1) clone)
-    Map(Arc<OrderMap<Arc<String>, Self>>),
     /// Reference to a graph node (by ID)
     Node(NodeId),
     /// Reference to a relationship (by edge ID); endpoints are resolved on
     /// demand via the runtime / graph reverse index.
     Relationship(RelationshipId),
-    /// A path through the graph (alternating nodes and relationships)
-    Path(Arc<ThinVec<Self>>),
-    /// Float32 vector (for vector similarity operations)
-    VecF32(Arc<ThinVec<f32>>),
     /// Geographic point (latitude, longitude)
     Point(Point),
     /// DateTime as Unix timestamp in seconds
@@ -213,6 +209,17 @@ pub enum Value {
     Time(i64),
     /// Duration as seconds from epoch (offset encoding)
     Duration(i64),
+    // ---- heap-owning variants below: kept contiguous for cheap drop glue ----
+    /// Unicode string (shared via Arc for efficiency)
+    String(Arc<String>),
+    /// Ordered list of values (Arc-wrapped for O(1) clone)
+    List(Arc<ThinVec<Self>>),
+    /// Key-value map with string keys (Arc-wrapped for O(1) clone)
+    Map(Arc<OrderMap<Arc<String>, Self>>),
+    /// A path through the graph (alternating nodes and relationships)
+    Path(Arc<ThinVec<Self>>),
+    /// Float32 vector (for vector similarity operations)
+    VecF32(Arc<ThinVec<f32>>),
 }
 
 impl Value {

@@ -158,7 +158,7 @@ pub fn create_js_node<'js>(
     // .attributes - object with all node properties
     let attrs_obj = Object::new(ctx.clone()).map_err(|e| format!("JS object error: {e}"))?;
     for (attr_name, value) in g.get_node_all_attrs(nid).iter_named() {
-        let js_val = type_convert::value_to_js(ctx, value, graph, None)?;
+        let js_val = type_convert::value_to_js(ctx, &value, graph, None)?;
         attrs_obj
             .set(attr_name.as_str(), js_val)
             .map_err(|e| format!("JS set error: {e}"))?;

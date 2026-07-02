@@ -29,7 +29,10 @@ use rustc_hash::FxHashMap;
 use roaring::RoaringTreemap;
 
 use super::graphblas::serialization::{Decode, Encode, Reader, Writer};
-use crate::runtime::{ordermap::OrderMap, value::Value};
+use crate::runtime::{
+    ordermap::OrderMap,
+    value::{Point, Value},
+};
 
 /// Insertion-ordered map of attribute names to attribute indices.
 ///
@@ -200,7 +203,7 @@ impl AttributeStore {
     }
 
     #[must_use]
-    pub fn get_all_attrs(
+    pub fn get_attrs(
         &self,
         key: u64,
     ) -> AttrArrayView<'_> {
@@ -497,9 +500,9 @@ impl<'a> AttrArrayView<'a> {
             .any(|c| c.get_at(pidx, cin, slot).is_some())
     }
 
-    /// Iterate `(attr_idx, &Value)` pairs in ascending index order, reading
-    /// straight from the columns with no allocation and no `Value` clones.
-    pub fn iter(&self) -> impl Iterator<Item = (u16, &'a Value)> {
+    /// Iterate `(attr_idx, value)` pairs in ascending index order. Mixed chunks
+    /// yield a borrow; packed scalar chunks materialize a cheap owned value.
+    pub fn iter(&self) -> impl Iterator<Item = (u16, ValueRef<'a>)> {
         let store = self.store;
         let (pidx, cin, slot) = decompose_id(self.entity_id);
         store
@@ -510,10 +513,9 @@ impl<'a> AttrArrayView<'a> {
             .filter_map(move |(i, col)| col.get_at(pidx, cin, slot).map(|v| (i as u16, v)))
     }
 
-    /// Iterate `(&attr_name, &Value)` pairs in ascending index order. Like
-    /// [`iter`](Self::iter) but resolves each column index to its attribute
-    /// name — still borrowing, with no allocation and no `Value` clones.
-    pub fn iter_named(&self) -> impl Iterator<Item = (&'a Arc<String>, &'a Value)> {
+    /// Iterate `(&attr_name, value)` pairs in ascending index order. Like
+    /// [`iter`](Self::iter) but resolves each column index to its attribute name.
+    pub fn iter_named(&self) -> impl Iterator<Item = (&'a Arc<String>, ValueRef<'a>)> {
         let store = self.store;
         let (pidx, cin, slot) = decompose_id(self.entity_id);
         store
@@ -527,12 +529,12 @@ impl<'a> AttrArrayView<'a> {
             })
     }
 
-    /// Materialize an owned `Vec` of `(name, value)` pairs, cloning each value.
-    /// For callers that need the attributes to outlive the store borrow.
+    /// Materialize an owned `Vec` of `(name, value)` pairs. For callers that need
+    /// the attributes to outlive the store borrow.
     #[must_use]
     pub fn to_pairs(&self) -> Vec<(Arc<String>, Value)> {
         self.iter_named()
-            .map(|(n, v)| (n.clone(), v.clone()))
+            .map(|(n, v)| (n.clone(), v.into_owned()))
             .collect()
     }
 }
@@ -565,22 +567,377 @@ const PAGE_LEN: usize = 64;
 const PAGE_SHIFT: u32 = PAGE_LEN.trailing_zeros();
 const PAGE_MASK: usize = PAGE_LEN - 1;
 
-/// A dense block of `CHUNK_LEN` values for a contiguous id range. `Value::Null`
-/// marks an absent attribute. `count` tracks the number of non-null values so
-/// an emptied chunk can be reclaimed in O(1).
+/// A borrowed or owned handle to a stored [`Value`].
+///
+/// Mixed chunks store real `Value`s and hand out a borrow (`Borrowed`); packed
+/// scalar chunks keep no `Value` in memory, so they materialize a cheap
+/// (`Copy`-sized) owned value (`Owned`). Dereferences to `Value`, so most call
+/// sites are agnostic to which case they hold.
+pub enum ValueRef<'a> {
+    Borrowed(&'a Value),
+    Owned(Value),
+}
+
+impl std::ops::Deref for ValueRef<'_> {
+    type Target = Value;
+
+    #[inline]
+    fn deref(&self) -> &Value {
+        match self {
+            Self::Borrowed(v) => v,
+            Self::Owned(v) => v,
+        }
+    }
+}
+
+impl ValueRef<'_> {
+    /// Take ownership of the value, cloning only in the borrowed case.
+    #[inline]
+    #[must_use]
+    pub fn into_owned(self) -> Value {
+        match self {
+            Self::Borrowed(v) => v.clone(),
+            Self::Owned(v) => v,
+        }
+    }
+}
+
+/// Number of 64-bit words in a chunk's presence bitmap.
+const PRESENT_WORDS: usize = CHUNK_LEN / 64;
+
+#[inline]
+const fn present_get(
+    present: &[u64; PRESENT_WORDS],
+    slot: usize,
+) -> bool {
+    (present[slot >> 6] >> (slot & 63)) & 1 != 0
+}
+
+#[inline]
+const fn present_set(
+    present: &mut [u64; PRESENT_WORDS],
+    slot: usize,
+) {
+    present[slot >> 6] |= 1u64 << (slot & 63);
+}
+
+#[inline]
+const fn present_clear(
+    present: &mut [u64; PRESENT_WORDS],
+    slot: usize,
+) {
+    present[slot >> 6] &= !(1u64 << (slot & 63));
+}
+
+/// Allocate a boxed fixed array of `CHUNK_LEN` copies of `fill`.
+fn boxed_array<T: Clone>(fill: T) -> Box<[T; CHUNK_LEN]> {
+    vec![fill; CHUNK_LEN]
+        .into_boxed_slice()
+        .try_into()
+        .unwrap_or_else(|_| unreachable!("vec built with exactly CHUNK_LEN elements"))
+}
+
+/// The scalar attribute types that can be stored *unboxed* in a packed,
+/// type-homogeneous chunk. Each is `Copy`, at most 8 bytes, and owns no heap.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ScalarKind {
+    Bool,
+    Int,
+    Float,
+    Point,
+    Datetime,
+    Date,
+    Time,
+    Duration,
+}
+
+impl ScalarKind {
+    /// The packable scalar kind of `v`, or `None` for `Null` and the
+    /// pointer-backed types (`String`/`List`/`VecF32`) which stay boxed as
+    /// `Value`s in a mixed chunk.
+    #[inline]
+    const fn of(v: &Value) -> Option<Self> {
+        match v {
+            Value::Bool(_) => Some(Self::Bool),
+            Value::Int(_) => Some(Self::Int),
+            Value::Float(_) => Some(Self::Float),
+            Value::Point(_) => Some(Self::Point),
+            Value::Datetime(_) => Some(Self::Datetime),
+            Value::Date(_) => Some(Self::Date),
+            Value::Time(_) => Some(Self::Time),
+            Value::Duration(_) => Some(Self::Duration),
+            _ => None,
+        }
+    }
+
+    /// Bytes per stored element for this kind's packed array.
+    const fn elem_size(self) -> usize {
+        match self {
+            Self::Bool => std::mem::size_of::<bool>(),
+            Self::Int | Self::Datetime | Self::Date | Self::Time | Self::Duration => {
+                std::mem::size_of::<i64>()
+            }
+            Self::Float => std::mem::size_of::<f64>(),
+            Self::Point => std::mem::size_of::<Point>(),
+        }
+    }
+}
+
+/// Packed, type-homogeneous storage for one chunk's scalar values. Absent slots
+/// are tracked by the chunk's presence bitmap, so the padding in unused slots is
+/// never observed.
 #[derive(Clone)]
-struct Chunk {
-    values: Box<[Value; CHUNK_LEN]>,
-    count: u32,
+enum ScalarData {
+    Bool(Box<[bool; CHUNK_LEN]>),
+    Int(Box<[i64; CHUNK_LEN]>),
+    Float(Box<[f64; CHUNK_LEN]>),
+    Point(Box<[Point; CHUNK_LEN]>),
+    Datetime(Box<[i64; CHUNK_LEN]>),
+    Date(Box<[i64; CHUNK_LEN]>),
+    Time(Box<[i64; CHUNK_LEN]>),
+    Duration(Box<[i64; CHUNK_LEN]>),
+}
+
+impl ScalarData {
+    /// A zero-filled packed array for `kind` (padding for absent slots).
+    fn empty(kind: ScalarKind) -> Self {
+        match kind {
+            ScalarKind::Bool => Self::Bool(boxed_array(false)),
+            ScalarKind::Int => Self::Int(boxed_array(0)),
+            ScalarKind::Float => Self::Float(boxed_array(0.0)),
+            ScalarKind::Point => Self::Point(boxed_array(Point::new(0.0, 0.0))),
+            ScalarKind::Datetime => Self::Datetime(boxed_array(0)),
+            ScalarKind::Date => Self::Date(boxed_array(0)),
+            ScalarKind::Time => Self::Time(boxed_array(0)),
+            ScalarKind::Duration => Self::Duration(boxed_array(0)),
+        }
+    }
+
+    #[inline]
+    const fn kind(&self) -> ScalarKind {
+        match self {
+            Self::Bool(_) => ScalarKind::Bool,
+            Self::Int(_) => ScalarKind::Int,
+            Self::Float(_) => ScalarKind::Float,
+            Self::Point(_) => ScalarKind::Point,
+            Self::Datetime(_) => ScalarKind::Datetime,
+            Self::Date(_) => ScalarKind::Date,
+            Self::Time(_) => ScalarKind::Time,
+            Self::Duration(_) => ScalarKind::Duration,
+        }
+    }
+
+    /// Write a value known to match this data's kind into `slot`.
+    #[inline]
+    #[allow(clippy::match_same_arms)]
+    fn write(
+        &mut self,
+        slot: usize,
+        value: Value,
+    ) {
+        match (self, value) {
+            (Self::Bool(a), Value::Bool(b)) => a[slot] = b,
+            (Self::Int(a), Value::Int(i)) => a[slot] = i,
+            (Self::Float(a), Value::Float(f)) => a[slot] = f,
+            (Self::Point(a), Value::Point(p)) => a[slot] = p,
+            (Self::Datetime(a), Value::Datetime(t)) => a[slot] = t,
+            (Self::Date(a), Value::Date(t)) => a[slot] = t,
+            (Self::Time(a), Value::Time(t)) => a[slot] = t,
+            (Self::Duration(a), Value::Duration(t)) => a[slot] = t,
+            _ => unreachable!("ScalarData::write called with mismatched value type"),
+        }
+    }
+
+    /// Reconstruct the `Value` stored at `slot` (caller ensures presence).
+    #[inline]
+    fn value_at(
+        &self,
+        slot: usize,
+    ) -> Value {
+        match self {
+            Self::Bool(a) => Value::Bool(a[slot]),
+            Self::Int(a) => Value::Int(a[slot]),
+            Self::Float(a) => Value::Float(a[slot]),
+            Self::Point(a) => Value::Point(a[slot].clone()),
+            Self::Datetime(a) => Value::Datetime(a[slot]),
+            Self::Date(a) => Value::Date(a[slot]),
+            Self::Time(a) => Value::Time(a[slot]),
+            Self::Duration(a) => Value::Duration(a[slot]),
+        }
+    }
+}
+
+/// A dense block of `CHUNK_LEN` values for a contiguous id range.
+///
+/// A chunk is either **packed** — a type-homogeneous [`ScalarData`] array plus a
+/// presence bitmap, roughly halving memory for the common case of a column whose
+/// values are all the same scalar type — or **mixed**, a `Box<[Value; CHUNK_LEN]>`
+/// where `Value::Null` marks absent slots (used for pointer-typed values like
+/// `String`/`List`/`VecF32` and for columns that mix types). `count` tracks the
+/// number of present values so an emptied chunk can be reclaimed in O(1).
+#[derive(Clone)]
+enum Chunk {
+    Mixed {
+        values: Box<[Value; CHUNK_LEN]>,
+        count: u32,
+    },
+    Scalar {
+        data: ScalarData,
+        present: [u64; PRESENT_WORDS],
+        count: u32,
+    },
 }
 
 impl Chunk {
-    fn new() -> Self {
-        let values: Box<[Value; CHUNK_LEN]> = vec![Value::Null; CHUNK_LEN]
-            .into_boxed_slice()
-            .try_into()
-            .unwrap_or_else(|_| unreachable!("vec built with exactly CHUNK_LEN elements"));
-        Self { values, count: 0 }
+    /// Build a chunk seeded with a single non-null `value` at `slot`, choosing
+    /// the packed representation when the value is a packable scalar.
+    fn with_first(
+        slot: usize,
+        value: Value,
+    ) -> Self {
+        if let Some(kind) = ScalarKind::of(&value) {
+            let mut data = ScalarData::empty(kind);
+            data.write(slot, value);
+            let mut present = [0u64; PRESENT_WORDS];
+            present_set(&mut present, slot);
+            Self::Scalar {
+                data,
+                present,
+                count: 1,
+            }
+        } else {
+            let mut values = boxed_array(Value::Null);
+            values[slot] = value;
+            Self::Mixed { values, count: 1 }
+        }
+    }
+
+    /// Read `slot`, borrowing for mixed chunks and materializing a cheap owned
+    /// `Value` for packed scalar chunks.
+    #[inline]
+    fn get(
+        &self,
+        slot: usize,
+    ) -> Option<ValueRef<'_>> {
+        match self {
+            Self::Mixed { values, .. } => {
+                let v = &values[slot];
+                if matches!(v, Value::Null) {
+                    None
+                } else {
+                    Some(ValueRef::Borrowed(v))
+                }
+            }
+            Self::Scalar { data, present, .. } => {
+                if present_get(present, slot) {
+                    Some(ValueRef::Owned(data.value_at(slot)))
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    /// Set a non-null `value` at `slot`. Returns whether a value was already
+    /// present. A packed chunk that receives a differing scalar type is promoted
+    /// to a mixed chunk first.
+    fn set(
+        &mut self,
+        slot: usize,
+        value: Value,
+    ) -> bool {
+        debug_assert!(
+            !matches!(value, Value::Null),
+            "Chunk::set is only called with non-null values; nulls go through clear"
+        );
+        match self {
+            Self::Mixed { values, count } => {
+                let had = !matches!(values[slot], Value::Null);
+                if !had {
+                    *count += 1;
+                }
+                values[slot] = value;
+                return had;
+            }
+            Self::Scalar {
+                data,
+                present,
+                count,
+            } if ScalarKind::of(&value) == Some(data.kind()) => {
+                let had = present_get(present, slot);
+                if !had {
+                    present_set(present, slot);
+                    *count += 1;
+                }
+                data.write(slot, value);
+                return had;
+            }
+            Self::Scalar { .. } => {}
+        }
+        // Promotion: a packed chunk received a different type — rebuild as mixed.
+        let Self::Scalar {
+            data,
+            present,
+            count,
+        } = self
+        else {
+            unreachable!("promotion is only reached from a scalar chunk");
+        };
+        let mut values = boxed_array(Value::Null);
+        for s in 0..CHUNK_LEN {
+            if present_get(present, s) {
+                values[s] = data.value_at(s);
+            }
+        }
+        let mut new_count = *count;
+        let had = present_get(present, slot);
+        if !had {
+            new_count += 1;
+        }
+        values[slot] = value;
+        *self = Self::Mixed {
+            values,
+            count: new_count,
+        };
+        had
+    }
+
+    /// Clear `slot` (caller ensures it is present). Returns whether the chunk is
+    /// now empty and can be reclaimed.
+    fn clear(
+        &mut self,
+        slot: usize,
+    ) -> bool {
+        match self {
+            Self::Mixed { values, count } => {
+                values[slot] = Value::Null;
+                *count -= 1;
+                *count == 0
+            }
+            Self::Scalar { present, count, .. } => {
+                present_clear(present, slot);
+                *count -= 1;
+                *count == 0
+            }
+        }
+    }
+
+    /// Structural bytes of this chunk's value array plus presence bitmap.
+    const fn structural_bytes(&self) -> usize {
+        match self {
+            Self::Mixed { .. } => CHUNK_LEN * std::mem::size_of::<Value>(),
+            Self::Scalar { data, .. } => {
+                CHUNK_LEN * data.kind().elem_size() + std::mem::size_of::<[u64; PRESENT_WORDS]>()
+            }
+        }
+    }
+
+    /// Out-of-line heap owned by this chunk's values. Packed scalars own none.
+    fn heap_payload_bytes(&self) -> usize {
+        match self {
+            Self::Mixed { values, .. } => values.iter().map(Value::heap_size).sum(),
+            Self::Scalar { .. } => 0,
+        }
     }
 }
 
@@ -616,7 +973,7 @@ impl Column {
     fn get(
         &self,
         id: u64,
-    ) -> Option<&Value> {
+    ) -> Option<ValueRef<'_>> {
         let cid = (id >> CHUNK_SHIFT) as usize;
         self.get_at(
             cid >> PAGE_SHIFT,
@@ -634,15 +991,10 @@ impl Column {
         pidx: usize,
         cin: usize,
         slot: usize,
-    ) -> Option<&Value> {
+    ) -> Option<ValueRef<'_>> {
         let page = self.pages.get(pidx)?.as_ref()?;
         let chunk = page.chunks[cin].as_ref()?;
-        let v = &chunk.values[slot];
-        if matches!(v, Value::Null) {
-            None
-        } else {
-            Some(v)
-        }
+        chunk.get(slot)
     }
 
     /// Set `id`'s value. Returns whether a non-null value was already present.
@@ -661,16 +1013,16 @@ impl Column {
         let page_arc = pages[pidx].get_or_insert_with(|| Arc::new(Page::default()));
         // Copy-on-write the touched page (PAGE_LEN pointers) if shared.
         let page = Arc::make_mut(page_arc);
-        let chunk_arc = page.chunks[cid & PAGE_MASK].get_or_insert_with(|| Arc::new(Chunk::new()));
-        // Copy-on-write the touched chunk (CHUNK_LEN values) if shared.
-        let chunk = Arc::make_mut(chunk_arc);
         let slot = (id & CHUNK_MASK) as usize;
-        let had = !matches!(chunk.values[slot], Value::Null);
-        if !had {
-            chunk.count += 1;
+        // Copy-on-write the touched chunk (CHUNK_LEN values) if shared; a brand
+        // new chunk picks its packed/mixed representation from the first value.
+        let entry = &mut page.chunks[cid & PAGE_MASK];
+        if let Some(chunk_arc) = entry {
+            Arc::make_mut(chunk_arc).set(slot, value)
+        } else {
+            *entry = Some(Arc::new(Chunk::with_first(slot, value)));
+            false
         }
-        chunk.values[slot] = value;
-        had
     }
 
     /// Clear `id`'s value. Returns whether a non-null value was present.
@@ -692,9 +1044,7 @@ impl Column {
         let page_emptied = {
             let page = Arc::make_mut(pages[pidx].as_mut().expect("present page"));
             let chunk = Arc::make_mut(page.chunks[cin].as_mut().expect("present chunk"));
-            chunk.values[slot] = Value::Null;
-            chunk.count -= 1;
-            if chunk.count == 0 {
+            if chunk.clear(slot) {
                 // Reclaim the emptied chunk: drops this version's `Arc` (shared
                 // readers keep theirs), freeing the dense value block.
                 page.chunks[cin] = None;
@@ -729,20 +1079,14 @@ impl Column {
             + self.pages.len() * std::mem::size_of::<Option<Arc<Page>>>()
             + self
                 .chunks()
-                .map(|c| {
-                    c.values.len() * std::mem::size_of::<Value>()
-                        + c.values.iter().map(Value::heap_size).sum::<usize>()
-                })
+                .map(|c| c.structural_bytes() + c.heap_payload_bytes())
                 .sum::<usize>()
     }
 
     fn structural_bytes(&self) -> usize {
         self.num_chunk_slots() * std::mem::size_of::<Option<Arc<Chunk>>>()
             + self.pages.len() * std::mem::size_of::<Option<Arc<Page>>>()
-            + self
-                .chunks()
-                .map(|c| c.values.len() * std::mem::size_of::<Value>())
-                .sum::<usize>()
+            + self.chunks().map(|c| c.structural_bytes()).sum::<usize>()
     }
 }
 
@@ -818,7 +1162,7 @@ impl AttributeStorage {
     ) -> Option<Option<Value>> {
         self.column(attr_idx)?
             .get(entity_id)
-            .map(|v| Some(v.clone()))
+            .map(|v| Some(v.into_owned()))
     }
 
     /// Fused batch lookup that writes resolved `Value`s straight into `out`,
@@ -837,7 +1181,7 @@ impl AttributeStorage {
         let col = self.column(attr_idx);
         for (pos, &id) in keys.iter().enumerate() {
             if let Some(v) = col.and_then(|c| c.get(id)) {
-                out.push(v.clone());
+                out.push(v.into_owned());
             } else {
                 out.push(default.clone());
                 missing.push(base + pos);
@@ -860,7 +1204,7 @@ impl AttributeStorage {
         let slot = (entity_id & CHUNK_MASK) as usize;
         for (idx, col) in self.columns.iter().enumerate() {
             if let Some(v) = col.get_at(pidx, cin, slot) {
-                f(idx as u16, v);
+                f(idx as u16, &v);
             }
         }
     }
@@ -906,5 +1250,75 @@ impl AttributeStorage {
     #[must_use]
     pub fn structural_memory_usage(&self) -> usize {
         self.columns.iter().map(Column::structural_bytes).sum()
+    }
+}
+
+#[cfg(test)]
+mod pack_tests {
+    use super::*;
+
+    #[test]
+    fn packed_scalar_roundtrip() {
+        let mut col = Column::default();
+        // Values spanning several chunks stay type-homogeneous → packed.
+        for id in 0..300u64 {
+            col.set(id, Value::Int(id as i64));
+        }
+        for id in 0..300u64 {
+            assert!(
+                matches!(col.get(id).as_deref(), Some(Value::Int(v)) if *v == id as i64),
+                "int {id} round-trip"
+            );
+        }
+        assert!(col.get(300).is_none());
+    }
+
+    #[test]
+    fn promotes_to_mixed_on_type_change() {
+        let mut col = Column::default();
+        for id in 0..10u64 {
+            col.set(id, Value::Int(id as i64));
+        }
+        let packed_bytes = col.structural_bytes();
+
+        // A differing type in the same chunk promotes it to a mixed value array.
+        col.set(3, Value::String(Arc::new("x".to_owned())));
+        assert!(matches!(col.get(3).as_deref(), Some(Value::String(s)) if s.as_str() == "x"));
+        // The other ints in the promoted chunk survive the rebuild.
+        assert!(matches!(col.get(7).as_deref(), Some(Value::Int(7))));
+        // A promoted chunk (16 B/slot) is larger than the packed one (8 B/slot).
+        assert!(col.structural_bytes() > packed_bytes);
+    }
+
+    #[test]
+    fn clear_reclaims_and_updates() {
+        let mut col = Column::default();
+        col.set(10, Value::Float(1.5));
+        col.set(11, Value::Float(2.5));
+        assert!(col.clear(10));
+        assert!(col.get(10).is_none());
+        assert!(matches!(col.get(11).as_deref(), Some(Value::Float(f)) if *f == 2.5));
+        // Clearing the last value reclaims the chunk.
+        assert!(col.clear(11));
+        assert!(col.get(11).is_none());
+    }
+
+    #[test]
+    fn packed_scalar_uses_less_memory_than_mixed() {
+        let n = 4096u64;
+        let mut ints = Column::default();
+        let mut strings = Column::default();
+        for id in 0..n {
+            ints.set(id, Value::Int(id as i64));
+            strings.set(id, Value::String(Arc::new(format!("{id}"))));
+        }
+        // Same slot count, but packed i64 slots are 8 B vs the 16 B `Value` slots
+        // a mixed (pointer-typed) column must use.
+        assert!(
+            ints.structural_bytes() < strings.structural_bytes(),
+            "packed {} should be < mixed {}",
+            ints.structural_bytes(),
+            strings.structural_bytes()
+        );
     }
 }

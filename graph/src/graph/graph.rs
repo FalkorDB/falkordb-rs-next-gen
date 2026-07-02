@@ -1485,7 +1485,7 @@ impl Graph {
 
             let label = &self.node_labels[lid];
             if self.node_indexer.has_index(label) {
-                for (attr, _) in self.node_attrs.get_all_attrs(node_id).iter_named() {
+                for (attr, _) in self.node_attrs.get_attrs(node_id).iter_named() {
                     if self.node_indexer.has_indexed_attr(label, attr) {
                         remove_docs.entry(label_id).or_default().insert(node_id);
                         break;
@@ -2464,7 +2464,7 @@ impl Graph {
         id: NodeId,
     ) -> impl Iterator<Item = Arc<String>> + '_ {
         self.node_attrs
-            .get_all_attrs(id.0)
+            .get_attrs(id.0)
             .iter_named()
             .map(|(n, _)| n.clone())
             .collect::<Vec<_>>()
@@ -2475,7 +2475,7 @@ impl Graph {
         &self,
         id: NodeId,
     ) -> AttrArrayView<'_> {
-        self.node_attrs.get_all_attrs(id.0)
+        self.node_attrs.get_attrs(id.0)
     }
 
     pub fn get_relationship_attrs(
@@ -2483,7 +2483,7 @@ impl Graph {
         id: RelationshipId,
     ) -> impl Iterator<Item = Arc<String>> + '_ {
         self.relationship_attrs
-            .get_all_attrs(id.0)
+            .get_attrs(id.0)
             .iter_named()
             .map(|(n, _)| n.clone())
             .collect::<Vec<_>>()
@@ -2494,7 +2494,7 @@ impl Graph {
         &self,
         id: RelationshipId,
     ) -> AttrArrayView<'_> {
-        self.relationship_attrs.get_all_attrs(id.0)
+        self.relationship_attrs.get_attrs(id.0)
     }
 
     pub fn create_index(
@@ -3241,7 +3241,7 @@ impl Graph {
                     for prop in &constraint.properties {
                         if !attrs
                             .iter_named()
-                            .any(|(name, val)| name == prop && !matches!(val, Value::Null))
+                            .any(|(name, val)| name == prop && !matches!(*val, Value::Null))
                         {
                             return false;
                         }
@@ -3258,7 +3258,7 @@ impl Graph {
                     for prop in &constraint.properties {
                         if !attrs
                             .iter_named()
-                            .any(|(name, val)| name == prop && !matches!(val, Value::Null))
+                            .any(|(name, val)| name == prop && !matches!(*val, Value::Null))
                         {
                             return false;
                         }
@@ -3324,9 +3324,9 @@ impl Graph {
                 .find(|(name, _)| *name == prop)
                 .map(|(_, v)| v);
             match value {
-                Some(v) if !matches!(v, Value::Null) => {
+                Some(v) if !matches!(*v, Value::Null) => {
                     all_null = false;
-                    key.extend_from_slice(format!("{v:?}").as_bytes());
+                    key.extend_from_slice(format!("{:?}", *v).as_bytes());
                 }
                 _ => {
                     key.push(0); // NULL marker
@@ -3647,7 +3647,7 @@ impl Graph {
         entity_id: u64,
     ) -> usize {
         let mut sz: usize = 0;
-        for (_, val) in store.get_all_attrs(entity_id).iter() {
+        for (_, val) in store.get_attrs(entity_id).iter() {
             sz += std::mem::size_of::<u16>() + std::mem::size_of::<Value>() + val.heap_size();
         }
         sz
