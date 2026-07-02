@@ -846,8 +846,15 @@ impl Indexer {
         Ok(())
     }
 
+    /// Update the graph reference used by background index population workers.
+    ///
+    /// Takes `&self` because the underlying store is `Arc<Mutex<…>>` (interior
+    /// mutability), so no exclusive `&mut self` borrow of the `Indexer` is
+    /// required.  Callers must ensure `borrow_mut()` is **not** held on the
+    /// target `AtomicRefCell<Graph>` at the time this is called; see the
+    /// `MvccGraph::commit` call site for the canonical pattern.
     pub fn set_graph(
-        &mut self,
+        &self,
         graph: Arc<AtomicRefCell<Graph>>,
     ) {
         *self.graph.lock() = Some(graph);

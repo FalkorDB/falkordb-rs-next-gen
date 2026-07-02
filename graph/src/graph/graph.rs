@@ -3423,8 +3423,14 @@ impl Graph {
         self.edge_indexer.cancel();
     }
 
+    /// Wire up both indexers so background population workers can reach the
+    /// committed graph.  Uses `&self` because `Indexer::set_graph` only needs
+    /// interior mutability (`Arc<Mutex<…>>`); no exclusive borrow of `Graph`
+    /// is required.  Callers in `MvccGraph::commit` must invoke this via
+    /// `borrow()` — **not** `borrow_mut()` — so that the `AtomicRefCell` borrow
+    /// state is clear when background threads call `borrow()` on the same cell.
     pub fn set_indexer_graph(
-        &mut self,
+        &self,
         graph: Arc<AtomicRefCell<Self>>,
     ) {
         self.node_indexer.set_graph(graph.clone());

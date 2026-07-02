@@ -160,7 +160,20 @@ impl MvccGraph {
             new_graph.borrow_mut().schema_version += 1;
         }
 
-        new_graph.borrow_mut().set_indexer_graph(new_graph.clone());
+        // Wire up the indexer's graph reference AFTER all borrow_mut() calls
+        // are done so that concurrent background populate workers cannot
+        // observe `new_graph` as the `indexer.graph` target while a mutable
+        // borrow is still active on `new_graph`.
+        //
+        // Before this change the call was `new_graph.borrow_mut().set_indexer_graph(…)`,
+        // which updated `indexer.graph` to point at `new_graph` while holding a
+        // `borrow_mut()` on `new_graph`.  A background `populate_index_batch`
+        // worker that called `indexer.get_graph()` during that window would
+        // receive the same `AtomicRefCell` and immediately panic on the
+        // subsequent `graph.borrow()` — killing the whole server via the global
+        // panic hook.  `set_indexer_graph` only needs `&self` (interior
+        // mutability), so switching to `borrow()` here eliminates the race.
+        new_graph.borrow().set_indexer_graph(new_graph.clone());
         self.graph = new_graph;
         self.write.store(false, Ordering::Release);
     }
