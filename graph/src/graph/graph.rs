@@ -83,7 +83,7 @@ use roaring::RoaringTreemap;
 use crate::{
     entity_type::EntityType,
     graph::{
-        attribute_store::{AttrArray, AttributeStore},
+        attribute_store::{AttrArrayView, AttributeStore},
         constraint::{Constraint, ConstraintStatus, ConstraintType},
         graphblas::{
             matrix::{
@@ -2477,7 +2477,7 @@ impl Graph {
     pub fn get_node_all_attrs_by_id(
         &self,
         id: NodeId,
-    ) -> AttrArray {
+    ) -> AttrArrayView<'_> {
         self.node_attrs.get_all_attrs_by_id(id.0)
     }
 
@@ -2499,7 +2499,7 @@ impl Graph {
     pub fn get_relationship_all_attrs_by_id(
         &self,
         id: RelationshipId,
-    ) -> AttrArray {
+    ) -> AttrArrayView<'_> {
         self.relationship_attrs.get_all_attrs_by_id(id.0)
     }
 

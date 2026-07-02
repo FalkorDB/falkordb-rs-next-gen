@@ -113,10 +113,6 @@ impl<'a> IntoIterator for &'a AttrNameMap {
     }
 }
 
-/// Shared empty attribute vector to avoid per-entity allocations when an
-/// entity has no properties.
-static EMPTY_ATTRS: std::sync::LazyLock<AttrArray> = std::sync::LazyLock::new(AttrArray::empty);
-
 /// Columnar attribute storage for graph entities.
 ///
 /// Uses a shared [`AttributeStorage`] as the sole, in-memory source of truth for
@@ -237,10 +233,11 @@ impl AttributeStore {
     pub fn get_all_attrs_by_id(
         &self,
         key: u64,
-    ) -> AttrArray {
-        self.storage
-            .get_entity(key, self.version)
-            .unwrap_or_else(|| EMPTY_ATTRS.clone())
+    ) -> AttrArrayView<'_> {
+        AttrArrayView {
+            store: self,
+            entity_id: key,
+        }
     }
 
     // ---- write path (cache only) ----------------------------------------
@@ -494,110 +491,66 @@ impl Decode<19> for AttributeStore {
 // Columnar storage engine
 // ============================================================================
 
-/// Owned, per-entity snapshot of attributes materialized from the columns.
+/// Borrowing view of one entity's attributes, gathered lazily from the columns.
 ///
-/// Returned by the per-entity read APIs (`get_entity`, `get_all_attrs_by_id`).
-/// Indices are kept ascending so [`position`](Self::position) can binary-search.
-/// Cheaply clonable (`Arc`) and entirely safe.
-#[derive(Clone, Default)]
-pub struct AttrArray {
-    inner: Arc<AttrArrayInner>,
+/// Returned by the per-entity read APIs (`get_all_attrs_by_id`). Holds no owned
+/// data and clones no `Value`s: `iter()` walks the columns on demand in ascending
+/// attribute-index order, so the view must be consumed while the store borrow is
+/// alive. A prop-less entity simply yields an empty iterator.
+pub struct AttrArrayView<'a> {
+    store: &'a AttributeStore,
+    entity_id: u64,
 }
 
-#[derive(Default)]
-struct AttrArrayInner {
-    /// Attribute (column) indices, ascending.
-    indices: Box<[u16]>,
-    /// Values, positionally aligned with `indices`.
-    values: Box<[Value]>,
-}
-
-impl AttrArray {
-    /// Build directly from parallel `indices` (ascending) and `values` columns.
-    #[must_use]
-    fn from_columns(
-        indices: Vec<u16>,
-        values: Vec<Value>,
-    ) -> Self {
-        debug_assert_eq!(indices.len(), values.len());
-        debug_assert!(indices.windows(2).all(|w| w[0] < w[1]), "indices ascending");
-        Self {
-            inner: Arc::new(AttrArrayInner {
-                indices: indices.into_boxed_slice(),
-                values: values.into_boxed_slice(),
-            }),
-        }
-    }
-
-    /// Shared empty instance for prop-less entities.
-    #[must_use]
-    fn empty() -> Self {
-        Self::default()
-    }
-
-    #[inline]
+impl<'a> AttrArrayView<'a> {
+    /// Number of present attributes for this entity.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.inner.indices.len()
+        let (pidx, cin, slot) = decompose_id(self.entity_id);
+        self.store
+            .storage
+            .columns
+            .iter()
+            .filter(|c| c.get_at(pidx, cin, slot).is_some())
+            .count()
     }
 
-    #[inline]
+    /// Whether the entity has no attributes.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.inner.indices.is_empty()
-    }
-
-    #[inline]
-    #[must_use]
-    pub fn indices(&self) -> &[u16] {
-        &self.inner.indices
-    }
-
-    #[inline]
-    #[must_use]
-    pub fn values(&self) -> &[Value] {
-        &self.inner.values
-    }
-
-    /// Position of `attr_idx` within the sorted index column, if present.
-    #[inline]
-    #[must_use]
-    pub fn position(
-        &self,
-        attr_idx: u16,
-    ) -> Option<usize> {
-        self.inner.indices.binary_search(&attr_idx).ok()
-    }
-
-    /// Value for `attr_idx`, if the attribute is present.
-    #[inline]
-    #[must_use]
-    pub fn get(
-        &self,
-        attr_idx: u16,
-    ) -> Option<&Value> {
-        self.position(attr_idx).map(|pos| &self.inner.values[pos])
-    }
-
-    /// Iterate `(attr_idx, &Value)` pairs in index order.
-    pub fn iter(&self) -> impl Iterator<Item = (u16, &Value)> + '_ {
-        self.inner
-            .indices
+        let (pidx, cin, slot) = decompose_id(self.entity_id);
+        !self
+            .store
+            .storage
+            .columns
             .iter()
-            .copied()
-            .zip(self.inner.values.iter())
+            .any(|c| c.get_at(pidx, cin, slot).is_some())
     }
 
-    /// Materialize an owned `Vec` of `(attr_idx, Value)` pairs.
-    #[must_use]
-    pub fn to_pairs(&self) -> Vec<(u16, Value)> {
-        self.inner
-            .indices
+    /// Iterate `(attr_idx, &Value)` pairs in ascending index order, reading
+    /// straight from the columns with no allocation and no `Value` clones.
+    pub fn iter(&self) -> impl Iterator<Item = (u16, &'a Value)> {
+        let store = self.store;
+        let (pidx, cin, slot) = decompose_id(self.entity_id);
+        store
+            .storage
+            .columns
             .iter()
-            .copied()
-            .zip(self.inner.values.iter().cloned())
-            .collect()
+            .enumerate()
+            .filter_map(move |(i, col)| col.get_at(pidx, cin, slot).map(|v| (i as u16, v)))
     }
+}
+
+/// Decompose an entity id into `(page index, chunk-in-page, value slot)` for
+/// direct column addressing.
+#[inline]
+fn decompose_id(id: u64) -> (usize, usize, usize) {
+    let cid = (id >> CHUNK_SHIFT) as usize;
+    (
+        cid >> PAGE_SHIFT,
+        cid & PAGE_MASK,
+        (id & CHUNK_MASK) as usize,
+    )
 }
 
 /// Number of consecutive entity ids whose values live in one [`Chunk`].
@@ -892,28 +845,6 @@ impl AttributeStorage {
                 out.push(default.clone());
                 missing.push(base + pos);
             }
-        }
-    }
-
-    /// Materialize all of an entity's attributes by gathering across columns.
-    #[must_use]
-    pub fn get_entity(
-        &self,
-        entity_id: u64,
-        _version: u64,
-    ) -> Option<AttrArray> {
-        let cap = self.columns.len();
-        let mut indices: Vec<u16> = Vec::with_capacity(cap);
-        let mut values: Vec<Value> = Vec::with_capacity(cap);
-        self.for_each_attr(entity_id, |idx, v| {
-            indices.push(idx);
-            values.push(v.clone());
-        });
-        if indices.is_empty() {
-            None
-        } else {
-            // Columns iterate in ascending index order, so `indices` is sorted.
-            Some(AttrArray::from_columns(indices, values))
         }
     }
 
