@@ -199,38 +199,8 @@ impl AttributeStore {
         self.storage.has_entity(key, self.version).unwrap_or(false)
     }
 
-    pub fn get_attrs(
-        &self,
-        key: u64,
-    ) -> impl Iterator<Item = Arc<String>> + '_ {
-        let mut out: Vec<Arc<String>> = Vec::new();
-        let names = &self.attrs_name;
-        self.storage.for_each_attr(key, |idx, _| {
-            if let Some(n) = names.get(idx as usize) {
-                out.push(n.clone());
-            }
-        });
-        out.into_iter()
-    }
-
     #[must_use]
     pub fn get_all_attrs(
-        &self,
-        key: u64,
-    ) -> Vec<(Arc<String>, Value)> {
-        // Gather pairs directly into the output — no intermediate `AttrArray`.
-        let mut out: Vec<(Arc<String>, Value)> = Vec::new();
-        let names = &self.attrs_name;
-        self.storage.for_each_attr(key, |idx, v| {
-            if let Some(n) = names.get(idx as usize) {
-                out.push((n.clone(), v.clone()));
-            }
-        });
-        out
-    }
-
-    #[must_use]
-    pub fn get_all_attrs_by_id(
         &self,
         key: u64,
     ) -> AttrArrayView<'_> {
@@ -493,7 +463,7 @@ impl Decode<19> for AttributeStore {
 
 /// Borrowing view of one entity's attributes, gathered lazily from the columns.
 ///
-/// Returned by the per-entity read APIs (`get_all_attrs_by_id`). Holds no owned
+/// Returned by the per-entity read APIs (`get_all_attrs`). Holds no owned
 /// data and clones no `Value`s: `iter()` walks the columns on demand in ascending
 /// attribute-index order, so the view must be consumed while the store borrow is
 /// alive. A prop-less entity simply yields an empty iterator.
@@ -538,6 +508,32 @@ impl<'a> AttrArrayView<'a> {
             .iter()
             .enumerate()
             .filter_map(move |(i, col)| col.get_at(pidx, cin, slot).map(|v| (i as u16, v)))
+    }
+
+    /// Iterate `(&attr_name, &Value)` pairs in ascending index order. Like
+    /// [`iter`](Self::iter) but resolves each column index to its attribute
+    /// name — still borrowing, with no allocation and no `Value` clones.
+    pub fn iter_named(&self) -> impl Iterator<Item = (&'a Arc<String>, &'a Value)> {
+        let store = self.store;
+        let (pidx, cin, slot) = decompose_id(self.entity_id);
+        store
+            .storage
+            .columns
+            .iter()
+            .enumerate()
+            .filter_map(move |(i, col)| {
+                col.get_at(pidx, cin, slot)
+                    .and_then(|v| store.attrs_name.get(i).map(|n| (n, v)))
+            })
+    }
+
+    /// Materialize an owned `Vec` of `(name, value)` pairs, cloning each value.
+    /// For callers that need the attributes to outlive the store borrow.
+    #[must_use]
+    pub fn to_pairs(&self) -> Vec<(Arc<String>, Value)> {
+        self.iter_named()
+            .map(|(n, v)| (n.clone(), v.clone()))
+            .collect()
     }
 }
 

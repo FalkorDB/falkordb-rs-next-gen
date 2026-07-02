@@ -1485,8 +1485,8 @@ impl Graph {
 
             let label = &self.node_labels[lid];
             if self.node_indexer.has_index(label) {
-                for attr in self.node_attrs.get_attrs(node_id) {
-                    if self.node_indexer.has_indexed_attr(label, &attr) {
+                for (attr, _) in self.node_attrs.get_all_attrs(node_id).iter_named() {
+                    if self.node_indexer.has_indexed_attr(label, attr) {
                         remove_docs.entry(label_id).or_default().insert(node_id);
                         break;
                     }
@@ -2463,44 +2463,38 @@ impl Graph {
         &self,
         id: NodeId,
     ) -> impl Iterator<Item = Arc<String>> + '_ {
-        self.node_attrs.get_attrs(id.0)
+        self.node_attrs
+            .get_all_attrs(id.0)
+            .iter_named()
+            .map(|(n, _)| n.clone())
+            .collect::<Vec<_>>()
+            .into_iter()
     }
 
-    /// Get all attribute names and values for a node in a single storage pass.
     pub fn get_node_all_attrs(
         &self,
         id: NodeId,
-    ) -> Vec<(Arc<String>, Value)> {
-        self.node_attrs.get_all_attrs(id.0)
-    }
-
-    pub fn get_node_all_attrs_by_id(
-        &self,
-        id: NodeId,
     ) -> AttrArrayView<'_> {
-        self.node_attrs.get_all_attrs_by_id(id.0)
+        self.node_attrs.get_all_attrs(id.0)
     }
 
     pub fn get_relationship_attrs(
         &self,
         id: RelationshipId,
     ) -> impl Iterator<Item = Arc<String>> + '_ {
-        self.relationship_attrs.get_attrs(id.0)
+        self.relationship_attrs
+            .get_all_attrs(id.0)
+            .iter_named()
+            .map(|(n, _)| n.clone())
+            .collect::<Vec<_>>()
+            .into_iter()
     }
 
-    /// Get all attribute names and values for a relationship in a single storage pass.
     pub fn get_relationship_all_attrs(
         &self,
         id: RelationshipId,
-    ) -> Vec<(Arc<String>, Value)> {
-        self.relationship_attrs.get_all_attrs(id.0)
-    }
-
-    pub fn get_relationship_all_attrs_by_id(
-        &self,
-        id: RelationshipId,
     ) -> AttrArrayView<'_> {
-        self.relationship_attrs.get_all_attrs_by_id(id.0)
+        self.relationship_attrs.get_all_attrs(id.0)
     }
 
     pub fn create_index(
@@ -3246,7 +3240,7 @@ impl Graph {
                     let attrs = self.get_node_all_attrs(NodeId(node_id));
                     for prop in &constraint.properties {
                         if !attrs
-                            .iter()
+                            .iter_named()
                             .any(|(name, val)| name == prop && !matches!(val, Value::Null))
                         {
                             return false;
@@ -3263,7 +3257,7 @@ impl Graph {
                     let attrs = self.get_relationship_all_attrs(RelationshipId(edge_id));
                     for prop in &constraint.properties {
                         if !attrs
-                            .iter()
+                            .iter_named()
                             .any(|(name, val)| name == prop && !matches!(val, Value::Null))
                         {
                             return false;
@@ -3320,12 +3314,15 @@ impl Graph {
     #[must_use]
     pub fn build_composite_key(
         properties: &[Arc<String>],
-        attrs: &[(Arc<String>, Value)],
+        attrs: &AttrArrayView,
     ) -> Vec<u8> {
         let mut all_null = true;
         let mut key = Vec::new();
         for prop in properties {
-            let value = attrs.iter().find(|(name, _)| name == prop).map(|(_, v)| v);
+            let value = attrs
+                .iter_named()
+                .find(|(name, _)| *name == prop)
+                .map(|(_, v)| v);
             match value {
                 Some(v) if !matches!(v, Value::Null) => {
                     all_null = false;
@@ -3650,7 +3647,7 @@ impl Graph {
         entity_id: u64,
     ) -> usize {
         let mut sz: usize = 0;
-        for (_, val) in store.get_all_attrs_by_id(entity_id).iter() {
+        for (_, val) in store.get_all_attrs(entity_id).iter() {
             sz += std::mem::size_of::<u16>() + std::mem::size_of::<Value>() + val.heap_size();
         }
         sz

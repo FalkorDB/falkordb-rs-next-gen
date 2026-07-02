@@ -234,8 +234,9 @@ impl Runtime<'_> {
             let g = self.g.borrow();
             for &id in &committed {
                 let labels = g.get_node_label_ids(id).collect();
-                let mut actual =
-                    crate::runtime::ordermap::OrderMap::from_vec(g.get_node_all_attrs(id));
+                let mut actual = crate::runtime::ordermap::OrderMap::from_vec(
+                    g.get_node_all_attrs(id).to_pairs(),
+                );
                 self.pending.borrow().update_node_attrs(id, &mut actual);
                 deleted_nodes.insert(id, DeletedNode::new(labels, actual));
             }
@@ -323,7 +324,7 @@ impl Runtime<'_> {
                         .get_type(crate::graph::graph::TypeId(*type_idx))
                         .expect("type must exist");
                     let mut actual = crate::runtime::ordermap::OrderMap::from_vec(
-                        g.get_relationship_all_attrs(rel_id),
+                        g.get_relationship_all_attrs(rel_id).to_pairs(),
                     );
                     let (src, dst) = g.get_relationship_endpoints(rel_id);
                     pending.update_relationship_attrs(rel_id, &mut actual);

@@ -1419,7 +1419,7 @@ impl<'a> Runtime<'a> {
                 .collect();
             return attrs;
         }
-        let mut actual = OrderMap::from_vec(self.g.borrow().get_node_all_attrs(id));
+        let mut actual = OrderMap::from_vec(self.g.borrow().get_node_all_attrs(id).to_pairs());
         self.pending.borrow().update_node_attrs(id, &mut actual);
         actual
     }
@@ -1436,7 +1436,8 @@ impl<'a> Runtime<'a> {
                 .collect();
             return attrs;
         }
-        let mut actual = OrderMap::from_vec(self.g.borrow().get_relationship_all_attrs(id));
+        let mut actual =
+            OrderMap::from_vec(self.g.borrow().get_relationship_all_attrs(id).to_pairs());
         self.pending
             .borrow()
             .update_relationship_attrs(id, &mut actual);

@@ -228,7 +228,7 @@ pub fn reply_compact_value(
                     raw::RedisModule_ReplySetArrayLength.unwrap()(ctx.ctx, labels_len as _);
                 }
 
-                let attrs = bg.get_node_all_attrs_by_id(*id);
+                let attrs = bg.get_node_all_attrs(*id);
                 raw::reply_with_array(ctx.ctx, attrs.len() as _);
                 for (key, value) in attrs.iter() {
                     raw::reply_with_array(ctx.ctx, 3);
@@ -266,7 +266,7 @@ pub fn reply_compact_value(
                 );
                 raw::reply_with_long_long(ctx.ctx, u64::from(rel_src) as _);
                 raw::reply_with_long_long(ctx.ctx, u64::from(rel_dst) as _);
-                let attrs = bg.get_relationship_all_attrs_by_id(*rel);
+                let attrs = bg.get_relationship_all_attrs(*rel);
                 raw::reply_with_array(ctx.ctx, attrs.len() as _);
                 for (key, value) in attrs.iter() {
                     raw::reply_with_array(ctx.ctx, 3);
@@ -443,7 +443,7 @@ pub fn reply_verbose_value(
                 reply_with_str(ctx, "properties");
                 let attrs = bg.get_node_all_attrs(*id);
                 raw::reply_with_array(ctx.ctx, attrs.len() as _);
-                for (key, value) in &attrs {
+                for (key, value) in attrs.iter_named() {
                     raw::reply_with_array(ctx.ctx, 2);
                     reply_with_str(ctx, key);
                     reply_verbose_value(ctx, runtime, value);
@@ -463,26 +463,14 @@ pub fn reply_verbose_value(
 
             let bg = runtime.g.borrow();
             let dr = runtime.deleted_relationships.borrow();
-            let (type_name, attrs_iter): (Arc<String>, Vec<(Arc<String>, Value)>) =
-                dr.get(rel).map_or_else(
-                    || {
-                        let type_id = bg.get_relationship_type_id(*rel);
-                        let name = bg
-                            .get_type(type_id)
-                            .unwrap_or_else(|| Arc::new(String::new()));
-                        let attrs = bg.get_relationship_all_attrs(*rel);
-                        (name, attrs)
-                    },
-                    |x| {
-                        (
-                            x.type_name.clone(),
-                            x.attrs
-                                .iter()
-                                .map(|(k, v)| (k.clone(), v.clone()))
-                                .collect(),
-                        )
-                    },
-                );
+            let type_name: Arc<String> = dr.get(rel).map_or_else(
+                || {
+                    let type_id = bg.get_relationship_type_id(*rel);
+                    bg.get_type(type_id)
+                        .unwrap_or_else(|| Arc::new(String::new()))
+                },
+                |x| x.type_name.clone(),
+            );
 
             raw::reply_with_array(ctx.ctx, 2);
             reply_with_str(ctx, "type");
@@ -498,11 +486,22 @@ pub fn reply_verbose_value(
 
             raw::reply_with_array(ctx.ctx, 2);
             reply_with_str(ctx, "properties");
-            raw::reply_with_array(ctx.ctx, attrs_iter.len() as _);
-            for (key, value) in &attrs_iter {
-                raw::reply_with_array(ctx.ctx, 2);
-                reply_with_str(ctx, key);
-                reply_verbose_value(ctx, runtime, value);
+            // Borrow attributes instead of cloning every Value into a Vec.
+            if let Some(x) = dr.get(rel) {
+                raw::reply_with_array(ctx.ctx, x.attrs.len() as _);
+                for (key, value) in x.attrs.iter() {
+                    raw::reply_with_array(ctx.ctx, 2);
+                    reply_with_str(ctx, key);
+                    reply_verbose_value(ctx, runtime, value);
+                }
+            } else {
+                let attrs = bg.get_relationship_all_attrs(*rel);
+                raw::reply_with_array(ctx.ctx, attrs.len() as _);
+                for (key, value) in attrs.iter_named() {
+                    raw::reply_with_array(ctx.ctx, 2);
+                    reply_with_str(ctx, key);
+                    reply_verbose_value(ctx, runtime, value);
+                }
             }
             drop(bg);
         }

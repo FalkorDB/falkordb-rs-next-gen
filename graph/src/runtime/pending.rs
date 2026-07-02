@@ -1015,7 +1015,7 @@ impl Pending {
                 ConstraintType::Mandatory => {
                     for prop in &constraint.properties {
                         let has_prop = attrs
-                            .iter()
+                            .iter_named()
                             .any(|(name, val)| name == prop && !matches!(val, Value::Null));
                         if !has_prop {
                             return Err(format!(
@@ -1075,7 +1075,7 @@ impl Pending {
                 ConstraintType::Mandatory => {
                     for prop in &constraint.properties {
                         let has_prop = attrs
-                            .iter()
+                            .iter_named()
                             .any(|(name, val)| name == prop && !matches!(val, Value::Null));
                         if !has_prop {
                             return Err(format!(
