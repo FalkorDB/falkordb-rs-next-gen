@@ -254,7 +254,7 @@ fn process_node_token(
         return Ok(());
     }
 
-    g.create_nodes(&nodes_bitmap);
+    g.create_nodes(&nodes_bitmap)?;
     unsafe { maybe_yield(raw_ctx) };
 
     let mut index_add_docs: FxHashMap<u64, RoaringTreemap> = FxHashMap::default();
@@ -331,7 +331,7 @@ fn process_edge_token(
         return Ok(());
     }
 
-    g.create_relationships_bulk(&type_name, &srcs, &dsts, &edge_ids);
+    g.create_relationships_bulk(&type_name, &srcs, &dsts, &edge_ids)?;
     unsafe { maybe_yield(raw_ctx) };
 
     if !resolved_rel_attrs.is_empty() {

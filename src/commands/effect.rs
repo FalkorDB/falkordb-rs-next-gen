@@ -133,7 +133,7 @@ fn apply_effects(
                 // Create the node
                 let mut nodes = RoaringTreemap::new();
                 nodes.insert(node_id_raw);
-                g.create_nodes(&nodes);
+                g.create_nodes(&nodes)?;
 
                 // Apply labels
                 if label_count > 0 {
@@ -158,7 +158,7 @@ fn apply_effects(
 
                 g.inc_reserved_relationship_count();
 
-                g.create_relationships_bulk(&type_name, &[src_id], &[dst_id], &[rel_id_raw]);
+                g.create_relationships_bulk(&type_name, &[src_id], &[dst_id], &[rel_id_raw])?;
 
                 // Attributes
                 let attr_count = read_u16(buf, &mut offset)?;
