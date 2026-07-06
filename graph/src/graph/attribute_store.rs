@@ -22,7 +22,7 @@
 //! changes — and rollback is simply dropping the discarded version. No locks,
 //! no per-entry version stamps, and no `unsafe`.
 
-use std::sync::Arc;
+use std::{borrow::Cow, sync::Arc};
 
 use rustc_hash::FxHashMap;
 
@@ -502,7 +502,7 @@ impl<'a> AttrArrayView<'a> {
 
     /// Iterate `(attr_idx, value)` pairs in ascending index order. Mixed chunks
     /// yield a borrow; packed scalar chunks materialize a cheap owned value.
-    pub fn iter(&self) -> impl Iterator<Item = (u16, ValueRef<'a>)> {
+    pub fn iter(&self) -> impl Iterator<Item = (u16, Cow<'a, Value>)> {
         let store = self.store;
         let (pidx, cin, slot) = decompose_id(self.entity_id);
         store
@@ -515,7 +515,7 @@ impl<'a> AttrArrayView<'a> {
 
     /// Iterate `(&attr_name, value)` pairs in ascending index order. Like
     /// [`iter`](Self::iter) but resolves each column index to its attribute name.
-    pub fn iter_named(&self) -> impl Iterator<Item = (&'a Arc<String>, ValueRef<'a>)> {
+    pub fn iter_named(&self) -> impl Iterator<Item = (&'a Arc<String>, Cow<'a, Value>)> {
         let store = self.store;
         let (pidx, cin, slot) = decompose_id(self.entity_id);
         store
@@ -566,41 +566,6 @@ const CHUNK_MASK: u64 = CHUNK_LEN as u64 - 1;
 const PAGE_LEN: usize = 64;
 const PAGE_SHIFT: u32 = PAGE_LEN.trailing_zeros();
 const PAGE_MASK: usize = PAGE_LEN - 1;
-
-/// A borrowed or owned handle to a stored [`Value`].
-///
-/// Mixed chunks store real `Value`s and hand out a borrow (`Borrowed`); packed
-/// scalar chunks keep no `Value` in memory, so they materialize a cheap
-/// (`Copy`-sized) owned value (`Owned`). Dereferences to `Value`, so most call
-/// sites are agnostic to which case they hold.
-pub enum ValueRef<'a> {
-    Borrowed(&'a Value),
-    Owned(Value),
-}
-
-impl std::ops::Deref for ValueRef<'_> {
-    type Target = Value;
-
-    #[inline]
-    fn deref(&self) -> &Value {
-        match self {
-            Self::Borrowed(v) => v,
-            Self::Owned(v) => v,
-        }
-    }
-}
-
-impl ValueRef<'_> {
-    /// Take ownership of the value, cloning only in the borrowed case.
-    #[inline]
-    #[must_use]
-    pub fn into_owned(self) -> Value {
-        match self {
-            Self::Borrowed(v) => v.clone(),
-            Self::Owned(v) => v,
-        }
-    }
-}
 
 /// Number of 64-bit words in a chunk's presence bitmap.
 const PRESENT_WORDS: usize = CHUNK_LEN / 64;
@@ -818,19 +783,19 @@ impl Chunk {
     fn get(
         &self,
         slot: usize,
-    ) -> Option<ValueRef<'_>> {
+    ) -> Option<Cow<'_, Value>> {
         match self {
             Self::Mixed { values, .. } => {
                 let v = &values[slot];
                 if matches!(v, Value::Null) {
                     None
                 } else {
-                    Some(ValueRef::Borrowed(v))
+                    Some(Cow::Borrowed(v))
                 }
             }
             Self::Scalar { data, present, .. } => {
                 if present_get(present, slot) {
-                    Some(ValueRef::Owned(data.value_at(slot)))
+                    Some(Cow::Owned(data.value_at(slot)))
                 } else {
                     None
                 }
@@ -973,7 +938,7 @@ impl Column {
     fn get(
         &self,
         id: u64,
-    ) -> Option<ValueRef<'_>> {
+    ) -> Option<Cow<'_, Value>> {
         let cid = (id >> CHUNK_SHIFT) as usize;
         self.get_at(
             cid >> PAGE_SHIFT,
@@ -991,7 +956,7 @@ impl Column {
         pidx: usize,
         cin: usize,
         slot: usize,
-    ) -> Option<ValueRef<'_>> {
+    ) -> Option<Cow<'_, Value>> {
         let page = self.pages.get(pidx)?.as_ref()?;
         let chunk = page.chunks[cin].as_ref()?;
         chunk.get(slot)
