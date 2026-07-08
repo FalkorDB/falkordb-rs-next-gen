@@ -1,0 +1,60 @@
+    87.91%     0.00%  [.] 0xffffffffffffffff                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      -      -            
+            |
+            ---0xffffffffffffffff
+               |          
+               |--37.69%--GB_AxB_meta
+               |          GB_AxB_dot
+               |          GB_AxB_dot2
+               |          __kmpc_fork_call
+               |          __kmp_fork_call
+               |          __kmp_invoke_microtask
+               |          GB_AxB_dot2.omp_outlined.184
+               |          |          
+               |           --37.17%--lg_hll_merge
+               |          
+               |--13.38%--GrB_Vector_eWiseMult_BinaryOp
+               |          |          
+               |           --13.37%--GB_ewise
+               |                     |          
+               |                      --12.82%--GB_ewise_fulln
+               |                                |          
+               |                                 --12.81%--GB_ewise_fulln_jit
+               |                                           |          
+               |                                            --12.80%--GB_jit__ewise_fulln__000000bee0beecf__lg_hll_delta
+               |                                                      |          
+               |                                                       --12.80%--__kmpc_fork_call
+               |                                                                 |          
+               |                                                                  --12.80%--__kmp_fork_call
+               |                                                                            |          
+               |                                                                             --12.80%--__kmp_invoke_microtask
+               |                                                                                       GB_jit__ewise_fulln__000000bee0beecf__lg_hll_delta.omp_outlined
+               |          
+               |--8.71%--GrB_mxv
+               |          |          
+               |           --8.70%--GB_mxm
+               |                     |          
+               |                     |--4.34%--GB_accum_mask
+               |                     |          |          
+               |                     |           --3.98%--GB_subassign
+               |                     |                     |          
+               |                     |                      --3.97%--GB_subassigner
+               |                     |                                |          
+               |                     |                                 --3.97%--GB_subassign_23
+               |                     |                                           |          
+               |                     |                                            --3.97%--__kmpc_fork_call
+               |                     |                                                      |          
+               |                     |                                                       --3.97%--__kmp_fork_call
+               |                     |                                                                 |          
+               |                     |                                                                  --3.97%--__kmp_invoke_microtask
+               |                     |                                                                            |          
+               |                     |                                                                             --3.96%--GB_subassign_23.omp_outlined
+               |                     |                                                                                       |          
+               |                     |                                                                                        --3.41%--lg_hll_merge
+               |                     |          
+               |                     |--2.36%--GB_AxB_meta
+               |                     |          |          
+               |                     |           --2.28%--GB_AxB_dot
+               |                     |                     |          
+               |                     |                      --1.77%--GB_AxB_dot2
+               |                     |                                |          
+               |                     |                                 --1.36%--__kmpc_fork_call
