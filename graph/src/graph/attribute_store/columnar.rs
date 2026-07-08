@@ -28,7 +28,7 @@ use rustc_hash::FxHashMap;
 
 use roaring::RoaringTreemap;
 
-use super::graphblas::serialization::{Decode, Encode, Reader, Writer};
+use super::super::graphblas::serialization::{Decode, Encode, Reader, Writer};
 use crate::runtime::{
     ordermap::OrderMap,
     value::{Point, Value},

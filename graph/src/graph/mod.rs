@@ -30,11 +30,11 @@
 //!                               │
 //!                               ▼
 //!                    ┌────────────────────┐
-//!                    │ AttributeStorage   │
+//!                    │ Attr engine        │
 //!                    │ (attribute_store)  │
 //!                    │                    │
-//!                    │ sharded RwLock     │
-//!                    │ Shared via Arc     │
+//!                    │ columnar (default) │
+//!                    │ or row heap (feat) │
 //!                    └────────────────────┘
 //! ```
 //!
@@ -43,7 +43,9 @@
 //! - [`graph::Graph`]: The main graph structure holding nodes, edges, labels, and properties
 //! - [`mvcc_graph::MvccGraph`]: MVCC wrapper providing snapshot isolation for concurrent access
 //! - [`cow::Cow`]: Copy-on-Write wrapper that defers matrix duplication until mutation
-//! - [`attribute_store::AttributeStore`]: In-memory columnar property storage for entities
+//! - [`attribute_store::AttributeStore`]: In-memory property storage for entities —
+//!   columnar chunks by default, or a row-oriented paged clustered heap behind the
+//!   `attr-store-heap` feature (identical public API)
 //! - [`graphblas`]: FFI bindings to the GraphBLAS C library (auto-generated, do not edit)
 //!
 //! ## Storage Model
@@ -53,7 +55,8 @@
 //! - Labels are stored as diagonal sparse matrices (node ID x node ID -> bool)
 //! - The adjacency matrix tracks all edges (src x dst -> bool)
 //! - Relationship types are stored as 3D tensors (src x dst x edge_id)
-//! - Properties are stored in a columnar in-memory attribute store
+//! - Properties are stored in an in-memory attribute store (feature-selected
+//!   engine: columnar chunks by default, paged row heap via `attr-store-heap`)
 //!
 //! ## Concurrency Model
 //!

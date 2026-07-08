@@ -17,6 +17,11 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin)'] }
 # JIT-control choice in matrix.rs is selectable at build time, not from a
 # process env var that could leak into a shipped binary.
 prejit_harvest = []
+# Swap the attribute store engine from the default columnar chunks to the
+# row-oriented paged clustered heap (see graph/src/graph/attribute_store/).
+# Both engines expose an identical public API; benchmarked head-to-head in
+# graph/tests/attr_store_bench.rs.
+attr-store-heap = []
 
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

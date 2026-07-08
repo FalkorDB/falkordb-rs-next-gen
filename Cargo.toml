@@ -54,3 +54,7 @@ fuzz = []
 # matrix.rs and forwarded by gen_prejit.sh; never enable in shipped builds —
 # the runtime image has no compiler and no on-disk cache.
 prejit_harvest = ["graph/prejit_harvest"]
+# Swap the attribute store engine from columnar chunks (default) to the
+# row-oriented paged clustered heap. Forwarded to the graph crate; see
+# graph/src/graph/attribute_store/ for the two engines and trade-offs.
+attr-store-heap = ["graph/attr-store-heap"]
