@@ -1,0 +1,60 @@
+    87.15%     0.04%  [.] __kmp_invoke_microtask                                                                                                                                                                                                                                                                                                                                                                                                                                                      -      -            
+            |          
+             --87.10%--__kmp_invoke_microtask
+                       |          
+                       |--42.88%--GB_AxB_dot2.omp_outlined.184
+                       |          |          
+                       |          |--36.15%--lg_hll_merge
+                       |          |          
+                       |          |--1.96%--0x7f8691f5cacf
+                       |          |          
+                       |          |--0.79%--0x7f8691f5ccb6
+                       |          |          
+                       |           --0.54%--0x7f8691f5cc7e
+                       |          
+                       |--12.19%--GB_jit__ewise_fulln__000000bee0beecf__lg_hll_delta.omp_outlined
+                       |          
+                       |--4.35%--GB_memset.omp_outlined
+                       |          |          
+                       |           --4.33%--0x7f8691f5d418
+                       |                     |          
+                       |                      --3.98%--asm_exc_page_fault
+                       |                                |          
+                       |                                 --3.98%--exc_page_fault
+                       |                                           |          
+                       |                                            --3.98%--do_user_addr_fault
+                       |                                                      |          
+                       |                                                       --2.60%--handle_mm_fault
+                       |                                                                 |          
+                       |                                                                  --2.54%--__handle_mm_fault
+                       |                                                                            |          
+                       |                                                                            |--1.42%--vma_alloc_folio
+                       |                                                                            |          |          
+                       |                                                                            |           --1.39%--__folio_alloc
+                       |                                                                            |                     |          
+                       |                                                                            |                      --1.39%--__alloc_pages
+                       |                                                                            |                                |          
+                       |                                                                            |                                 --1.35%--get_page_from_freelist
+                       |                                                                            |                                           |          
+                       |                                                                            |                                            --1.18%--clear_page_erms
+                       |                                                                            |          
+                       |                                                                             --0.63%--__mem_cgroup_charge
+                       |          
+                       |--3.88%--GB_subassign_23.omp_outlined
+                       |          |          
+                       |           --3.31%--lg_hll_merge
+                       |          
+                       |--3.63%--GB_apply_op.omp_outlined.42
+                       |          |          
+                       |          |--1.15%--0x7f8691f5cb34
+                       |          |          
+                       |           --0.82%--LG_MF_GetResidual
+                       |          
+                       |--3.48%--GB_transpose_ix.omp_outlined.15
+                       |          |          
+                       |           --0.69%--GB__cast_double_double
+                       |          
+                       |--2.30%--GB__sel_phase2__gt_thunk_fp64.omp_outlined
+                       |          
+                       |--1.49%--GB_apply_op.omp_outlined.55
+                       |          |          
