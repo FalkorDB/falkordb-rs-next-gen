@@ -1,0 +1,1239 @@
+{
+  "runs": [
+    {
+      "vendor": "FalkorDB",
+      "read-write-ratio": 0.0,
+      "clients": 20,
+      "platform": "intel",
+      "target-messages-per-second": 500,
+      "edges": 10000,
+      "relationships": 121716,
+      "result": {
+        "deadline-offset": "0ms",
+        "actual-messages-per-second": 500,
+        "latency": {
+          "p50": "21ms",
+          "p95": "46ms",
+          "p99": "49ms"
+        },
+        "cpu-usage": 0.1,
+        "ram-usage": "15MB",
+        "errors": 0,
+        "successful-requests": 1000000
+      }
+    },
+    {
+      "vendor": "FalkorDB",
+      "read-write-ratio": 0.0,
+      "clients": 40,
+      "platform": "intel",
+      "target-messages-per-second": 500,
+      "edges": 10000,
+      "relationships": 121716,
+      "result": {
+        "deadline-offset": "0ms",
+        "actual-messages-per-second": 500,
+        "latency": {
+          "p50": "44ms",
+          "p95": "95ms",
+          "p99": "100ms"
+        },
+        "cpu-usage": 0.1,
+        "ram-usage": "15MB",
+        "errors": 0,
+        "successful-requests": 1000000
+      }
+    },
+    {
+      "vendor": "FalkorDB",
+      "read-write-ratio": 0.0,
+      "clients": 20,
+      "platform": "intel",
+      "target-messages-per-second": 1000,
+      "edges": 10000,
+      "relationships": 121716,
+      "result": {
+        "deadline-offset": "0ms",
+        "actual-messages-per-second": 1000,
+        "latency": {
+          "p50": "18ms",
+          "p95": "24ms",
+          "p99": "44ms"
+        },
+        "cpu-usage": 0.1,
+        "ram-usage": "15MB",
+        "errors": 0,
+        "successful-requests": 1000000
+      }
+    },
+    {
+      "vendor": "FalkorDB",
+      "read-write-ratio": 0.0,
+      "clients": 40,
+      "platform": "intel",
+      "target-messages-per-second": 1000,
+      "edges": 10000,
+      "relationships": 121716,
+      "result": {
+        "deadline-offset": "0ms",
+        "actual-messages-per-second": 1000,
+        "latency": {
+          "p50": "37ms",
+          "p95": "47ms",
+          "p99": "49ms"
+        },
+        "cpu-usage": 0.1,
+        "ram-usage": "15MB",
+        "errors": 0,
+        "successful-requests": 1000000
+      }
+    },
+    {
+      "vendor": "FalkorDB",
+      "read-write-ratio": 0.0,
+      "clients": 20,
+      "platform": "intel",
+      "target-messages-per-second": 1500,
+      "edges": 10000,
+      "relationships": 121716,
+      "result": {
+        "deadline-offset": "0ms",
+        "actual-messages-per-second": 1500,
+        "latency": {
+          "p50": "17ms",
+          "p95": "23ms",
+          "p99": "25ms"
+        },
+        "cpu-usage": 0.1,
+        "ram-usage": "15MB",
+        "errors": 0,
+        "successful-requests": 1000000
+      }
+    },
+    {
+      "vendor": "FalkorDB",
+      "read-write-ratio": 0.0,
+      "clients": 40,
+      "platform": "intel",
+      "target-messages-per-second": 1500,
+      "edges": 10000,
+      "relationships": 121716,
+      "result": {
+        "deadline-offset": "0ms",
+        "actual-messages-per-second": 1500,
+        "latency": {
+          "p50": "34ms",
+          "p95": "46ms",
+          "p99": "49ms"
+        },
+        "cpu-usage": 0.1,
+        "ram-usage": "15MB",
+        "errors": 0,
+        "successful-requests": 1000000
+      }
+    },
+    {
+      "vendor": "FalkorDB",
+      "read-write-ratio": 0.0,
+      "clients": 20,
+      "platform": "intel",
+      "target-messages-per-second": 2000,
+      "edges": 10000,
+      "relationships": 121716,
+      "result": {
+        "deadline-offset": "0ms",
+        "actual-messages-per-second": 2000,
+        "latency": {
+          "p50": "9ms",
+          "p95": "23ms",
+          "p99": "24ms"
+        },
+        "cpu-usage": 0.1,
+        "ram-usage": "16MB",
+        "errors": 0,
+        "successful-requests": 1000000
+      }
+    },
+    {
+      "vendor": "FalkorDB",
+      "read-write-ratio": 0.0,
+      "clients": 40,
+      "platform": "intel",
+      "target-messages-per-second": 2000,
+      "edges": 10000,
+      "relationships": 121716,
+      "result": {
+        "deadline-offset": "0ms",
+        "actual-messages-per-second": 2000,
+        "latency": {
+          "p50": "18ms",
+          "p95": "24ms",
+          "p99": "45ms"
+        },
+        "cpu-usage": 0.1,
+        "ram-usage": "15MB",
+        "errors": 0,
+        "successful-requests": 1000000
+      }
+    },
+    {
+      "vendor": "FalkorDB",
+      "read-write-ratio": 0.0,
+      "clients": 20,
+      "platform": "intel",
+      "target-messages-per-second": 2500,
+      "edges": 10000,
+      "relationships": 121716,
+      "result": {
+        "deadline-offset": "0ms",
+        "actual-messages-per-second": 2500,
+        "latency": {
+          "p50": "8ms",
+          "p95": "17ms",
+          "p99": "24ms"
+        },
+        "cpu-usage": 0.1,
+        "ram-usage": "16MB",
+        "errors": 0,
+        "successful-requests": 1000000
+      }
+    },
+    {
+      "vendor": "FalkorDB",
+      "read-write-ratio": 0.0,
+      "clients": 40,
+      "platform": "intel",
+      "target-messages-per-second": 2500,
+      "edges": 10000,
+      "relationships": 121716,
+      "result": {
+        "deadline-offset": "0ms",
+        "actual-messages-per-second": 2500,
+        "latency": {
+          "p50": "14ms",
+          "p95": "18ms",
+          "p99": "26ms"
+        },
+        "cpu-usage": 0.2,
+        "ram-usage": "17MB",
+        "errors": 0,
+        "successful-requests": 1000000
+      }
+    },
+    {
+      "_comment": "*****  neo4j ******"
+    },
+    {
+      "vendor": "Neo4j",
+      "read-write-ratio": 0.0,
+      "clients": 20,
+      "platform": "intel",
+      "target-messages-per-second": 500,
+      "edges": 10000,
+      "relationships": 121716,
+      "result": {
+        "deadline-offset": "42.5min",
+        "actual-messages-per-second": 229,
+        "latency": {
+          "p50": "24ms",
+          "p95": "230ms",
+          "p99": "1.3s"
+        },
+        "cpu-usage": 0.1,
+        "ram-usage": "1.7GB",
+        "errors": 0,
+        "successful-requests": 1000000
+      }
+    },
+    {
+      "vendor": "Neo4j",
+      "read-write-ratio": 0.0,
+      "clients": 40,
+      "platform": "intel",
+      "target-messages-per-second": 500,
+      "edges": 10000,
+      "relationships": 121716,
+      "result": {
+        "deadline-offset": "42.6min",
+        "actual-messages-per-second": 220,
+        "latency": {
+          "p50": "146ms",
+          "p95": "370ms",
+          "p99": "1.8s"
+        },
+        "cpu-usage": 0.3,
+        "ram-usage": "1.67GB",
+        "errors": 0,
+        "successful-requests": 1000000
+      }
+    },
+    {
+      "vendor": "Neo4j",
+      "read-write-ratio": 0.0,
+      "clients": 20,
+      "platform": "intel",
+      "target-messages-per-second": 1000,
+      "edges": 10000,
+      "relationships": 121716,
+      "result": {
+        "deadline-offset": "68min",
+        "actual-messages-per-second": 220,
+        "latency": {
+          "p50": "26ms",
+          "p95": "236ms",
+          "p99": "1.4s"
+        },
+        "cpu-usage": 0.4,
+        "ram-usage": "1.6GB",
+        "errors": 0,
+        "successful-requests": 1000000
+      }
+    },
+    {
+      "vendor": "Neo4j",
+      "read-write-ratio": 0.0,
+      "clients": 40,
+      "platform": "intel",
+      "target-messages-per-second": 1000,
+      "edges": 10000,
+      "relationships": 121716,
+      "result": {
+        "deadline-offset": "67min",
+        "actual-messages-per-second": 220,
+        "latency": {
+          "p50": "146ms",
+          "p95": "386ms",
+          "p99": "1.66s"
+        },
+        "cpu-usage": 0.4,
+        "ram-usage": "15GB",
+        "errors": 0,
+        "successful-requests": 1000000
+      }
+    },
+    {
+      "vendor": "Neo4j",
+      "read-write-ratio": 0.0,
+      "clients": 20,
+      "platform": "intel",
+      "target-messages-per-second": 1500,
+      "edges": 10000,
+      "relationships": 121716,
+      "result": {
+        "deadline-offset": "67min",
+        "actual-messages-per-second": 220,
+        "latency": {
+          "p50": "26ms",
+          "p95": "230ms",
+          "p99": "1.4s"
+        },
+        "cpu-usage": 0.3,
+        "ram-usage": "17GB",
+        "errors": 0,
+        "successful-requests": 1000000
+      }
+    },
+    {
+      "vendor": "Neo4j",
+      "read-write-ratio": 0.0,
+      "clients": 40,
+      "platform": "intel",
+      "target-messages-per-second": 1500,
+      "edges": 10000,
+      "relationships": 121716,
+      "result": {
+        "deadline-offset": "67min",
+        "actual-messages-per-second": 220,
+        "latency": {
+          "p50": "148ms",
+          "p95": "4395ms",
+          "p99": "1.7s"
+        },
+        "cpu-usage": 0.3,
+        "ram-usage": "15.4GB",
+        "errors": 0,
+        "successful-requests": 1000000
+      }
+    },
+    {
+      "vendor": "Neo4j",
+      "read-write-ratio": 0.0,
+      "clients": 20,
+      "platform": "intel",
+      "target-messages-per-second": 2000,
+      "edges": 10000,
+      "relationships": 121716,
+      "result": {
+        "deadline-offset": "67min",
+        "actual-messages-per-second": 220,
+        "latency": {
+          "p50": "24ms",
+          "p95": "223ms",
+          "p99": "1.3s"
+        },
+        "cpu-usage": 0.3,
+        "ram-usage": "1.6GB",
+        "errors": 0,
+        "successful-requests": 1000000
+      }
+    },
+    {
+      "vendor": "Neo4j",
+      "read-write-ratio": 0.0,
+      "clients": 40,
+      "platform": "intel",
+      "target-messages-per-second": 2000,
+      "edges": 10000,
+      "relationships": 121716,
+      "result": {
+        "deadline-offset": "68min",
+        "actual-messages-per-second": 220,
+        "latency": {
+          "p50": "145ms",
+          "p95": "384ms",
+          "p99": "1.7s"
+        },
+        "cpu-usage": 0.5,
+        "ram-usage": "2.2GB",
+        "errors": 0,
+        "successful-requests": 1000000
+      }
+    },
+    {
+      "vendor": "Neo4j",
+      "read-write-ratio": 0.0,
+      "clients": 20,
+      "platform": "intel",
+      "target-messages-per-second": 2500,
+      "edges": 10000,
+      "relationships": 121716,
+      "result": {
+        "deadline-offset": "72min",
+        "actual-messages-per-second": 220,
+        "latency": {
+          "p50": "24.6ms",
+          "p95": "227ms",
+          "p99": "1.40s"
+        },
+        "cpu-usage": 0.4,
+        "ram-usage": "16.2GB",
+        "errors": 0,
+        "successful-requests": 1000000
+      }
+    },
+    {
+      "vendor": "Neo4j",
+      "read-write-ratio": 0.0,
+      "clients": 40,
+      "platform": "intel",
+      "target-messages-per-second": 2500,
+      "edges": 10000,
+      "relationships": 121716,
+      "result": {
+        "deadline-offset": "72min",
+        "actual-messages-per-second": 220,
+        "latency": {
+          "p50": "145ms",
+          "p95": "382ms",
+          "p99": "1.6s"
+        },
+        "cpu-usage": 0.2,
+        "ram-usage": "1.8GB",
+        "errors": 0,
+        "successful-requests": 1000000
+      }
+    },
+    {
+      "_comment": "*****  macbook ******"
+    },
+    {
+      "vendor": "FalkorDB",
+      "read-write-ratio": 0.0,
+      "clients": 20,
+      "platform": "arm",
+      "target-messages-per-second": 500,
+      "edges": 10000,
+      "relationships": 121716,
+      "result": {
+        "deadline-offset": "0ms",
+        "actual-messages-per-second": 500,
+        "latency": {
+          "p50": "30.5ms",
+          "p95": "47.6ms",
+          "p99": "49.9ms"
+        },
+        "cpu-usage": 0.03,
+        "ram-usage": "15.9MB",
+        "errors": 0,
+        "successful-requests": 1000000
+      }
+    },
+    {
+      "vendor": "FalkorDB",
+      "read-write-ratio": 0.0,
+      "clients": 40,
+      "platform": "arm",
+      "target-messages-per-second": 500,
+      "edges": 10000,
+      "relationships": 121716,
+      "result": {
+        "deadline-offset": "0ms",
+        "actual-messages-per-second": 500,
+        "latency": {
+          "p50": "75ms",
+          "p95": "95ms",
+          "p99": "99.5ms"
+        },
+        "cpu-usage": 0.03,
+        "ram-usage": "15.2MB",
+        "errors": 0,
+        "successful-requests": 1000000
+      }
+    },
+    {
+      "vendor": "FalkorDB",
+      "read-write-ratio": 0.0,
+      "clients": 20,
+      "platform": "arm",
+      "target-messages-per-second": 1000,
+      "edges": 10000,
+      "relationships": 121716,
+      "result": {
+        "deadline-offset": "0ms",
+        "actual-messages-per-second": 1000,
+        "latency": {
+          "p50": "17.5ms",
+          "p95": "23.6ms",
+          "p99": "25ms"
+        },
+        "cpu-usage": 0.06,
+        "ram-usage": "15.5MB",
+        "errors": 0,
+        "successful-requests": 1000000
+      }
+    },
+    {
+      "vendor": "FalkorDB",
+      "read-write-ratio": 0.0,
+      "clients": 40,
+      "platform": "arm",
+      "target-messages-per-second": 1000,
+      "edges": 10000,
+      "relationships": 121716,
+      "result": {
+        "deadline-offset": "0ms",
+        "actual-messages-per-second": 1000,
+        "latency": {
+          "p50": "37.5ms",
+          "p95": "47.6ms",
+          "p99": "49.8ms"
+        },
+        "cpu-usage": 0.06,
+        "ram-usage": "15.9MB",
+        "errors": 0,
+        "successful-requests": 1000000
+      }
+    },
+    {
+      "vendor": "FalkorDB",
+      "read-write-ratio": 0.0,
+      "clients": 20,
+      "platform": "arm",
+      "target-messages-per-second": 1500,
+      "edges": 10000,
+      "relationships": 121716,
+      "result": {
+        "deadline-offset": "0ms",
+        "actual-messages-per-second": 1500,
+        "latency": {
+          "p50": "17.4ms",
+          "p95": "23.5ms",
+          "p99": "24.9ms"
+        },
+        "cpu-usage": 0.09,
+        "ram-usage": "15.6MB",
+        "errors": 0,
+        "successful-requests": 1000000
+      }
+    },
+    {
+      "vendor": "FalkorDB",
+      "read-write-ratio": 0.0,
+      "clients": 40,
+      "platform": "arm",
+      "target-messages-per-second": 1500,
+      "edges": 10000,
+      "relationships": 121716,
+      "result": {
+        "deadline-offset": "0ms",
+        "actual-messages-per-second": 1500,
+        "latency": {
+          "p50": "35.2ms",
+          "p95": "47.1ms",
+          "p99": "49.7ms"
+        },
+        "cpu-usage": 0.09,
+        "ram-usage": "17MB",
+        "errors": 0,
+        "successful-requests": 1000000
+      }
+    },
+    {
+      "vendor": "FalkorDB",
+      "read-write-ratio": 0.0,
+      "clients": 20,
+      "platform": "arm",
+      "target-messages-per-second": 2000,
+      "edges": 10000,
+      "relationships": 121716,
+      "result": {
+        "deadline-offset": "0ms",
+        "actual-messages-per-second": 2000,
+        "latency": {
+          "p50": "9.36ms",
+          "p95": "21.5ms",
+          "p99": "24.7ms"
+        },
+        "cpu-usage": 0.15,
+        "ram-usage": "16MB",
+        "errors": 0,
+        "successful-requests": 1000000
+      }
+    },
+    {
+      "vendor": "FalkorDB",
+      "read-write-ratio": 0.0,
+      "clients": 40,
+      "platform": "arm",
+      "target-messages-per-second": 2000,
+      "edges": 10000,
+      "relationships": 121716,
+      "result": {
+        "deadline-offset": "0ms",
+        "actual-messages-per-second": 2000,
+        "latency": {
+          "p50": "17.6ms",
+          "p95": "23.7ms",
+          "p99": "31.5ms"
+        },
+        "cpu-usage": 0.13,
+        "ram-usage": "16.6MB",
+        "errors": 0,
+        "successful-requests": 1000000
+      }
+    },
+    {
+      "vendor": "FalkorDB",
+      "read-write-ratio": 0.0,
+      "clients": 20,
+      "platform": "arm",
+      "target-messages-per-second": 2500,
+      "edges": 10000,
+      "relationships": 121716,
+      "result": {
+        "deadline-offset": "0ms",
+        "actual-messages-per-second": 2500,
+        "latency": {
+          "p50": "7.85ms",
+          "p95": "15.1ms",
+          "p99": "24.1ms"
+        },
+        "cpu-usage": 0.2,
+        "ram-usage": "16.5MB",
+        "errors": 0,
+        "successful-requests": 1000000
+      }
+    },
+    {
+      "vendor": "FalkorDB",
+      "read-write-ratio": 0.0,
+      "clients": 40,
+      "platform": "arm",
+      "target-messages-per-second": 2500,
+      "edges": 10000,
+      "relationships": 121716,
+      "result": {
+        "deadline-offset": "0ms",
+        "actual-messages-per-second": 2500,
+        "latency": {
+          "p50": "17.5ms",
+          "p95": "23.5ms",
+          "p99": "24.9ms"
+        },
+        "cpu-usage": 0.2,
+        "ram-usage": "17.4MB",
+        "errors": 0,
+        "successful-requests": 1000000
+      }
+    },
+
+    {
+      "vendor": "Neo4j",
+      "read-write-ratio": 0.0,
+      "clients": 20,
+      "platform": "arm",
+      "target-messages-per-second": 500,
+      "edges": 10000,
+      "relationships": 121716,
+      "result": {
+        "deadline-offset": "53min",
+        "actual-messages-per-second": 224,
+        "latency": {
+          "p50": "36.9ms",
+          "p95": "396ms",
+          "p99": "2.5s"
+        },
+        "cpu-usage": 0.93,
+        "ram-usage": "1.1GB",
+        "errors": 0,
+        "successful-requests": 1000000
+      }
+    },
+
+    {
+      "vendor": "Neo4j",
+      "read-write-ratio": 0.0,
+      "clients": 40,
+      "platform": "arm",
+      "target-messages-per-second": 500,
+      "edges": 10000,
+      "relationships": 121716,
+      "result": {
+        "deadline-offset": "51min",
+        "actual-messages-per-second": 239,
+        "latency": {
+          "p50": "165ms",
+          "p95": "443ms",
+          "p99": "1.97s"
+        },
+        "cpu-usage": 0.93,
+        "ram-usage": "1.1GB",
+        "errors": 0,
+        "successful-requests": 1000000
+      }
+    },
+    {
+      "vendor": "Neo4j",
+      "read-write-ratio": 0.0,
+      "clients": 20,
+      "platform": "arm",
+      "target-messages-per-second": 1000,
+      "edges": 10000,
+      "relationships": 121716,
+      "result": {
+        "deadline-offset": "86min",
+        "actual-messages-per-second": 214,
+        "latency": {
+          "p50": "33ms",
+          "p95": "293ms",
+          "p99": "1.95s"
+        },
+        "cpu-usage": 0.93,
+        "ram-usage": "1.15GB",
+        "errors": 0,
+        "successful-requests": 1000000
+      }
+    },
+    {
+      "vendor": "Neo4j",
+      "read-write-ratio": 0.0,
+      "clients": 40,
+      "platform": "arm",
+      "target-messages-per-second": 1000,
+      "edges": 10000,
+      "relationships": 121716,
+      "result": {
+        "deadline-offset": "65min",
+        "actual-messages-per-second": 254,
+        "latency": {
+          "p50": "157ms",
+          "p95": "411ms",
+          "p99": "1.85s"
+        },
+        "cpu-usage": 0.93,
+        "ram-usage": "1.26GB",
+        "errors": 0,
+        "successful-requests": 1000000
+      }
+    },
+    {
+      "vendor": "Neo4j",
+      "read-write-ratio": 0.0,
+      "clients": 20,
+      "platform": "arm",
+      "target-messages-per-second": 1500,
+      "edges": 10000,
+      "relationships": 121716,
+      "result": {
+        "deadline-offset": "84min",
+        "actual-messages-per-second": 282,
+        "latency": {
+          "p50": "31ms",
+          "p95": "271ms",
+          "p99": "1.84s"
+        },
+        "cpu-usage": 0.94,
+        "ram-usage": "1.3GB",
+        "errors": 0,
+        "successful-requests": 1000000
+      }
+    },
+    {
+      "vendor": "Neo4j",
+      "read-write-ratio": 0.0,
+      "clients": 40,
+      "platform": "arm",
+      "target-messages-per-second": 1500,
+      "edges": 10000,
+      "relationships": 121716,
+      "result": {
+        "deadline-offset": "106min",
+        "actual-messages-per-second": 236,
+        "latency": {
+          "p50": "166ms",
+          "p95": "435ms",
+          "p99": "1.95s"
+        },
+        "cpu-usage": 0.93,
+        "ram-usage": "1.39GB",
+        "errors": 0,
+        "successful-requests": 1000000
+      }
+    },
+    {
+      "vendor": "Neo4j",
+      "read-write-ratio": 0.0,
+      "clients": 20,
+      "platform": "arm",
+      "target-messages-per-second": 2000,
+      "edges": 10000,
+      "relationships": 121716,
+      "result": {
+        "deadline-offset": "99min",
+        "actual-messages-per-second": 230,
+        "latency": {
+          "p50": "40ms",
+          "p95": "385ms",
+          "p99": "2.43s"
+        },
+        "cpu-usage": 0.93,
+        "ram-usage": "1.07GB",
+        "errors": 0,
+        "successful-requests": 1000000
+      }
+    },
+    {
+      "vendor": "Neo4j",
+      "read-write-ratio": 0.0,
+      "clients": 40,
+      "platform": "arm",
+      "target-messages-per-second": 2000,
+      "edges": 10000,
+      "relationships": 121716,
+      "result": {
+        "deadline-offset": "79min",
+        "actual-messages-per-second": 260,
+        "latency": {
+          "p50": "161ms",
+          "p95": "394ms",
+          "p99": "2.08s"
+        },
+        "cpu-usage": 0.88,
+        "ram-usage": "1.21GB",
+        "errors": 0,
+        "successful-requests": 1000000
+      }
+    },
+    {
+      "vendor": "Neo4j",
+      "read-write-ratio": 0.0,
+      "clients": 20,
+      "platform": "arm",
+      "target-messages-per-second": 2500,
+      "edges": 10000,
+      "relationships": 121716,
+      "result": {
+        "deadline-offset": "79min",
+        "actual-messages-per-second": 225,
+        "latency": {
+          "p50": "33ms",
+          "p95": "287ms",
+          "p99": "2.04s"
+        },
+        "cpu-usage": 0.93,
+        "ram-usage": "1.42GB",
+        "errors": 0,
+        "successful-requests": 1000000
+      }
+    },
+    {
+      "vendor": "Neo4j",
+      "read-write-ratio": 0.0,
+      "clients": 40,
+      "platform": "arm",
+      "target-messages-per-second": 2500,
+      "edges": 10000,
+      "relationships": 121716,
+      "result": {
+        "deadline-offset": "79min",
+        "actual-messages-per-second": 238,
+        "latency": {
+          "p50": "169ms",
+          "p95": "456ms",
+          "p99": "2.05s"
+        },
+        "cpu-usage": 0.93,
+        "ram-usage": "1.35GB",
+        "errors": 0,
+        "successful-requests": 1000000
+      }
+    }
+  ],
+  "unrealstic": [
+    {
+      "vendor": "FalkorDB",
+      "node_count": 100000,
+      "relation_count": 1768515,
+      "query_count": 100000,
+      "memory": "95MB",
+      "histogram_for_type": {
+        "aggregate_expansion_1_with_filter": [
+          0.7,
+          0.8,
+          0.8,
+          0.9,
+          0.9,
+          1.0,
+          1.0,
+          1.1,
+          1.3,
+          1.5,
+          1.9
+        ],
+        "aggregate_expansion_3_with_filter": [
+          1.3,
+          2.2,
+          3.3,
+          4.4,
+          5.8,
+          7.6,
+          9.9,
+          13.4,
+          19.2,
+          24.3,
+          31.2
+        ],
+        "single_edge_write": [
+          0.8,
+          0.9,
+          1.0,
+          1.0,
+          1.1,
+          1.1,
+          1.2,
+          1.2,
+          1.3,
+          1.4,
+          1.6
+        ],
+        "aggregate_expansion_1": [
+          0.7,
+          0.8,
+          0.8,
+          0.9,
+          0.9,
+          1.0,
+          1.0,
+          1.1,
+          1.3,
+          1.5,
+          1.9
+        ],
+        "single_vertex_write": [
+          0.7,
+          0.8,
+          0.9,
+          0.9,
+          1.0,
+          1.0,
+          1.1,
+          1.2,
+          1.2,
+          1.3,
+          1.6
+        ],
+        "aggregate_expansion_2_with_filter": [
+          0.9,
+          1.0,
+          1.1,
+          1.2,
+          1.3,
+          1.4,
+          1.6,
+          2.0,
+          2.8,
+          3.5,
+          5.2
+        ],
+        "write": [
+          0.8,
+          0.9,
+          0.9,
+          1.0,
+          1.0,
+          1.1,
+          1.1,
+          1.2,
+          1.3,
+          1.4,
+          1.6
+        ],
+        "aggregate_expansion_4_with_filter": [
+          4.4,
+          14.3,
+          22.7,
+          29.6,
+          36.1,
+          41.7,
+          48.1,
+          55.0,
+          66.6,
+          74.2,
+          82.9
+        ],
+        "aggregate_expansion_2": [
+          0.9,
+          1.0,
+          1.1,
+          1.2,
+          1.4,
+          1.5,
+          1.8,
+          2.2,
+          3.3,
+          6.6,
+          9.4
+        ],
+        "aggregate_expansion_4": [
+          5.1,
+          19.7,
+          32.6,
+          44.5,
+          55.0,
+          65.3,
+          76.3,
+          90.1,
+          108.0,
+          121.3,
+          136.2
+        ],
+        "aggregate_expansion_3": [
+          1.4,
+          2.6,
+          3.9,
+          5.8,
+          8.1,
+          10.5,
+          13.4,
+          19.2,
+          29.1,
+          40.7,
+          49.9
+        ],
+        "single_vertex_read": [
+          0.6,
+          0.7,
+          0.7,
+          0.8,
+          0.8,
+          0.9,
+          0.9,
+          1.0,
+          1.0,
+          1.1,
+          1.3
+        ]
+      }
+    },
+    {
+      "vendor": "Neo4j",
+      "node_count": 100000,
+      "relation_count": 1768515,
+      "query_count": 100000,
+      "memory": "600MB",
+      "histogram_for_type": {
+        "aggregate_expansion_3_with_filter": [
+          2.5,
+          6.2,
+          11.1,
+          17.4,
+          25.9,
+          36.9,
+          55.3,
+          86.5,
+          151.6,
+          220.2,
+          337.9
+        ],
+        "aggregate_expansion_1_with_filter": [
+          1.0,
+          1.2,
+          1.4,
+          1.5,
+          1.6,
+          1.8,
+          1.9,
+          2.1,
+          2.4,
+          2.6,
+          3.3
+        ],
+        "single_vertex_read": [
+          1.0,
+          1.2,
+          1.3,
+          1.5,
+          1.6,
+          1.8,
+          1.9,
+          2.1,
+          2.3,
+          2.5,
+          3.1
+        ],
+        "write": [
+          2.3,
+          2.6,
+          2.8,
+          3.1,
+          3.4,
+          3.7,
+          3.9,
+          4.3,
+          4.8,
+          5.3,
+          6.8
+        ],
+        "aggregate_expansion_2": [
+          1.5,
+          1.8,
+          2.1,
+          2.4,
+          2.8,
+          3.4,
+          4.3,
+          6.0,
+          11.3,
+          24.3,
+          43.0
+        ],
+        "aggregate_expansion_2_with_filter": [
+          1.4,
+          1.7,
+          2.0,
+          2.2,
+          2.5,
+          2.9,
+          3.6,
+          4.8,
+          7.7,
+          11.7,
+          26.4
+        ],
+        "aggregate_expansion_4_with_filter": [
+          16.5,
+          106.0,
+          209.9,
+          329.7,
+          469.0,
+          679.9,
+          1056.8,
+          1933.3,
+          4554.8,
+          13959.2,
+          41156.6
+        ],
+        "single_vertex_write": [
+          2.2,
+          2.5,
+          2.7,
+          3.0,
+          3.3,
+          3.6,
+          3.8,
+          4.1,
+          4.6,
+          5.1,
+          6.2
+        ],
+        "aggregate_expansion_3": [
+          2.7,
+          7.6,
+          14.5,
+          23.8,
+          36.4,
+          52.7,
+          75.3,
+          117.8,
+          213.0,
+          313.3,
+          475.1
+        ],
+        "single_edge_write": [
+          2.3,
+          2.6,
+          2.9,
+          3.2,
+          3.5,
+          3.8,
+          4.0,
+          4.4,
+          5.0,
+          5.5,
+          7.1
+        ],
+        "aggregate_expansion_4": [
+          28.4,
+          134.1,
+          266.2,
+          403.5,
+          577.5,
+          802.8,
+          1187.8,
+          2072.6,
+          4784.1,
+          17039.4,
+          46923.8
+        ],
+        "aggregate_expansion_1": [
+          1.0,
+          1.2,
+          1.4,
+          1.5,
+          1.7,
+          1.8,
+          2.0,
+          2.1,
+          2.4,
+          2.6,
+          3.2
+        ]
+      }
+    }
+  ],
+  "platforms": [
+    {
+      "id": "Macbook-Air-2024",
+      "cpu": "M3 (ARM, 8 cores)",
+      "ram": "24GB",
+      "storage": "512gb SSD"
+    },
+    {
+      "id": "intel-Lenovo-ultra7",
+      "cpu": "Intel Ultra 7 155H 22 CPU 16 cores",
+      "ram": "30GB",
+      "storage": "MVMe 930GB"
+    }
+  ]
+}
+
