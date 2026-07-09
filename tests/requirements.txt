@@ -4,6 +4,7 @@ falkordb-bulk-loader
 hypothesis
 pytest
 pytest-benchmark
+pytest-timeout
 textual
 textual-dev
 RLTest>=0.7.25

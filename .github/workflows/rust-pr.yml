@@ -383,6 +383,205 @@ jobs:
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
+  # Native macOS build + test (arm64). No Docker — hosted macOS runners don't
+  # ship docker, so this path doesn't go through the toolchain/RC images that
+  # the Linux pipeline uses. We brew-install the toolchain, build GraphBLAS
+  # and RediSearch via the existing scripts (both already Darwin-aware and
+  # CC/CXX-driven post-#539), then cargo-build libfalkordb.dylib and run
+  # cargo + pytest + TCK + flow tests against a locally spawned Homebrew
+  # redis-server with --loadmodule pointing at the freshly built dylib.
+  # See issue #547.
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 90
+    needs:
+      - check-files
+    if: ${{ !cancelled() }}
+    env:
+      # graph/build.rs (post-#539) static-links libomp when
+      # ${LIBOMP_PREFIX}/lib/libomp.a exists. Brew's `libomp` formula installs
+      # both libomp.a and libomp.dylib under /opt/homebrew/opt/libomp, so point
+      # LIBOMP_PREFIX at it to get the same self-contained dylib Linux builds
+      # produce via build/libomp.sh.
+      LIBOMP_PREFIX: /opt/homebrew/opt/libomp
+      # Install GraphBLAS into a workspace-local prefix instead of the script's
+      # /usr/local default. Two reasons:
+      #   1. No sudo — actions/cache restores as the unprivileged runner user
+      #      and can't write under /usr/local, so a /usr/local install would
+      #      never restore from cache.
+      #   2. The whole dependency tree (GraphBLAS .a + headers + cmake config)
+      #      lives under one cacheable directory in the workspace.
+      # graphblas.sh reads GRAPHBLAS_INSTALL_PREFIX; graph/build.rs reads
+      # GRAPHBLAS_LIB_DIR to find libgraphblas.a at link time.
+      GRAPHBLAS_INSTALL_PREFIX: ${{ github.workspace }}/.deps/graphblas
+      GRAPHBLAS_LIB_DIR: ${{ github.workspace }}/.deps/graphblas/lib
+      # Only the release dylib is built (cargo build --release), so tell
+      # tests/common.py and flow.sh to load target/release/libfalkordb.dylib.
+      # Without this, common.py defaults to the debug path on Darwin, redis
+      # fails to load a non-existent module, and start_redis() would hang.
+      RELEASE: "1"
+      # The concurrency/MVCC pytest suites use multiprocessing.Pool. macOS
+      # defaults to the 'spawn' start method (Linux uses 'fork'); the tests now
+      # force a fork context via common.fork_pool(). macOS aborts fork() in a
+      # process that already initialised ObjC/system frameworks unless this is
+      # set, so disable that guard for the pure-Python redis-client workers.
+      OBJC_DISABLE_INITIALIZE_FORK_SAFETY: "YES"
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Install Homebrew build + test deps
+        run: |
+          # - llvm:    clang (Homebrew LLVM) — graphblas.sh / redisearch.sh
+          #            pass it through via CC/CXX (see "Export Homebrew LLVM"
+          #            step below). Required for OpenMP in VectorSimilarity.
+          # - libomp:  ships libomp.a + libomp.dylib at /opt/homebrew/opt/libomp;
+          #            consumed via LIBOMP_PREFIX (see env block).
+          # - cmake:   required by GraphBLAS, RediSearch and VecSim.
+          # - redis:   provides redis-server for the test suites' local-dev
+          #            spawn mode (no FALKORDB_TEST_IMAGE => RLTest spawns a
+          #            redis with --loadmodule libfalkordb.dylib).
+          # - openssl@3: RediSearch coordinator references libssl/libcrypto;
+          #              graph/build.rs links them statically on macOS from
+          #              /opt/homebrew/opt/openssl@3/lib.
+          # - jq, lcov: already used by existing scripts and a no-op if unused.
+          brew install cmake llvm libomp redis openssl@3 jq lcov
+
+      - name: Export Homebrew LLVM into PATH/CC/CXX
+        run: |
+          LLVM_PREFIX="$(brew --prefix llvm)"
+          echo "${LLVM_PREFIX}/bin"            >> "$GITHUB_PATH"
+          echo "CC=${LLVM_PREFIX}/bin/clang"    >> "$GITHUB_ENV"
+          echo "CXX=${LLVM_PREFIX}/bin/clang++" >> "$GITHUB_ENV"
+          # Capture the exact Homebrew LLVM version so the native-deps cache key
+          # can bust when clang is upgraded (the C artefacts are ABI-tied to it).
+          # `runner.os` env (ImageVersion) isn't exposed to the `env:` expression
+          # context, so derive a real toolchain fingerprint here instead.
+          echo "BREW_LLVM_VERSION=$(brew list --versions llvm | awk '{print $2}')" >> "$GITHUB_ENV"
+
+      - name: Install Rust stable
+        run: rustup default stable
+
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: "macos-release"
+
+      # The Linux pipeline bakes GraphBLAS + RediSearch into the
+      # `falkordb-build` Docker toolchain image, so its jobs never rebuild
+      # them. Hosted macOS runners have no Docker, so we rebuild from source
+      # and cache the artefacts here instead. Cache the three outputs the
+      # cargo link step needs:
+      #   * .deps/graphblas         — GraphBLAS install prefix (lib + headers
+      #                               + cmake config), from GRAPHBLAS_INSTALL_PREFIX.
+      #   * lagraph_lib             — LAGraph static archives (graphblas.sh
+      #                               installs them here; build.rs reads
+      #                               ../lagraph_lib).
+      #   * redisearch/RediSearch/bin — RediSearch static build tree.
+      # Key on the script contents + the vendored PreJIT kernels + the exact
+      # Homebrew LLVM version (captured into BREW_LLVM_VERSION above), so a
+      # clang upgrade — which can change the C ABI of these artefacts — busts
+      # the cache. On a hit, both build steps below are skipped (~15 min
+      # saved); on a miss we rebuild and repopulate.
+      #
+      # Restore/save are split (rather than the all-in-one `actions/cache`) so
+      # the artefacts are saved by the dedicated step below — which runs
+      # `if: always()` right after the builds — instead of in a post-job step
+      # that only fires on overall job success. That means a failing test step
+      # downstream no longer throws away a good native build, so iterating on
+      # test fixes doesn't pay the ~15-min rebuild each time.
+      - name: Restore GraphBLAS + RediSearch native builds
+        id: native-cache
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: |
+            .deps/graphblas
+            lagraph_lib
+            redisearch/RediSearch/bin
+          key: macos-native-deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('graphblas.sh', 'redisearch.sh', 'build/graphblas/**') }}-llvm${{ env.BREW_LLVM_VERSION }}
+
+      - name: Build GraphBLAS + LAGraph
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        run: ./graphblas.sh
+
+      - name: Build RediSearch
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        run: ./redisearch.sh
+
+      # Persist the freshly built native deps as soon as they exist, before the
+      # cargo/pytest/flow steps that might fail. Positioned ahead of the test
+      # steps with default (success-only) semantics: it saves only when the
+      # builds above succeeded — never partial/broken artefacts — yet a later
+      # test failure can't discard the good build. Skipped on a cache hit since
+      # actions/cache/save errors when the key already exists.
+      - name: Save GraphBLAS + RediSearch native builds
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: |
+            .deps/graphblas
+            lagraph_lib
+            redisearch/RediSearch/bin
+          key: ${{ steps.native-cache.outputs.cache-primary-key }}
+
+      - name: Build libfalkordb.dylib (release)
+        run: cargo build --release
+
+      - name: Run cargo unit tests
+        # Disable LTO for the test build (matching the Linux job). With the
+        # release profile's fat LTO on, rustc tries to extract LLVM bitcode
+        # from the GraphBLAS/LAGraph static archives when linking doctests and
+        # fails with "Can't find section __bitcode" — those C libs are plain
+        # Mach-O objects, not bitcode. Linking the shipped dylib (cargo build
+        # --release above) is unaffected; only doctest LTO trips on it.
+        # NB: the Linux job also passes RUSTDOCFLAGS=-Wl,--allow-multiple-definition,
+        # a GNU-ld flag ld64 rejects, so it's omitted here.
+        run: CARGO_PROFILE_RELEASE_LTO=false cargo test --release -p graph
+
+      - name: Set up Python venv
+        run: |
+          python3 -m venv venv
+          . venv/bin/activate
+          pip install --upgrade pip
+          pip install -r tests/requirements.txt
+
+      - name: Run pytest suites
+        run: |
+          . venv/bin/activate
+          # No FALKORDB_TEST_IMAGE / EXISTING_ENV — tests/common.py spawns
+          # a local redis-server (brew, on PATH) with --loadmodule pointing
+          # at target/release/libfalkordb.dylib.
+          # --timeout bounds any single test (macOS was never exercised before,
+          # so a deadlock would otherwise run until the job timeout). Use the
+          # signal method rather than thread: it doesn't add a watchdog thread
+          # before the multiprocessing suites fork(), avoiding fork-after-thread
+          # issues on macOS, and still dumps a traceback of the stuck test.
+          pytest tests/test_e2e.py tests/test_functions.py tests/test_mvcc.py tests/test_concurrency.py \
+            -vv --timeout=600 --timeout-method=signal
+
+      - name: Run TCK tests
+        run: |
+          . venv/bin/activate
+          TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
+
+      - name: Run flow tests
+        run: |
+          . venv/bin/activate
+          # flow.sh's Darwin branch picks .dylib and spawns redis locally.
+          # In this local-dev mode it runs RLTest with
+          # `--parallelism $(sysctl -n hw.ncpu)`, so flow tests fan out across
+          # all runner cores — the same per-host parallelism the Linux jobs
+          # get. (Linux additionally shards flow tests across a matrix of
+          # Docker runners; that fan-out isn't available without Docker, so a
+          # single macOS runner executes the whole suite, parallelised by core.)
+          RELEASE=1 ./flow.sh
+
+      - name: Upload flow logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: macos-flow-logs
+          path: tests/flow/logs/
+          if-no-files-found: ignore
+
   fuzz:
     runs-on: ubuntu-latest
     container: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}

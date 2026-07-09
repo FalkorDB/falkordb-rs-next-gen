@@ -1,6 +1,5 @@
 import common
 from falkordb import FalkorDB
-from multiprocessing import Pool
 
 
 def setup_module(module):
@@ -97,8 +96,8 @@ def run_read_relationship(id):
 def mvcc(data_query, run_write, run_read):
     common.g.query(data_query)
 
-    pool1 = Pool(1)
-    pool8 = Pool(8)
+    pool1 = common.fork_pool(1)
+    pool8 = common.fork_pool(8)
 
     res_write = pool1.map_async(run_write, range(1, 101))
     res_read = pool8.map_async(run_read, range(1, 101))

@@ -1,5 +1,7 @@
+import multiprocessing
 import os
 import platform
+import shutil
 import subprocess
 import time
 
@@ -12,6 +14,19 @@ redis_server: subprocess.Popen = None
 client = None
 g = None
 shutdown = False
+
+
+def fork_pool(processes=None):
+    """Return a multiprocessing.Pool that always uses the 'fork' start method.
+
+    macOS (and Windows) default to the 'spawn' start method, under which Pool
+    workers boot a fresh interpreter and re-import the test module — that
+    re-runs pytest collection inside every child and deadlocks. Linux already
+    defaults to 'fork', so this is a no-op there while making the concurrency
+    and MVCC suites work on macOS. The worker functions only open their own
+    redis connections, so the usual fork-after-threads caveats don't apply.
+    """
+    return multiprocessing.get_context("fork").Pool(processes)
 
 
 def start_redis(release=None, moduleEnvs=[]):
@@ -48,18 +63,51 @@ def start_redis(release=None, moduleEnvs=[]):
         shutdown = True
         if os.path.exists("redis-test.log"):
             os.remove("redis-test.log")
+        # Resolve redis-server from PATH so this works regardless of install
+        # prefix: Linux/Intel Homebrew use /usr/local/bin, Apple-silicon
+        # Homebrew uses /opt/homebrew/bin, and distro packages use /usr/bin.
+        # REDIS_SERVER_PATH overrides for non-standard layouts.
+        redis_server_bin = (
+            os.environ.get("REDIS_SERVER_PATH")
+            or shutil.which("redis-server")
+            or "/usr/local/bin/redis-server"
+        )
         redis_server = subprocess.Popen(
-            ["/usr/local/bin/redis-server",
+            [redis_server_bin,
              "--save", "", "--port", str(port), "--logfile", "redis-test.log",
              "--loadmodule", target] + moduleEnvs,
             stdout=subprocess.PIPE)
+    # Bounded startup wait: if redis-server exits (e.g. the module fails to
+    # load because `target` doesn't exist or has unresolved symbols) or never
+    # becomes reachable, fail fast with diagnostics instead of spinning here
+    # forever — an unbounded loop turns any startup error into an opaque hang.
+    deadline = time.time() + 60
     while True:
+        exited = redis_server.poll()
+        if exited is not None:
+            log = ""
+            try:
+                with open("redis-test.log") as f:
+                    log = f.read()
+            except OSError:
+                pass
+            raise RuntimeError(
+                f"redis-server exited with code {exited} while loading module "
+                f"{target!r} (exists={os.path.exists(target)}).\n"
+                f"redis-test.log:\n{log}"
+            )
         try:
             r.ping()
             client = FalkorDB(host=host, port=port)
             g = client.select_graph("test")
             return
         except Exception:
+            if time.time() > deadline:
+                raise RuntimeError(
+                    f"redis-server did not become reachable on {host}:{port} "
+                    f"within 60s (module {target!r}, "
+                    f"exists={os.path.exists(target)})"
+                )
             # Backoff so a slow redis startup doesn't peg a CPU core.
             time.sleep(0.05)
 
