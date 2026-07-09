@@ -1,0 +1,1773 @@
+{
+  "runs": [
+    {
+      "vendor": "falkordb-c",
+      "read-write-ratio": 0.0,
+      "clients": 20,
+      "platform": "intel",
+      "target-messages-per-second": 5000,
+      "edges": 10000,
+      "relationships": 121716,
+      "started-at-epoch-secs": 1783615262,
+      "result": {
+        "deadline-offset": "0ms",
+        "actual-messages-per-second": 872.0565149136578,
+        "latency": {
+          "p50": "4.479ms",
+          "p95": "33.02ms",
+          "p99": "557.05ms"
+        },
+        "avg-latency-ms": 18.76782119126903,
+        "latency-histogram": {
+          "buckets-ms": [
+            1,
+            1,
+            5,
+            10,
+            25,
+            50,
+            100,
+            250,
+            500,
+            1000,
+            2500,
+            5000,
+            10000
+          ],
+          "cumulative-counts": [
+            416,
+            1692,
+            10958,
+            15840,
+            18609,
+            19371,
+            19693,
+            19720,
+            19725,
+            19953,
+            19991,
+            19998,
+            19998
+          ],
+          "count": 19998
+        },
+        "elapsed-ms": 22932,
+        "cpu-usage": 0.0,
+        "ram-usage": "7.0MB",
+        "errors": 2,
+        "successful-requests": 19998,
+        "operations": {
+          "by-query": {
+            "aggregate_age": 545,
+            "aggregate_age_distinct": 567,
+            "aggregate_age_filtered": 525,
+            "aggregate_age_min_max_avg": 555,
+            "aggregate_count_users": 532,
+            "aggregate_expansion_1": 550,
+            "aggregate_expansion_1_with_filter": 577,
+            "aggregate_expansion_2": 555,
+            "aggregate_expansion_2_with_filter": 507,
+            "aggregate_expansion_3": 552,
+            "aggregate_expansion_3_with_filter": 545,
+            "aggregate_expansion_4": 543,
+            "aggregate_expansion_4_with_filter": 551,
+            "algo_harmonic_summary": 190,
+            "algo_max_flow_single_pair": 189,
+            "algo_msf_summary": 203,
+            "algo_pagerank_summary": 198,
+            "call_subquery": 568,
+            "id_range_scan": 530,
+            "id_seek": 544,
+            "neighbours_2": 555,
+            "neighbours_2_with_data": 530,
+            "neighbours_2_with_data_and_filter": 585,
+            "neighbours_2_with_filter": 577,
+            "optional_friend": 505,
+            "order_by_age": 519,
+            "pattern_cycle": 544,
+            "pattern_long": 571,
+            "pattern_short": 545,
+            "shortest_path": 541,
+            "shortest_path_with_filter": 543,
+            "single_vertex_read": 555,
+            "unwind_rows": 552,
+            "value_join": 535,
+            "value_join_cnt": 559,
+            "var_len_friends": 549,
+            "vertex_on_label_property": 555,
+            "vertex_on_label_property_index": 580,
+            "vertex_on_property": 574
+          },
+          "by-spawn": {
+            "0": 659,
+            "1": 1159,
+            "10": 976,
+            "11": 812,
+            "12": 560,
+            "13": 703,
+            "14": 938,
+            "15": 1089,
+            "16": 1111,
+            "17": 1271,
+            "18": 1280,
+            "19": 1102,
+            "2": 877,
+            "3": 1242,
+            "4": 1083,
+            "5": 1322,
+            "6": 1061,
+            "7": 619,
+            "8": 757,
+            "9": 1379
+          }
+        },
+        "spawn-stats": {
+          "min": 560,
+          "max": 1379,
+          "p50": 1083,
+          "p95": 1322,
+          "max-min-ratio": 2.4625,
+          "cv": 0.24304937769926505
+        },
+        "histogram_for_type": {
+          "aggregate_age": [
+            2.431,
+            2.735,
+            3.199,
+            3.711,
+            4.351,
+            5.119,
+            6.111,
+            7.071,
+            9.215,
+            12.223,
+            21.887
+          ],
+          "aggregate_age_distinct": [
+            3.615,
+            3.919,
+            4.319,
+            4.767,
+            5.439,
+            6.111,
+            6.911,
+            8.383,
+            10.687,
+            15.103,
+            25.215
+          ],
+          "aggregate_age_filtered": [
+            2.575,
+            3.071,
+            3.567,
+            4.095,
+            4.735,
+            5.471,
+            6.399,
+            8.127,
+            10.751,
+            14.911,
+            24.831
+          ],
+          "aggregate_age_min_max_avg": [
+            4.543,
+            4.991,
+            5.375,
+            5.951,
+            6.623,
+            7.423,
+            8.511,
+            9.727,
+            12.287,
+            15.807,
+            26.367
+          ],
+          "aggregate_count_users": [
+            0.543,
+            0.891,
+            1.367,
+            1.863,
+            2.351,
+            3.087,
+            4.031,
+            5.407,
+            8.319,
+            11.583,
+            19.711
+          ],
+          "aggregate_expansion_1": [
+            0.663,
+            1.019,
+            1.495,
+            1.967,
+            2.559,
+            3.103,
+            4.047,
+            5.439,
+            7.551,
+            11.263,
+            22.015
+          ],
+          "aggregate_expansion_1_with_filter": [
+            0.627,
+            0.895,
+            1.263,
+            1.751,
+            2.335,
+            2.927,
+            4.095,
+            5.375,
+            7.871,
+            11.455,
+            23.807
+          ],
+          "aggregate_expansion_2": [
+            0.991,
+            1.327,
+            1.823,
+            2.335,
+            2.943,
+            3.727,
+            4.607,
+            6.143,
+            9.087,
+            11.903,
+            19.327
+          ],
+          "aggregate_expansion_2_with_filter": [
+            1.071,
+            1.503,
+            1.935,
+            2.383,
+            3.087,
+            3.743,
+            4.895,
+            6.175,
+            8.191,
+            10.623,
+            19.455
+          ],
+          "aggregate_expansion_3": [
+            2.271,
+            3.295,
+            4.223,
+            5.247,
+            6.143,
+            6.911,
+            8.031,
+            9.599,
+            12.735,
+            16.639,
+            29.951
+          ],
+          "aggregate_expansion_3_with_filter": [
+            2.383,
+            3.135,
+            4.031,
+            4.735,
+            5.599,
+            6.847,
+            8.447,
+            10.943,
+            13.695,
+            17.279,
+            29.567
+          ],
+          "aggregate_expansion_4": [
+            5.247,
+            8.383,
+            10.559,
+            12.095,
+            13.375,
+            14.463,
+            15.743,
+            17.535,
+            20.991,
+            24.575,
+            62.975
+          ],
+          "aggregate_expansion_4_with_filter": [
+            4.575,
+            7.519,
+            8.959,
+            10.047,
+            11.071,
+            12.159,
+            13.759,
+            15.359,
+            19.071,
+            22.655,
+            33.791
+          ],
+          "algo_harmonic_summary": [
+            532.479,
+            548.863,
+            552.959,
+            561.151,
+            569.343,
+            581.631,
+            589.823,
+            602.111,
+            610.303,
+            630.783,
+            651.263
+          ],
+          "algo_max_flow_single_pair": [
+            47.359,
+            54.783,
+            61.951,
+            75.775,
+            88.063,
+            684.031,
+            884.735,
+            1064.959,
+            1638.399,
+            2056.191,
+            4816.895
+          ],
+          "algo_msf_summary": [
+            53.759,
+            57.343,
+            59.903,
+            62.207,
+            63.999,
+            66.047,
+            69.119,
+            72.191,
+            76.287,
+            81.919,
+            97.279
+          ],
+          "algo_pagerank_summary": [
+            13.887,
+            15.231,
+            16.255,
+            17.919,
+            19.583,
+            21.375,
+            23.807,
+            26.239,
+            29.439,
+            31.871,
+            39.167
+          ],
+          "call_subquery": [
+            0.747,
+            1.095,
+            1.583,
+            2.007,
+            2.687,
+            3.519,
+            4.351,
+            6.015,
+            9.023,
+            12.479,
+            20.479
+          ],
+          "id_range_scan": [
+            0.691,
+            0.947,
+            1.367,
+            1.783,
+            2.191,
+            2.703,
+            3.727,
+            4.959,
+            7.199,
+            10.815,
+            18.815
+          ],
+          "id_seek": [
+            0.509,
+            0.847,
+            1.207,
+            1.615,
+            2.143,
+            2.831,
+            3.759,
+            5.311,
+            7.487,
+            10.047,
+            19.583
+          ],
+          "neighbours_2": [
+            1.015,
+            1.343,
+            1.735,
+            2.255,
+            2.831,
+            3.535,
+            4.351,
+            5.663,
+            8.575,
+            11.519,
+            22.015
+          ],
+          "neighbours_2_with_data": [
+            1.823,
+            2.495,
+            3.167,
+            3.839,
+            4.447,
+            5.439,
+            6.559,
+            7.839,
+            11.583,
+            14.143,
+            21.759
+          ],
+          "neighbours_2_with_data_and_filter": [
+            1.551,
+            2.287,
+            2.815,
+            3.487,
+            4.079,
+            4.831,
+            5.791,
+            7.295,
+            10.239,
+            13.439,
+            28.543
+          ],
+          "neighbours_2_with_filter": [
+            0.995,
+            1.391,
+            1.855,
+            2.335,
+            3.007,
+            3.615,
+            4.479,
+            6.047,
+            8.095,
+            11.391,
+            19.839
+          ],
+          "optional_friend": [
+            0.763,
+            1.151,
+            1.663,
+            2.063,
+            2.703,
+            3.263,
+            4.159,
+            5.503,
+            7.647,
+            10.047,
+            20.351
+          ],
+          "order_by_age": [
+            28.799,
+            30.079,
+            31.231,
+            32.511,
+            34.047,
+            35.839,
+            37.375,
+            39.679,
+            44.543,
+            52.223,
+            169.983
+          ],
+          "pattern_cycle": [
+            1.039,
+            1.663,
+            2.063,
+            2.479,
+            3.183,
+            3.871,
+            4.927,
+            6.847,
+            10.175,
+            15.423,
+            32.511
+          ],
+          "pattern_long": [
+            6.143,
+            9.791,
+            12.671,
+            15.167,
+            16.767,
+            18.303,
+            19.711,
+            22.015,
+            25.599,
+            33.023,
+            84.991
+          ],
+          "pattern_short": [
+            1.095,
+            1.583,
+            2.127,
+            2.623,
+            3.279,
+            3.903,
+            5.023,
+            6.655,
+            8.959,
+            12.159,
+            29.695
+          ],
+          "shortest_path": [
+            3.055,
+            3.775,
+            4.319,
+            5.055,
+            5.983,
+            7.039,
+            7.935,
+            9.343,
+            11.455,
+            15.231,
+            23.679
+          ],
+          "shortest_path_with_filter": [
+            3.135,
+            3.855,
+            4.479,
+            5.151,
+            5.919,
+            6.687,
+            7.935,
+            9.279,
+            12.223,
+            16.063,
+            27.391
+          ],
+          "single_vertex_read": [
+            0.591,
+            0.987,
+            1.375,
+            1.823,
+            2.463,
+            3.055,
+            4.191,
+            5.727,
+            7.999,
+            10.175,
+            19.967
+          ],
+          "unwind_rows": [
+            0.623,
+            0.915,
+            1.359,
+            1.823,
+            2.367,
+            3.103,
+            3.999,
+            5.535,
+            8.831,
+            13.311,
+            26.111
+          ],
+          "value_join": [
+            3.151,
+            3.791,
+            4.639,
+            5.343,
+            5.983,
+            6.879,
+            7.967,
+            9.663,
+            13.695,
+            16.895,
+            33.279
+          ],
+          "value_join_cnt": [
+            2.447,
+            2.911,
+            3.279,
+            3.791,
+            4.479,
+            5.183,
+            6.143,
+            7.391,
+            10.111,
+            13.503,
+            19.839
+          ],
+          "var_len_friends": [
+            0.995,
+            1.455,
+            1.975,
+            2.447,
+            3.087,
+            3.775,
+            4.767,
+            6.111,
+            8.127,
+            11.967,
+            24.191
+          ],
+          "vertex_on_label_property": [
+            0.539,
+            0.907,
+            1.351,
+            1.783,
+            2.303,
+            3.087,
+            3.871,
+            5.375,
+            7.487,
+            11.071,
+            18.047
+          ],
+          "vertex_on_label_property_index": [
+            0.599,
+            0.959,
+            1.351,
+            1.871,
+            2.575,
+            3.327,
+            4.287,
+            5.823,
+            7.935,
+            11.391,
+            19.583
+          ],
+          "vertex_on_property": [
+            1.759,
+            2.159,
+            2.703,
+            3.199,
+            3.743,
+            4.447,
+            5.279,
+            6.815,
+            9.599,
+            12.287,
+            26.879
+          ]
+        },
+        "telemetry_for_type": {
+          "CALL DB.LABELS()": {
+            "wait-ms": 593.727,
+            "exec-ms": 309.13,
+            "report-ms": 6.007
+          },
+          "CALL DB.PROPERTYKEYS()": {
+            "wait-ms": 40.651,
+            "exec-ms": 1089.795,
+            "report-ms": 6.012
+          },
+          "CALL db.indexes()": {
+            "wait-ms": 62.851,
+            "exec-ms": 3125.013,
+            "report-ms": 26.879
+          },
+          "CALL db.meta.stats()": {
+            "wait-ms": 48.583,
+            "exec-ms": 1233.326,
+            "report-ms": 11.075
+          },
+          "CALL dbms.procedures() YIELD name WITH collect(toLower(name)) AS names RETURN size([n IN names WHERE n = 'algo.pagerank']) AS pagerank_count": {
+            "wait-ms": 38.069,
+            "exec-ms": 2687.574,
+            "report-ms": 5.986
+          },
+          "MATCH ()-[r:Friend]->() RETURN count(r)": {
+            "wait-ms": 51.182,
+            "exec-ms": 1320.403,
+            "report-ms": 6.303
+          },
+          "MATCH ()-[r:Friend]->() WHERE r.bench_capacity IS NULL RETURN count(r)": {
+            "wait-ms": 44.954,
+            "exec-ms": 58901.977,
+            "report-ms": 6.969
+          },
+          "UNWIND [{src:1365": {
+            "wait-ms": 57.147,
+            "exec-ms": 354599.101,
+            "report-ms": 8.465
+          },
+          "UNWIND [{src:3621": {
+            "wait-ms": 92.966,
+            "exec-ms": 361363.604,
+            "report-ms": 9.543
+          },
+          "UNWIND [{src:4211": {
+            "wait-ms": 191.204,
+            "exec-ms": 352607.847,
+            "report-ms": 9.275
+          },
+          "UNWIND [{src:7394": {
+            "wait-ms": 41.111,
+            "exec-ms": 352121.335,
+            "report-ms": 8.744
+          },
+          "UNWIND [{src:9138": {
+            "wait-ms": 54.943,
+            "exec-ms": 354865.573,
+            "report-ms": 8.825
+          },
+          "UNWIND [{src:9174": {
+            "wait-ms": 38.578,
+            "exec-ms": 124010.791,
+            "report-ms": 9.657
+          },
+          "UNWIND [{src:9202": {
+            "wait-ms": 61.289,
+            "exec-ms": 358499.844,
+            "report-ms": 8.467
+          },
+          "aggregate_age": {
+            "wait-ms": 1570.859,
+            "exec-ms": 2325.513,
+            "report-ms": 8.171
+          },
+          "aggregate_age_distinct": {
+            "wait-ms": 1475.513,
+            "exec-ms": 3869.69,
+            "report-ms": 5.863
+          },
+          "aggregate_age_filtered": {
+            "wait-ms": 1743.876,
+            "exec-ms": 2455.12,
+            "report-ms": 8.441
+          },
+          "aggregate_age_min_max_avg": {
+            "wait-ms": 2118.974,
+            "exec-ms": 4250.73,
+            "report-ms": 9.083
+          },
+          "aggregate_count_users": {
+            "wait-ms": 2132.226,
+            "exec-ms": 202.74,
+            "report-ms": 5.458
+          },
+          "aggregate_expansion_1": {
+            "wait-ms": 2123.385,
+            "exec-ms": 384.256,
+            "report-ms": 5.64
+          },
+          "aggregate_expansion_1_with_filter": {
+            "wait-ms": 1920.6,
+            "exec-ms": 316.778,
+            "report-ms": 5.474
+          },
+          "aggregate_expansion_2": {
+            "wait-ms": 1634.018,
+            "exec-ms": 722.994,
+            "report-ms": 31.152
+          },
+          "aggregate_expansion_2_with_filter": {
+            "wait-ms": 2124.539,
+            "exec-ms": 701.133,
+            "report-ms": 20.394
+          },
+          "aggregate_expansion_3": {
+            "wait-ms": 1776.539,
+            "exec-ms": 1936.42,
+            "report-ms": 236.331
+          },
+          "aggregate_expansion_3_with_filter": {
+            "wait-ms": 1977.695,
+            "exec-ms": 2223.159,
+            "report-ms": 150.11
+          },
+          "aggregate_expansion_4": {
+            "wait-ms": 1435.968,
+            "exec-ms": 4116.216,
+            "report-ms": 654.081
+          },
+          "aggregate_expansion_4_with_filter": {
+            "wait-ms": 2113.302,
+            "exec-ms": 4067.425,
+            "report-ms": 436.889
+          },
+          "algo_harmonic_summary": {
+            "wait-ms": 2474.821,
+            "exec-ms": 569368.179,
+            "report-ms": 12.139
+          },
+          "algo_max_flow_single_pair": {
+            "wait-ms": 1098.303,
+            "exec-ms": 706450.167,
+            "report-ms": 8.336
+          },
+          "algo_msf_summary": {
+            "wait-ms": 1183.582,
+            "exec-ms": 61456.518,
+            "report-ms": 10.042
+          },
+          "algo_pagerank_summary": {
+            "wait-ms": 1593.817,
+            "exec-ms": 15232.096,
+            "report-ms": 60.392
+          },
+          "call_subquery": {
+            "wait-ms": 1784.681,
+            "exec-ms": 363.196,
+            "report-ms": 5.932
+          },
+          "id_range_scan": {
+            "wait-ms": 1482.236,
+            "exec-ms": 196.609,
+            "report-ms": 15.459
+          },
+          "id_seek": {
+            "wait-ms": 1395.028,
+            "exec-ms": 242.188,
+            "report-ms": 5.242
+          },
+          "neighbours_2": {
+            "wait-ms": 1760.537,
+            "exec-ms": 505.109,
+            "report-ms": 26.547
+          },
+          "neighbours_2_with_data": {
+            "wait-ms": 1198.04,
+            "exec-ms": 559.865,
+            "report-ms": 289.419
+          },
+          "neighbours_2_with_data_and_filter": {
+            "wait-ms": 2157.192,
+            "exec-ms": 562.949,
+            "report-ms": 201.6
+          },
+          "neighbours_2_with_filter": {
+            "wait-ms": 1351.051,
+            "exec-ms": 628.468,
+            "report-ms": 30.773
+          },
+          "optional_friend": {
+            "wait-ms": 1881.79,
+            "exec-ms": 533.5,
+            "report-ms": 8.214
+          },
+          "order_by_age": {
+            "wait-ms": 1702.52,
+            "exec-ms": 11626.028,
+            "report-ms": 2152.868
+          },
+          "pattern_cycle": {
+            "wait-ms": 1430.756,
+            "exec-ms": 1779.818,
+            "report-ms": 15.102
+          },
+          "pattern_long": {
+            "wait-ms": 2164.687,
+            "exec-ms": 3294.302,
+            "report-ms": 1087.27
+          },
+          "pattern_short": {
+            "wait-ms": 1951.048,
+            "exec-ms": 759.714,
+            "report-ms": 53.088
+          },
+          "shortest_path": {
+            "wait-ms": 1753.168,
+            "exec-ms": 3097.86,
+            "report-ms": 5.936
+          },
+          "shortest_path_with_filter": {
+            "wait-ms": 1728.224,
+            "exec-ms": 3558.263,
+            "report-ms": 6.132
+          },
+          "single_vertex_read": {
+            "wait-ms": 1761.472,
+            "exec-ms": 415.526,
+            "report-ms": 7.994
+          },
+          "unwind_rows": {
+            "wait-ms": 2000.104,
+            "exec-ms": 338.47,
+            "report-ms": 4.373
+          },
+          "value_join": {
+            "wait-ms": 1887.753,
+            "exec-ms": 2503.19,
+            "report-ms": 193.501
+          },
+          "value_join_cnt": {
+            "wait-ms": 1969.316,
+            "exec-ms": 2250.797,
+            "report-ms": 5.647
+          },
+          "var_len_friends": {
+            "wait-ms": 2006.501,
+            "exec-ms": 576.996,
+            "report-ms": 54.424
+          },
+          "vertex_on_label_property_index": {
+            "wait-ms": 1519.363,
+            "exec-ms": 245.293,
+            "report-ms": 15.228
+          },
+          "vertex_on_property": {
+            "wait-ms": 1615.15,
+            "exec-ms": 1459.661,
+            "report-ms": 22.212
+          }
+        }
+      }
+    },
+    {
+      "vendor": "falkordb-rs",
+      "read-write-ratio": 0.0,
+      "clients": 20,
+      "platform": "intel",
+      "target-messages-per-second": 5000,
+      "edges": 10000,
+      "relationships": 121716,
+      "started-at-epoch-secs": 1783615254,
+      "result": {
+        "deadline-offset": "0ms",
+        "actual-messages-per-second": 1001.8534288433601,
+        "latency": {
+          "p50": "3.743ms",
+          "p95": "30.21ms",
+          "p99": "419.84ms"
+        },
+        "avg-latency-ms": 16.488797141299962,
+        "latency-histogram": {
+          "buckets-ms": [
+            1,
+            1,
+            5,
+            10,
+            25,
+            50,
+            100,
+            250,
+            500,
+            1000,
+            2500,
+            5000,
+            10000
+          ],
+          "cumulative-counts": [
+            350,
+            1836,
+            12316,
+            16474,
+            18727,
+            19377,
+            19669,
+            19699,
+            19897,
+            19957,
+            19995,
+            20000,
+            20000
+          ],
+          "count": 20000
+        },
+        "elapsed-ms": 19963,
+        "cpu-usage": 0.0,
+        "ram-usage": "12.0MB",
+        "errors": 0,
+        "successful-requests": 20000,
+        "operations": {
+          "by-query": {
+            "aggregate_age": 524,
+            "aggregate_age_distinct": 547,
+            "aggregate_age_filtered": 549,
+            "aggregate_age_min_max_avg": 532,
+            "aggregate_count_users": 529,
+            "aggregate_expansion_1": 584,
+            "aggregate_expansion_1_with_filter": 526,
+            "aggregate_expansion_2": 545,
+            "aggregate_expansion_2_with_filter": 535,
+            "aggregate_expansion_3": 516,
+            "aggregate_expansion_3_with_filter": 549,
+            "aggregate_expansion_4": 543,
+            "aggregate_expansion_4_with_filter": 579,
+            "algo_harmonic_summary": 209,
+            "algo_max_flow_single_pair": 209,
+            "algo_msf_summary": 202,
+            "algo_pagerank_summary": 187,
+            "call_subquery": 571,
+            "id_range_scan": 576,
+            "id_seek": 535,
+            "neighbours_2": 538,
+            "neighbours_2_with_data": 548,
+            "neighbours_2_with_data_and_filter": 555,
+            "neighbours_2_with_filter": 557,
+            "optional_friend": 569,
+            "order_by_age": 565,
+            "pattern_cycle": 541,
+            "pattern_long": 530,
+            "pattern_short": 522,
+            "shortest_path": 530,
+            "shortest_path_with_filter": 592,
+            "single_vertex_read": 594,
+            "unwind_rows": 581,
+            "value_join": 545,
+            "value_join_cnt": 531,
+            "var_len_friends": 527,
+            "vertex_on_label_property": 574,
+            "vertex_on_label_property_index": 535,
+            "vertex_on_property": 519
+          },
+          "by-spawn": {
+            "0": 1154,
+            "1": 1152,
+            "10": 1118,
+            "11": 691,
+            "12": 790,
+            "13": 989,
+            "14": 843,
+            "15": 1169,
+            "16": 1096,
+            "17": 1252,
+            "18": 992,
+            "19": 1072,
+            "2": 786,
+            "3": 1076,
+            "4": 979,
+            "5": 984,
+            "6": 1072,
+            "7": 880,
+            "8": 808,
+            "9": 1097
+          }
+        },
+        "spawn-stats": {
+          "min": 691,
+          "max": 1252,
+          "p50": 1072,
+          "p95": 1169,
+          "max-min-ratio": 1.8118668596237337,
+          "cv": 0.1499583275446882
+        },
+        "histogram_for_type": {
+          "aggregate_age": [
+            1.447,
+            1.775,
+            2.223,
+            2.559,
+            3.071,
+            3.807,
+            4.703,
+            5.951,
+            8.127,
+            12.095,
+            20.735
+          ],
+          "aggregate_age_distinct": [
+            1.679,
+            2.039,
+            2.431,
+            2.895,
+            3.359,
+            3.823,
+            4.479,
+            5.727,
+            7.711,
+            10.751,
+            16.127
+          ],
+          "aggregate_age_filtered": [
+            1.967,
+            2.399,
+            2.847,
+            3.343,
+            3.951,
+            4.543,
+            5.407,
+            6.527,
+            9.599,
+            11.583,
+            20.991
+          ],
+          "aggregate_age_min_max_avg": [
+            2.271,
+            2.623,
+            3.135,
+            3.839,
+            4.479,
+            5.279,
+            6.399,
+            8.031,
+            10.623,
+            12.927,
+            34.815
+          ],
+          "aggregate_count_users": [
+            0.475,
+            0.771,
+            1.087,
+            1.447,
+            1.879,
+            2.415,
+            3.279,
+            4.543,
+            7.007,
+            9.279,
+            15.743
+          ],
+          "aggregate_expansion_1": [
+            0.679,
+            1.055,
+            1.407,
+            1.839,
+            2.319,
+            2.815,
+            3.775,
+            5.055,
+            7.743,
+            9.983,
+            19.583
+          ],
+          "aggregate_expansion_1_with_filter": [
+            0.727,
+            1.047,
+            1.447,
+            1.807,
+            2.607,
+            3.375,
+            4.319,
+            5.471,
+            7.583,
+            9.215,
+            22.399
+          ],
+          "aggregate_expansion_2": [
+            1.135,
+            1.503,
+            1.967,
+            2.479,
+            2.991,
+            3.791,
+            4.543,
+            5.823,
+            8.511,
+            11.199,
+            30.719
+          ],
+          "aggregate_expansion_2_with_filter": [
+            1.079,
+            1.543,
+            1.943,
+            2.463,
+            2.895,
+            3.551,
+            4.319,
+            5.919,
+            8.383,
+            11.199,
+            22.527
+          ],
+          "aggregate_expansion_3": [
+            2.431,
+            3.135,
+            3.887,
+            4.543,
+            5.471,
+            6.367,
+            7.455,
+            8.895,
+            11.903,
+            15.423,
+            19.967
+          ],
+          "aggregate_expansion_3_with_filter": [
+            1.983,
+            2.655,
+            3.423,
+            4.031,
+            4.671,
+            5.343,
+            6.399,
+            7.615,
+            10.175,
+            13.247,
+            23.295
+          ],
+          "aggregate_expansion_4": [
+            4.511,
+            6.879,
+            8.447,
+            9.791,
+            10.943,
+            11.903,
+            13.055,
+            15.423,
+            18.943,
+            22.143,
+            45.311
+          ],
+          "aggregate_expansion_4_with_filter": [
+            4.255,
+            5.791,
+            6.783,
+            7.519,
+            8.159,
+            9.215,
+            10.303,
+            11.775,
+            14.783,
+            17.151,
+            54.527
+          ],
+          "algo_harmonic_summary": [
+            372.735,
+            387.071,
+            399.359,
+            411.647,
+            428.031,
+            440.319,
+            456.703,
+            477.183,
+            499.711,
+            520.191,
+            540.671
+          ],
+          "algo_max_flow_single_pair": [
+            49.663,
+            56.575,
+            61.951,
+            68.095,
+            77.823,
+            497.663,
+            696.319,
+            1023.999,
+            1327.103,
+            1957.887,
+            2883.583
+          ],
+          "algo_msf_summary": [
+            44.031,
+            47.871,
+            49.919,
+            52.735,
+            55.039,
+            58.367,
+            61.183,
+            62.975,
+            69.631,
+            75.775,
+            86.015
+          ],
+          "algo_pagerank_summary": [
+            10.047,
+            11.007,
+            12.223,
+            13.119,
+            14.399,
+            15.935,
+            17.791,
+            20.479,
+            24.191,
+            26.751,
+            39.935
+          ],
+          "call_subquery": [
+            0.811,
+            1.287,
+            1.639,
+            2.047,
+            2.559,
+            3.327,
+            4.015,
+            5.215,
+            7.711,
+            9.599,
+            19.583
+          ],
+          "id_range_scan": [
+            0.655,
+            0.959,
+            1.207,
+            1.583,
+            2.095,
+            2.639,
+            3.615,
+            4.831,
+            7.071,
+            10.431,
+            25.471
+          ],
+          "id_seek": [
+            0.507,
+            0.763,
+            1.063,
+            1.471,
+            2.031,
+            2.511,
+            3.439,
+            4.415,
+            7.263,
+            9.919,
+            19.071
+          ],
+          "neighbours_2": [
+            1.047,
+            1.367,
+            1.863,
+            2.287,
+            2.943,
+            3.855,
+            4.959,
+            6.559,
+            8.383,
+            10.431,
+            20.607
+          ],
+          "neighbours_2_with_data": [
+            1.815,
+            2.799,
+            3.423,
+            4.127,
+            5.151,
+            6.111,
+            7.423,
+            9.343,
+            11.967,
+            14.399,
+            33.023
+          ],
+          "neighbours_2_with_data_and_filter": [
+            1.879,
+            2.623,
+            3.343,
+            3.807,
+            4.447,
+            5.599,
+            6.559,
+            8.159,
+            10.559,
+            13.887,
+            25.343
+          ],
+          "neighbours_2_with_filter": [
+            1.111,
+            1.423,
+            1.823,
+            2.255,
+            2.895,
+            3.455,
+            4.479,
+            5.567,
+            8.319,
+            10.175,
+            18.175
+          ],
+          "optional_friend": [
+            0.771,
+            1.039,
+            1.359,
+            1.695,
+            2.223,
+            2.911,
+            3.839,
+            5.087,
+            8.159,
+            10.815,
+            22.527
+          ],
+          "order_by_age": [
+            23.167,
+            24.575,
+            25.727,
+            27.391,
+            28.927,
+            30.719,
+            33.023,
+            35.327,
+            40.447,
+            49.663,
+            182.271
+          ],
+          "pattern_cycle": [
+            1.055,
+            1.407,
+            1.815,
+            2.335,
+            2.815,
+            3.519,
+            4.319,
+            5.663,
+            8.383,
+            10.687,
+            19.199
+          ],
+          "pattern_long": [
+            6.463,
+            10.047,
+            12.479,
+            14.207,
+            15.743,
+            17.279,
+            19.199,
+            21.759,
+            26.111,
+            32.383,
+            79.359
+          ],
+          "pattern_short": [
+            1.183,
+            1.711,
+            2.127,
+            2.671,
+            3.135,
+            3.759,
+            4.543,
+            5.951,
+            8.255,
+            10.943,
+            16.767
+          ],
+          "shortest_path": [
+            0.843,
+            1.271,
+            1.671,
+            2.095,
+            2.655,
+            3.487,
+            4.543,
+            6.111,
+            8.159,
+            9.983,
+            18.943
+          ],
+          "shortest_path_with_filter": [
+            0.919,
+            1.303,
+            1.647,
+            2.223,
+            2.879,
+            3.583,
+            4.575,
+            6.047,
+            8.319,
+            11.711,
+            25.727
+          ],
+          "single_vertex_read": [
+            0.655,
+            1.011,
+            1.391,
+            1.815,
+            2.479,
+            3.023,
+            3.807,
+            5.151,
+            7.391,
+            9.087,
+            18.687
+          ],
+          "unwind_rows": [
+            0.699,
+            1.047,
+            1.471,
+            1.935,
+            2.543,
+            3.167,
+            4.159,
+            5.727,
+            8.639,
+            11.071,
+            27.391
+          ],
+          "value_join": [
+            2.335,
+            2.959,
+            3.647,
+            4.383,
+            5.183,
+            6.047,
+            7.263,
+            8.831,
+            11.775,
+            14.847,
+            22.271
+          ],
+          "value_join_cnt": [
+            1.703,
+            2.207,
+            2.655,
+            3.215,
+            3.711,
+            4.255,
+            5.119,
+            6.367,
+            9.471,
+            12.799,
+            19.199
+          ],
+          "var_len_friends": [
+            1.127,
+            1.639,
+            2.191,
+            2.591,
+            3.391,
+            3.967,
+            4.767,
+            6.463,
+            8.831,
+            11.583,
+            19.583
+          ],
+          "vertex_on_label_property": [
+            0.559,
+            0.879,
+            1.271,
+            1.679,
+            2.223,
+            2.831,
+            3.647,
+            5.119,
+            7.967,
+            10.623,
+            18.175
+          ],
+          "vertex_on_label_property_index": [
+            0.691,
+            0.999,
+            1.343,
+            1.783,
+            2.351,
+            3.087,
+            4.127,
+            5.343,
+            7.871,
+            11.519,
+            24.575
+          ],
+          "vertex_on_property": [
+            0.875,
+            1.143,
+            1.495,
+            1.927,
+            2.383,
+            3.055,
+            3.887,
+            5.183,
+            8.127,
+            10.943,
+            20.991
+          ]
+        },
+        "telemetry_for_type": {
+          "CALL DB.LABELS()": {
+            "wait-ms": 318.11,
+            "exec-ms": 8.912,
+            "report-ms": 847.705
+          },
+          "CALL DB.PROPERTYKEYS()": {
+            "wait-ms": 51.037,
+            "exec-ms": 10.479,
+            "report-ms": 58.5
+          },
+          "CALL db.indexes()": {
+            "wait-ms": 16.28,
+            "exec-ms": 26.627,
+            "report-ms": 1487.198
+          },
+          "CALL db.meta.stats()": {
+            "wait-ms": 35.361,
+            "exec-ms": 38.623,
+            "report-ms": 42.212
+          },
+          "CALL dbms.procedures() YIELD name WITH collect(toLower(name)) AS names RETURN size([n IN names WHERE n = 'algo.pagerank']) AS pagerank_count": {
+            "wait-ms": 32.092,
+            "exec-ms": 88.033,
+            "report-ms": 1550.197
+          },
+          "MATCH ()-[r:Friend]->() RETURN count(r)": {
+            "wait-ms": 17.497,
+            "exec-ms": 10.076,
+            "report-ms": 32.085
+          },
+          "MATCH ()-[r:Friend]->() WHERE r.bench_capacity IS NULL RETURN count(r)": {
+            "wait-ms": 23.831,
+            "exec-ms": 49234.337,
+            "report-ms": 52.353
+          },
+          "aggregate_age": {
+            "wait-ms": 1182.437,
+            "exec-ms": 997.585,
+            "report-ms": 67.759
+          },
+          "aggregate_age_distinct": {
+            "wait-ms": 1090.866,
+            "exec-ms": 1237.01,
+            "report-ms": 59.076
+          },
+          "aggregate_age_filtered": {
+            "wait-ms": 1078.08,
+            "exec-ms": 1867.161,
+            "report-ms": 84.311
+          },
+          "aggregate_age_min_max_avg": {
+            "wait-ms": 1351.822,
+            "exec-ms": 1946.821,
+            "report-ms": 85.652
+          },
+          "aggregate_count_users": {
+            "wait-ms": 1206.171,
+            "exec-ms": 22.772,
+            "report-ms": 51.924
+          },
+          "aggregate_expansion_1": {
+            "wait-ms": 1023.846,
+            "exec-ms": 441.742,
+            "report-ms": 130.436
+          },
+          "aggregate_expansion_1_with_filter": {
+            "wait-ms": 1157.729,
+            "exec-ms": 424.0,
+            "report-ms": 170.624
+          },
+          "aggregate_expansion_2": {
+            "wait-ms": 1430.053,
+            "exec-ms": 604.588,
+            "report-ms": 192.15
+          },
+          "aggregate_expansion_2_with_filter": {
+            "wait-ms": 1064.819,
+            "exec-ms": 636.471,
+            "report-ms": 198.137
+          },
+          "aggregate_expansion_3": {
+            "wait-ms": 983.697,
+            "exec-ms": 1041.603,
+            "report-ms": 373.885
+          },
+          "aggregate_expansion_3_with_filter": {
+            "wait-ms": 1143.599,
+            "exec-ms": 1043.942,
+            "report-ms": 314.083
+          },
+          "aggregate_expansion_4": {
+            "wait-ms": 1288.469,
+            "exec-ms": 1780.379,
+            "report-ms": 744.119
+          },
+          "aggregate_expansion_4_with_filter": {
+            "wait-ms": 1077.169,
+            "exec-ms": 1772.42,
+            "report-ms": 577.165
+          },
+          "algo_harmonic_summary": {
+            "wait-ms": 1439.08,
+            "exec-ms": 426874.371,
+            "report-ms": 105.78
+          },
+          "algo_max_flow_single_pair": {
+            "wait-ms": 1202.416,
+            "exec-ms": 519885.485,
+            "report-ms": 262.988
+          },
+          "algo_msf_summary": {
+            "wait-ms": 1035.482,
+            "exec-ms": 52628.699,
+            "report-ms": 165.533
+          },
+          "algo_pagerank_summary": {
+            "wait-ms": 1137.803,
+            "exec-ms": 12442.43,
+            "report-ms": 98.28
+          },
+          "call_subquery": {
+            "wait-ms": 1066.666,
+            "exec-ms": 526.712,
+            "report-ms": 160.66
+          },
+          "id_range_scan": {
+            "wait-ms": 1268.399,
+            "exec-ms": 26.796,
+            "report-ms": 171.227
+          },
+          "id_seek": {
+            "wait-ms": 1229.221,
+            "exec-ms": 20.01,
+            "report-ms": 104.481
+          },
+          "neighbours_2": {
+            "wait-ms": 1230.234,
+            "exec-ms": 585.419,
+            "report-ms": 142.767
+          },
+          "neighbours_2_with_data": {
+            "wait-ms": 1446.292,
+            "exec-ms": 557.173,
+            "report-ms": 756.891
+          },
+          "neighbours_2_with_data_and_filter": {
+            "wait-ms": 1257.246,
+            "exec-ms": 503.705,
+            "report-ms": 599.607
+          },
+          "neighbours_2_with_filter": {
+            "wait-ms": 1181.413,
+            "exec-ms": 558.396,
+            "report-ms": 179.859
+          },
+          "optional_friend": {
+            "wait-ms": 1025.778,
+            "exec-ms": 501.727,
+            "report-ms": 106.4
+          },
+          "order_by_age": {
+            "wait-ms": 1354.13,
+            "exec-ms": 4937.552,
+            "report-ms": 2237.736
+          },
+          "pattern_cycle": {
+            "wait-ms": 1159.906,
+            "exec-ms": 747.276,
+            "report-ms": 215.0
+          },
+          "pattern_long": {
+            "wait-ms": 1255.992,
+            "exec-ms": 1616.71,
+            "report-ms": 1266.077
+          },
+          "pattern_short": {
+            "wait-ms": 1156.686,
+            "exec-ms": 604.224,
+            "report-ms": 178.705
+          },
+          "shortest_path": {
+            "wait-ms": 1089.328,
+            "exec-ms": 712.188,
+            "report-ms": 140.031
+          },
+          "shortest_path_with_filter": {
+            "wait-ms": 1196.621,
+            "exec-ms": 622.867,
+            "report-ms": 190.375
+          },
+          "single_vertex_read": {
+            "wait-ms": 1031.807,
+            "exec-ms": 373.44,
+            "report-ms": 107.51
+          },
+          "unwind_rows": {
+            "wait-ms": 1505.662,
+            "exec-ms": 481.791,
+            "report-ms": 102.577
+          },
+          "value_join": {
+            "wait-ms": 1109.636,
+            "exec-ms": 1580.292,
+            "report-ms": 314.234
+          },
+          "value_join_cnt": {
+            "wait-ms": 1305.449,
+            "exec-ms": 1387.144,
+            "report-ms": 157.731
+          },
+          "var_len_friends": {
+            "wait-ms": 1025.528,
+            "exec-ms": 805.881,
+            "report-ms": 200.899
+          },
+          "vertex_on_label_property_index": {
+            "wait-ms": 1106.829,
+            "exec-ms": 409.355,
+            "report-ms": 112.493
+          },
+          "vertex_on_property": {
+            "wait-ms": 1086.983,
+            "exec-ms": 384.631,
+            "report-ms": 117.265
+          }
+        }
+      }
+    }
+  ]
+}
