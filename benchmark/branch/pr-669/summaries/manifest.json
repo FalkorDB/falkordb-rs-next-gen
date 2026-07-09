@@ -1,6 +1,10 @@
 {
   "falkordb_vs_falkordb.json": [
     {
+      "filename": "falkordb_vs_falkordb_1783613437.json",
+      "timestamp": 1783613437
+    },
+    {
       "filename": "falkordb_vs_falkordb_1783611362.json",
       "timestamp": 1783611362
     },
@@ -35,10 +39,6 @@
     {
       "filename": "falkordb_vs_falkordb_1781247164.json",
       "timestamp": 1781247164
-    },
-    {
-      "filename": "falkordb_vs_falkordb_1781206991.json",
-      "timestamp": 1781206991
     }
   ]
 }
