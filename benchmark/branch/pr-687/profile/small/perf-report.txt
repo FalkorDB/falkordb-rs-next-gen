@@ -1,60 +1,60 @@
-    97.46%     0.00%  [.] 0xffffffffffffffff                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  -      -            
+    96.17%     0.00%  [.] 0xffffffffffffffff                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               -      -            
             |
             ---0xffffffffffffffff
                |          
-               |--44.59%--<graph::runtime::batch::BatchOp as core::iter::traits::iterator::Iterator>::next
+               |--42.32%--<graph::runtime::batch::BatchOp as core::iter::traits::iterator::Iterator>::next
                |          |          
-               |          |--35.91%--<graph::runtime::ops::cond_var_len_traverse::CondVarLenTraverseOp as core::iter::traits::iterator::Iterator>::next
+               |          |--34.01%--<graph::runtime::ops::cond_var_len_traverse::CondVarLenTraverseOp as core::iter::traits::iterator::Iterator>::next
                |          |          |          
-               |          |           --35.91%--<graph::runtime::ops::cond_var_len_traverse::VarLenIter as core::iter::traits::iterator::Iterator>::next
+               |          |           --34.01%--<graph::runtime::ops::cond_var_len_traverse::VarLenIter as core::iter::traits::iterator::Iterator>::next
                |          |                     |          
-               |          |                      --0.79%--GrB_Matrix_extractElement_BOOL
+               |          |                      --0.73%--GrB_Matrix_extractElement_BOOL
                |          |          
-               |           --7.85%--<graph::runtime::ops::aggregate::AggregateOp as core::iter::traits::iterator::Iterator>::next
+               |           --7.42%--<graph::runtime::ops::aggregate::AggregateOp as core::iter::traits::iterator::Iterator>::next
                |                     |          
-               |                      --7.83%--<graph::runtime::batch::BatchOp as core::iter::traits::iterator::Iterator>::next
+               |                      --7.40%--<graph::runtime::batch::BatchOp as core::iter::traits::iterator::Iterator>::next
+               |                                <graph::runtime::ops::cond_var_len_traverse::CondVarLenTraverseOp as core::iter::traits::iterator::Iterator>::next
                |                                |          
-               |                                 --7.83%--<graph::runtime::ops::cond_var_len_traverse::CondVarLenTraverseOp as core::iter::traits::iterator::Iterator>::next
-               |                                           |          
-               |                                           |--2.61%--<(graph::graph::graph::NodeId, graph::graph::graph::NodeId, core::option::Option<graph::runtime::value::Value>) as graph::runtime::ops::batched_result_emitter::GatherItem>::push_into
-               |                                           |          
-               |                                           |--1.68%--<graph::runtime::ops::cond_var_len_traverse::VarLenIter as core::iter::traits::iterator::Iterator>::next
-               |                                           |          
-               |                                            --0.60%--<graph::runtime::batch::Batch>::gather
+               |                                |--2.42%--<(graph::graph::graph::NodeId, graph::graph::graph::NodeId, core::option::Option<graph::runtime::value::Value>) as graph::runtime::ops::batched_result_emitter::GatherItem>::push_into
+               |                                |          
+               |                                |--1.61%--<graph::runtime::ops::cond_var_len_traverse::VarLenIter as core::iter::traits::iterator::Iterator>::next
+               |                                |          
+               |                                 --0.54%--<graph::runtime::batch::Batch>::gather
                |          
-               |--21.70%--<graph::runtime::runtime::Runtime>::query
+               |--20.96%--<graph::runtime::runtime::Runtime>::query
                |          |          
-               |           --21.70%--<graph::runtime::batch::BatchOp as core::iter::traits::iterator::Iterator>::next
+               |           --20.95%--<graph::runtime::batch::BatchOp as core::iter::traits::iterator::Iterator>::next
                |                     |          
-               |                      --21.64%--<graph::runtime::ops::aggregate::AggregateOp as core::iter::traits::iterator::Iterator>::next
+               |                      --20.89%--<graph::runtime::ops::aggregate::AggregateOp as core::iter::traits::iterator::Iterator>::next
                |                                |          
-               |                                |--5.79%--<graph::runtime::functions::GraphFn>::validate_args_type::<graph::runtime::value::Value>
+               |                                |--5.48%--<graph::runtime::functions::GraphFn>::validate_args_type::<graph::runtime::value::Value>
                |                                |          |          
-               |                                |           --2.43%--<graph::runtime::value::Value as graph::runtime::value::ValueTypeOf>::value_of_type
+               |                                |           --2.19%--<graph::runtime::value::Value as graph::runtime::value::ValueTypeOf>::value_of_type
                |                                |          
-               |                                |--2.34%--core::ptr::drop_glue::<alloc::vec::Vec<graph::runtime::value::Value>>
+               |                                |--2.28%--core::ptr::drop_glue::<alloc::vec::Vec<graph::runtime::value::Value>>
                |                                |          |          
-               |                                |           --2.29%--core::ptr::drop_glue::<graph::runtime::value::Value>
+               |                                |           --2.23%--core::ptr::drop_glue::<graph::runtime::value::Value>
                |                                |          
-               |                                |--1.38%--<graph::runtime::functions::GraphFn>::validate_args_domain
+               |                                |--1.32%--<graph::runtime::functions::GraphFn>::validate_args_domain
                |                                |          
-               |                                |--1.18%--<graph::runtime::batch::Column>::get
+               |                                |--1.15%--<graph::runtime::batch::Column>::get
                |                                |          
-               |                                |--0.80%--<alloc::vec::Vec<usize> as alloc::vec::spec_from_iter_nested::SpecFromIterNested<usize, graph::runtime::batch::ActiveIndices>>::from_iter
+               |                                |--0.75%--<alloc::vec::Vec<usize> as alloc::vec::spec_from_iter_nested::SpecFromIterNested<usize, graph::runtime::batch::ActiveIndices>>::from_iter
                |                                |          
-               |                                 --0.58%--graph::runtime::functions::aggregation::count_batch
+               |                                 --0.59%--graph::runtime::functions::aggregation::count_batch
                |          
-               |--17.08%--GrB_Matrix_extractElement_BOOL
+               |--16.55%--GrB_Matrix_extractElement_BOOL
                |          |          
-               |          |--8.33%--__kmpc_flush
+               |          |--8.07%--__kmpc_flush
                |          |          
-               |           --1.56%--GB_hyper_hash_lookup
+               |           --1.49%--GB_hyper_hash_lookup
                |          
-               |--3.70%--<graph::runtime::ops::cond_var_len_traverse::CondVarLenTraverseOp as core::iter::traits::iterator::Iterator>::next
+               |--3.62%--<graph::runtime::ops::cond_var_len_traverse::CondVarLenTraverseOp as core::iter::traits::iterator::Iterator>::next
                |          |          
-               |           --3.70%--<graph::runtime::ops::cond_var_len_traverse::VarLenIter as core::iter::traits::iterator::Iterator>::next
+               |           --3.62%--<graph::runtime::ops::cond_var_len_traverse::VarLenIter as core::iter::traits::iterator::Iterator>::next
                |                     |          
-               |                     |--1.61%--GrB_Matrix_extractElement_BOOL
-               |                     |          
-               |                      --1.48%--<core::iter::adapters::flatten::FlattenCompat<core::iter::adapters::map::Map<alloc::vec::into_iter::IntoIter<&graph::graph::graphblas::tensor::Tensor>, <graph::graph::graph::Graph>::get_node_relationships_by_type::{closure#1}>, core::iter::adapters::chain::Chain<graph::graph::graphblas::tensor::Iter, core::iter::adapters::filter::Filter<graph::graph::graphblas::tensor::Iter, <graph::graph::graph::Graph>::get_node_relationships_by_type::{closure#1}::{closure#0}>>> as core::iter::traits::iterator::Iterator>::next
-               |                                |          
+               |                     |--1.57%--<core::iter::adapters::flatten::FlattenCompat<core::iter::adapters::map::Map<alloc::vec::into_iter::IntoIter<&graph::graph::graphblas::tensor::Tensor>, <graph::graph::graph::Graph>::get_node_relationships_by_type::{closure#1}>, core::iter::adapters::chain::Chain<graph::graph::graphblas::tensor::Iter, core::iter::adapters::filter::Filter<graph::graph::graphblas::tensor::Iter, <graph::graph::graph::Graph>::get_node_relationships_by_type::{closure#1}::{closure#0}>>> as core::iter::traits::iterator::Iterator>::next
+               |                     |          |          
+               |                     |           --1.42%--core::iter::adapters::flatten::and_then_or_clear::<core::iter::adapters::chain::Chain<graph::graph::graphblas::tensor::Iter, core::iter::adapters::filter::Filter<graph::graph::graphblas::tensor::Iter, <graph::graph::graph::Graph>::get_node_relationships_by_type::{closure#1}::{closure#0}>>, (u64, u64, u64), <core::iter::adapters::chain::Chain<graph::graph::graphblas::tensor::Iter, core::iter::adapters::filter::Filter<graph::graph::graphblas::tensor::Iter, <graph::graph::graph::Graph>::get_node_relationships_by_type::{closure#1}::{closure#0}>> as core::iter::traits::iterator::Iterator>::next>
+               |                     |                     |          
+               |                     |                      --1.28%--<graph::graph::graphblas::tensor::Iter as core::iter::traits::iterator::Iterator>::next
