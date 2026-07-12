@@ -1,0 +1,60 @@
+    98.00%     0.00%  [.] 0xffffffffffffffff                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               -      -            
+            |
+            ---0xffffffffffffffff
+               |          
+               |--48.28%--<graph::runtime::batch::BatchOp as core::iter::traits::iterator::Iterator>::next
+               |          |          
+               |          |--39.48%--<graph::runtime::ops::cond_var_len_traverse::CondVarLenTraverseOp as core::iter::traits::iterator::Iterator>::next
+               |          |          |          
+               |          |           --39.48%--<graph::runtime::ops::cond_var_len_traverse::VarLenIter as core::iter::traits::iterator::Iterator>::next
+               |          |                     |          
+               |          |                      --0.85%--GrB_Matrix_extractElement_BOOL
+               |          |          
+               |           --8.07%--<graph::runtime::ops::aggregate::AggregateOp as core::iter::traits::iterator::Iterator>::next
+               |                     |          
+               |                      --8.05%--<graph::runtime::batch::BatchOp as core::iter::traits::iterator::Iterator>::next
+               |                                |          
+               |                                 --8.04%--<graph::runtime::ops::cond_var_len_traverse::CondVarLenTraverseOp as core::iter::traits::iterator::Iterator>::next
+               |                                           |          
+               |                                           |--2.64%--<(graph::graph::graph::NodeId, graph::graph::graph::NodeId, core::option::Option<graph::runtime::value::Value>) as graph::runtime::ops::batched_result_emitter::GatherItem>::push_into
+               |                                           |          
+               |                                           |--1.56%--<graph::runtime::ops::cond_var_len_traverse::VarLenIter as core::iter::traits::iterator::Iterator>::next
+               |                                           |          
+               |                                            --0.63%--<graph::runtime::batch::Batch>::gather
+               |                                                      |          
+               |                                                       --0.52%--<graph::runtime::batch::Column>::gather::<core::iter::adapters::copied::Copied<core::slice::iter::Iter<usize>>>
+               |          
+               |--20.59%--<graph::runtime::runtime::Runtime>::query
+               |          |          
+               |           --20.59%--<graph::runtime::batch::BatchOp as core::iter::traits::iterator::Iterator>::next
+               |                     |          
+               |                      --20.51%--<graph::runtime::ops::aggregate::AggregateOp as core::iter::traits::iterator::Iterator>::next
+               |                                |          
+               |                                |--5.70%--<graph::runtime::functions::GraphFn>::validate_args_type::<graph::runtime::value::Value>
+               |                                |          |          
+               |                                |           --2.39%--<graph::runtime::value::Value as graph::runtime::value::ValueTypeOf>::value_of_type
+               |                                |          
+               |                                |--1.53%--<graph::runtime::functions::GraphFn>::validate_args_domain
+               |                                |          
+               |                                |--1.26%--<graph::runtime::batch::Column>::get
+               |                                |          
+               |                                |--1.16%--core::ptr::drop_glue::<alloc::vec::Vec<graph::runtime::value::Value>>
+               |                                |          |          
+               |                                |           --0.99%--core::ptr::drop_glue::<graph::runtime::value::Value>
+               |                                |          
+               |                                |--0.87%--<alloc::vec::Vec<usize> as alloc::vec::spec_from_iter_nested::SpecFromIterNested<usize, graph::runtime::batch::ActiveIndices>>::from_iter
+               |                                |          
+               |                                 --0.62%--graph::runtime::functions::aggregation::count_batch
+               |          
+               |--16.95%--GrB_Matrix_extractElement_BOOL
+               |          |          
+               |          |--8.15%--__kmpc_flush
+               |          |          
+               |           --2.10%--GB_hyper_hash_lookup
+               |          
+               |--4.36%--<graph::runtime::ops::cond_var_len_traverse::CondVarLenTraverseOp as core::iter::traits::iterator::Iterator>::next
+               |          |          
+               |           --4.36%--<graph::runtime::ops::cond_var_len_traverse::VarLenIter as core::iter::traits::iterator::Iterator>::next
+               |                     |          
+               |                     |--2.08%--<core::iter::adapters::flatten::FlattenCompat<core::iter::adapters::map::Map<alloc::vec::into_iter::IntoIter<&graph::graph::graphblas::tensor::Tensor>, <graph::graph::graph::Graph>::get_node_relationships_by_type::{closure#1}>, core::iter::adapters::chain::Chain<graph::graph::graphblas::tensor::Iter, core::iter::adapters::filter::Filter<graph::graph::graphblas::tensor::Iter, <graph::graph::graph::Graph>::get_node_relationships_by_type::{closure#1}::{closure#0}>>> as core::iter::traits::iterator::Iterator>::next
+               |                     |          |          
