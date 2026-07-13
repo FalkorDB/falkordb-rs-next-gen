@@ -266,14 +266,14 @@ checksum = "d0a5c400df2834b80a4c3327b3aad3a4c4cd4de0629063962b03235697506a28"
 
 [[package]]
 name = "crossfire"
-version = "3.1.18"
+version = "3.1.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df981decccf9b846c396ae513b3d2c6a1770d9593c8e47853d8fdb336c7bcb46"
+checksum = "111ce8f7abfbac38b4bc4f32a3a2dda1a8034b873c90c7899f302cc9dbbc05ec"
 dependencies = [
  "crossbeam-utils",
- "embed-collections",
  "futures-core",
  "parking_lot",
+ "pointers",
  "smallvec",
 ]
 
@@ -303,12 +303,6 @@ name = "either"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
-
-[[package]]
-name = "embed-collections"
-version = "0.12.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "82e4033966f8f27b67150cff46840aa0cf68da9d83454e84c903d76f939ff698"
 
 [[package]]
 name = "equivalent"
@@ -1037,6 +1031,12 @@ checksum = "c6fd9027e2d9319be6349febd1db4e8d02aa544921200c9b777720ac34a3aa89"
 dependencies = [
  "siphasher",
 ]
+
+[[package]]
+name = "pointers"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5dcdc93847ad24990939cce6e1804361e903efcb5f99daa5abd87943a9d6d7ba"
 
 [[package]]
 name = "prettyplease"
