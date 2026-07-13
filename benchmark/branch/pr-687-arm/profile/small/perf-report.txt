@@ -1,0 +1,60 @@
+    37.32%     0.01%  [.] <graph::runtime::batch::BatchOp as core::iter::traits::iterator::Iterator>::next                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 -      -            
+            |          
+             --37.31%--<graph::runtime::batch::BatchOp as core::iter::traits::iterator::Iterator>::next
+                       |          
+                        --36.67%--<graph::runtime::ops::aggregate::AggregateOp as core::iter::traits::iterator::Iterator>::next
+                                  |          
+                                  |--11.15%--<graph::runtime::batch::BatchOp as core::iter::traits::iterator::Iterator>::next
+                                  |          |          
+                                  |           --11.11%--<graph::runtime::ops::cond_var_len_traverse::CondVarLenTraverseOp as core::iter::traits::iterator::Iterator>::next
+                                  |                     |          
+                                  |                     |--4.18%--<(graph::graph::graph::NodeId, graph::graph::graph::NodeId, core::option::Option<graph::runtime::value::Value>) as graph::runtime::ops::batched_result_emitter::GatherItem>::push_into
+                                  |                     |          
+                                  |                     |--1.40%--<graph::runtime::ops::cond_var_len_traverse::VarLenIter as core::iter::traits::iterator::Iterator>::next
+                                  |                     |          
+                                  |                      --0.70%--<graph::runtime::batch::Batch>::gather
+                                  |                                |          
+                                  |                                 --0.63%--<graph::runtime::batch::Column>::gather::<core::iter::adapters::copied::Copied<core::slice::iter::Iter<usize>>>
+                                  |          
+                                  |--7.24%--<graph::runtime::functions::GraphFn>::validate_args_type::<graph::runtime::value::Value>
+                                  |          |          
+                                  |           --2.46%--<graph::runtime::value::Value as graph::runtime::value::ValueTypeOf>::value_of_type
+                                  |          
+                                  |--2.80%--core::ptr::drop_glue::<alloc::vec::Vec<graph::runtime::value::Value>>
+                                  |          |          
+                                  |           --1.91%--core::ptr::drop_glue::<graph::runtime::value::Value>
+                                  |          
+                                  |--1.24%--<graph::runtime::batch::Column>::get
+                                  |          
+                                  |--1.14%--<alloc::vec::Vec<usize> as alloc::vec::spec_from_iter_nested::SpecFromIterNested<usize, graph::runtime::batch::ActiveIndices>>::from_iter
+                                  |          
+                                  |--0.96%--<graph::runtime::functions::GraphFn>::validate_args_domain
+                                  |          
+                                  |--0.88%--graph::runtime::functions::aggregation::count_batch
+                                  |          
+                                   --0.76%--core::ptr::drop_glue::<graph::runtime::value::Value>
+
+    36.92%    10.24%  [.] <graph::runtime::ops::aggregate::AggregateOp as core::iter::traits::iterator::Iterator>::next                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    -      -            
+            |          
+            |--26.68%--<graph::runtime::ops::aggregate::AggregateOp as core::iter::traits::iterator::Iterator>::next
+            |          |          
+            |          |--11.40%--<graph::runtime::batch::BatchOp as core::iter::traits::iterator::Iterator>::next
+            |          |          |          
+            |          |           --11.32%--<graph::runtime::ops::cond_var_len_traverse::CondVarLenTraverseOp as core::iter::traits::iterator::Iterator>::next
+            |          |                     |          
+            |          |                     |--4.18%--<(graph::graph::graph::NodeId, graph::graph::graph::NodeId, core::option::Option<graph::runtime::value::Value>) as graph::runtime::ops::batched_result_emitter::GatherItem>::push_into
+            |          |                     |          
+            |          |                     |--1.48%--<graph::runtime::ops::cond_var_len_traverse::VarLenIter as core::iter::traits::iterator::Iterator>::next
+            |          |                     |          
+            |          |                      --0.72%--<graph::runtime::batch::Batch>::gather
+            |          |                                |          
+            |          |                                 --0.66%--<graph::runtime::batch::Column>::gather::<core::iter::adapters::copied::Copied<core::slice::iter::Iter<usize>>>
+            |          |          
+            |          |--7.24%--<graph::runtime::functions::GraphFn>::validate_args_type::<graph::runtime::value::Value>
+            |          |          |          
+            |          |           --2.46%--<graph::runtime::value::Value as graph::runtime::value::ValueTypeOf>::value_of_type
+            |          |          
+            |          |--2.80%--core::ptr::drop_glue::<alloc::vec::Vec<graph::runtime::value::Value>>
+            |          |          |          
+            |          |           --1.91%--core::ptr::drop_glue::<graph::runtime::value::Value>
+            |          |          
