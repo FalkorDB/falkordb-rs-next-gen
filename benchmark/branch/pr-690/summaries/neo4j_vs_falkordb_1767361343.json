@@ -1,0 +1,285 @@
+{
+  "runs": [
+    {
+      "vendor": "falkordb",
+      "read-write-ratio": 0.0,
+      "clients": 10,
+      "platform": "arm",
+      "target-messages-per-second": 8000,
+      "edges": 100000,
+      "relationships": 1768515,
+      "started-at-epoch-secs": 1767361343,
+      "result": {
+        "deadline-offset": "0ms",
+        "actual-messages-per-second": 58.42552855836564,
+        "latency": {
+          "p50": "156.67ms",
+          "p95": "358.40ms",
+          "p99": "450.56ms"
+        },
+        "avg-latency-ms": 171.10525416695899,
+        "latency-histogram": {
+          "buckets-ms": [
+            1,
+            1,
+            5,
+            10,
+            25,
+            50,
+            100,
+            250,
+            500,
+            1000,
+            2500,
+            5000,
+            10000
+          ],
+          "cumulative-counts": [
+            0,
+            18,
+            2261,
+            2263,
+            2263,
+            3170,
+            10970,
+            32481,
+            39885,
+            39998,
+            39998,
+            39998,
+            39998
+          ],
+          "count": 39998
+        },
+        "elapsed-ms": 684598,
+        "cpu-usage": 0.0,
+        "ram-usage": "80.0MB",
+        "errors": 2,
+        "successful-requests": 39998,
+        "operations": {
+          "by-query": {
+            "single_edge_update": 10151,
+            "single_edge_write": 9926,
+            "single_vertex_update": 9983,
+            "single_vertex_write": 9940
+          },
+          "by-spawn": {
+            "0": 3998,
+            "1": 3999,
+            "2": 4000,
+            "3": 4005,
+            "4": 4001,
+            "5": 3998,
+            "6": 4001,
+            "7": 3997,
+            "8": 4001,
+            "9": 4000
+          }
+        },
+        "spawn-stats": {
+          "min": 3997,
+          "max": 4005,
+          "p50": 4000,
+          "p95": 4005,
+          "max-min-ratio": 1.0020015011258443,
+          "cv": 0.0005361902647381805
+        },
+        "histogram_for_type": {
+          "single_edge_update": [
+            99.327,
+            140.287,
+            157.695,
+            186.367,
+            216.063,
+            235.519,
+            268.287,
+            309.247,
+            360.447,
+            403.455,
+            487.423
+          ],
+          "single_edge_write": [
+            50.943,
+            73.215,
+            89.599,
+            126.975,
+            146.431,
+            160.767,
+            198.655,
+            232.447,
+            286.719,
+            321.535,
+            407.551
+          ],
+          "single_vertex_update": [
+            48.383,
+            72.703,
+            84.991,
+            124.927,
+            146.431,
+            161.791,
+            198.655,
+            232.447,
+            286.719,
+            325.631,
+            409.599
+          ],
+          "single_vertex_write": [
+            48.639,
+            72.703,
+            84.991,
+            123.903,
+            145.407,
+            159.743,
+            197.631,
+            231.423,
+            284.671,
+            323.583,
+            403.455
+          ]
+        }
+      }
+    },
+    {
+      "vendor": "neo4j",
+      "read-write-ratio": 0.0,
+      "clients": 10,
+      "platform": "arm",
+      "target-messages-per-second": 8000,
+      "edges": 100000,
+      "relationships": 1768515,
+      "started-at-epoch-secs": 1767362029,
+      "result": {
+        "deadline-offset": "0ms",
+        "actual-messages-per-second": 31.089476289999528,
+        "latency": {
+          "p50": "8.095ms",
+          "p95": "1.548s",
+          "p99": "1.753s"
+        },
+        "avg-latency-ms": 321.5583779875535,
+        "latency-histogram": {
+          "buckets-ms": [
+            1,
+            1,
+            5,
+            10,
+            25,
+            50,
+            100,
+            250,
+            500,
+            1000,
+            2500,
+            5000,
+            10000
+          ],
+          "cumulative-counts": [
+            0,
+            0,
+            6209,
+            24331,
+            28614,
+            29675,
+            29821,
+            29836,
+            29840,
+            32951,
+            40000,
+            40000,
+            40000
+          ],
+          "count": 40000
+        },
+        "elapsed-ms": 1286609,
+        "cpu-usage": 0.0,
+        "ram-usage": "0MB",
+        "base-dataset-bytes": 88715412,
+        "errors": 0,
+        "successful-requests": 40000,
+        "operations": {
+          "by-query": {
+            "single_edge_update": 10163,
+            "single_edge_write": 10038,
+            "single_vertex_update": 9940,
+            "single_vertex_write": 9859
+          },
+          "by-spawn": {
+            "0": 4059,
+            "1": 4036,
+            "2": 4187,
+            "3": 4053,
+            "4": 3963,
+            "5": 3819,
+            "6": 3885,
+            "7": 4018,
+            "8": 4016,
+            "9": 3964
+          }
+        },
+        "spawn-stats": {
+          "min": 3819,
+          "max": 4187,
+          "p50": 4018,
+          "p95": 4187,
+          "max-min-ratio": 1.0963603037444358,
+          "cv": 0.02395125257684867
+        },
+        "histogram_for_type": {
+          "single_edge_update": [
+            864.255,
+            921.599,
+            995.327,
+            1114.111,
+            1245.183,
+            1351.679,
+            1449.983,
+            1548.287,
+            1662.975,
+            1736.703,
+            1859.583
+          ],
+          "single_edge_write": [
+            4.959,
+            5.055,
+            5.343,
+            6.175,
+            7.359,
+            7.967,
+            8.447,
+            9.919,
+            14.335,
+            21.887,
+            43.775
+          ],
+          "single_vertex_update": [
+            4.863,
+            4.959,
+            5.151,
+            6.015,
+            7.071,
+            7.903,
+            8.191,
+            9.535,
+            13.247,
+            20.607,
+            41.983
+          ],
+          "single_vertex_write": [
+            4.831,
+            4.991,
+            5.151,
+            5.919,
+            7.039,
+            7.935,
+            8.255,
+            9.535,
+            13.951,
+            22.271,
+            42.239
+          ]
+        }
+      }
+    }
+  ]
+}
