@@ -1,0 +1,364 @@
+{
+  "runs": [
+    {
+      "vendor": "falkordb",
+      "read-write-ratio": 0.0,
+      "clients": 1,
+      "platform": "arm",
+      "target-messages-per-second": 500,
+      "edges": 100000,
+      "relationships": 1768515,
+      "started-at-epoch-secs": 1767466726,
+      "result": {
+        "deadline-offset": "0ms",
+        "actual-messages-per-second": 64.81627018014062,
+        "latency": {
+          "p50": "0.437ms",
+          "p95": "71.17ms",
+          "p99": "76.29ms"
+        },
+        "avg-latency-ms": 15.419012624549993,
+        "latency-histogram": {
+          "buckets-ms": [
+            1,
+            1,
+            5,
+            10,
+            25,
+            50,
+            100,
+            250,
+            500,
+            1000,
+            2500,
+            5000,
+            10000
+          ],
+          "cumulative-counts": [
+            25045,
+            29894,
+            29999,
+            30001,
+            30002,
+            32294,
+            39999,
+            40000,
+            40000,
+            40000,
+            40000,
+            40000,
+            40000
+          ],
+          "count": 40000
+        },
+        "elapsed-ms": 617129,
+        "cpu-usage": 0.0,
+        "ram-usage": "80.0MB",
+        "errors": 0,
+        "successful-requests": 40000,
+        "operations": {
+          "by-query": {
+            "single_edge_update": 9997,
+            "single_edge_write": 10011,
+            "single_vertex_update": 10057,
+            "single_vertex_write": 9935
+          },
+          "by-spawn": {
+            "0": 40000
+          }
+        },
+        "spawn-stats": {
+          "min": 40000,
+          "max": 40000,
+          "p50": 40000,
+          "p95": 40000,
+          "max-min-ratio": 1.0,
+          "cv": 0.0
+        },
+        "histogram_for_type": {
+          "single_edge_update": [
+            43.007,
+            48.639,
+            54.015,
+            58.879,
+            62.975,
+            66.047,
+            68.607,
+            71.167,
+            74.239,
+            75.775,
+            78.847
+          ],
+          "single_edge_write": [
+            0.347,
+            0.365,
+            0.379,
+            0.391,
+            0.403,
+            0.417,
+            0.433,
+            0.453,
+            0.485,
+            0.519,
+            0.683
+          ],
+          "single_vertex_update": [
+            0.311,
+            0.327,
+            0.337,
+            0.349,
+            0.359,
+            0.371,
+            0.387,
+            0.407,
+            0.443,
+            0.479,
+            0.603
+          ],
+          "single_vertex_write": [
+            0.317,
+            0.365,
+            0.407,
+            0.441,
+            0.467,
+            0.497,
+            0.531,
+            0.559,
+            0.603,
+            0.643,
+            0.775
+          ]
+        },
+        "telemetry_for_type": {
+          "CALL DB.LABELS()": {
+            "wait-ms": 42.208,
+            "exec-ms": 512.292,
+            "report-ms": 7.709
+          },
+          "CALL DB.PROPERTYKEYS()": {
+            "wait-ms": 39.771,
+            "exec-ms": 222.646,
+            "report-ms": 5.229
+          },
+          "CALL DB.RELATIONSHIPTYPES()": {
+            "wait-ms": 33.833,
+            "exec-ms": 649.459,
+            "report-ms": 5.292
+          },
+          "CALL db.indexes()": {
+            "wait-ms": 48.209,
+            "exec-ms": 515.667,
+            "report-ms": 15.875
+          },
+          "CALL db.labels()": {
+            "wait-ms": 28.511,
+            "exec-ms": 45.198,
+            "report-ms": 3.25
+          },
+          "CALL db.labels() YIELD label as info": {
+            "wait-ms": 30.378,
+            "exec-ms": 40.112,
+            "report-ms": 4.014
+          },
+          "CALL db.meta.stats()": {
+            "wait-ms": 199.0,
+            "exec-ms": 1878.375,
+            "report-ms": 26.833
+          },
+          "CALL db.propertyKeys()": {
+            "wait-ms": 22.458,
+            "exec-ms": 49.271,
+            "report-ms": 3.323
+          },
+          "CALL db.propertyKeys() YIELD propertyKey as info": {
+            "wait-ms": 25.149,
+            "exec-ms": 31.738,
+            "report-ms": 4.018
+          },
+          "CALL db.relationshipTypes()": {
+            "wait-ms": 17.396,
+            "exec-ms": 34.615,
+            "report-ms": 2.333
+          },
+          "CALL db.relationshipTypes() YIELD relationshipType as info": {
+            "wait-ms": 26.279,
+            "exec-ms": 40.114,
+            "report-ms": 2.89
+          },
+          "CALL dbms.procedures() YIELD name as info": {
+            "wait-ms": 46.792,
+            "exec-ms": 120.791,
+            "report-ms": 3.292
+          },
+          "MATCH ()-[e]->() RETURN count(e) as edges": {
+            "wait-ms": 24.431,
+            "exec-ms": 47.845,
+            "report-ms": 2.595
+          },
+          "MATCH (n) OPTIONAL MATCH (n)-[e]-(m) RETURN * LIMIT 100": {
+            "wait-ms": 45.073,
+            "exec-ms": 1120.959,
+            "report-ms": 118.917
+          },
+          "MATCH (n) RETURN count(n) as nodes": {
+            "wait-ms": 25.603,
+            "exec-ms": 55.649,
+            "report-ms": 3.138
+          },
+          "single_edge_update": {
+            "wait-ms": 22.34,
+            "exec-ms": 59956.914,
+            "report-ms": 3.125
+          },
+          "single_edge_write": {
+            "wait-ms": 22.348,
+            "exec-ms": 137.355,
+            "report-ms": 1.41
+          },
+          "single_vertex_update": {
+            "wait-ms": 22.487,
+            "exec-ms": 84.108,
+            "report-ms": 2.152
+          },
+          "single_vertex_write": {
+            "wait-ms": 22.499,
+            "exec-ms": 28.265,
+            "report-ms": 159.059
+          }
+        }
+      }
+    },
+    {
+      "vendor": "neo4j",
+      "read-write-ratio": 0.0,
+      "clients": 1,
+      "platform": "arm",
+      "target-messages-per-second": 500,
+      "edges": 100000,
+      "relationships": 1768515,
+      "started-at-epoch-secs": 1767467344,
+      "result": {
+        "deadline-offset": "0ms",
+        "actual-messages-per-second": 8.69938345294623,
+        "latency": {
+          "p50": "4.671ms",
+          "p95": "501.76ms",
+          "p99": "581.63ms"
+        },
+        "avg-latency-ms": 114.94345533450073,
+        "latency-histogram": {
+          "buckets-ms": [
+            1,
+            1,
+            5,
+            10,
+            25,
+            50,
+            100,
+            250,
+            500,
+            1000,
+            2500,
+            5000,
+            10000
+          ],
+          "cumulative-counts": [
+            0,
+            0,
+            27528,
+            29970,
+            30072,
+            30096,
+            30098,
+            30099,
+            38004,
+            39999,
+            40000,
+            40000,
+            40000
+          ],
+          "count": 40000
+        },
+        "elapsed-ms": 4598027,
+        "cpu-usage": 0.0,
+        "ram-usage": "0MB",
+        "base-dataset-bytes": 88715412,
+        "errors": 0,
+        "successful-requests": 40000,
+        "operations": {
+          "by-query": {
+            "single_edge_update": 9900,
+            "single_edge_write": 10242,
+            "single_vertex_update": 9859,
+            "single_vertex_write": 9999
+          },
+          "by-spawn": {
+            "0": 40000
+          }
+        },
+        "spawn-stats": {
+          "min": 40000,
+          "max": 40000,
+          "p50": 40000,
+          "p95": 40000,
+          "max-min-ratio": 1.0,
+          "cv": 0.0
+        },
+        "histogram_for_type": {
+          "single_edge_update": [
+            403.455,
+            407.551,
+            413.695,
+            417.791,
+            425.983,
+            440.319,
+            466.943,
+            501.759,
+            532.479,
+            573.439,
+            647.167
+          ],
+          "single_edge_write": [
+            3.711,
+            3.935,
+            3.983,
+            4.015,
+            4.063,
+            4.255,
+            4.799,
+            4.895,
+            5.023,
+            5.311,
+            7.263
+          ],
+          "single_vertex_update": [
+            3.615,
+            3.903,
+            3.951,
+            3.983,
+            4.015,
+            4.127,
+            4.735,
+            4.863,
+            4.959,
+            5.279,
+            7.103
+          ],
+          "single_vertex_write": [
+            3.295,
+            3.903,
+            3.967,
+            3.999,
+            4.031,
+            4.095,
+            4.735,
+            4.863,
+            4.991,
+            5.183,
+            7.103
+          ]
+        }
+      }
+    }
+  ]
+}

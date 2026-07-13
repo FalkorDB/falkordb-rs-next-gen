@@ -1,0 +1,332 @@
+{
+  "runs": [
+    {
+      "vendor": "falkordb",
+      "read-write-ratio": 0.0,
+      "clients": 10,
+      "platform": "arm",
+      "target-messages-per-second": 8000,
+      "edges": 100000,
+      "relationships": 1768515,
+      "started-at-epoch-secs": 1767437441,
+      "result": {
+        "deadline-offset": "0ms",
+        "actual-messages-per-second": 64.06670959350843,
+        "latency": {
+          "p50": "145.41ms",
+          "p95": "315.39ms",
+          "p99": "399.36ms"
+        },
+        "avg-latency-ms": 156.05073104597588,
+        "latency-histogram": {
+          "buckets-ms": [
+            1,
+            1,
+            5,
+            10,
+            25,
+            50,
+            100,
+            250,
+            500,
+            1000,
+            2500,
+            5000,
+            10000
+          ],
+          "cumulative-counts": [
+            0,
+            172,
+            2411,
+            2411,
+            2411,
+            3508,
+            12028,
+            34133,
+            39954,
+            39998,
+            39998,
+            39998,
+            39998
+          ],
+          "count": 39998
+        },
+        "elapsed-ms": 624318,
+        "cpu-usage": 0.0,
+        "ram-usage": "80.0MB",
+        "errors": 2,
+        "successful-requests": 39998,
+        "operations": {
+          "by-query": {
+            "single_edge_update": 9837,
+            "single_edge_write": 10005,
+            "single_vertex_update": 10120,
+            "single_vertex_write": 10038
+          },
+          "by-spawn": {
+            "0": 4001,
+            "1": 4001,
+            "2": 4002,
+            "3": 4001,
+            "4": 3998,
+            "5": 3999,
+            "6": 3999,
+            "7": 3998,
+            "8": 3999,
+            "9": 4002
+          }
+        },
+        "spawn-stats": {
+          "min": 3998,
+          "max": 4002,
+          "p50": 4001,
+          "p95": 4002,
+          "max-min-ratio": 1.001000500250125,
+          "cv": 0.00037080992435478314
+        },
+        "histogram_for_type": {
+          "single_edge_update": [
+            90.623,
+            129.023,
+            145.407,
+            165.887,
+            199.679,
+            218.111,
+            237.567,
+            282.623,
+            317.439,
+            370.687,
+            458.751
+          ],
+          "single_edge_write": [
+            46.847,
+            69.119,
+            81.407,
+            115.711,
+            137.215,
+            150.527,
+            176.127,
+            214.015,
+            260.095,
+            301.055,
+            382.975
+          ],
+          "single_vertex_update": [
+            44.799,
+            68.095,
+            79.359,
+            114.175,
+            136.191,
+            151.551,
+            179.199,
+            214.015,
+            258.047,
+            299.007,
+            372.735
+          ],
+          "single_vertex_write": [
+            45.567,
+            69.119,
+            80.383,
+            114.687,
+            137.215,
+            150.527,
+            178.175,
+            215.039,
+            252.927,
+            296.959,
+            378.879
+          ]
+        },
+        "telemetry_for_type": {
+          "CALL DB.LABELS()": {
+            "wait-ms": 32.942,
+            "exec-ms": 36.317,
+            "report-ms": 2.708
+          },
+          "CALL DB.PROPERTYKEYS()": {
+            "wait-ms": 29.677,
+            "exec-ms": 37.896,
+            "report-ms": 2.965
+          },
+          "CALL DB.RELATIONSHIPTYPES()": {
+            "wait-ms": 54.058,
+            "exec-ms": 38.867,
+            "report-ms": 3.763
+          },
+          "CALL db.indexes()": {
+            "wait-ms": 37.042,
+            "exec-ms": 269.458,
+            "report-ms": 13.666
+          },
+          "CALL db.meta.stats()": {
+            "wait-ms": 77.834,
+            "exec-ms": 496.5,
+            "report-ms": 34.375
+          },
+          "single_edge_update": {
+            "wait-ms": 139976.098,
+            "exec-ms": 62909.82,
+            "report-ms": 3.542
+          },
+          "single_edge_write": {
+            "wait-ms": 140486.404,
+            "exec-ms": 163.464,
+            "report-ms": 1.627
+          },
+          "single_vertex_update": {
+            "wait-ms": 139662.768,
+            "exec-ms": 110.128,
+            "report-ms": 2.331
+          },
+          "single_vertex_write": {
+            "wait-ms": 139909.205,
+            "exec-ms": 44.743,
+            "report-ms": 179.618
+          }
+        }
+      }
+    },
+    {
+      "vendor": "neo4j",
+      "read-write-ratio": 0.0,
+      "clients": 10,
+      "platform": "arm",
+      "target-messages-per-second": 8000,
+      "edges": 100000,
+      "relationships": 1768515,
+      "started-at-epoch-secs": 1767438067,
+      "result": {
+        "deadline-offset": "0ms",
+        "actual-messages-per-second": 43.1865637962717,
+        "latency": {
+          "p50": "7.839ms",
+          "p95": "1.147s",
+          "p99": "1.303s"
+        },
+        "avg-latency-ms": 231.42469564252502,
+        "latency-histogram": {
+          "buckets-ms": [
+            1,
+            1,
+            5,
+            10,
+            25,
+            50,
+            100,
+            250,
+            500,
+            1000,
+            2500,
+            5000,
+            10000
+          ],
+          "cumulative-counts": [
+            0,
+            0,
+            11742,
+            26803,
+            29040,
+            29970,
+            30114,
+            30118,
+            30532,
+            36500,
+            40000,
+            40000,
+            40000
+          ],
+          "count": 40000
+        },
+        "elapsed-ms": 926214,
+        "cpu-usage": 0.0,
+        "ram-usage": "0MB",
+        "base-dataset-bytes": 88715412,
+        "errors": 0,
+        "successful-requests": 40000,
+        "operations": {
+          "by-query": {
+            "single_edge_update": 9880,
+            "single_edge_write": 10092,
+            "single_vertex_update": 9957,
+            "single_vertex_write": 10071
+          },
+          "by-spawn": {
+            "0": 3896,
+            "1": 3904,
+            "2": 4073,
+            "3": 3979,
+            "4": 4021,
+            "5": 4112,
+            "6": 4029,
+            "7": 3965,
+            "8": 4083,
+            "9": 3938
+          }
+        },
+        "spawn-stats": {
+          "min": 3896,
+          "max": 4112,
+          "p50": 4021,
+          "p95": 4112,
+          "max-min-ratio": 1.055441478439425,
+          "cv": 0.017955848629346374
+        },
+        "histogram_for_type": {
+          "single_edge_update": [
+            602.111,
+            724.991,
+            790.527,
+            835.583,
+            892.927,
+            966.655,
+            1056.767,
+            1146.879,
+            1228.799,
+            1286.143,
+            1392.639
+          ],
+          "single_edge_write": [
+            4.191,
+            4.959,
+            5.023,
+            5.055,
+            5.151,
+            6.367,
+            7.967,
+            8.095,
+            11.903,
+            20.351,
+            42.751
+          ],
+          "single_vertex_update": [
+            4.015,
+            4.863,
+            4.927,
+            4.991,
+            5.055,
+            5.983,
+            7.903,
+            8.031,
+            10.559,
+            19.071,
+            42.239
+          ],
+          "single_vertex_write": [
+            4.015,
+            4.767,
+            4.959,
+            5.023,
+            5.119,
+            6.015,
+            7.935,
+            8.063,
+            10.815,
+            18.687,
+            41.471
+          ]
+        }
+      }
+    }
+  ]
+}
