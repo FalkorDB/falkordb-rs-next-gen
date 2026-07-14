@@ -168,10 +168,25 @@ impl EdgeIdStore {
         self.range_iter(min_key, max_key).collect()
     }
 
-    /// Every live `(key, id)` pair, ascending, as an owned `Vec`.
+    /// Call `f(key, id)` for every live pair, ascending by `(key, id)`. The tree
+    /// walk (`for_each_tuple`) matches each leaf's format once and runs a tight
+    /// inner loop — the fast, allocation-free primitive consumers should prefer
+    /// when they process every pair (e.g. the weighted-MSF ephemeral rebuild
+    /// filling its `(row, col, val)` build arrays).
+    pub fn for_each_pair<F: FnMut(u64, u64)>(
+        &self,
+        f: F,
+    ) {
+        self.tree.for_each_tuple(f);
+    }
+
+    /// Every live `(key, id)` pair, ascending, as an owned `Vec`. Prefer
+    /// [`for_each_pair`](Self::for_each_pair) on hot paths — this allocates.
     #[must_use]
     pub fn all_pairs(&self) -> Vec<(u64, u64)> {
-        self.range_pairs(0, u64::MAX)
+        let mut v = Vec::with_capacity(self.count as usize);
+        self.for_each_pair(|k, d| v.push((k, d)));
+        v
     }
 
     /// Total live edge count.
@@ -575,14 +590,26 @@ mod perf {
             base_get.as_nanos() as f64 / iters as f64,
         );
 
-        // ---- ITERATION (full scan) ----
+        // ---- ITERATION (full scan, materialized — the iter_edges / MSF path) ----
         let reps = 30u32;
         let t = Instant::now();
         let mut c = 0u64;
         for _ in 0..reps {
-            c += cow.range_iter(0, u64::MAX).count() as u64;
+            c += cow.all_pairs().len() as u64; // bulk for_each_tuple
         }
         let cow_it = t.elapsed();
+        // old lazy cursor path, for reference
+        let t2 = Instant::now();
+        let mut c_lazy = 0u64;
+        for _ in 0..reps {
+            c_lazy += cow.range_iter(0, u64::MAX).count() as u64;
+        }
+        let cow_lazy = t2.elapsed();
+        println!(
+            "[iter*  ] cow all_pairs(bulk) {:6.1} M/s | cow range_iter(lazy) {:6.1} M/s",
+            (c as f64 / cow_it.as_secs_f64()) / 1e6,
+            (c_lazy as f64 / cow_lazy.as_secs_f64()) / 1e6,
+        );
         // committed base has empty add/del → full scan reads the base slice;
         // read both fields so the loop isn't optimized to `len()`.
         let t = Instant::now();

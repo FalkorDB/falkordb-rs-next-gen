@@ -234,7 +234,7 @@ impl Tensor {
     }
 
     /// Iterate every `(src, dst, edge_id)` triple, ascending by `(src, dst, id)`.
-    /// A single lazy streaming pass over the store — no allocation.
+    /// Lazy: a streaming pass over the store, no allocation, droppable mid-scan.
     pub fn iter_edges(&self) -> impl Iterator<Item = (u64, u64, u64)> + '_ {
         self.ids.range_iter(0, u64::MAX).map(|(k, id)| {
             let (s, d) = split_key(k);
@@ -284,18 +284,19 @@ impl Tensor {
     /// snapshot.
     #[must_use]
     pub fn build_msf_forward(&self) -> VersionedMatrix<u64> {
-        let pairs = self.ids.all_pairs();
         let (mut rows, mut cols, mut vals) = (Vec::new(), Vec::new(), Vec::new());
         let mut prev: Option<u64> = None;
-        for (k, id) in pairs {
+        // Drive the build arrays straight from the tree walk (sorted by
+        // `(key,id)`), so the first id per key is its min — no intermediate Vec.
+        self.ids.for_each_pair(|k, id| {
             if prev != Some(k) {
                 let (s, d) = split_key(k);
                 rows.push(s);
                 cols.push(d);
-                vals.push(id); // sorted → first per key is the min
+                vals.push(id);
                 prev = Some(k);
             }
-        }
+        });
         let mut m = Matrix::<u64>::new(self.m.nrows(), self.m.ncols());
         m.build(&rows, &cols, &vals);
         m.wait();
@@ -307,17 +308,17 @@ impl Tensor {
     /// store for weighted `algo.MSF`'s overflow scoring pass.
     #[must_use]
     pub fn build_msf_overflow(&self) -> VersionedMatrix<bool> {
-        let pairs = self.ids.all_pairs();
         let (mut rows, mut cols) = (Vec::new(), Vec::new());
         let mut prev: Option<u64> = None;
-        for (k, id) in pairs {
+        // Overflow = 2nd+ id of each key (the non-first entries per sorted key).
+        self.ids.for_each_pair(|k, id| {
             if prev == Some(k) {
                 rows.push(k);
                 cols.push(id);
             } else {
                 prev = Some(k);
             }
-        }
+        });
         let mut me = Matrix::<bool>::new(GrB_INDEX_MAX, GrB_INDEX_MAX);
         if !rows.is_empty() {
             me.build(&rows, &cols);

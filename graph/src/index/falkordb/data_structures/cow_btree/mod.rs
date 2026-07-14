@@ -256,6 +256,26 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> CowBTree<LEAF_MAX, BRANCH_M
         RangeIter::new(&self.root, (lo, 0), hi)
     }
 
+    /// Call `f(key, doc)` for every tuple in the tree, in `(key, doc)` order. A bulk full-scan that
+    /// matches each leaf's format once and runs a tight inner loop — faster than collecting the lazy
+    /// [`range_tuples`](Self::range_tuples) cursor when the whole tree is consumed (`iter_edges`, the MSF
+    /// rebuild). No allocation, no per-entry `Iterator::next` dispatch.
+    pub fn for_each_tuple<F: FnMut(u64, u64)>(
+        &self,
+        mut f: F,
+    ) {
+        fn walk<F: FnMut(u64, u64), const LEAF_MAX: usize, const BRANCH_MAX: usize>(
+            node: &Node<LEAF_MAX, BRANCH_MAX>,
+            f: &mut F,
+        ) {
+            match node {
+                Node::Leaf(leaf) => leaf.for_each_tuple(&mut *f),
+                Node::Branch(branch) => branch.children.iter().for_each(|c| walk(c, f)),
+            }
+        }
+        walk(&self.root, &mut f);
+    }
+
     /// Approximate resident heap bytes: the sum of every leaf's byte blob plus branch child/separator
     /// vectors. Walks all pages (`O(pages)`), so call it off hot paths (memory reporting).
     #[must_use]
