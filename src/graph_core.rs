@@ -107,6 +107,30 @@ pub fn register_graph(
     }
 }
 
+/// Re-key a registry entry when a Redis RENAME moves a graph to a new key.
+///
+/// `graph_free` only runs for the *overwritten destination* value, so without
+/// this the old name keeps a stale entry: the next `register_graph` under
+/// that name (e.g. a concurrent write query re-creating the key) displaces
+/// it and trips the invariant assert above.
+pub fn rename_graph(
+    old_name: &str,
+    new_name: &str,
+) {
+    let displaced = {
+        let mut reg = GRAPH_REGISTRY.lock();
+        reg.remove(old_name)
+            .and_then(|arc| reg.insert(new_name.to_string(), arc))
+    };
+    // The destination entry is normally already removed (overwriting the key
+    // ran `graph_free` synchronously), but under lazy free that removal is
+    // deferred, so we may displace it here. Drop off the main Redis thread
+    // (see `register_graph` for the rationale).
+    if let Some(displaced) = displaced {
+        std::thread::spawn(move || drop(displaced));
+    }
+}
+
 pub struct WriteMessage {
     pub bc: BlockedClient,
     pub query: Arc<str>,
@@ -297,6 +321,14 @@ pub mod ffi {
     }
 }
 
+/// Sticky flag: set once any replica has ever attached (ReplicaChange
+/// server event) and never cleared — a disconnected replica may resume
+/// from the replication backlog, so effects buffers must keep being
+/// built after the first attach. While false (and AOF is off) write
+/// queries skip serializing effects entirely; the replication layer's
+/// verbatim-query fallback is then a no-op propagation.
+pub static REPLICATION_CONSUMERS: AtomicBool = AtomicBool::new(false);
+
 pub struct ThreadedGraph {
     pub graph: MvccGraph,
     pub sender: MTx<Array<Box<WriteMessage>>>,
@@ -463,15 +495,18 @@ impl ThreadedGraph {
             QUERY_MEM_CAPACITY.load(Ordering::Relaxed),
             Some(net_thread_usage),
         );
+        runtime.build_effects.set(
+            REPLICATION_CONSUMERS.load(Ordering::Relaxed)
+                || ctx.get_flags().contains(ContextFlags::AOF),
+        );
         let mut result = match runtime.query() {
             Ok(r) => r,
             Err(err) => {
-                // Clean up dirty cache entries before the graph is dropped.
-                g.borrow_mut().rollback_cache();
+                // The private MVCC graph is dropped on rollback, discarding
+                // all attribute writes with it.
                 return Err(err);
             }
         };
-        g.borrow_mut().clear_rollback_state();
 
         // Query succeeded — commit deferred index operations to RediSearch
         // without holding the GIL; RediSearch's ForkGC would deadlock against
@@ -608,7 +643,6 @@ impl ThreadedGraph {
         );
         match runtime.query() {
             Ok(_) => {
-                g.borrow_mut().clear_rollback_state();
                 runtime.commit_deferred_indexes();
                 reply_profile(ctx, &runtime, &plan);
                 Ok(WriteQueryOk {
@@ -619,10 +653,7 @@ impl ThreadedGraph {
                     params_offset: 0,
                 })
             }
-            Err(err) => {
-                g.borrow_mut().rollback_cache();
-                Err(err)
-            }
+            Err(err) => Err(err),
         }
     }
 }

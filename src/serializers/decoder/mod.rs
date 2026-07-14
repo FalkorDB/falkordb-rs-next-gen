@@ -3,7 +3,6 @@ use std::sync::Arc;
 use graph::entity_type::EntityType;
 use graph::graph::attribute_store::AttributeStore;
 use graph::graph::graph::Graph;
-use graph::graph::graphblas::matrix::New;
 use graph::graph::graphblas::serialization::{Decode, Reader};
 use graph::graph::graphblas::tensor::Tensor;
 use graph::graph::graphblas::versioned_matrix::VersionedMatrix;
@@ -54,8 +53,8 @@ pub fn rdb_load_graph(
 
         if is_first_key {
             // First key: initialize the pending graph.
-            let node_attrs = AttributeStore::new(0);
-            let mut rel_attrs = AttributeStore::new(0);
+            let node_attrs = AttributeStore::new();
+            let mut rel_attrs = AttributeStore::new();
 
             // Set attribute names on the stores now -- they are the same across all keys.
             let mut node_attrs_init = node_attrs;
@@ -91,8 +90,8 @@ pub fn rdb_load_graph(
                 deleted_rels: RoaringTreemap::new(),
                 label_matrices: Vec::new(),
                 relationship_tensors: Vec::new(),
-                adj_matrix: VersionedMatrix::new(0, 0),
-                lbls_matrix: VersionedMatrix::new(0, 0),
+                adj_matrix: VersionedMatrix::<bool>::new(0, 0),
+                lbls_matrix: VersionedMatrix::<bool>::new(0, 0),
             };
             decode_state.pending.insert(hdr.graph_name.clone(), pg);
         } else {
@@ -132,7 +131,7 @@ pub fn rdb_load_graph(
             let pg = decode_state.pending.remove(&graph_name).ok_or_else(|| {
                 format!("pending graph {graph_name} not found at multi-key RDB finalization")
             })?;
-            let graph = finalize_pending_graph(pg)?;
+            let graph = finalize_pending_graph(pg);
             // Store the finalized graph in DECODE_STATE for the caller to retrieve.
             decode_state.finalized.insert(graph_name, graph);
         }
@@ -141,8 +140,8 @@ pub fn rdb_load_graph(
     }
 
     // Single-key path (key_count == 1): decode everything in one go.
-    let mut node_attrs = AttributeStore::new(0);
-    let mut rel_attrs = AttributeStore::new(0);
+    let mut node_attrs = AttributeStore::new();
+    let mut rel_attrs = AttributeStore::new();
 
     for name in &schema.attribute_names {
         node_attrs.attrs_name.insert(name.clone());
@@ -151,10 +150,10 @@ pub fn rdb_load_graph(
 
     let mut deleted_nodes = RoaringTreemap::new();
     let mut deleted_rels = RoaringTreemap::new();
-    let mut label_matrices: Vec<VersionedMatrix> = Vec::new();
+    let mut label_matrices = Vec::new();
     let mut relationship_tensors: Vec<Tensor> = Vec::new();
-    let mut adj_matrix = VersionedMatrix::new(0, 0);
-    let mut lbls_matrix = VersionedMatrix::new(0, 0);
+    let mut adj_matrix = VersionedMatrix::<bool>::new(0, 0);
+    let mut lbls_matrix = VersionedMatrix::<bool>::new(0, 0);
 
     for (state, count) in &payloads {
         match *state {
@@ -193,13 +192,6 @@ pub fn rdb_load_graph(
         }
     }
 
-    node_attrs
-        .commit()
-        .map_err(|e| format!("commit node attrs: {e}"))?;
-    rel_attrs
-        .commit()
-        .map_err(|e| format!("commit rel attrs: {e}"))?;
-
     let mut graph = Graph::restore(
         &hdr.graph_name,
         cache_size,
@@ -209,8 +201,8 @@ pub fn rdb_load_graph(
         deleted_rels,
         adj_matrix,
         lbls_matrix,
-        VersionedMatrix::new(0, 0),
-        VersionedMatrix::new(0, 0),
+        VersionedMatrix::<bool>::new(0, 0),
+        VersionedMatrix::<bool>::new(0, 0),
         label_matrices,
         relationship_tensors,
         schema.node_labels,
@@ -275,17 +267,10 @@ fn decode_payloads_into_pending(
     Ok(())
 }
 
-/// Finalize a pending multi-key graph: commit attrs, build Graph, rebuild derived matrices.
-pub fn finalize_pending_graph(pg: PendingGraph) -> Result<Graph, String> {
-    let mut node_attrs = pg.node_attrs;
-    let mut rel_attrs = pg.rel_attrs;
-
-    node_attrs
-        .commit()
-        .map_err(|e| format!("commit node attrs: {e}"))?;
-    rel_attrs
-        .commit()
-        .map_err(|e| format!("commit rel attrs: {e}"))?;
+/// Finalize a pending multi-key graph: build Graph, rebuild derived matrices.
+pub fn finalize_pending_graph(pg: PendingGraph) -> Graph {
+    let node_attrs = pg.node_attrs;
+    let rel_attrs = pg.rel_attrs;
 
     let mut graph = Graph::restore(
         &pg.header.graph_name,
@@ -296,8 +281,8 @@ pub fn finalize_pending_graph(pg: PendingGraph) -> Result<Graph, String> {
         pg.deleted_rels,
         pg.adj_matrix,
         pg.lbls_matrix,
-        VersionedMatrix::new(0, 0),
-        VersionedMatrix::new(0, 0),
+        VersionedMatrix::<bool>::new(0, 0),
+        VersionedMatrix::<bool>::new(0, 0),
         pg.label_matrices,
         pg.relationship_tensors,
         pg.schema.node_labels,
@@ -313,7 +298,7 @@ pub fn finalize_pending_graph(pg: PendingGraph) -> Result<Graph, String> {
     }
     graph.populate_indexes_sync();
 
-    Ok(graph)
+    graph
 }
 
 /// Rebuild indexes from the decoded schema information.
@@ -420,8 +405,8 @@ fn load_graph_from_reader(
         payloads.push((state, count));
     }
 
-    let mut node_attrs = AttributeStore::new(0);
-    let mut rel_attrs = AttributeStore::new(0);
+    let mut node_attrs = AttributeStore::new();
+    let mut rel_attrs = AttributeStore::new();
 
     for name in &schema.attribute_names {
         node_attrs.attrs_name.insert(name.clone());
@@ -430,10 +415,10 @@ fn load_graph_from_reader(
 
     let mut deleted_nodes = RoaringTreemap::new();
     let mut deleted_rels = RoaringTreemap::new();
-    let mut label_matrices: Vec<VersionedMatrix> = Vec::new();
+    let mut label_matrices = Vec::new();
     let mut relationship_tensors: Vec<Tensor> = Vec::new();
-    let mut adj_matrix = VersionedMatrix::new(0, 0);
-    let mut lbls_matrix = VersionedMatrix::new(0, 0);
+    let mut adj_matrix = VersionedMatrix::<bool>::new(0, 0);
+    let mut lbls_matrix = VersionedMatrix::<bool>::new(0, 0);
 
     for (state, count) in &payloads {
         match *state {
@@ -472,13 +457,6 @@ fn load_graph_from_reader(
         }
     }
 
-    node_attrs
-        .commit()
-        .map_err(|e| format!("commit node attrs: {e}"))?;
-    rel_attrs
-        .commit()
-        .map_err(|e| format!("commit rel attrs: {e}"))?;
-
     let mut graph = Graph::restore(
         dest_name,
         cache_size,
@@ -488,8 +466,8 @@ fn load_graph_from_reader(
         deleted_rels,
         adj_matrix,
         lbls_matrix,
-        VersionedMatrix::new(0, 0),
-        VersionedMatrix::new(0, 0),
+        VersionedMatrix::<bool>::new(0, 0),
+        VersionedMatrix::<bool>::new(0, 0),
         label_matrices,
         relationship_tensors,
         schema.node_labels,

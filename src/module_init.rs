@@ -24,9 +24,9 @@
 
 use crate::config::{
     CONFIGURATION_INDEX_WORKER_THREADS, CONFIGURATION_JS_HEAP_SIZE, CONFIGURATION_JS_STACK_SIZE,
-    CONFIGURATION_TEMP_FOLDER, DELTA_MAX_PENDING_CHANGES, EFFECTS_THRESHOLD, MAX_QUEUED_QUERIES,
-    OMP_THREAD_COUNT, QUERY_MEM_CAPACITY, RESULTSET_SIZE, TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX,
-    get_thread_count,
+    CONFIGURATION_NODE_CREATION_BUFFER, CONFIGURATION_TEMP_FOLDER, DELTA_MAX_PENDING_CHANGES,
+    EFFECTS_THRESHOLD, MAX_QUEUED_QUERIES, OMP_THREAD_COUNT, QUERY_MEM_CAPACITY, RESULTSET_SIZE,
+    TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX, get_thread_count, normalize_node_creation_buffer,
 };
 use crate::redis_type::on_persistence;
 use crate::telemetry;
@@ -68,6 +68,10 @@ const REDISMODULE_SUBEVENT_LOADING_FAILED: u64 = 4;
 #[allow(non_upper_case_globals)]
 static RedisModuleEvent_ReplicationRoleChanged: RedisModuleEvent =
     RedisModuleEvent { id: 0, dataver: 1 };
+
+/// Redis event ID for replica attach/detach (REDISMODULE_EVENT_REPLICA_CHANGE).
+#[allow(non_upper_case_globals)]
+static RedisModuleEvent_ReplicaChange: RedisModuleEvent = RedisModuleEvent { id: 6, dataver: 1 };
 
 /// Redis event ID for shutdown. Only wired up under sanitizer/valgrind
 /// runs (gated by `RS_GLOBAL_DTORS`) so workers join cleanly and per-thread
@@ -258,6 +262,10 @@ pub fn graph_init(
         //            thread which holds the GIL, so no per-fork release.
         // - CHILD:   force GraphBLAS/OpenMP to single-threaded mode so they
         //            don't touch the parent's (now-invalid) thread pools.
+        //            Index state needs no quiescing: the indexer map is a
+        //            lock-free `ArcSwap` snapshot, so the child can read it
+        //            (`index_info` during RDB encoding) regardless of what
+        //            the parent's writer thread was doing at fork time.
         pthread_atfork(
             Some(crate::redis_type::pre_fork_prepare),
             None,
@@ -350,6 +358,13 @@ pub fn graph_init(
     let tc = get_thread_count(ctx) as usize;
     let _ = init_thread_pool(tc);
 
+    // Publish the normalized NODE_CREATION_BUFFER to the graph engine: it is
+    // the chunk size matrix capacities grow by (see `Graph::grow_cap`).
+    graph::graph::graph::NODE_CREATION_BUFFER.store(
+        normalize_node_creation_buffer(*CONFIGURATION_NODE_CREATION_BUFFER.lock(ctx)) as u64,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+
     // If OMP_THREAD_COUNT was given as a module arg, cap GraphBLAS/OpenMP
     // parallelism per operation (mirrors the C module's GxB_NTHREADS setup).
     // Otherwise GraphBLAS keeps its default (all cores) and we report the
@@ -400,6 +415,22 @@ pub fn graph_init(
             Some(on_role_change),
         );
         debug_assert_eq!(res, REDISMODULE_OK as c_int);
+    }
+
+    // Latch effects-buffer building as soon as any replica attaches (or if
+    // this instance already changed roles); until then standalone masters
+    // skip serializing per-commit replication effects.
+    unsafe {
+        let res = RedisModule_SubscribeToServerEvent.unwrap()(
+            ctx.ctx,
+            RedisModuleEvent_ReplicaChange,
+            Some(on_replica_change),
+        );
+        debug_assert_eq!(res, REDISMODULE_OK as c_int);
+    }
+    if ctx.get_flags().contains(ContextFlags::SLAVE) {
+        // Loaded on a replica: replication topology already exists.
+        crate::graph_core::REPLICATION_CONSUMERS.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
     // Subscribe to keyspace notifications for graph key rename handling.
@@ -471,6 +502,21 @@ unsafe extern "C" fn on_role_change(
     _data: *mut c_void,
 ) {
     telemetry::set_is_replica(subevent == REDISMODULE_EVENT_REPLROLECHANGED_NOW_REPLICA);
+    // A role change means a replication topology exists (or is being set
+    // up); keep building effects buffers from here on.
+    crate::graph_core::REPLICATION_CONSUMERS.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Any replica attach/detach latches the sticky "replication has
+/// consumers" flag: even after the last replica detaches it may resume
+/// from the replication backlog, so effects buffers must keep being built.
+unsafe extern "C" fn on_replica_change(
+    _ctx: *mut RedisModuleCtx,
+    _eid: RedisModuleEvent,
+    _subevent: u64,
+    _data: *mut c_void,
+) {
+    crate::graph_core::REPLICATION_CONSUMERS.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Loading event callback. After a slave finishes a full RDB resync from
@@ -522,6 +568,7 @@ unsafe extern "C" fn on_keyspace_event(
         "rename_to" => {
             let old = RENAME_OLD_NAME.lock().take();
             if let Some(old_name) = old {
+                crate::graph_core::rename_graph(&old_name, key_name);
                 let context = Context::new(ctx);
                 telemetry::delete_stream(&context, &old_name);
             }
