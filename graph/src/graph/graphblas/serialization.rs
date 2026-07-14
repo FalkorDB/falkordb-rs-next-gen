@@ -6,6 +6,45 @@
 
 use roaring::RoaringTreemap;
 
+/// Typed failure modes for decoding GraphBLAS vectors/matrices from an
+/// untrusted payload (`GRAPH.RESTORE` / RDB load). Every variant is a clean
+/// rejection of malformed input — never a panic — because the module's
+/// process-exiting panic hook turns any panic into a full-server crash.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum DecodeError {
+    /// The declared value-buffer byte length does not match the buffer that
+    /// was actually read (copying would over-read attacker-controlled bytes).
+    #[error("Vector decode: declared byte length {declared} does not match buffer length {actual}")]
+    ByteLengthMismatch { declared: u64, actual: usize },
+    /// The declared entry count cannot fit in the declared byte length.
+    #[error("Vector decode: entry count {n_entries} exceeds byte length {n_bytes}")]
+    EntryCountExceedsBytes { n_entries: u64, n_bytes: u64 },
+    /// The serialized type name is not a single NUL-terminated C string.
+    #[error("Vector decode: type name is not NUL-terminated")]
+    TypeNameNotNulTerminated,
+    /// The declared byte length cannot be represented as an allocation layout.
+    #[error("Vector decode: invalid buffer layout: {0}")]
+    InvalidLayout(String),
+    /// Allocating the backing buffer for the decoded values failed.
+    #[error("Vector decode: buffer allocation failed")]
+    AllocationFailed,
+    /// The serialized container/blob is smaller than the fixed-size header.
+    #[error("container buffer too small: {actual} bytes < {required} bytes required")]
+    ContainerTooSmall { actual: usize, required: usize },
+    /// A GraphBLAS call rejected the reconstructed data.
+    #[error("{call} failed: {info:?}")]
+    GraphBlasFailure {
+        call: &'static str,
+        info: super::GrB_Info,
+    },
+}
+
+impl From<DecodeError> for String {
+    fn from(err: DecodeError) -> Self {
+        err.to_string()
+    }
+}
+
 /// Abstraction over a serialization sink.
 ///
 /// The root crate implements this for `BufferedWriter` (v19 buffered IO).
@@ -217,5 +256,90 @@ impl Decode<19> for RoaringTreemap {
             self.insert(id);
         }
         Ok(())
+    }
+}
+
+/// Shared in-memory [`Reader`]/[`Writer`] mocks for unit tests: they record /
+/// replay scripted values in call order so `Encode` output can be fed back
+/// into `Decode` (or hand-crafted malformed payloads can drive the
+/// validation paths) without any Redis IO.
+#[cfg(test)]
+pub(crate) mod test_io {
+    use std::collections::VecDeque;
+
+    use super::{Reader, Writer};
+
+    #[derive(Default)]
+    pub struct MockReader {
+        pub buffers: VecDeque<Vec<u8>>,
+        pub unsigned: VecDeque<u64>,
+        pub signed: VecDeque<i64>,
+    }
+
+    impl Reader for MockReader {
+        fn read_unsigned(&mut self) -> Result<u64, String> {
+            self.unsigned
+                .pop_front()
+                .ok_or_else(|| "mock: no more unsigned values".to_string())
+        }
+        fn read_signed(&mut self) -> Result<i64, String> {
+            self.signed
+                .pop_front()
+                .ok_or_else(|| "mock: no more signed values".to_string())
+        }
+        fn read_double(&mut self) -> Result<f64, String> {
+            Err("mock: read_double unused".to_string())
+        }
+        fn read_buffer(&mut self) -> Result<Vec<u8>, String> {
+            self.buffers
+                .pop_front()
+                .ok_or_else(|| "mock: no more buffers".to_string())
+        }
+    }
+
+    #[derive(Default)]
+    pub struct MockWriter {
+        pub buffers: VecDeque<Vec<u8>>,
+        pub unsigned: VecDeque<u64>,
+        pub signed: VecDeque<i64>,
+    }
+
+    impl MockWriter {
+        /// Consume the writer, replaying everything it recorded as a reader.
+        pub fn into_reader(self) -> MockReader {
+            MockReader {
+                buffers: self.buffers,
+                unsigned: self.unsigned,
+                signed: self.signed,
+            }
+        }
+    }
+
+    impl Writer for MockWriter {
+        fn write_unsigned(
+            &mut self,
+            val: u64,
+        ) {
+            self.unsigned.push_back(val);
+        }
+        fn write_signed(
+            &mut self,
+            val: i64,
+        ) {
+            self.signed.push_back(val);
+        }
+        fn write_double(
+            &mut self,
+            val: f64,
+        ) {
+            let _ = val;
+            unreachable!("write_double unused by GraphBLAS encode");
+        }
+        fn write_buffer(
+            &mut self,
+            data: &[u8],
+        ) {
+            self.buffers.push_back(data.to_vec());
+        }
     }
 }

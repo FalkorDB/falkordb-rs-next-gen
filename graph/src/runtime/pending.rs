@@ -1564,22 +1564,42 @@ fn write_value(
     }
 }
 
+/// Rejection of a malformed (truncated / non-UTF-8) effects buffer. The
+/// buffer arrives over `GRAPH.EFFECT` and is attacker-controlled, so every
+/// read is bounds-checked with overflow-safe arithmetic and fails cleanly
+/// with this error instead of panicking.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum EffectsDecodeError {
+    /// A read would run past the end of the effects buffer (or its
+    /// length/offset arithmetic would overflow).
+    #[error("effects buffer truncated")]
+    Truncated,
+    /// A string field is not valid UTF-8.
+    #[error("invalid utf8 in effects buffer: {0}")]
+    InvalidUtf8(#[from] std::str::Utf8Error),
+}
+
+impl From<EffectsDecodeError> for String {
+    fn from(err: EffectsDecodeError) -> Self {
+        err.to_string()
+    }
+}
+
 pub fn read_string(
     buf: &[u8],
     offset: &mut usize,
-) -> Result<Arc<String>, String> {
+) -> Result<Arc<String>, EffectsDecodeError> {
     let hdr_end = offset
         .checked_add(8)
         .filter(|&end| end <= buf.len())
-        .ok_or("effects buffer truncated")?;
+        .ok_or(EffectsDecodeError::Truncated)?;
     let len = u64::from_le_bytes(buf[*offset..hdr_end].try_into().unwrap()) as usize;
     *offset = hdr_end;
     let str_end = offset
         .checked_add(len)
         .filter(|&end| end <= buf.len())
-        .ok_or("effects buffer truncated")?;
-    let s = std::str::from_utf8(&buf[*offset..str_end])
-        .map_err(|e| format!("invalid utf8 in effects buffer: {e}"))?;
+        .ok_or(EffectsDecodeError::Truncated)?;
+    let s = std::str::from_utf8(&buf[*offset..str_end])?;
     *offset = str_end;
     Ok(Arc::new(s.to_string()))
 }
@@ -1587,11 +1607,11 @@ pub fn read_string(
 pub fn read_u16(
     buf: &[u8],
     offset: &mut usize,
-) -> Result<u16, String> {
+) -> Result<u16, EffectsDecodeError> {
     let end = offset
         .checked_add(2)
         .filter(|&end| end <= buf.len())
-        .ok_or("effects buffer truncated")?;
+        .ok_or(EffectsDecodeError::Truncated)?;
     let v = u16::from_le_bytes(buf[*offset..end].try_into().unwrap());
     *offset = end;
     Ok(v)
@@ -1600,11 +1620,11 @@ pub fn read_u16(
 pub fn read_u64(
     buf: &[u8],
     offset: &mut usize,
-) -> Result<u64, String> {
+) -> Result<u64, EffectsDecodeError> {
     let end = offset
         .checked_add(8)
         .filter(|&end| end <= buf.len())
-        .ok_or("effects buffer truncated")?;
+        .ok_or(EffectsDecodeError::Truncated)?;
     let v = u64::from_le_bytes(buf[*offset..end].try_into().unwrap());
     *offset = end;
     Ok(v)

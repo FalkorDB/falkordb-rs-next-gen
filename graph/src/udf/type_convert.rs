@@ -69,6 +69,21 @@ pub fn value_to_js<'js>(
 /// (or accidentally cyclic-shaped) value recurses until the stack overflows.
 const MAX_JS_CONVERSION_DEPTH: usize = 128;
 
+/// Rejection of a UDF value nested deeper than [`MAX_JS_CONVERSION_DEPTH`],
+/// raised while converting values between FalkorDB and JavaScript.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("UDF Exception: value nesting exceeds the maximum depth of {max}")]
+pub struct UdfValueTooDeepError {
+    /// The depth limit that was exceeded.
+    pub max: usize,
+}
+
+impl From<UdfValueTooDeepError> for String {
+    fn from(err: UdfValueTooDeepError) -> Self {
+        err.to_string()
+    }
+}
+
 fn value_to_js_depth<'js>(
     ctx: &Ctx<'js>,
     value: &Value,
@@ -77,7 +92,10 @@ fn value_to_js_depth<'js>(
     depth: usize,
 ) -> Result<JsValue<'js>, String> {
     if depth > MAX_JS_CONVERSION_DEPTH {
-        return Err("UDF Exception: value nesting too deep".to_string());
+        return Err(UdfValueTooDeepError {
+            max: MAX_JS_CONVERSION_DEPTH,
+        }
+        .into());
     }
     match value {
         Value::Null => Ok(JsValue::new_null(ctx.clone())),
@@ -209,7 +227,10 @@ fn js_to_value_depth(
     depth: usize,
 ) -> Result<Value, String> {
     if depth > MAX_JS_CONVERSION_DEPTH {
-        return Err("UDF Exception: value nesting too deep".to_string());
+        return Err(UdfValueTooDeepError {
+            max: MAX_JS_CONVERSION_DEPTH,
+        }
+        .into());
     }
     if val.is_null() || val.is_undefined() {
         return Ok(Value::Null);
@@ -399,4 +420,58 @@ fn js_to_value_depth(
     }
 
     Err("Unsupported JS value type".to_string())
+}
+
+#[cfg(test)]
+mod recursion_guard_tests {
+    use super::*;
+    use thin_vec::thin_vec;
+
+    fn with_js_ctx(f: impl for<'js> FnOnce(Ctx<'js>)) {
+        let rt = rquickjs::Runtime::new().expect("JS runtime");
+        let ctx = rquickjs::Context::full(&rt).expect("JS context");
+        ctx.with(f);
+    }
+
+    #[test]
+    fn js_to_value_rejects_deeply_nested_arrays() {
+        with_js_ctx(|ctx| {
+            let depth = MAX_JS_CONVERSION_DEPTH + 10;
+            let script = format!(
+                "(() => {{ let v = 1; for (let i = 0; i < {depth}; i++) {{ v = [v]; }} return v; }})()"
+            );
+            let val: JsValue = ctx.eval(script).expect("eval nested array");
+            let res = js_to_value(val);
+            assert!(
+                res.is_err_and(|e| e.contains("value nesting exceeds the maximum depth")),
+                "deeply nested JS value should be rejected, not overflow the stack"
+            );
+        });
+    }
+
+    #[test]
+    fn js_to_value_accepts_moderate_nesting() {
+        with_js_ctx(|ctx| {
+            let val: JsValue = ctx.eval("[[1, [2, {a: {b: [3]}}]]]").expect("eval");
+            let res = js_to_value(val);
+            assert!(res.is_ok(), "moderate nesting should convert: {res:?}");
+        });
+    }
+
+    #[test]
+    fn value_to_js_rejects_deeply_nested_lists() {
+        crate::graph::graphblas::test_init::ensure_init();
+        let graph = Arc::new(AtomicRefCell::new(Graph::new(16, 16, 0, 0, "test")));
+        let mut value = Value::Int(1);
+        for _ in 0..(MAX_JS_CONVERSION_DEPTH + 10) {
+            value = Value::List(Arc::new(thin_vec![value]));
+        }
+        with_js_ctx(|ctx| {
+            let res = value_to_js(&ctx, &value, &graph, None);
+            assert!(
+                res.is_err_and(|e| e.contains("value nesting exceeds the maximum depth")),
+                "deeply nested Value should be rejected, not overflow the stack"
+            );
+        });
+    }
 }

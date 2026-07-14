@@ -29,6 +29,7 @@ use crate::parser::ast::{
     AllShortestPaths, BoundQueryIR, ExprIR, QueryExpr, QueryGraph, QueryIR, QueryNode, QueryPath,
     QueryRelationship, RawQueryIR, ReduceVars, SetItem, SupportAggregation, Variable,
 };
+use crate::parser::cypher::{ExpressionTooDeepError, MAX_EXPRESSION_DEPTH};
 use crate::runtime::functions::{FnArguments, FnType, Type};
 use crate::runtime::orderset::OrderSet;
 use crate::runtime::value::{Value, ValueTypeOf};
@@ -36,6 +37,7 @@ use crate::tree;
 use orx_tree::{Dfs, Dyn, DynNode, DynTree, NodeRef};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 /// The binder performs semantic analysis on parsed Cypher queries.
 ///
@@ -63,12 +65,12 @@ pub struct Binder {
     /// Current expression-recursion depth while binding, used to reject
     /// pathologically nested expressions before they overflow the call stack.
     bind_depth: usize,
+    /// Maximum expression nesting depth accepted by this binder, captured
+    /// from [`MAX_EXPRESSION_DEPTH`] at construction time. Mirrors the
+    /// parser's guard; a deeply nested AST would otherwise recurse through
+    /// `bind_expr_node` until the thread stack overflows.
+    max_bind_depth: usize,
 }
-
-/// Maximum expression nesting depth accepted by the binder. Mirrors the
-/// parser's `MAX_EXPR_DEPTH`; a deeply nested AST would otherwise recurse
-/// through `bind_expr_node` until the thread stack overflows.
-const MAX_BIND_DEPTH: usize = 512;
 
 impl Default for Binder {
     fn default() -> Self {
@@ -80,6 +82,7 @@ impl Default for Binder {
             node_labels: HashMap::new(),
             varlen_rel_var_ids: std::collections::HashSet::new(),
             bind_depth: 0,
+            max_bind_depth: MAX_EXPRESSION_DEPTH.load(Ordering::Relaxed),
         }
     }
 }
@@ -815,6 +818,7 @@ impl Binder {
                         node_labels: HashMap::new(),
                         varlen_rel_var_ids: std::collections::HashSet::new(),
                         bind_depth: 0,
+                        max_bind_depth: self.max_bind_depth,
                     };
 
                     // Build bound clauses: explicit import WITH + remaining
@@ -1646,9 +1650,12 @@ impl Binder {
         locals: &mut Vec<HashMap<Arc<String>, Variable>>,
     ) -> Result<DynTree<ExprIR<Variable>>, String> {
         self.bind_depth += 1;
-        if self.bind_depth > MAX_BIND_DEPTH {
+        if self.bind_depth > self.max_bind_depth {
             self.bind_depth -= 1;
-            return Err("expression nesting too deep".to_string());
+            return Err(ExpressionTooDeepError {
+                max: self.max_bind_depth,
+            }
+            .into());
         }
         let result = self.bind_expr_node_inner(expr, node_ref, locals);
         self.bind_depth -= 1;
@@ -2502,4 +2509,39 @@ fn raw_exprs_structurally_equal(
     }
 
     nodes_eq(a, a.root().idx(), b, b.root().idx())
+}
+
+#[cfg(test)]
+mod recursion_guard_tests {
+    use super::*;
+    use crate::parser::cypher::Parser;
+
+    /// Bind a query, returning the result of `Binder::bind`.
+    fn parse_and_bind(query: &str) -> Result<(), String> {
+        let raw_ir = Parser::new(query).parse()?;
+        Binder::default().bind(raw_ir).map(|_| ())
+    }
+
+    #[test]
+    fn rejects_deeply_nested_ast() {
+        // Alternating `+`/`-` nests one AST level per operator pair while the
+        // parser itself stays iterative (its own depth guard never fires), so
+        // this exercises the binder's `bind_expr_node` recursion guard: without
+        // it the deeply nested AST would overflow the native stack (and, via
+        // the process-exiting panic hook, crash the whole server).
+        let depth = MAX_EXPRESSION_DEPTH.load(Ordering::Relaxed) + 100;
+        let expr = "1+1-".repeat(depth);
+        let query = format!("RETURN {expr}1");
+        let result = parse_and_bind(&query);
+        assert!(
+            result.is_err_and(|e| e.contains("expression nesting exceeds the maximum depth")),
+            "deeply nested AST should be rejected by the binder"
+        );
+    }
+
+    #[test]
+    fn accepts_moderately_nested_ast() {
+        let result = parse_and_bind("RETURN 1+2-3+4-5*6, [[1, [2, {a: {b: 3}}]]]");
+        assert!(result.is_ok(), "moderate nesting should bind: {result:?}");
+    }
 }

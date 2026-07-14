@@ -122,4 +122,5 @@ pub const CONFIG_NAMES: &[&str] = &[
     "TEMP_FOLDER",
     "JS_HEAP_SIZE",
     "JS_STACK_SIZE",
+    "MAX_EXPRESSION_DEPTH",
 ];

@@ -270,6 +270,25 @@ const EDGE_NO_ENDPOINT: u64 = u64::MAX;
 /// attacker-chosen id must never be allowed to drive that growth unchecked.
 const MAX_UNTRUSTED_ENTITY_ID: u64 = u32::MAX as u64;
 
+/// Rejection of an out-of-range entity id on an untrusted-input entry point
+/// (`create_nodes` / `create_relationships_bulk`).
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum EntityIdError {
+    /// A node/relationship id exceeded [`MAX_UNTRUSTED_ENTITY_ID`].
+    #[error("id {id} exceeds the maximum supported entity id ({MAX_UNTRUSTED_ENTITY_ID})")]
+    ExceedsMaximum { id: u64 },
+    /// The edge endpoint reverse index could not be grown to cover `id`
+    /// (allocation failure / capacity overflow).
+    #[error("relationship id {id} does not fit in the edge endpoint index")]
+    EdgeEndpointIndexOverflow { id: u64 },
+}
+
+impl From<EntityIdError> for String {
+    fn from(err: EntityIdError) -> Self {
+        err.to_string()
+    }
+}
+
 pub struct Graph {
     /// Graph name (Redis key name)
     name: String,
@@ -1334,7 +1353,7 @@ impl Graph {
     }
 
     /// # Errors
-    /// Returns `Err` (without mutating any graph state) if `nodes` contains
+    /// Returns [`EntityIdError`] (without mutating any graph state) if `nodes` contains
     /// an id exceeding [`MAX_UNTRUSTED_ENTITY_ID`]. `nodes` may be
     /// attacker-controlled (via `GRAPH.EFFECT`/`GRAPH.RESTORE`); an oversized
     /// id would otherwise be accepted here and later panic in
@@ -1343,11 +1362,9 @@ impl Graph {
     pub fn create_nodes(
         &mut self,
         nodes: &RoaringTreemap,
-    ) -> Result<(), String> {
+    ) -> Result<(), EntityIdError> {
         if let Some(id) = nodes.max().filter(|&id| id > MAX_UNTRUSTED_ENTITY_ID) {
-            return Err(format!(
-                "id {id} exceeds the maximum supported node id ({MAX_UNTRUSTED_ENTITY_ID})"
-            ));
+            return Err(EntityIdError::ExceedsMaximum { id });
         }
 
         self.node_count += nodes.len();
@@ -1356,15 +1373,12 @@ impl Graph {
 
         // Ensure capacity covers the highest node ID (effects replay may
         // insert IDs above the current count when applied one-by-one).
-        // `saturating_add` keeps an out-of-range ID from a malformed effects
-        // buffer from integer-overflowing the `+ 1` (a panic, which — given the
-        // process-exiting panic hook — would crash the server); legitimate IDs
-        // are unaffected. The bounds check above additionally ensures a single
-        // attacker-chosen id can't drive `resize_node_matrices` to a huge (slow
-        // or OOM-inducing) dimension in the first place, and keeps `needed`
+        // The bounds check above ensures a single attacker-chosen id can't
+        // drive `resize_node_matrices` to a huge (slow or OOM-inducing)
+        // dimension, keeps `max_id + 1` from overflowing, and keeps `needed`
         // small enough that `grow_cap` cannot overflow.
         if let Some(max_id) = nodes.max() {
-            let needed = max_id.saturating_add(1);
+            let needed = max_id + 1;
             if needed > self.node_cap {
                 self.node_cap = grow_cap(self.node_cap, needed);
                 self.resize_node_matrices();
@@ -1961,7 +1975,7 @@ impl Graph {
     /// Avoids HashMap overhead while using individual GraphBLAS set calls.
     ///
     /// # Errors
-    /// Returns `Err` (without mutating any graph state) if any of `srcs`,
+    /// Returns [`EntityIdError`] (without mutating any graph state) if any of `srcs`,
     /// `dsts`, or `rel_ids` exceeds [`MAX_UNTRUSTED_ENTITY_ID`]. These values
     /// may be attacker-controlled (via `GRAPH.EFFECT`/`GRAPH.RESTORE`), and
     /// an oversized id would otherwise panic downstream — either directly
@@ -1974,17 +1988,14 @@ impl Graph {
         srcs: &[u64],
         dsts: &[u64],
         rel_ids: &[u64],
-    ) -> Result<(), String> {
+    ) -> Result<(), EntityIdError> {
         if let Some(&id) = srcs
             .iter()
             .chain(dsts.iter())
             .chain(rel_ids.iter())
             .find(|&&id| id > MAX_UNTRUSTED_ENTITY_ID)
         {
-            return Err(format!(
-                "id {id} exceeds the maximum supported node/relationship id \
-                 ({MAX_UNTRUSTED_ENTITY_ID})"
-            ));
+            return Err(EntityIdError::ExceedsMaximum { id });
         }
 
         let count = srcs.len() as u64;
@@ -1999,7 +2010,8 @@ impl Graph {
         }
 
         if let Some(&max_id) = rel_ids.iter().max() {
-            let needed = max_id.saturating_add(1);
+            // The upfront bounds check makes `max_id + 1` overflow-free.
+            let needed = max_id + 1;
             if needed > self.relationship_cap {
                 self.relationship_cap = grow_cap(self.relationship_cap, needed);
                 self.resize_relationship_matrices();
@@ -2025,17 +2037,14 @@ impl Graph {
         // process; the upfront `MAX_UNTRUSTED_ENTITY_ID` check already bounds
         // `needed`, but this stays as defense in depth against untrusted input.
         if let Some(&max_id) = rel_ids.iter().max() {
-            let needed = (max_id as usize).saturating_add(1);
+            let needed = max_id as usize + 1;
             if needed > self.edge_endpoints.len() {
                 if self
                     .edge_endpoints
                     .try_reserve_exact(needed - self.edge_endpoints.len())
                     .is_err()
                 {
-                    return Err(format!(
-                        "relationship id {max_id} is too large to represent in the edge \
-                         endpoint index"
-                    ));
+                    return Err(EntityIdError::EdgeEndpointIndexOverflow { id: max_id });
                 }
                 self.edge_endpoints.resize(needed, EDGE_NO_ENDPOINT);
             }
@@ -2044,9 +2053,10 @@ impl Graph {
             // Defense in depth: even though the reserve above should make
             // every `id` in-bounds, never index blindly into a Vec sized
             // from untrusted input.
-            let slot = self.edge_endpoints.get_mut(id as usize).ok_or_else(|| {
-                format!("relationship id {id} exceeds the edge endpoint index bounds")
-            })?;
+            let slot = self
+                .edge_endpoints
+                .get_mut(id as usize)
+                .ok_or(EntityIdError::EdgeEndpointIndexOverflow { id })?;
             *slot = compound_key(src, dst);
         }
 
@@ -4019,40 +4029,8 @@ impl Graph {
 
 #[cfg(test)]
 mod untrusted_id_bounds_tests {
-    use std::{ffi::c_void, sync::Once};
-
     use super::*;
-
-    // GraphBLAS's `GxB_init` requires non-null allocator function pointers
-    // (unlike production, which passes Redis's allocator); the plain libc
-    // allocator is fine for this test-only initialization.
-    unsafe extern "C" {
-        fn malloc(size: usize) -> *mut c_void;
-        fn calloc(
-            nmemb: usize,
-            size: usize,
-        ) -> *mut c_void;
-        fn realloc(
-            ptr: *mut c_void,
-            size: usize,
-        ) -> *mut c_void;
-        fn free(ptr: *mut c_void);
-    }
-
-    // GraphBLAS may only be initialized once per process; `cargo test` runs
-    // every test in this binary, so guard the (possibly repeated) init call.
-    fn init_graphblas_once() {
-        static INIT: Once = Once::new();
-        INIT.call_once(|| {
-            crate::graph::graphblas::matrix::init(
-                Some(malloc),
-                Some(calloc),
-                Some(realloc),
-                Some(free),
-            )
-            .expect("GraphBLAS init failed");
-        });
-    }
+    use crate::graph::graphblas::test_init::ensure_init as init_graphblas_once;
 
     #[test]
     fn rejects_relationship_id_too_large_for_edge_endpoints_index() {

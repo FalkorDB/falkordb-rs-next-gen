@@ -4,6 +4,7 @@ use crate::{
     redis_type::GRAPH_TYPE,
 };
 use graph::{
+    graph::bulk_validate::validate_declared_counts,
     graph::graph::{Graph, NodeId, RelationshipId},
     runtime::value::Value,
     threadpool::spawn,
@@ -487,16 +488,13 @@ pub fn graph_bulk_insert(
         .take(rel_token_count)
         .map(|t| t.as_slice().len())
         .sum();
-    if node_count > node_payload_bytes {
-        return Err(redis_module::RedisError::Str(
-            "Bulk insert format error, node count exceeds payload size.",
-        ));
-    }
-    if edge_count > edge_payload_bytes {
-        return Err(redis_module::RedisError::Str(
-            "Bulk insert format error, relation count exceeds payload size.",
-        ));
-    }
+    validate_declared_counts(
+        node_count,
+        edge_count,
+        node_payload_bytes,
+        edge_payload_bytes,
+    )
+    .map_err(|e| redis_module::RedisError::String(e.to_string()))?;
 
     // Inside MULTI/EXEC: blocking commands are not allowed, run synchronously
     // with RM_Yield to let Redis process PING between operations.

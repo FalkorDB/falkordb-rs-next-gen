@@ -206,6 +206,19 @@ pub fn graph_init(
                 ctx.log_warning("Invalid value for MAX_QUEUED_QUERIES module argument");
                 return Status::Err;
             }
+            if name == "MAX_EXPRESSION_DEPTH" {
+                if i + 1 < args_str.len()
+                    && let Ok(v) = args_str[i + 1].parse::<usize>()
+                    && v >= 1
+                {
+                    graph::parser::cypher::MAX_EXPRESSION_DEPTH
+                        .store(v, std::sync::atomic::Ordering::Relaxed);
+                    i += 2;
+                    continue;
+                }
+                ctx.log_warning("Invalid value for MAX_EXPRESSION_DEPTH module argument");
+                return Status::Err;
+            }
             i += 1;
         }
     }

@@ -19,7 +19,8 @@
 //! Read-only (SET returns an error):
 //!   THREAD_COUNT, OMP_THREAD_COUNT, CACHE_SIZE, ASYNC_DELETE,
 //!   NODE_CREATION_BUFFER, CMD_INFO, MAX_INFO_QUERIES,
-//!   BOLT_PORT, DELAY_INDEXING, IMPORT_FOLDER, TEMP_FOLDER
+//!   BOLT_PORT, DELAY_INDEXING, IMPORT_FOLDER, TEMP_FOLDER,
+//!   MAX_EXPRESSION_DEPTH
 //!
 //! ## Multi-SET semantics
 //! When multiple name-value pairs are provided in a single SET, all pairs are
@@ -82,6 +83,9 @@ fn config_get_one(
         "IMPORT_FOLDER" => RedisValue::BulkString((*CONFIGURATION_IMPORT_FOLDER.lock(ctx)).clone()),
         "TEMP_FOLDER" => RedisValue::BulkString((*CONFIGURATION_TEMP_FOLDER.lock(ctx)).clone()),
         "JS_HEAP_SIZE" => RedisValue::Integer(*CONFIGURATION_JS_HEAP_SIZE.lock(ctx)),
+        "MAX_EXPRESSION_DEPTH" => RedisValue::Integer(
+            graph::parser::cypher::MAX_EXPRESSION_DEPTH.load(Ordering::Relaxed) as i64,
+        ),
         "JS_STACK_SIZE" => RedisValue::Integer(*CONFIGURATION_JS_STACK_SIZE.lock(ctx)),
         _ => return Err(format!("Unknown configuration field '{name}'")),
     };
@@ -164,7 +168,8 @@ fn validate_config_set(
         | "BOLT_PORT"
         | "DELAY_INDEXING"
         | "IMPORT_FOLDER"
-        | "TEMP_FOLDER" => {
+        | "TEMP_FOLDER"
+        | "MAX_EXPRESSION_DEPTH" => {
             Err("This configuration parameter cannot be set at run-time".to_string())
         }
         _ => Err(format!("Unknown configuration field '{name}'")),

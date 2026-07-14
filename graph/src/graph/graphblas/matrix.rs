@@ -69,7 +69,7 @@ use parking_lot::Mutex;
 
 use crate::graph::graphblas::{
     lagraph_bindings::{LAGraph_Finalize, LAGraph_Init},
-    serialization::{Decode, Encode, Reader, Writer},
+    serialization::{Decode, DecodeError, Encode, Reader, Writer},
 };
 
 /// Size of the `GxB_Container_struct` in bytes.
@@ -346,11 +346,11 @@ impl<T> Decode<19> for Matrix<T> {
 
         // Validate container size before copying
         if container_bytes.len() < CONTAINER_STRUCT_SIZE {
-            return Err(format!(
-                "container buffer too small: {} bytes < {} bytes required",
-                container_bytes.len(),
-                CONTAINER_STRUCT_SIZE
-            ));
+            return Err(DecodeError::ContainerTooSmall {
+                actual: container_bytes.len(),
+                required: CONTAINER_STRUCT_SIZE,
+            }
+            .into());
         }
 
         unsafe {
@@ -406,9 +406,11 @@ impl<T> Decode<19> for Matrix<T> {
                 let _ = GxB_Container_free(&raw mut c);
                 let mut mm = m;
                 let _ = GrB_Matrix_free(&raw mut mm);
-                return Err(format!(
-                    "Matrix decode: GxB_load_Matrix_from_Container failed: {info:?}"
-                ));
+                return Err(DecodeError::GraphBlasFailure {
+                    call: "GxB_load_Matrix_from_Container",
+                    info,
+                }
+                .into());
             }
 
             let mut c = container;
@@ -1272,6 +1274,84 @@ impl<E: IterExtract> Iterator for Iter<E> {
                     || GxB_rowIterator_getRowIndex(self.inner) > self.max_row;
             }
             Some(item)
+        }
+    }
+}
+
+#[cfg(test)]
+mod decode_tests {
+    use super::*;
+    use crate::graph::graphblas::serialization::test_io::MockWriter;
+    use crate::graph::graphblas::test_init::ensure_init;
+
+    fn sample_matrix() -> Matrix<bool> {
+        let mut m = Matrix::<bool>::new(8, 8);
+        m.set(0, 1, true);
+        m.set(3, 5, true);
+        m.wait();
+        m
+    }
+
+    #[test]
+    fn matrix_roundtrips_through_encode_decode() {
+        ensure_init();
+        let m = sample_matrix();
+
+        let mut w = MockWriter::default();
+        m.encode(&mut w);
+
+        let mut r = w.into_reader();
+        let decoded = <Matrix<bool> as Decode<19>>::decode(&mut r)
+            .unwrap_or_else(|e| panic!("round-trip decode failed: {e}"));
+        assert_eq!(decoded.get(0, 1), Some(true));
+        assert_eq!(decoded.get(3, 5), Some(true));
+        assert_eq!(decoded.get(1, 0), None);
+    }
+
+    #[test]
+    fn decode_rejects_container_buffer_too_small() {
+        ensure_init();
+        let mut r = crate::graph::graphblas::serialization::test_io::MockReader {
+            buffers: std::collections::VecDeque::from(vec![vec![0_u8; 8]]),
+            ..Default::default()
+        };
+        match <Matrix<bool> as Decode<19>>::decode(&mut r) {
+            Err(err) => assert!(
+                err.contains("container buffer too small"),
+                "unexpected error: {err}"
+            ),
+            Ok(_) => panic!("expected decode to reject a truncated container buffer"),
+        }
+    }
+
+    #[test]
+    fn decode_rejects_corrupted_container() {
+        // Corrupt the serialized container header (attacker-controlled via
+        // `GRAPH.RESTORE`): `GxB_load_Matrix_from_Container` must reject the
+        // inconsistent data with a clean `Err` instead of a (release-stripped)
+        // debug_assert or a panic that would take down the whole server.
+        ensure_init();
+        let m = sample_matrix();
+
+        let mut w = MockWriter::default();
+        m.encode(&mut w);
+
+        let mut buffers = w.buffers;
+        {
+            let container_bytes = buffers.front_mut().expect("container buffer");
+            // Corrupt the `nvals` header field (byte offset 32 in
+            // `GxB_Container_struct`) to a huge value inconsistent with the
+            // actual vector contents, keeping the buffer length valid.
+            container_bytes[32..36].copy_from_slice(&[0xFF; 4]);
+        }
+        let mut r = crate::graph::graphblas::serialization::test_io::MockReader {
+            buffers,
+            unsigned: w.unsigned,
+            signed: w.signed,
+        };
+        match <Matrix<bool> as Decode<19>>::decode(&mut r) {
+            Err(err) => assert!(err.contains("failed"), "unexpected error message: {err}"),
+            Ok(_) => panic!("expected decode to reject a corrupted container"),
         }
     }
 }
