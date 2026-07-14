@@ -404,19 +404,6 @@ impl VersionedMatrix<u64> {
         Iter::<Uint64Extract>::new(self, min_row, max_row)
     }
 
-    /// Structure-only `(row, col)` iterator over the effective matrix,
-    /// ignoring the stored edge-id values. Same semantics as the bool
-    /// [`VersionedMatrix::iter`].
-    #[must_use]
-    pub fn structural_iter(
-        &self,
-        min_row: u64,
-        max_row: u64,
-    ) -> Iter {
-        self.wait();
-        Iter::<BoolExtract>::new(self, min_row, max_row)
-    }
-
     /// Write `value` at `(i, j)`: the new value lands in `dp`, and if the
     /// committed base holds an entry at `(i, j)` it is masked in `dm` so the
     /// old value never shadows the new one (`dp ∩ (m ∖ dm) = ∅`).

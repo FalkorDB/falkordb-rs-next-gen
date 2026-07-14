@@ -48,36 +48,6 @@ use orx_tree::{Dyn, NodeIdx, NodeRef};
 
 use super::batched_result_emitter::{BatchedResultEmitter, EdgeEndpoints, RowIter};
 
-/// Base matrix for the batched mxm path. Relationship matrices store inline
-/// edge ids (`u64`) while the adjacency matrix and merged multi-type matrices
-/// are `bool`; traversal only consumes the sparsity pattern (`ANY_PAIR`
-/// semiring), so both traverse identically. Cloning either variant is cheap
-/// (`Arc` handle clones, no data copy).
-enum TraversalMatrix {
-    Bool(VersionedMatrix<bool>),
-    U64(VersionedMatrix<u64>),
-}
-
-impl TraversalMatrix {
-    fn ncols(&self) -> u64 {
-        match self {
-            Self::Bool(m) => m.ncols(),
-            Self::U64(m) => m.ncols(),
-        }
-    }
-
-    /// `f = f * self` (delta-aware, structural). See [`Matrix::delta_lmxm`].
-    fn delta_lmxm_into(
-        &self,
-        f: &mut Matrix<bool>,
-    ) {
-        match self {
-            Self::Bool(m) => f.delta_lmxm(m),
-            Self::U64(m) => f.delta_lmxm(m),
-        }
-    }
-}
-
 /// Lazily resolved state — built on first `expand_row`, after any sibling
 /// Commit in the subtree has had a chance to create new labels/types.
 struct CtState {
@@ -102,11 +72,13 @@ struct CtState {
     no_match: bool,
     /// Materialized base matrix for batched mxm path. Built lazily on
     /// first `expand_batch`. Cached for op lifetime; safe because writes
-    /// are serialized w.r.t. read queries.
-    batched_matrix: Option<TraversalMatrix>,
+    /// are serialized w.r.t. read queries. Cloning is cheap (`Arc` handle
+    /// clones, no data copy); traversal only consumes the sparsity pattern
+    /// (`ANY_PAIR` semiring).
+    batched_matrix: Option<VersionedMatrix<bool>>,
     /// Per-hop matrices for fused chain (same lifetime/safety rules as
     /// `batched_matrix`). `chain_matrices[i]` corresponds to `chain[i]`.
-    chain_matrices: Vec<TraversalMatrix>,
+    chain_matrices: Vec<VersionedMatrix<bool>>,
     /// Per-hop label IDs for `chain[i].to` (post-multiply dst filter).
     chain_dst_label_ids: Vec<Vec<LabelId>>,
 }
@@ -180,7 +152,7 @@ fn build_unrestricted_iter(
     if types.len() == 1 {
         return g
             .get_relationship_matrix(&types[0])
-            .map(|t| t.matrix().structural_iter(0, u64::MAX));
+            .map(|t| t.matrix().iter(0, u64::MAX));
     }
     let merged = g.build_relationship_matrix_unrestricted(types)?;
     Some(VersionedMatrix::from_matrix(merged).iter(0, u64::MAX))
@@ -452,17 +424,17 @@ impl<'a> CondTraverseOp<'a> {
 
         if state.batched_matrix.is_none() {
             let m = if rp.types.is_empty() {
-                TraversalMatrix::Bool(g.adjacency_matrix().clone())
+                g.adjacency_matrix().clone()
             } else if rp.types.len() == 1 {
                 if let Some(t) = g.get_relationship_matrix(&rp.types[0]) {
-                    TraversalMatrix::U64(t.matrix().clone())
+                    t.matrix().clone()
                 } else {
                     state.no_match = true;
                     return true;
                 }
             } else {
                 if let Some(m) = g.build_relationship_matrix_unrestricted(&rp.types) {
-                    TraversalMatrix::Bool(VersionedMatrix::from_matrix(m))
+                    VersionedMatrix::from_matrix(m)
                 } else {
                     state.no_match = true;
                     return true;
@@ -476,17 +448,17 @@ impl<'a> CondTraverseOp<'a> {
             // either.
             for hop in self.chain {
                 let hm = if hop.types.is_empty() {
-                    TraversalMatrix::Bool(g.adjacency_matrix().clone())
+                    g.adjacency_matrix().clone()
                 } else if hop.types.len() == 1 {
                     if let Some(t) = g.get_relationship_matrix(&hop.types[0]) {
-                        TraversalMatrix::U64(t.matrix().clone())
+                        t.matrix().clone()
                     } else {
                         state.no_match = true;
                         return true;
                     }
                 } else {
                     if let Some(m) = g.build_relationship_matrix_unrestricted(&hop.types) {
-                        TraversalMatrix::Bool(VersionedMatrix::from_matrix(m))
+                        VersionedMatrix::from_matrix(m)
                     } else {
                         state.no_match = true;
                         return true;
@@ -548,9 +520,9 @@ impl<'a> CondTraverseOp<'a> {
 
         let mut f = Matrix::<bool>::new(nrows, ncols);
         f.build(&row_idx_buf, &col_idx_buf);
-        m_merged.delta_lmxm_into(&mut f);
+        f.delta_lmxm(m_merged);
         for hop_m in &state.chain_matrices {
-            hop_m.delta_lmxm_into(&mut f);
+            f.delta_lmxm(hop_m);
         }
 
         // Flush pending mxm work before attaching the row iterator.

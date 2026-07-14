@@ -160,7 +160,11 @@ impl MvccGraph {
             new_graph.borrow_mut().schema_version += 1;
         }
 
-        new_graph.borrow_mut().trim_attr_stores();
+        {
+            let mut g = new_graph.borrow_mut();
+            g.trim_attr_stores();
+            g.fold_edge_stores();
+        }
 
         // Use an immutable borrow here: `set_indexer_graph` only publishes
         // `new_graph` into the indexers' own `Mutex`-guarded fields. Holding

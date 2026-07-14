@@ -825,6 +825,15 @@ impl Graph {
         self.relationship_attrs.trim();
     }
 
+    /// Fold each relationship tensor's edge-store delta into its shared base
+    /// when possible. Called once at MVCC commit; a no-op for stores whose
+    /// base is still shared with an older version.
+    pub fn fold_edge_stores(&mut self) {
+        for tensor in &mut self.relationship_matrices {
+            tensor.fold_edge_store();
+        }
+    }
+
     #[must_use]
     pub fn new_version(&self) -> Self {
         debug_assert_eq!(self.reserved_node_count, 0);

@@ -51,6 +51,7 @@
 #![allow(clippy::pub_underscore_fields)]
 #![allow(clippy::derive_partial_eq_without_eq)]
 
+pub mod edge_store;
 pub mod lagraph_bindings;
 pub mod lagraphx_bindings;
 pub mod matrix;
