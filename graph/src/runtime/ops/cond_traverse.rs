@@ -48,21 +48,18 @@ use orx_tree::{Dyn, NodeIdx, NodeRef};
 
 use super::batched_result_emitter::{BatchedResultEmitter, EdgeEndpoints, RowIter};
 
-/// Base matrix for the batched mxm path. Relationship matrices store inline
-/// edge ids (`u64`) while the adjacency matrix and merged multi-type matrices
-/// are `bool`; traversal only consumes the sparsity pattern (`ANY_PAIR`
-/// semiring), so both traverse identically. Cloning either variant is cheap
-/// (`Arc` handle clones, no data copy).
+/// Base matrix for the batched mxm path. All relationship/adjacency/merged
+/// matrices are structure-only `bool`; traversal only consumes the sparsity
+/// pattern (`ANY_PAIR` semiring). Cloning is cheap (`Arc` handle clone, no data
+/// copy). Kept as a wrapper enum for symmetry with the per-hop chain plumbing.
 enum TraversalMatrix {
     Bool(VersionedMatrix<bool>),
-    U64(VersionedMatrix<u64>),
 }
 
 impl TraversalMatrix {
     fn ncols(&self) -> u64 {
         match self {
             Self::Bool(m) => m.ncols(),
-            Self::U64(m) => m.ncols(),
         }
     }
 
@@ -73,7 +70,6 @@ impl TraversalMatrix {
     ) {
         match self {
             Self::Bool(m) => f.delta_lmxm(m),
-            Self::U64(m) => f.delta_lmxm(m),
         }
     }
 }
@@ -180,7 +176,7 @@ fn build_unrestricted_iter(
     if types.len() == 1 {
         return g
             .get_relationship_matrix(&types[0])
-            .map(|t| t.matrix().structural_iter(0, u64::MAX));
+            .map(|t| t.matrix().iter(0, u64::MAX));
     }
     let merged = g.build_relationship_matrix_unrestricted(types)?;
     Some(VersionedMatrix::from_matrix(merged).iter(0, u64::MAX))
@@ -455,7 +451,7 @@ impl<'a> CondTraverseOp<'a> {
                 TraversalMatrix::Bool(g.adjacency_matrix().clone())
             } else if rp.types.len() == 1 {
                 if let Some(t) = g.get_relationship_matrix(&rp.types[0]) {
-                    TraversalMatrix::U64(t.matrix().clone())
+                    TraversalMatrix::Bool(t.matrix().clone())
                 } else {
                     state.no_match = true;
                     return true;
@@ -479,7 +475,7 @@ impl<'a> CondTraverseOp<'a> {
                     TraversalMatrix::Bool(g.adjacency_matrix().clone())
                 } else if hop.types.len() == 1 {
                     if let Some(t) = g.get_relationship_matrix(&hop.types[0]) {
-                        TraversalMatrix::U64(t.matrix().clone())
+                        TraversalMatrix::Bool(t.matrix().clone())
                     } else {
                         state.no_match = true;
                         return true;

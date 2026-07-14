@@ -1387,7 +1387,11 @@ fn register_msf(funcs: &mut Functions) {
                     // the no-shadow invariant — then score every id
                     // with one parallel apply directly into `{score, edge}`
                     // pairs and bulk-extract them.
-                    let vm = tensor.matrix();
+                    // Edge ids live in the tensor's native store; rebuild the
+                    // ephemeral UINT64 forward matrix (min id per pair) so the
+                    // parallel scoring pass below is unchanged. Deltas are empty.
+                    let vm_owned = tensor.build_msf_forward();
+                    let vm = &vm_owned;
                     vm.wait();
                     let mut eff: GrB_Matrix = null_mut();
                     GrB_Matrix_new(&raw mut eff, GrB_UINT64, vm.nrows(), vm.ncols());
@@ -1463,7 +1467,10 @@ fn register_msf(funcs: &mut Functions) {
                     if !tensor.has_multi_edge() {
                         continue;
                     }
-                    let me = tensor.edge_versioned();
+                    // Rebuild the ephemeral bool overflow matrix (2nd+ edges per
+                    // multi-edge pair, compound-key rows) from the native store.
+                    let me_owned = tensor.build_msf_overflow();
+                    let me = &me_owned;
                     me.wait();
                     // Two read-only edge sources per tensor: live base edges `m`
                     // (masked by ¬dm to drop deletions) and pending additions `dp`

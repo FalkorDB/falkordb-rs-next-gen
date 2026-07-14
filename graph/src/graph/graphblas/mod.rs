@@ -59,6 +59,10 @@ pub mod tensor;
 pub mod vector;
 pub mod versioned_matrix;
 
+// Native copy-on-write edge-id store — the source of truth for edge ids in the
+// decoupled `tensor` representation (adjacency matrices are structure-only bool).
+pub mod edge_id_store;
+
 /// Process-wide GraphBLAS initialization for unit tests. `GrB_init` may only
 /// be called once per process, so every `#[cfg(test)]` module must go through
 /// this shared guard rather than owning its own `Once`.

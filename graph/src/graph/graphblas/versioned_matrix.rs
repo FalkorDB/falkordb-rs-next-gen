@@ -392,6 +392,23 @@ impl VersionedMatrix<u64> {
         }
     }
 
+    /// Wrap an owned UINT64 `Matrix` as a `VersionedMatrix` with empty
+    /// delta-plus / delta-minus. Used to expose an ephemerally-built edge-id
+    /// matrix (e.g. for weighted MSF) through the versioned-matrix API without
+    /// re-inserting element by element. Distinct name from the `bool`
+    /// `from_matrix` so unqualified `VersionedMatrix::from_matrix` calls stay
+    /// unambiguous.
+    #[must_use]
+    pub fn from_owned_matrix(m: Matrix<u64>) -> Self {
+        let nrows = m.nrows();
+        let ncols = m.ncols();
+        Self {
+            m: Cow::new(m),
+            dp: Cow::new(Matrix::<u64>::new(nrows, ncols)),
+            dm: Cow::new(Matrix::<bool>::new(nrows, ncols)),
+        }
+    }
+
     /// Stream effective UINT64 `(row, col, value)` triples over rows in
     /// `[min_row, max_row]`: `(m ∖ dm) ∪ dp`.
     #[must_use]
