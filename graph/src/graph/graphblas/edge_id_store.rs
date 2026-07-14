@@ -100,12 +100,18 @@ impl EdgeIdStore {
         self.count += sorted.len() as u64;
     }
 
-    /// Batch-remove `(key, id)` pairs. Exact count (each removal is reported).
+    /// Batch-remove `(key, id)` pairs. Sorted first so consecutive removals
+    /// route through adjacent leaves/shared upper branches — with the tree's
+    /// copy-on-write (`Arc::make_mut`), each touched page is then copied once
+    /// per version instead of once per removal. Exact count (each removal is
+    /// reported by the tree).
     pub fn remove_batch(
         &mut self,
         pairs: &[(u64, u64)],
     ) {
-        for &(key, id) in pairs {
+        let mut sorted: Vec<(u64, u64)> = pairs.to_vec();
+        sorted.sort_unstable();
+        for (key, id) in sorted {
             if self.tree.remove(key, id) {
                 self.count -= 1;
             }
