@@ -393,17 +393,14 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Node<LEAF_MAX, BRANCH_MAX> 
     }
 }
 
-/// Copy-on-write: hand back a mutable reference into `arc`, copying first iff it is still shared.
-///
-/// [`Arc::make_mut`] clones only when the `Arc` is shared with another holder (the committed version or a
-/// reader snapshot), so a node the writer touches for the *first* time is copied — keeping the committed
-/// version immutable for any concurrent reader — but a **re-touch** of a node already privatized within the
-/// same write transaction mutates it in place with no further copy. The single-op paths (`insert_one` /
-/// `remove_one`) never re-touch, so they always copy exactly once as before; a *batch of single removes*
-/// (e.g. `EdgeIdStore::remove_batch`) that routes many deletions through the same upper branches now pays
-/// one copy per node instead of one per deletion.
+/// Copy-on-write: replace `arc` with a private clone and hand back a mutable reference into it. Unlike
+/// `Arc::make_mut` this ALWAYS clones — the writer's working tree shares the committed version's nodes, so
+/// every branch it touches must be copied to keep the committed version immutable for any concurrent
+/// reader. (We deliberately drop `make_mut`'s in-place path: it only ever fires on a re-touch of a node
+/// already privatized within one transaction, and the batch digest path never re-touches.)
 fn make_private<T: Clone>(arc: &mut Arc<T>) -> &mut T {
-    Arc::make_mut(arc)
+    *arc = Arc::new((**arc).clone());
+    Arc::get_mut(arc).expect("uniquely owned right after the clone")
 }
 
 /// Test-only synchronization seam (compiled out of release builds). It lets the concurrency test
