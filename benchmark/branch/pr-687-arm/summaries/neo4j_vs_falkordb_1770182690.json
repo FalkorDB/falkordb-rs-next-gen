@@ -1,0 +1,1048 @@
+{
+  "runs": [
+    {
+      "vendor": "falkordb",
+      "read-write-ratio": 0.0,
+      "clients": 10,
+      "platform": "arm",
+      "target-messages-per-second": 200,
+      "edges": 1632803,
+      "relationships": 30622564,
+      "started-at-epoch-secs": 1770182690,
+      "result": {
+        "deadline-offset": "0ms",
+        "actual-messages-per-second": 198.93635362926221,
+        "latency": {
+          "p50": "17.15ms",
+          "p95": "203.78ms",
+          "p99": "274.43ms"
+        },
+        "avg-latency-ms": 50.149412690933424,
+        "latency-histogram": {
+          "buckets-ms": [
+            1,
+            1,
+            5,
+            10,
+            25,
+            50,
+            100,
+            250,
+            500,
+            1000,
+            2500,
+            5000,
+            10000
+          ],
+          "cumulative-counts": [
+            321,
+            1980,
+            4932,
+            6265,
+            8746,
+            10668,
+            11877,
+            14678,
+            15000,
+            15000,
+            15000,
+            15000,
+            15000
+          ],
+          "count": 15000
+        },
+        "elapsed-ms": 75401,
+        "cpu-usage": 0.0,
+        "ram-usage": "1.37GB",
+        "errors": 0,
+        "successful-requests": 15000,
+        "operations": {
+          "by-query": {
+            "aggregate_age": 567,
+            "aggregate_age_distinct": 572,
+            "aggregate_age_filtered": 597,
+            "aggregate_age_min_max_avg": 615,
+            "aggregate_count_users": 541,
+            "aggregate_expansion_1": 552,
+            "aggregate_expansion_1_with_filter": 601,
+            "aggregate_expansion_2": 561,
+            "aggregate_expansion_2_with_filter": 591,
+            "aggregate_expansion_3": 540,
+            "aggregate_expansion_3_with_filter": 588,
+            "aggregate_expansion_4": 605,
+            "aggregate_expansion_4_with_filter": 605,
+            "neighbours_2": 549,
+            "neighbours_2_with_data": 574,
+            "neighbours_2_with_data_and_filter": 550,
+            "neighbours_2_with_filter": 578,
+            "pattern_cycle": 555,
+            "pattern_long": 579,
+            "pattern_short": 580,
+            "shortest_path": 556,
+            "shortest_path_with_filter": 576,
+            "single_vertex_read": 599,
+            "vertex_on_label_property": 618,
+            "vertex_on_label_property_index": 595,
+            "vertex_on_property": 556
+          },
+          "by-spawn": {
+            "0": 1462,
+            "1": 1579,
+            "2": 1478,
+            "3": 1561,
+            "4": 1509,
+            "5": 1407,
+            "6": 1526,
+            "7": 1499,
+            "8": 1473,
+            "9": 1506
+          }
+        },
+        "spawn-stats": {
+          "min": 1407,
+          "max": 1579,
+          "p50": 1506,
+          "p95": 1579,
+          "max-min-ratio": 1.1222459132906895,
+          "cv": 0.03131346888055255
+        },
+        "histogram_for_type": {
+          "aggregate_age": [
+            116.735,
+            121.855,
+            125.951,
+            130.047,
+            135.167,
+            139.263,
+            144.383,
+            150.527,
+            163.839,
+            173.055,
+            198.655
+          ],
+          "aggregate_age_distinct": [
+            144.383,
+            149.503,
+            153.599,
+            158.719,
+            162.815,
+            168.959,
+            175.103,
+            183.295,
+            197.631,
+            206.847,
+            243.711
+          ],
+          "aggregate_age_filtered": [
+            127.487,
+            134.143,
+            138.239,
+            142.335,
+            147.455,
+            151.551,
+            157.695,
+            165.887,
+            180.223,
+            194.559,
+            251.903
+          ],
+          "aggregate_age_min_max_avg": [
+            224.255,
+            231.423,
+            236.543,
+            243.711,
+            248.831,
+            254.975,
+            266.239,
+            276.479,
+            296.959,
+            307.199,
+            362.495
+          ],
+          "aggregate_count_users": [
+            0.415,
+            0.523,
+            0.663,
+            0.967,
+            1.599,
+            3.823,
+            7.135,
+            13.119,
+            23.807,
+            27.775,
+            38.143
+          ],
+          "aggregate_expansion_1": [
+            0.643,
+            0.763,
+            0.939,
+            1.367,
+            2.175,
+            5.119,
+            10.111,
+            15.039,
+            23.679,
+            28.927,
+            36.351
+          ],
+          "aggregate_expansion_1_with_filter": [
+            0.631,
+            0.783,
+            1.011,
+            1.439,
+            2.335,
+            4.223,
+            6.751,
+            12.415,
+            20.607,
+            27.775,
+            37.631
+          ],
+          "aggregate_expansion_2": [
+            0.843,
+            1.247,
+            1.935,
+            2.799,
+            3.839,
+            5.119,
+            8.191,
+            13.183,
+            21.247,
+            28.671,
+            40.191
+          ],
+          "aggregate_expansion_2_with_filter": [
+            0.851,
+            1.247,
+            1.663,
+            2.751,
+            4.287,
+            6.335,
+            10.047,
+            16.255,
+            23.807,
+            28.031,
+            35.583
+          ],
+          "aggregate_expansion_3": [
+            1.655,
+            5.055,
+            9.471,
+            13.247,
+            16.639,
+            20.991,
+            25.343,
+            29.823,
+            37.631,
+            43.007,
+            53.759
+          ],
+          "aggregate_expansion_3_with_filter": [
+            1.735,
+            5.023,
+            8.767,
+            12.735,
+            16.063,
+            20.479,
+            24.703,
+            29.567,
+            36.863,
+            42.239,
+            56.575
+          ],
+          "aggregate_expansion_4": [
+            6.271,
+            18.559,
+            22.911,
+            27.263,
+            32.383,
+            39.167,
+            43.775,
+            50.175,
+            61.183,
+            69.631,
+            81.407
+          ],
+          "aggregate_expansion_4_with_filter": [
+            4.639,
+            18.303,
+            23.807,
+            29.439,
+            34.559,
+            40.447,
+            45.567,
+            51.199,
+            61.951,
+            68.607,
+            82.943
+          ],
+          "neighbours_2": [
+            0.871,
+            1.319,
+            2.143,
+            2.927,
+            4.159,
+            6.367,
+            10.367,
+            17.023,
+            24.703,
+            28.671,
+            39.167
+          ],
+          "neighbours_2_with_data": [
+            1.167,
+            1.983,
+            3.471,
+            5.183,
+            7.871,
+            10.879,
+            15.231,
+            21.375,
+            27.903,
+            35.071,
+            47.871
+          ],
+          "neighbours_2_with_data_and_filter": [
+            0.983,
+            1.751,
+            2.751,
+            4.255,
+            6.207,
+            9.343,
+            13.119,
+            18.175,
+            25.215,
+            32.639,
+            51.455
+          ],
+          "neighbours_2_with_filter": [
+            0.831,
+            1.231,
+            1.839,
+            2.815,
+            4.575,
+            6.943,
+            11.135,
+            16.319,
+            25.471,
+            31.103,
+            38.911
+          ],
+          "pattern_cycle": [
+            0.767,
+            1.047,
+            1.503,
+            2.463,
+            3.823,
+            5.759,
+            9.023,
+            15.295,
+            24.703,
+            31.231,
+            88.063
+          ],
+          "pattern_long": [
+            6.015,
+            20.735,
+            25.727,
+            30.719,
+            35.327,
+            40.959,
+            48.127,
+            54.783,
+            65.023,
+            70.143,
+            89.599
+          ],
+          "pattern_short": [
+            0.835,
+            1.335,
+            2.143,
+            3.087,
+            4.639,
+            6.751,
+            10.495,
+            18.687,
+            25.471,
+            30.079,
+            43.519
+          ],
+          "shortest_path": [
+            35.839,
+            67.071,
+            90.111,
+            107.519,
+            120.831,
+            137.215,
+            155.647,
+            169.983,
+            195.583,
+            214.015,
+            272.383
+          ],
+          "shortest_path_with_filter": [
+            30.335,
+            69.631,
+            87.039,
+            100.863,
+            117.247,
+            133.119,
+            148.479,
+            163.839,
+            186.367,
+            206.847,
+            254.975
+          ],
+          "single_vertex_read": [
+            0.551,
+            0.699,
+            0.899,
+            1.319,
+            2.255,
+            3.999,
+            7.263,
+            12.543,
+            20.479,
+            27.647,
+            38.399
+          ],
+          "vertex_on_label_property": [
+            0.551,
+            0.651,
+            0.831,
+            1.247,
+            2.127,
+            4.479,
+            7.807,
+            14.911,
+            23.039,
+            28.799,
+            37.375
+          ],
+          "vertex_on_label_property_index": [
+            0.527,
+            0.615,
+            0.811,
+            1.239,
+            1.895,
+            3.823,
+            7.071,
+            12.735,
+            22.271,
+            28.415,
+            35.839
+          ],
+          "vertex_on_property": [
+            62.719,
+            67.071,
+            69.631,
+            73.727,
+            77.311,
+            80.895,
+            84.479,
+            89.599,
+            99.327,
+            108.031,
+            155.647
+          ]
+        },
+        "telemetry_for_type": {
+          "CALL DB.LABELS()": {
+            "wait-ms": 120.312,
+            "exec-ms": 51.579,
+            "report-ms": 3.683
+          },
+          "CALL DB.PROPERTYKEYS()": {
+            "wait-ms": 451.438,
+            "exec-ms": 46.283,
+            "report-ms": 3.017
+          },
+          "CALL db.indexes()": {
+            "wait-ms": 42.666,
+            "exec-ms": 2054.541,
+            "report-ms": 11.208
+          },
+          "CALL db.meta.stats()": {
+            "wait-ms": 82.583,
+            "exec-ms": 483.708,
+            "report-ms": 21.416
+          },
+          "aggregate_age": {
+            "wait-ms": 239.146,
+            "exec-ms": 130295.271,
+            "report-ms": 6.04
+          },
+          "aggregate_age_distinct": {
+            "wait-ms": 271.453,
+            "exec-ms": 159707.263,
+            "report-ms": 5.114
+          },
+          "aggregate_age_filtered": {
+            "wait-ms": 189.352,
+            "exec-ms": 144020.837,
+            "report-ms": 5.836
+          },
+          "aggregate_age_min_max_avg": {
+            "wait-ms": 191.974,
+            "exec-ms": 247398.155,
+            "report-ms": 5.908
+          },
+          "aggregate_count_users": {
+            "wait-ms": 212.614,
+            "exec-ms": 153.5,
+            "report-ms": 5.341
+          },
+          "aggregate_expansion_1": {
+            "wait-ms": 232.623,
+            "exec-ms": 420.315,
+            "report-ms": 5.385
+          },
+          "aggregate_expansion_1_with_filter": {
+            "wait-ms": 231.339,
+            "exec-ms": 332.217,
+            "report-ms": 4.845
+          },
+          "aggregate_expansion_2": {
+            "wait-ms": 245.432,
+            "exec-ms": 1034.355,
+            "report-ms": 42.832
+          },
+          "aggregate_expansion_2_with_filter": {
+            "wait-ms": 251.976,
+            "exec-ms": 1072.302,
+            "report-ms": 25.439
+          },
+          "aggregate_expansion_3": {
+            "wait-ms": 264.837,
+            "exec-ms": 7000.112,
+            "report-ms": 305.527
+          },
+          "aggregate_expansion_3_with_filter": {
+            "wait-ms": 228.176,
+            "exec-ms": 7800.987,
+            "report-ms": 259.462
+          },
+          "aggregate_expansion_4": {
+            "wait-ms": 253.21,
+            "exec-ms": 21010.587,
+            "report-ms": 442.759
+          },
+          "aggregate_expansion_4_with_filter": {
+            "wait-ms": 193.685,
+            "exec-ms": 22020.031,
+            "report-ms": 379.612
+          },
+          "neighbours_2": {
+            "wait-ms": 206.16,
+            "exec-ms": 943.168,
+            "report-ms": 72.21
+          },
+          "neighbours_2_with_data": {
+            "wait-ms": 236.818,
+            "exec-ms": 726.859,
+            "report-ms": 964.559
+          },
+          "neighbours_2_with_data_and_filter": {
+            "wait-ms": 214.142,
+            "exec-ms": 917.163,
+            "report-ms": 620.72
+          },
+          "neighbours_2_with_filter": {
+            "wait-ms": 270.571,
+            "exec-ms": 1146.852,
+            "report-ms": 34.364
+          },
+          "pattern_cycle": {
+            "wait-ms": 277.04,
+            "exec-ms": 2568.814,
+            "report-ms": 11.319
+          },
+          "pattern_long": {
+            "wait-ms": 251.688,
+            "exec-ms": 20444.143,
+            "report-ms": 796.027
+          },
+          "pattern_short": {
+            "wait-ms": 201.476,
+            "exec-ms": 1021.803,
+            "report-ms": 92.833
+          },
+          "shortest_path": {
+            "wait-ms": 242.893,
+            "exec-ms": 113224.826,
+            "report-ms": 9.871
+          },
+          "shortest_path_with_filter": {
+            "wait-ms": 195.371,
+            "exec-ms": 108859.309,
+            "report-ms": 5.712
+          },
+          "single_vertex_read": {
+            "wait-ms": 275.178,
+            "exec-ms": 251.901,
+            "report-ms": 8.467
+          },
+          "vertex_on_label_property": {
+            "wait-ms": 204.595,
+            "exec-ms": 280.784,
+            "report-ms": 9.72
+          },
+          "vertex_on_property": {
+            "wait-ms": 199.695,
+            "exec-ms": 72092.917,
+            "report-ms": 10.111
+          }
+        }
+      }
+    },
+    {
+      "vendor": "neo4j",
+      "read-write-ratio": 0.0,
+      "clients": 10,
+      "platform": "arm",
+      "target-messages-per-second": 200,
+      "edges": 1632803,
+      "relationships": 30622564,
+      "started-at-epoch-secs": 1770182766,
+      "result": {
+        "deadline-offset": "0ms",
+        "actual-messages-per-second": 2.673763497172932,
+        "latency": {
+          "p50": "11.78ms",
+          "p95": "8.847s",
+          "p99": "65.012s"
+        },
+        "avg-latency-ms": 2229.476356049056,
+        "latency-histogram": {
+          "buckets-ms": [
+            1,
+            1,
+            5,
+            10,
+            25,
+            50,
+            100,
+            250,
+            500,
+            1000,
+            2500,
+            5000,
+            10000
+          ],
+          "cumulative-counts": [
+            20,
+            1796,
+            6355,
+            7234,
+            8451,
+            9304,
+            10332,
+            12932,
+            13175,
+            13387,
+            13691,
+            13887,
+            14126
+          ],
+          "count": 14816
+        },
+        "elapsed-ms": 5541253,
+        "cpu-usage": 0.0,
+        "ram-usage": "0MB",
+        "base-dataset-bytes": 1519792788,
+        "errors": 184,
+        "successful-requests": 14816,
+        "operations": {
+          "by-query": {
+            "aggregate_age": 574,
+            "aggregate_age_distinct": 602,
+            "aggregate_age_filtered": 576,
+            "aggregate_age_min_max_avg": 561,
+            "aggregate_count_users": 552,
+            "aggregate_expansion_1": 588,
+            "aggregate_expansion_1_with_filter": 573,
+            "aggregate_expansion_2": 583,
+            "aggregate_expansion_2_with_filter": 598,
+            "aggregate_expansion_3": 616,
+            "aggregate_expansion_3_with_filter": 594,
+            "aggregate_expansion_4": 650,
+            "aggregate_expansion_4_with_filter": 685,
+            "neighbours_2": 575,
+            "neighbours_2_with_data": 603,
+            "neighbours_2_with_data_and_filter": 569,
+            "neighbours_2_with_filter": 574,
+            "pattern_cycle": 519,
+            "pattern_long": 643,
+            "pattern_short": 574,
+            "shortest_path": 563,
+            "shortest_path_with_filter": 535,
+            "single_vertex_read": 556,
+            "vertex_on_label_property": 571,
+            "vertex_on_label_property_index": 582,
+            "vertex_on_property": 568
+          },
+          "by-spawn": {
+            "0": 1486,
+            "1": 2087,
+            "2": 1687,
+            "3": 1555,
+            "4": 1201,
+            "5": 1484,
+            "6": 1509,
+            "7": 1222,
+            "8": 1756,
+            "9": 1197
+          }
+        },
+        "spawn-stats": {
+          "min": 1197,
+          "max": 2087,
+          "p50": 1509,
+          "p95": 2087,
+          "max-min-ratio": 1.7435254803675857,
+          "cv": 0.1747109184023381
+        },
+        "histogram_for_type": {
+          "aggregate_age": [
+            116.223,
+            117.247,
+            118.783,
+            119.807,
+            121.855,
+            124.415,
+            126.975,
+            132.095,
+            147.455,
+            184.319,
+            236.543
+          ],
+          "aggregate_age_distinct": [
+            114.175,
+            115.711,
+            116.735,
+            118.271,
+            120.319,
+            122.879,
+            125.439,
+            130.559,
+            144.383,
+            169.983,
+            260.095
+          ],
+          "aggregate_age_filtered": [
+            62.975,
+            63.487,
+            63.999,
+            65.023,
+            66.047,
+            67.583,
+            69.631,
+            73.215,
+            85.503,
+            102.911,
+            162.815
+          ],
+          "aggregate_age_min_max_avg": [
+            148.479,
+            150.527,
+            152.575,
+            154.623,
+            156.671,
+            159.743,
+            163.839,
+            171.007,
+            194.559,
+            219.135,
+            286.719
+          ],
+          "aggregate_count_users": [
+            0.587,
+            0.663,
+            0.727,
+            0.783,
+            0.855,
+            0.951,
+            1.063,
+            1.223,
+            1.591,
+            1.895,
+            4.351
+          ],
+          "aggregate_expansion_1": [
+            0.863,
+            0.979,
+            1.063,
+            1.167,
+            1.271,
+            1.375,
+            1.543,
+            1.751,
+            2.191,
+            2.719,
+            6.815
+          ],
+          "aggregate_expansion_1_with_filter": [
+            0.855,
+            0.971,
+            1.071,
+            1.191,
+            1.311,
+            1.447,
+            1.607,
+            1.855,
+            2.239,
+            2.767,
+            8.063
+          ],
+          "aggregate_expansion_2": [
+            1.055,
+            1.607,
+            2.223,
+            3.103,
+            4.863,
+            7.391,
+            11.135,
+            17.919,
+            33.535,
+            60.159,
+            168.959
+          ],
+          "aggregate_expansion_2_with_filter": [
+            1.119,
+            1.695,
+            2.303,
+            3.311,
+            4.927,
+            7.231,
+            10.879,
+            17.279,
+            30.719,
+            46.847,
+            109.055
+          ],
+          "aggregate_expansion_3": [
+            1.687,
+            14.655,
+            40.191,
+            91.647,
+            184.319,
+            344.063,
+            606.207,
+            1044.479,
+            2047.999,
+            3473.407,
+            7307.263
+          ],
+          "aggregate_expansion_3_with_filter": [
+            1.127,
+            6.079,
+            26.623,
+            61.695,
+            110.079,
+            224.255,
+            456.703,
+            880.639,
+            2113.535,
+            3407.871,
+            7503.871
+          ],
+          "aggregate_expansion_4": [
+            1.231,
+            190.463,
+            1228.799,
+            2998.271,
+            6127.615,
+            11206.655,
+            20971.519,
+            34865.151,
+            63176.703,
+            82837.503,
+            111149.055
+          ],
+          "aggregate_expansion_4_with_filter": [
+            1.271,
+            94.719,
+            864.255,
+            2342.911,
+            5865.471,
+            9633.791,
+            19267.583,
+            33816.575,
+            56885.247,
+            82837.503,
+            108527.615
+          ],
+          "neighbours_2": [
+            1.239,
+            1.655,
+            2.287,
+            3.135,
+            4.959,
+            7.647,
+            11.583,
+            18.687,
+            32.639,
+            52.479,
+            115.199
+          ],
+          "neighbours_2_with_data": [
+            1.191,
+            1.847,
+            2.671,
+            3.839,
+            5.663,
+            8.639,
+            12.863,
+            20.479,
+            32.639,
+            51.455,
+            123.903
+          ],
+          "neighbours_2_with_data_and_filter": [
+            1.095,
+            1.599,
+            2.255,
+            2.975,
+            4.319,
+            6.975,
+            12.031,
+            19.583,
+            37.119,
+            61.951,
+            154.623
+          ],
+          "neighbours_2_with_filter": [
+            1.159,
+            1.711,
+            2.543,
+            3.615,
+            5.023,
+            7.647,
+            12.607,
+            20.351,
+            34.047,
+            52.735,
+            137.215
+          ],
+          "pattern_cycle": [
+            1.087,
+            1.479,
+            2.023,
+            2.655,
+            3.583,
+            5.151,
+            8.319,
+            16.255,
+            29.823,
+            46.591,
+            109.567
+          ],
+          "pattern_long": [
+            1.751,
+            323.583,
+            1589.247,
+            4325.375,
+            7405.567,
+            13828.095,
+            25427.967,
+            41156.607,
+            67633.151,
+            91226.111,
+            114294.783
+          ],
+          "pattern_short": [
+            1.207,
+            1.879,
+            2.623,
+            4.223,
+            6.175,
+            10.367,
+            14.591,
+            23.039,
+            37.887,
+            48.639,
+            134.143
+          ],
+          "shortest_path": [
+            1.575,
+            2.543,
+            8.959,
+            14.271,
+            21.247,
+            27.263,
+            34.047,
+            45.311,
+            66.047,
+            91.647,
+            175.103
+          ],
+          "shortest_path_with_filter": [
+            2.543,
+            9.471,
+            15.551,
+            22.783,
+            29.311,
+            38.399,
+            47.615,
+            65.535,
+            112.639,
+            8454.143,
+            9109.503
+          ],
+          "single_vertex_read": [
+            0.795,
+            0.875,
+            0.951,
+            1.015,
+            1.095,
+            1.207,
+            1.383,
+            1.623,
+            1.935,
+            2.351,
+            4.831
+          ],
+          "vertex_on_label_property": [
+            0.775,
+            0.847,
+            0.911,
+            0.991,
+            1.087,
+            1.199,
+            1.375,
+            1.543,
+            1.911,
+            2.287,
+            5.919
+          ],
+          "vertex_on_label_property_index": [
+            0.751,
+            0.855,
+            0.931,
+            0.999,
+            1.087,
+            1.223,
+            1.423,
+            1.591,
+            2.023,
+            2.319,
+            5.439
+          ],
+          "vertex_on_property": [
+            156.671,
+            158.719,
+            159.743,
+            161.791,
+            164.863,
+            166.911,
+            169.983,
+            175.103,
+            190.463,
+            232.447,
+            360.447
+          ]
+        }
+      }
+    }
+  ]
+}
