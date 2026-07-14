@@ -26,7 +26,7 @@
 //!
 //! The one consumer that needs edge ids inside GraphBLAS — weighted `algo.MSF` —
 //! rebuilds an ephemeral `UINT64` forward matrix and `bool` overflow matrix on
-//! demand via [`Tensor::build_msf_forward`] / [`Tensor::build_msf_overflow`].
+//! demand via [`Tensor::build_msf_matrices`] (one store walk).
 //!
 //! ## Compound Key Encoding
 //!
@@ -278,53 +278,75 @@ impl Tensor {
         self.ids.has_multi_edge()
     }
 
-    /// Ephemeral **UINT64** forward matrix `(src, dst) → min edge id`, rebuilt
-    /// from the store for weighted `algo.MSF`'s inline scoring pass. Deltas are
-    /// empty (all data in the base), so the MSF code reads it like a clean
-    /// snapshot.
+    /// Ephemeral MSF matrices rebuilt from the native store in a **single**
+    /// store walk, for weighted `algo.MSF`: the `UINT64` forward matrix
+    /// `(src, dst) → min edge id` (inline pass), the `bool` overflow matrix
+    /// `me[compound_key(src,dst)][edge_id]` holding the 2nd, 3rd, … edge of each
+    /// multi-edge pair (overflow pass), and whether any multi-edge exists.
+    ///
+    /// Replaces the former three separate O(E) store passes (`build_msf_forward`,
+    /// `build_msf_overflow`, `has_multi_edge`). The forward matrix is returned
+    /// bare (no delta wrapper) so the caller extracts straight from it — its
+    /// deltas would be empty anyway, so the old `dm`/`dp` materialization was
+    /// pure overhead. The overflow keeps the `VersionedMatrix` shape (empty
+    /// deltas) the overflow pass already reads.
     #[must_use]
-    pub fn build_msf_forward(&self) -> VersionedMatrix<u64> {
-        let (mut rows, mut cols, mut vals) = (Vec::new(), Vec::new(), Vec::new());
+    pub fn build_msf_matrices(&self) -> (Matrix<u64>, VersionedMatrix<bool>, bool) {
+        // Forward has one entry per pair (≤ total edge count); pre-size to it.
+        let cap = self.ids.nvals() as usize;
+        let (mut fwd_rows, mut fwd_cols, mut fwd_vals): (Vec<u64>, Vec<u64>, Vec<u64>) = (
+            Vec::with_capacity(cap),
+            Vec::with_capacity(cap),
+            Vec::with_capacity(cap),
+        );
+        let (mut ov_rows, mut ov_cols) = (Vec::new(), Vec::new());
+        // Fill the forward COO by index through raw pointers into the pre-sized
+        // buffers instead of `Vec::push`: the walk is the MSF-rebuild hot spot
+        // (~6.5ns/entry, dominated by three per-push capacity-checks + len bumps),
+        // so one shared counter + direct stores removes that per-entry bookkeeping.
+        let (rp, cp, vp) = (
+            fwd_rows.as_mut_ptr(),
+            fwd_cols.as_mut_ptr(),
+            fwd_vals.as_mut_ptr(),
+        );
+        let mut n_fwd = 0usize;
         let mut prev: Option<u64> = None;
-        // Drive the build arrays straight from the tree walk (sorted by
-        // `(key,id)`), so the first id per key is its min — no intermediate Vec.
-        self.ids.for_each_pair(|k, id| {
-            if prev != Some(k) {
-                let (s, d) = split_key(k);
-                rows.push(s);
-                cols.push(d);
-                vals.push(id);
-                prev = Some(k);
-            }
-        });
-        let mut m = Matrix::<u64>::new(self.m.nrows(), self.m.ncols());
-        m.build(&rows, &cols, &vals);
-        m.wait();
-        VersionedMatrix::<u64>::from_owned_matrix(m)
-    }
-
-    /// Ephemeral **bool** overflow matrix `me[compound_key(src,dst)][edge_id]`,
-    /// holding the 2nd, 3rd, … edge of each multi-edge pair, rebuilt from the
-    /// store for weighted `algo.MSF`'s overflow scoring pass.
-    #[must_use]
-    pub fn build_msf_overflow(&self) -> VersionedMatrix<bool> {
-        let (mut rows, mut cols) = (Vec::new(), Vec::new());
-        let mut prev: Option<u64> = None;
-        // Overflow = 2nd+ id of each key (the non-first entries per sorted key).
+        // One walk over the store (sorted by `(key, id)`): the first id per key
+        // is its min → forward; every 2nd+ id → overflow.
         self.ids.for_each_pair(|k, id| {
             if prev == Some(k) {
-                rows.push(k);
-                cols.push(id);
+                ov_rows.push(k);
+                ov_cols.push(id);
             } else {
+                let (s, d) = split_key(k);
+                // SAFETY: forward holds one entry per distinct pair, so
+                // `n_fwd <= nvals == cap`; every store is in-bounds and the
+                // pre-sized buffers are never reallocated (no push to them).
+                unsafe {
+                    *rp.add(n_fwd) = s;
+                    *cp.add(n_fwd) = d;
+                    *vp.add(n_fwd) = id;
+                }
+                n_fwd += 1;
                 prev = Some(k);
             }
         });
+        // SAFETY: `n_fwd` entries of each buffer were just initialized in order.
+        unsafe {
+            fwd_rows.set_len(n_fwd);
+            fwd_cols.set_len(n_fwd);
+            fwd_vals.set_len(n_fwd);
+        }
+        let mut m = Matrix::<u64>::new(self.m.nrows(), self.m.ncols());
+        m.build(&fwd_rows, &fwd_cols, &fwd_vals);
+        m.wait();
         let mut me = Matrix::<bool>::new(GrB_INDEX_MAX, GrB_INDEX_MAX);
-        if !rows.is_empty() {
-            me.build(&rows, &cols);
+        let has_multi = !ov_rows.is_empty();
+        if has_multi {
+            me.build(&ov_rows, &ov_cols);
             me.wait();
         }
-        VersionedMatrix::<bool>::from_matrix(me)
+        (m, VersionedMatrix::<bool>::from_matrix(me), has_multi)
     }
 
     pub fn wait(&mut self) {

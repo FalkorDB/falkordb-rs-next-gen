@@ -1251,7 +1251,7 @@ fn register_msf(funcs: &mut Functions) {
             // For unweighted: use 1.0 for all entries
             // For weighted: use the attribute value
             unsafe {
-                use crate::graph::graphblas::{GrB_BOOL, GrB_BinaryOp, GrB_BinaryOp_free, GrB_BinaryOp_new, GrB_DESC_SC, GrB_DESC_T1, GrB_Descriptor, GrB_FP64, GrB_Index, GrB_IndexUnaryOp, GrB_IndexUnaryOp_free, GrB_IndexUnaryOp_new, GrB_Info, GrB_Matrix, GrB_Matrix_apply, GrB_Matrix_apply_IndexOp_UDT, GrB_Matrix_build_UDT, GrB_Matrix_eWiseAdd_BinaryOp, GrB_Matrix_extract, GrB_Matrix_extractElement_UDT, GrB_Matrix_extractTuples_FP64, GrB_Matrix_free, GrB_Matrix_ncols, GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals, GrB_Matrix_reduce_Monoid, GrB_Matrix_wait, GrB_Monoid, GrB_Monoid_free, GrB_Monoid_new_UDT, GrB_IDENTITY_UINT64, GrB_SECOND_UINT64, GrB_Type, GrB_Type_free, GrB_Type_new, GrB_UINT64, GrB_UnaryOp, GrB_UnaryOp_free, GrB_UnaryOp_new, GrB_Vector, GrB_Vector_extractTuples_UDT, GrB_Vector_free, GrB_Vector_new, GrB_Vector_nvals, GrB_WaitMode, lagraphx_bindings};
+                use crate::graph::graphblas::{GrB_BOOL, GrB_BinaryOp, GrB_BinaryOp_free, GrB_BinaryOp_new, GrB_DESC_SC, GrB_DESC_T1, GrB_Descriptor, GrB_FP64, GrB_Index, GrB_IndexUnaryOp, GrB_IndexUnaryOp_free, GrB_IndexUnaryOp_new, GrB_Info, GrB_Matrix, GrB_Matrix_apply, GrB_Matrix_apply_IndexOp_UDT, GrB_Matrix_build_UDT, GrB_Matrix_eWiseAdd_BinaryOp, GrB_Matrix_extract, GrB_Matrix_extractElement_UDT, GrB_Matrix_extractTuples_FP64, GrB_Matrix_free, GrB_Matrix_ncols, GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals, GrB_Matrix_reduce_Monoid, GrB_Matrix_wait, GrB_Monoid, GrB_Monoid_free, GrB_Monoid_new_UDT, GrB_Type, GrB_Type_free, GrB_Type_new, GrB_UINT64, GrB_UnaryOp, GrB_UnaryOp_free, GrB_UnaryOp_new, GrB_Vector, GrB_Vector_extractTuples_UDT, GrB_Vector_free, GrB_Vector_new, GrB_Vector_nvals, GrB_WaitMode, lagraphx_bindings};
 
                 let active_set: FxHashSet<u64> = active_nodes.iter().copied().collect();
 
@@ -1390,35 +1390,13 @@ fn register_msf(funcs: &mut Functions) {
                     // Edge ids live in the tensor's native store; rebuild the
                     // ephemeral UINT64 forward matrix (min id per pair) so the
                     // parallel scoring pass below is unchanged. Deltas are empty.
-                    let vm_owned = tensor.build_msf_forward();
-                    let vm = &vm_owned;
-                    vm.wait();
-                    let mut eff: GrB_Matrix = null_mut();
-                    GrB_Matrix_new(&raw mut eff, GrB_UINT64, vm.nrows(), vm.ncols());
-                    // eff<¬dm> = m
-                    GrB_Matrix_apply(
-                        eff,
-                        vm.dm().inner(),
-                        null_mut(),
-                        GrB_IDENTITY_UINT64,
-                        vm.m().inner(),
-                        GrB_DESC_SC,
-                    );
-                    if vm.dp().nvals() != 0 {
-                        // eff = eff ⊕ dp (disjoint; SECOND is a no-op tiebreak).
-                        GrB_Matrix_eWiseAdd_BinaryOp(
-                            eff,
-                            null_mut(),
-                            null_mut(),
-                            GrB_SECOND_UINT64,
-                            eff,
-                            vm.dp().inner(),
-                            null_mut(),
-                        );
-                    }
-                    let mut eff_nvals: GrB_Index = 0;
-                    GrB_Matrix_nvals(&raw mut eff_nvals, eff);
-                    if eff_nvals != 0 {
+                    let (fwd, me_owned, has_multi) = tensor.build_msf_matrices();
+                    // Inline pass: the forward matrix's deltas are empty, so
+                    // extract the compact A(I,I) STRAIGHT from it — the old
+                    // `eff = m∖dm ∪ dp` copy + dp branch were pure overhead.
+                    let mut fwd_nvals: GrB_Index = 0;
+                    GrB_Matrix_nvals(&raw mut fwd_nvals, fwd.inner());
+                    if fwd_nvals != 0 {
                         // Compact A(I,I) extract: entries incident to inactive
                         // nodes drop out and indices are renumbered to 0..n-1
                         // inside GraphBLAS, replacing the old extractTuples →
@@ -1429,7 +1407,7 @@ fn register_msf(funcs: &mut Functions) {
                             eff_c,
                             null_mut(),
                             null_mut(),
-                            eff,
+                            fwd.inner(),
                             sorted_ids.as_ptr(),
                             n,
                             sorted_ids.as_ptr(),
@@ -1459,17 +1437,15 @@ fn register_msf(funcs: &mut Functions) {
                         GrB_Matrix_free(&raw mut eff_c);
                         GrB_Matrix_free(&raw mut scored_c);
                     }
-                    GrB_Matrix_free(&raw mut eff);
+                    // `fwd` (owned Matrix) frees itself on drop.
 
                     // Overflow pass: only the 2nd, 3rd, … edge of multi-edge
                     // pairs live in `me[compound_key(src,dst)][edge_id]`; skip
-                    // it entirely on single-edge tensors.
-                    if !tensor.has_multi_edge() {
+                    // it entirely on single-edge tensors. `me_owned`/`has_multi`
+                    // came from the single `build_msf_matrices` walk above.
+                    if !has_multi {
                         continue;
                     }
-                    // Rebuild the ephemeral bool overflow matrix (2nd+ edges per
-                    // multi-edge pair, compound-key rows) from the native store.
-                    let me_owned = tensor.build_msf_overflow();
                     let me = &me_owned;
                     me.wait();
                     // Two read-only edge sources per tensor: live base edges `m`
