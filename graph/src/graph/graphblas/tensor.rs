@@ -351,6 +351,35 @@ impl Tensor {
     }
 }
 
+#[cfg(test)]
+mod repro_tests {
+    use super::*;
+    use crate::graph::graphblas::test_init::ensure_init;
+
+    #[test]
+    fn repro_engine_pattern() {
+        ensure_init();
+        let mut t = Tensor::new(8, 8);
+        // a=0,b=1,c=2; edges (0,1,100),(0,1,101),(1,2,102),(0,2,103)
+        t.set_all_from_slices(&[0, 0, 1, 0], &[1, 1, 2, 2], &[100, 101, 102, 103]);
+        let mut e: Vec<_> = t.iter_edges().collect();
+        e.sort_unstable();
+        assert_eq!(e, vec![(0, 1, 100), (0, 1, 101), (0, 2, 103), (1, 2, 102)]);
+        assert_eq!(t.get(0, 1).collect::<Vec<_>>(), vec![100, 101]);
+        assert_eq!(t.get(0, 2).collect::<Vec<_>>(), vec![103]);
+        assert_eq!(t.edge_count(), 4);
+        assert_eq!(
+            t.iter(0, u64::MAX, false).collect::<Vec<_>>(),
+            vec![(0, 1, 100), (0, 1, 101), (0, 2, 103), (1, 2, 102)]
+        );
+        // dup + mutate (MVCC), old snapshot unchanged
+        let mut t2 = t.dup();
+        t2.set(2, 0, 200);
+        assert_eq!(t.edge_count(), 4);
+        assert_eq!(t2.edge_count(), 5);
+    }
+}
+
 /// MSB flag used by C FalkorDB to indicate multi-edge entries in the
 /// UINT64 forward matrix.
 const MSB_MASK: u64 = 1u64 << 63;

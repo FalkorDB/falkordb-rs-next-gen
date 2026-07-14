@@ -1,53 +1,38 @@
-//! Native copy-on-write edge-id store (POC for the decoupled tensor).
+//! Native copy-on-write edge-id store, backed by the index's [`CowBTree`].
 //!
 //! This is the source of truth for `compound_key(src,dst) → {edge ids}` in the
-//! "decouple" alternative, where the relationship adjacency matrices `m`/`mt`
-//! go back to pure `VersionedMatrix<bool>` (structure only) and all edge ids
-//! live here instead of inside a GraphBLAS matrix.
+//! decoupled `tensor`: the relationship adjacency matrices `m`/`mt` are
+//! structure-only `bool`, and all edge ids live here as `(compound_key,
+//! edge_id)` tuples.
 //!
-//! ## MVCC shape (mirrors `VersionedMatrix`)
+//! ## Why a B-tree, not base/delta
 //!
-//! ```text
-//!   EdgeIdStore
-//!     |-- base  Arc<[(key,id)]>   committed, sorted by (key,id)   ~ m
-//!     |-- add   Arc<BTreeMap>     per-version pending additions   ~ dp
-//!     |-- del   Arc<FxHashSet>    per-version tombstones (⊆ base)  ~ dm
+//! A [`CowBTree`] stores exactly `(key: u64, doc: u64)` sorted by `(key, doc)`
+//! with **page-level** copy-on-write: a snapshot is an `O(1)` root `Arc` bump,
+//! and a write path-copies only the root→leaf path (sharing every untouched
+//! page). Because writes mutate in place *within a copied leaf*, there is **no
+//! tombstone backlog and no flush threshold** — a delete+reinsert workload stays
+//! compact without a background rebuild. This is what a flat `Arc<[..]>` base +
+//! delta-map + tombstone set could not do (whole-array COW forces either
+//! unbounded delta growth or an `O(n)` flush).
 //!
-//!   Effective content = (base ∖ del) ∪ add   (a disjoint union)
-//! ```
+//! ## Count invariant
 //!
-//! `base` is sorted by `(compound_key, edge_id)` — which is exactly forward
-//! row-major `(src, dst, id)` adjacency order — so a forward `src` range is a
-//! contiguous slice and iteration needs no per-pair lookup. Versioning is the
-//! same hybrid the codebase already uses for `attribute_store::DataBlock`:
-//! clone three `Arc`s on `dup()` (O(1)); `Arc::make_mut` deep-copies only the
-//! small `add`/`del` delta on first write per version; `base` is shared
-//! read-only across snapshots and rebuilt only at `flush`/load.
-//!
-//! Invariants maintained by [`EdgeIdStore::set`] / [`EdgeIdStore::remove`]:
-//! - `del ⊆ base` (only committed entries get tombstoned)
-//! - `add ∩ (base ∖ del) = ∅` (an id is in `base` XOR `add`, never both live)
-//! - every `add[key]` is sorted ascending and non-empty
+//! [`EdgeIdStore::count`] is maintained exactly for single [`set`]/[`remove`]
+//! (the tree reports whether the tuple actually changed). [`insert_batch`]
+//! assumes its entries are **new** (disjoint from the tree) — which the tensor
+//! guarantees, since edge ids are globally unique and never re-inserted.
 
-use std::collections::BTreeMap;
-use std::sync::Arc;
+use crate::index::falkordb::data_structures::cow_btree::CowBTree;
 
-use itertools::merge;
-use rustc_hash::FxHashSet;
-use smallvec::SmallVec;
-
-/// Pending ids for one key. Inline for the common single-overflow case.
-type Ids = SmallVec<[u64; 1]>;
-
-/// Native COW `(compound_key → {edge id})` multimap with snapshot isolation.
+/// Native copy-on-write `(compound_key → {edge id})` multimap with page-level
+/// snapshot isolation.
 #[derive(Clone, Default)]
 pub struct EdgeIdStore {
-    /// Committed entries, sorted ascending by `(key, id)`. Immutable at runtime.
-    base: Arc<[(u64, u64)]>,
-    /// Per-version additions, `key → ascending ids`, disjoint from live `base`.
-    add: Arc<BTreeMap<u64, Ids>>,
-    /// Per-version tombstones over `base` entries.
-    del: Arc<FxHashSet<(u64, u64)>>,
+    /// `(compound_key, edge_id)` tuples, sorted by `(key, id)`.
+    tree: CowBTree,
+    /// Live tuple count (exact; maintained on every mutation).
+    count: u64,
 }
 
 impl EdgeIdStore {
@@ -57,62 +42,34 @@ impl EdgeIdStore {
     }
 
     /// Build a committed store directly from `(key, id)` pairs (bulk load).
-    /// Sorts and de-duplicates into `base`; `add`/`del` start empty.
+    /// Sorts and de-duplicates, then packs B-tree pages bottom-up.
     #[must_use]
     pub fn from_pairs(mut pairs: Vec<(u64, u64)>) -> Self {
         pairs.sort_unstable();
         pairs.dedup();
+        let count = pairs.len() as u64;
         Self {
-            base: pairs.into(),
-            add: Arc::new(BTreeMap::new()),
-            del: Arc::new(FxHashSet::default()),
+            tree: CowBTree::from_sorted(&pairs),
+            count,
         }
     }
 
-    /// New MVCC version: share all three layers via `Arc` (O(1)); the first
-    /// write in the new version copies only the touched delta.
+    /// New MVCC version: an `O(1)` root `Arc` bump; the first write in the new
+    /// version path-copies only the touched pages.
     #[must_use]
     pub fn dup(&self) -> Self {
         self.clone()
     }
 
-    /// Half-open `base` index range `[lo, hi)` of the run for `key`.
-    #[inline]
-    fn base_range(
-        &self,
-        key: u64,
-    ) -> (usize, usize) {
-        let lo = self.base.partition_point(|&(k, _)| k < key);
-        let hi = self.base.partition_point(|&(k, _)| k <= key);
-        (lo, hi)
-    }
-
-    #[inline]
-    fn base_contains(
-        &self,
-        key: u64,
-        id: u64,
-    ) -> bool {
-        self.base.binary_search(&(key, id)).is_ok()
-    }
-
-    /// Add edge `id` under `key`. Idempotent.
+    /// Add edge `id` under `key`. Idempotent (re-adding an existing tuple is a
+    /// no-op and leaves the count unchanged).
     pub fn set(
         &mut self,
         key: u64,
         id: u64,
     ) {
-        if self.base_contains(key, id) {
-            // Committed already: un-delete if it was tombstoned, else no-op.
-            if self.del.contains(&(key, id)) {
-                Arc::make_mut(&mut self.del).remove(&(key, id));
-            }
-            return;
-        }
-        let add = Arc::make_mut(&mut self.add);
-        let ids = add.entry(key).or_default();
-        if let Err(pos) = ids.binary_search(&id) {
-            ids.insert(pos, id);
+        if self.tree.insert(key, id) {
+            self.count += 1;
         }
     }
 
@@ -122,26 +79,13 @@ impl EdgeIdStore {
         key: u64,
         id: u64,
     ) {
-        if self.base_contains(key, id) {
-            Arc::make_mut(&mut self.del).insert((key, id));
-            return;
-        }
-        let add = Arc::make_mut(&mut self.add);
-        if let Some(ids) = add.get_mut(&key)
-            && let Ok(pos) = ids.binary_search(&id)
-        {
-            ids.remove(pos);
-            if ids.is_empty() {
-                add.remove(&key);
-            }
+        if self.tree.remove(key, id) {
+            self.count -= 1;
         }
     }
 
-    /// Batch-insert `(key, id)` pairs. Adopts the sorted batch-apply pattern
-    /// (cf. `CowBTree::insert_batch` / `attribute_store` `merge_span`): classify
-    /// the whole batch against the base once, then perform a single copy-on-write
-    /// of each touched delta and group the additions by key — one `BTreeMap`
-    /// entry per distinct key instead of per edge.
+    /// Batch-insert `(key, id)` pairs (sorts once, packs touched pages in one
+    /// pass). Assumes the entries are new — see the count invariant above.
     pub fn insert_batch(
         &mut self,
         pairs: &[(u64, u64)],
@@ -152,105 +96,30 @@ impl EdgeIdStore {
         let mut sorted: Vec<(u64, u64)> = pairs.to_vec();
         sorted.sort_unstable();
         sorted.dedup();
-
-        // Phase 1 (read-only): split into committed-but-tombstoned (un-delete)
-        // and genuinely-new (add).
-        let mut undeletes: Vec<(u64, u64)> = Vec::new();
-        let mut fresh: Vec<(u64, u64)> = Vec::new();
-        for &kv in &sorted {
-            if self.base_contains(kv.0, kv.1) {
-                if self.del.contains(&kv) {
-                    undeletes.push(kv);
-                }
-            } else {
-                fresh.push(kv);
-            }
-        }
-
-        // Phase 2 (batched mutation): one make_mut per touched delta.
-        if !undeletes.is_empty() {
-            let del = Arc::make_mut(&mut self.del);
-            for kv in &undeletes {
-                del.remove(kv);
-            }
-        }
-        if !fresh.is_empty() {
-            let add = Arc::make_mut(&mut self.add);
-            let mut i = 0;
-            while i < fresh.len() {
-                let key = fresh[i].0;
-                let ids = add.entry(key).or_default();
-                while i < fresh.len() && fresh[i].0 == key {
-                    let id = fresh[i].1;
-                    if let Err(pos) = ids.binary_search(&id) {
-                        ids.insert(pos, id);
-                    }
-                    i += 1;
-                }
-            }
-        }
+        self.tree.insert_batch(&sorted);
+        self.count += sorted.len() as u64;
     }
 
-    /// Batch-remove `(key, id)` pairs: tombstone committed entries, drop pending
-    /// ones — a single copy-on-write of each touched delta.
+    /// Batch-remove `(key, id)` pairs. Exact count (each removal is reported).
     pub fn remove_batch(
         &mut self,
         pairs: &[(u64, u64)],
     ) {
-        if pairs.is_empty() {
-            return;
-        }
-        let mut sorted: Vec<(u64, u64)> = pairs.to_vec();
-        sorted.sort_unstable();
-        sorted.dedup();
-
-        let mut tombstones: Vec<(u64, u64)> = Vec::new();
-        let mut add_removes: Vec<(u64, u64)> = Vec::new();
-        for &kv in &sorted {
-            if self.base_contains(kv.0, kv.1) {
-                tombstones.push(kv);
-            } else {
-                add_removes.push(kv);
-            }
-        }
-
-        if !tombstones.is_empty() {
-            let del = Arc::make_mut(&mut self.del);
-            for kv in tombstones {
-                del.insert(kv);
-            }
-        }
-        if !add_removes.is_empty() {
-            let add = Arc::make_mut(&mut self.add);
-            for (key, id) in add_removes {
-                if let Some(ids) = add.get_mut(&key)
-                    && let Ok(pos) = ids.binary_search(&id)
-                {
-                    ids.remove(pos);
-                    if ids.is_empty() {
-                        add.remove(&key);
-                    }
-                }
+        for &(key, id) in pairs {
+            if self.tree.remove(key, id) {
+                self.count -= 1;
             }
         }
     }
 
-    /// Live edge ids for `key`, ascending — a lazy streaming merge of the base
-    /// run (skipping tombstones) with the pending `add` ids for this key. Both
-    /// sources are ascending and disjoint, so no buffering or sort is needed.
+    /// Live edge ids for `key`, ascending — a lazy cursor owning a snapshot
+    /// (droppable mid-scan, no allocation).
     #[must_use]
     pub fn ids_iter(
         &self,
         key: u64,
-    ) -> impl Iterator<Item = u64> + '_ {
-        let (lo, hi) = self.base_range(key);
-        let del = &self.del;
-        let base = self.base[lo..hi]
-            .iter()
-            .filter(move |kv| !del.contains(kv))
-            .map(|&(_, id)| id);
-        let add = self.add.get(&key).into_iter().flatten().copied();
-        merge(base, add)
+    ) -> impl Iterator<Item = u64> {
+        self.tree.point(key)
     }
 
     /// Live edge ids for `key`, ascending, as an owned `Vec`.
@@ -259,7 +128,7 @@ impl EdgeIdStore {
         &self,
         key: u64,
     ) -> Vec<u64> {
-        self.ids_iter(key).collect()
+        self.tree.point(key).collect()
     }
 
     /// Whether `key` has at least one live edge id.
@@ -268,39 +137,18 @@ impl EdgeIdStore {
         &self,
         key: u64,
     ) -> bool {
-        let (lo, hi) = self.base_range(key);
-        if self.base[lo..hi]
-            .iter()
-            .any(|&(k, id)| !self.del.contains(&(k, id)))
-        {
-            return true;
-        }
-        self.add.get(&key).is_some_and(|ids| !ids.is_empty())
+        self.tree.point(key).next().is_some()
     }
 
-    /// Lazily stream all live `(key, id)` pairs whose key is in
-    /// `[min_key, max_key]`, ascending by `(key, id)` — a merge of the base
-    /// slice (skipping tombstones) with the pending `add` range. No allocation,
-    /// droppable mid-scan. Forward tensor iteration uses this over a
-    /// `src`-derived key range.
+    /// Lazily stream all live `(key, id)` pairs whose key is in `[min_key,
+    /// max_key]`, ascending by `(key, id)`. Owns a snapshot; no allocation.
     #[must_use]
     pub fn range_iter(
         &self,
         min_key: u64,
         max_key: u64,
-    ) -> impl Iterator<Item = (u64, u64)> + '_ {
-        let lo = self.base.partition_point(|&(k, _)| k < min_key);
-        let hi = self.base.partition_point(|&(k, _)| k <= max_key);
-        let del = &self.del;
-        let base = self.base[lo..hi]
-            .iter()
-            .copied()
-            .filter(move |kv| !del.contains(kv));
-        let add = self
-            .add
-            .range(min_key..=max_key)
-            .flat_map(|(&k, ids)| ids.iter().map(move |&id| (k, id)));
-        merge(base, add)
+    ) -> impl Iterator<Item = (u64, u64)> {
+        self.tree.range_tuples(min_key, max_key)
     }
 
     /// All live `(key, id)` pairs whose key is in `[min_key, max_key]`,
@@ -320,83 +168,31 @@ impl EdgeIdStore {
         self.range_pairs(0, u64::MAX)
     }
 
-    /// Total live edge count: `|base| − |del| + |add|`.
+    /// Total live edge count.
     #[must_use]
     pub fn nvals(&self) -> u64 {
-        let add_total: usize = self.add.values().map(SmallVec::len).sum();
-        (self.base.len() - self.del.len() + add_total) as u64
+        self.count
     }
 
-    /// Whether any key has more than one live id (multi-edge present).
+    /// Whether any key has more than one live id (multi-edge present). Scans the
+    /// tree for two consecutive tuples sharing a key, short-circuiting on the
+    /// first. Only weighted MSF / `COUNT` optimization call it, off hot paths.
     #[must_use]
     pub fn has_multi_edge(&self) -> bool {
-        // Cheap-ish: scan add first (usually the source of multiplicity at
-        // runtime), then base runs. For the POC this is not on a hot path.
-        if self.add.values().any(|ids| ids.len() > 1) {
-            // A key with ≥2 pending ids, or 1 pending + ≥1 live base, is multi.
-            return true;
-        }
-        // add has ≤1 id per key here; a multi pair then needs a live base id
-        // for a key that also has a pending id, or ≥2 live base ids per key.
-        let mut i = 0;
-        while i < self.base.len() {
-            let key = self.base[i].0;
-            let mut live = 0u32;
-            while i < self.base.len() && self.base[i].0 == key {
-                if !self.del.contains(&self.base[i]) {
-                    live += 1;
-                }
-                i += 1;
-            }
-            if self.add.contains_key(&key) {
-                live += 1;
-            }
-            if live > 1 {
+        let mut prev: Option<u64> = None;
+        for (k, _) in self.tree.range_tuples(0, u64::MAX) {
+            if prev == Some(k) {
                 return true;
             }
+            prev = Some(k);
         }
         false
     }
 
-    /// Merge `add`/`del` into `base` and clear the deltas. Rebuilds the sorted
-    /// committed snapshot (analogue of `VersionedMatrix::flush`).
-    pub fn flush(&mut self) {
-        if self.add.is_empty() && self.del.is_empty() {
-            return;
-        }
-        let add_total: usize = self.add.values().map(SmallVec::len).sum();
-        let mut merged: Vec<(u64, u64)> = Vec::with_capacity(self.base.len() + add_total);
-        merged.extend(
-            self.base
-                .iter()
-                .copied()
-                .filter(|kv| !self.del.contains(kv)),
-        );
-        for (&k, ids) in self.add.iter() {
-            merged.extend(ids.iter().map(|&id| (k, id)));
-        }
-        merged.sort_unstable();
-        self.base = merged.into();
-        self.add = Arc::new(BTreeMap::new());
-        self.del = Arc::new(FxHashSet::default());
-    }
-
-    /// Approximate resident bytes. `base` (16 B/edge) dominates at steady
-    /// state; the small deltas are estimated with modest per-entry overhead.
+    /// Approximate resident bytes of the backing tree plus this wrapper.
     #[must_use]
     pub fn memory_usage(&self) -> usize {
-        let base = self.base.len() * std::mem::size_of::<(u64, u64)>();
-        // FxHashSet: ~1.14× slots of (key,id) plus 1 control byte each.
-        let del = self.del.len() * (std::mem::size_of::<(u64, u64)>() + 1) * 8 / 7;
-        // BTreeMap: per-entry key + SmallVec header; spilled ids add 8 B each.
-        let add_headers =
-            self.add.len() * (std::mem::size_of::<u64>() + std::mem::size_of::<Ids>());
-        let add_spilled: usize = self
-            .add
-            .values()
-            .map(|ids| ids.len().saturating_sub(1) * std::mem::size_of::<u64>())
-            .sum();
-        base + del + add_headers + add_spilled
+        self.tree.heap_bytes() + std::mem::size_of::<Self>()
     }
 }
 
@@ -427,88 +223,43 @@ mod tests {
     }
 
     #[test]
-    fn remove_from_base_and_add() {
-        // base holds (10,100),(10,200); add holds (10,300)
-        let mut s = EdgeIdStore::from_pairs(vec![(10, 100), (10, 200)]);
-        s.set(10, 300);
-        assert_eq!(s.get(10), vec![100, 200, 300]);
-
-        s.remove(10, 200); // tombstone a base entry
-        assert_eq!(s.get(10), vec![100, 300]);
-        s.remove(10, 300); // drop a pending add
-        assert_eq!(s.get(10), vec![100]);
-        s.remove(10, 100); // tombstone last base entry -> empty
-        assert!(s.get(10).is_empty());
-        assert!(!s.pair_nonempty(10));
-        assert_eq!(s.nvals(), 0);
-    }
-
-    #[test]
-    fn re_add_after_tombstone_is_undelete() {
+    fn set_is_idempotent_for_count() {
         let mut s = EdgeIdStore::from_pairs(vec![(7, 42)]);
-        s.remove(7, 42);
-        assert!(s.get(7).is_empty());
-        s.set(7, 42); // must un-delete, not create a shadow in add
-        assert_eq!(s.get(7), vec![42]);
+        s.set(7, 42); // already present → no-op, count unchanged
         assert_eq!(s.nvals(), 1);
-        assert!(s.del.is_empty());
+        assert_eq!(s.get(7), vec![42]);
     }
 
     #[test]
-    fn range_pairs_is_sorted_and_scoped() {
-        let mut s = EdgeIdStore::from_pairs(vec![(1, 5), (3, 9), (3, 1)]);
-        s.set(2, 7);
-        assert_eq!(s.all_pairs(), vec![(1, 5), (2, 7), (3, 1), (3, 9)]);
-        assert_eq!(s.range_pairs(2, 3), vec![(2, 7), (3, 1), (3, 9)]);
-        assert_eq!(s.range_pairs(4, 100), vec![]);
-    }
-
-    #[test]
-    fn flush_equals_effective() {
-        let mut s = EdgeIdStore::from_pairs(vec![(1, 10), (2, 20), (2, 21)]);
-        s.set(3, 30);
+    fn remove_then_readd() {
+        let mut s = EdgeIdStore::from_pairs(vec![(1, 10), (1, 11), (2, 20)]);
+        s.remove(1, 10);
+        assert_eq!(s.get(1), vec![11]);
+        assert_eq!(s.nvals(), 2);
+        s.remove(9, 99); // absent → no-op
+        assert_eq!(s.nvals(), 2);
+        s.set(1, 10); // re-add
+        assert_eq!(s.get(1), vec![10, 11]);
+        assert_eq!(s.nvals(), 3);
         s.remove(2, 20);
-        let before = s.all_pairs();
-        let nvals = s.nvals();
-        s.flush();
-        assert!(s.add.is_empty() && s.del.is_empty());
-        assert_eq!(s.all_pairs(), before);
-        assert_eq!(s.nvals(), nvals);
-        assert_eq!(s.base.len() as u64, nvals);
+        assert!(!s.pair_nonempty(2));
     }
 
     #[test]
-    fn insert_batch_equals_per_element() {
-        // Same ops via batch vs per-element `set` must yield identical state.
-        let ops = [(5, 50), (5, 40), (2, 20), (9, 90), (5, 60), (2, 20)];
-        let mut a = EdgeIdStore::from_pairs(vec![(2, 20), (7, 70)]);
-        let mut b = a.clone();
-        for &(k, id) in &ops {
-            a.set(k, id);
-        }
-        b.insert_batch(&ops);
-        assert_eq!(a.all_pairs(), b.all_pairs());
-        assert_eq!(a.nvals(), b.nvals());
-        // Includes a re-add of the tombstone-free base entry (2,20): idempotent.
-        assert_eq!(b.get(2), vec![20]);
-        assert_eq!(b.get(5), vec![40, 50, 60]);
-    }
-
-    #[test]
-    fn remove_batch_equals_per_element() {
-        let base = EdgeIdStore::from_pairs(vec![(1, 10), (1, 11), (2, 20), (3, 30)]);
-        let extra = [(1, 12), (4, 40)];
-        let removals = [(1, 10), (4, 40), (3, 30), (1, 12)];
-        let mut a = base.clone();
-        let mut b = base.clone();
-        a.insert_batch(&extra);
-        b.insert_batch(&extra);
-        for &(k, id) in &removals {
-            a.remove(k, id);
-        }
-        b.remove_batch(&removals);
-        assert_eq!(a.all_pairs(), b.all_pairs());
-        assert_eq!(a.nvals(), b.nvals());
+    fn batch_insert_remove() {
+        let mut s = EdgeIdStore::from_pairs(vec![(2, 20), (7, 70)]);
+        // Disjoint batch (fresh ids) — the tensor invariant.
+        s.insert_batch(&[(5, 50), (5, 40), (9, 90), (5, 60)]);
+        assert_eq!(
+            s.all_pairs(),
+            vec![(2, 20), (5, 40), (5, 50), (5, 60), (7, 70), (9, 90)]
+        );
+        assert_eq!(s.nvals(), 6);
+        assert_eq!(s.get(5), vec![40, 50, 60]);
+        s.remove_batch(&[(5, 40), (7, 70), (5, 60)]);
+        assert_eq!(s.get(5), vec![50]);
+        assert!(!s.pair_nonempty(7));
+        assert_eq!(s.nvals(), 3);
     }
 
     #[test]
@@ -517,7 +268,6 @@ mod tests {
         s.set(2, 20);
         s.set(3, 32);
         s.remove(5, 50);
-        // range_iter == range_pairs; ids_iter == get.
         assert_eq!(s.range_iter(0, u64::MAX).collect::<Vec<_>>(), s.all_pairs());
         assert_eq!(s.range_iter(2, 3).collect::<Vec<_>>(), s.range_pairs(2, 3));
         for k in 0..7 {
@@ -533,12 +283,365 @@ mod tests {
         let mut v2 = base.dup();
         v2.set(3, 30);
         v2.remove(1, 10);
-        // Old snapshot is untouched.
+        // Old snapshot is untouched (page-level COW).
         assert_eq!(base.get(1), vec![10]);
         assert_eq!(base.all_pairs(), vec![(1, 10), (2, 20)]);
+        assert_eq!(base.nvals(), 2);
         // New version sees its writes.
         assert!(v2.get(1).is_empty());
         assert_eq!(v2.get(3), vec![30]);
         assert_eq!(v2.all_pairs(), vec![(2, 20), (3, 30)]);
+        assert_eq!(v2.nvals(), 2);
+    }
+
+    #[test]
+    fn repro_insert_batch_empty() {
+        let mut s = EdgeIdStore::new();
+        s.insert_batch(&[(1, 100), (1, 101), (4294967298, 102), (2, 103)]);
+        assert_eq!(s.get(1), vec![100, 101]);
+        assert_eq!(s.get(2), vec![103]);
+        assert_eq!(s.nvals(), 4);
+        assert_eq!(s.all_pairs().len(), 4);
+    }
+
+    #[test]
+    fn repro_mvcc_dup_then_batch() {
+        let mut v1 = EdgeIdStore::new();
+        v1.insert_batch(&[(1, 100)]);
+        let mut v2 = v1.dup();
+        v2.insert_batch(&[(1, 101), (2, 102)]);
+        assert_eq!(v1.all_pairs(), vec![(1, 100)], "v1 must be isolated");
+        assert_eq!(v2.all_pairs(), vec![(1, 100), (1, 101), (2, 102)]);
+        assert_eq!(v1.nvals(), 1);
+        assert_eq!(v2.nvals(), 3);
+    }
+
+    #[test]
+    fn repro_chain_of_versions() {
+        // Mimic the runtime: each "write" dups the previous committed version
+        // and batch-inserts fresh edges.
+        let mut committed = EdgeIdStore::new();
+        for round in 0..5u64 {
+            let mut next = committed.dup();
+            next.insert_batch(&[(round, 1000 + round)]);
+            committed = next;
+        }
+        assert_eq!(committed.nvals(), 5);
+        assert_eq!(committed.all_pairs().len(), 5);
+    }
+
+    #[test]
+    fn larger_multi_edge_and_count() {
+        let mut s = EdgeIdStore::new();
+        let mut expected = 0u64;
+        for pair in 0..1000u64 {
+            let key = (pair << 32) | (pair + 1);
+            for e in 0..(pair % 3 + 1) {
+                s.set(key, 10_000 + pair * 10 + e);
+                expected += 1;
+            }
+        }
+        assert_eq!(s.nvals(), expected);
+        assert!(s.has_multi_edge());
+        // Round-trip through all_pairs preserves everything.
+        let pairs = s.all_pairs();
+        assert_eq!(pairs.len() as u64, expected);
+        assert!(pairs.windows(2).all(|w| w[0] < w[1]));
+    }
+}
+
+/// A/B performance comparison: the CowBTree-backed [`EdgeIdStore`] vs an inline
+/// reimplementation of the previous `base/add/del` design (the milestone). Run:
+/// `cargo test -p graph --release -- edge_id_store::perf --nocapture --include-ignored`.
+#[cfg(test)]
+mod perf {
+    use std::collections::BTreeMap;
+    use std::hint::black_box;
+    use std::sync::Arc;
+    use std::time::Instant;
+
+    use rustc_hash::FxHashSet;
+    use smallvec::SmallVec;
+
+    use super::EdgeIdStore;
+
+    // ---- Baseline: the previous flat base + delta-map + tombstone store. ----
+    type Ids = SmallVec<[u64; 1]>;
+
+    #[derive(Clone, Default)]
+    struct Baseline {
+        base: Arc<[(u64, u64)]>,
+        add: Arc<BTreeMap<u64, Ids>>,
+        del: Arc<FxHashSet<(u64, u64)>>,
+    }
+
+    impl Baseline {
+        fn from_pairs(mut p: Vec<(u64, u64)>) -> Self {
+            p.sort_unstable();
+            p.dedup();
+            Self {
+                base: p.into(),
+                add: Default::default(),
+                del: Default::default(),
+            }
+        }
+        fn base_contains(
+            &self,
+            k: u64,
+            id: u64,
+        ) -> bool {
+            self.base.binary_search(&(k, id)).is_ok()
+        }
+        fn set(
+            &mut self,
+            k: u64,
+            id: u64,
+        ) {
+            if self.base_contains(k, id) {
+                if self.del.contains(&(k, id)) {
+                    Arc::make_mut(&mut self.del).remove(&(k, id));
+                }
+                return;
+            }
+            let a = Arc::make_mut(&mut self.add);
+            let v = a.entry(k).or_default();
+            if let Err(p) = v.binary_search(&id) {
+                v.insert(p, id);
+            }
+        }
+        fn remove(
+            &mut self,
+            k: u64,
+            id: u64,
+        ) {
+            if self.base_contains(k, id) {
+                Arc::make_mut(&mut self.del).insert((k, id));
+                return;
+            }
+            let a = Arc::make_mut(&mut self.add);
+            if let Some(v) = a.get_mut(&k)
+                && let Ok(p) = v.binary_search(&id)
+            {
+                v.remove(p);
+                if v.is_empty() {
+                    a.remove(&k);
+                }
+            }
+        }
+        fn insert_batch(
+            &mut self,
+            pairs: &[(u64, u64)],
+        ) {
+            for &(k, id) in pairs {
+                self.set(k, id);
+            }
+        }
+        fn get(
+            &self,
+            k: u64,
+        ) -> Vec<u64> {
+            let lo = self.base.partition_point(|&(x, _)| x < k);
+            let hi = self.base.partition_point(|&(x, _)| x <= k);
+            let mut o: Vec<u64> = self.base[lo..hi]
+                .iter()
+                .filter(|&&(x, id)| !self.del.contains(&(x, id)))
+                .map(|&(_, id)| id)
+                .collect();
+            if let Some(v) = self.add.get(&k) {
+                o.extend_from_slice(v);
+                o.sort_unstable();
+            }
+            o
+        }
+        /// Effective full-scan (base∖del ∪ add), reading every tuple.
+        fn iter_xor(&self) -> u64 {
+            let mut s = 0u64;
+            for &(k, id) in self.base.iter() {
+                if !self.del.contains(&(k, id)) {
+                    s ^= k ^ id;
+                }
+            }
+            for (&k, ids) in self.add.iter() {
+                for &id in ids {
+                    s ^= k ^ id;
+                }
+            }
+            s
+        }
+        fn dup(&self) -> Self {
+            self.clone()
+        }
+        fn memory(&self) -> usize {
+            let base = self.base.len() * 16;
+            let del = self.del.len() * (16 + 1) * 8 / 7;
+            let add = self.add.len() * (8 + std::mem::size_of::<Ids>());
+            base + del + add
+        }
+    }
+
+    const E: u64 = 200_000;
+    /// distinct single-edge keys 0..E, doc = 1_000_000 + i
+    fn pairs() -> Vec<(u64, u64)> {
+        (0..E)
+            .map(|i| ((i << 32) | (i + 1), 1_000_000 + i))
+            .collect()
+    }
+
+    #[inline]
+    fn lcg(s: &mut u64) -> u64 {
+        *s = s.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+        *s >> 16
+    }
+
+    #[test]
+    #[ignore = "benchmark; run with --release --nocapture --include-ignored"]
+    fn perf_ab() {
+        let all = pairs();
+        println!("\n===== EdgeIdStore: CowBTree vs base/add/del (E={E}) =====");
+
+        // ---- INGEST (batch): fresh store, one insert_batch of all edges ----
+        let t = Instant::now();
+        let cow = EdgeIdStore::from_pairs(all.clone()); // bulk load (from_sorted)
+        let cow_bulk = t.elapsed();
+        let t = Instant::now();
+        let mut cow_b = EdgeIdStore::new();
+        cow_b.insert_batch(&all);
+        let cow_batch = t.elapsed();
+        let t = Instant::now();
+        let mut base_b = Baseline::default();
+        base_b.insert_batch(&all);
+        let base_batch = t.elapsed();
+        println!(
+            "[ingest ] cow from_sorted {:5.0} ns/e | cow insert_batch {:5.0} ns/e | base insert_batch {:5.0} ns/e",
+            cow_bulk.as_nanos() as f64 / E as f64,
+            cow_batch.as_nanos() as f64 / E as f64,
+            base_batch.as_nanos() as f64 / E as f64,
+        );
+
+        // ---- INGEST (single set loop) ----
+        let t = Instant::now();
+        let mut cow_s = EdgeIdStore::new();
+        for &(k, id) in &all {
+            cow_s.set(k, id);
+        }
+        let cow_set = t.elapsed();
+        let t = Instant::now();
+        let mut base_s = Baseline::default();
+        for &(k, id) in &all {
+            base_s.set(k, id);
+        }
+        let base_set = t.elapsed();
+        println!(
+            "[ingest1] cow set-loop {:5.0} ns/e | base set-loop {:5.0} ns/e",
+            cow_set.as_nanos() as f64 / E as f64,
+            base_set.as_nanos() as f64 / E as f64,
+        );
+
+        // Runtime-state base: everything lives in the `add` BTreeMap because the
+        // tensor never flushes. `base_s` (built above via the set loop) IS that
+        // state — use it for the read/mvcc benches. (`cow` has no flushed vs
+        // unflushed distinction; its tree is always compact.)
+        let base = base_s;
+        let iters = 500_000usize;
+
+        // ---- POINT SEEK (get) ----
+        let mut st = 1u64;
+        let mut acc = 0u64;
+        let t = Instant::now();
+        for _ in 0..iters {
+            let i = lcg(&mut st) % E;
+            let k = (i << 32) | (i + 1);
+            acc += cow.get(k).iter().sum::<u64>();
+        }
+        let cow_get = t.elapsed();
+        let mut st = 1u64;
+        let t = Instant::now();
+        for _ in 0..iters {
+            let i = lcg(&mut st) % E;
+            let k = (i << 32) | (i + 1);
+            acc += base.get(k).iter().sum::<u64>();
+        }
+        let base_get = t.elapsed();
+        black_box(acc);
+        println!(
+            "[seek   ] cow {:5.0} ns/op | base {:5.0} ns/op",
+            cow_get.as_nanos() as f64 / iters as f64,
+            base_get.as_nanos() as f64 / iters as f64,
+        );
+
+        // ---- ITERATION (full scan) ----
+        let reps = 30u32;
+        let t = Instant::now();
+        let mut c = 0u64;
+        for _ in 0..reps {
+            c += cow.range_iter(0, u64::MAX).count() as u64;
+        }
+        let cow_it = t.elapsed();
+        // committed base has empty add/del → full scan reads the base slice;
+        // read both fields so the loop isn't optimized to `len()`.
+        let t = Instant::now();
+        let mut sink = 0u64;
+        for _ in 0..reps {
+            sink ^= base.iter_xor();
+        }
+        let base_it = t.elapsed();
+        assert_eq!(c / u64::from(reps), E);
+        black_box(sink);
+        let base_n = E * u64::from(reps);
+        println!(
+            "[iter   ] cow {:6.1} M/s | base {:6.1} M/s",
+            (c as f64 / cow_it.as_secs_f64()) / 1e6,
+            (base_n as f64 / base_it.as_secs_f64()) / 1e6,
+        );
+
+        // ---- DELETE (single remove loop on a committed snapshot) ----
+        let mut cow_d = cow.dup();
+        let t = Instant::now();
+        for &(k, id) in all.iter().take(50_000) {
+            cow_d.remove(k, id);
+        }
+        let cow_del = t.elapsed();
+        let mut base_d = base.dup();
+        let t = Instant::now();
+        for &(k, id) in all.iter().take(50_000) {
+            base_d.remove(k, id);
+        }
+        let base_del = t.elapsed();
+        println!(
+            "[delete ] cow {:5.0} ns/e | base {:5.0} ns/e",
+            cow_del.as_nanos() as f64 / 50_000.0,
+            base_del.as_nanos() as f64 / 50_000.0,
+        );
+
+        // ---- MVCC dup()+1 insert ----
+        let reps = 100_000u32;
+        let t = Instant::now();
+        for i in 0..u64::from(reps) {
+            let mut v = cow.dup();
+            v.set((E + i) << 32, 5_000_000 + i);
+            black_box(&v);
+        }
+        let cow_mv = t.elapsed();
+        let t = Instant::now();
+        for i in 0..u64::from(reps) {
+            let mut v = base.dup();
+            v.set((E + i) << 32, 5_000_000 + i);
+            black_box(&v);
+        }
+        let base_mv = t.elapsed();
+        println!(
+            "[mvcc   ] cow dup+1 {:5.0} ns | base dup+1 {:5.0} ns",
+            cow_mv.as_nanos() as f64 / f64::from(reps),
+            base_mv.as_nanos() as f64 / f64::from(reps),
+        );
+
+        // ---- MEMORY (runtime-built via set loop: the no-flush reality) ----
+        println!(
+            "[memory ] cow runtime {:.1} B/e | base runtime {:.1} B/e  (committed cow {:.1} B/e)",
+            cow_s.memory_usage() as f64 / E as f64,
+            base.memory() as f64 / E as f64,
+            cow.memory_usage() as f64 / E as f64,
+        );
+        println!("==========================================================\n");
     }
 }

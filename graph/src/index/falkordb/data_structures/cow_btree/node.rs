@@ -220,32 +220,39 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Node<LEAF_MAX, BRANCH_MAX> 
     /// cloned into a private copy before it is mutated (see [`make_private`]), so the committed version a
     /// reader may hold is never disturbed. Returns `Some(Split)` when the node split (the parent must take
     /// in the new right sibling), else `None`. Idempotent: inserting an already-present tuple is a no-op.
+    ///
+    /// Returns `(inserted, split)`: `inserted` is `false` when the tuple was already present (a no-op
+    /// on content), so callers can maintain an exact live count; `split` is `Some` when the node split.
     pub(super) fn insert_one(
         &mut self,
         key: u64,
         doc: u64,
-    ) -> Option<Split<LEAF_MAX, BRANCH_MAX>> {
+    ) -> (bool, Option<Split<LEAF_MAX, BRANCH_MAX>>) {
         match self {
             // The leaf owns the encoding-specific work (an AoS leaf splices its bytes; see [`Leaf::insert`]).
-            Self::Leaf(leaf) => match leaf.insert(key, doc)? {
-                LeafInsert::Fit(new) => {
+            Self::Leaf(leaf) => match leaf.insert(key, doc) {
+                None => (false, None), // already present
+                Some(LeafInsert::Fit(new)) => {
                     *leaf = new;
-                    None
+                    (true, None)
                 }
-                LeafInsert::Split { left, sep, right } => {
+                Some(LeafInsert::Split { left, sep, right }) => {
                     *leaf = left;
-                    Some(Split {
-                        sep,
-                        right: Self::Leaf(right),
-                    })
+                    (
+                        true,
+                        Some(Split {
+                            sep,
+                            right: Self::Leaf(right),
+                        }),
+                    )
                 }
             },
             Self::Branch(branch_arc) => {
                 let branch = make_private(branch_arc); // CoW: clone the shared branch, mutate the copy
                 let child_idx = branch.child_index(key, doc);
-                let Some(Split { sep, right }) = branch.children[child_idx].insert_one(key, doc)
-                else {
-                    return None; // absorbed below — nothing to insert here
+                let (inserted, child_split) = branch.children[child_idx].insert_one(key, doc);
+                let Some(Split { sep, right }) = child_split else {
+                    return (inserted, None); // absorbed below — nothing to insert here
                 };
                 // The child split — take in the promoted separator and the new right sibling beside it.
                 branch.seps.insert(child_idx, sep);
@@ -253,7 +260,7 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Node<LEAF_MAX, BRANCH_MAX> 
                 #[cfg(test)]
                 cow_gate::park_if(key); // test-only: parks AFTER the working copy is mutated
                 if branch.children.len() <= BRANCH_MAX {
-                    None
+                    (inserted, None)
                 } else {
                     // This branch overflowed in turn: keep the left half, promote the middle
                     // separator (it moves up, into neither side), hand the right half up.
@@ -261,13 +268,16 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Node<LEAF_MAX, BRANCH_MAX> 
                     let right_children = branch.children.split_off(mid);
                     let right_seps = branch.seps.split_off(mid);
                     let promoted = branch.seps.pop().unwrap(); // the separator between the two halves
-                    Some(Split {
-                        sep: promoted,
-                        right: Self::Branch(Arc::new(Branch {
-                            seps: right_seps,
-                            children: right_children,
-                        })),
-                    })
+                    (
+                        inserted,
+                        Some(Split {
+                            sep: promoted,
+                            right: Self::Branch(Arc::new(Branch {
+                                seps: right_seps,
+                                children: right_children,
+                            })),
+                        }),
+                    )
                 }
             }
         }

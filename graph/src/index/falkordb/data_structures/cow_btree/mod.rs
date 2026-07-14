@@ -36,7 +36,7 @@ mod node;
 #[cfg(test)]
 mod tests;
 
-pub use cursor::RangeIter;
+pub use cursor::{DocExtract, Extract, RangeIter, TupleExtract};
 use leaf::Leaf;
 pub use leaf::LeafFormat;
 use node::{Branch, Node, Split, build_root};
@@ -165,13 +165,15 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> CowBTree<LEAF_MAX, BRANCH_M
         }
     }
 
-    /// Insert a single `(key, doc)`. Idempotent: inserting an existing tuple is a no-op.
+    /// Insert a single `(key, doc)`. Idempotent: inserting an existing tuple is a no-op. Returns
+    /// `true` iff the tuple was newly inserted (so callers can maintain an exact live count).
     pub fn insert(
         &mut self,
         key: u64,
         doc: u64,
-    ) {
-        if let Some(Split { sep, right }) = self.root.insert_one(key, doc) {
+    ) -> bool {
+        let (inserted, split) = self.root.insert_one(key, doc);
+        if let Some(Split { sep, right }) = split {
             // The root split — grow a fresh level above the two halves.
             let left = std::mem::replace(&mut self.root, Node::Leaf(Leaf::from_pairs(&[])));
             self.root = Node::Branch(Arc::new(Branch {
@@ -179,6 +181,7 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> CowBTree<LEAF_MAX, BRANCH_M
                 children: vec![left, right],
             }));
         }
+        inserted
     }
 
     /// Apply a batch of `(key, doc)` adds **sorted ascending**, copying each touched page once.
@@ -199,12 +202,12 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> CowBTree<LEAF_MAX, BRANCH_M
     }
 
     /// Remove a single `(key, doc)`; merges underflowing pages so the tree stays compact. A missing
-    /// tuple is a no-op.
+    /// tuple is a no-op. Returns `true` iff a tuple was actually removed (for exact-count callers).
     pub fn remove(
         &mut self,
         key: u64,
         doc: u64,
-    ) {
+    ) -> bool {
         if self.root.remove_one(key, doc).is_some() {
             // A branch root that shrank to a single child loses a level.
             while let Node::Branch(branch) = &self.root {
@@ -215,6 +218,9 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> CowBTree<LEAF_MAX, BRANCH_M
                     break;
                 }
             }
+            true
+        } else {
+            false
         }
     }
 
@@ -236,6 +242,40 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> CowBTree<LEAF_MAX, BRANCH_M
         key: u64,
     ) -> RangeIter<LEAF_MAX, BRANCH_MAX> {
         self.range(key, key)
+    }
+
+    /// Lazily iterate the full `(key, doc)` tuples whose key lies in `[lo, hi]`, in `(key, doc)` order.
+    /// Like [`range`](Self::range) but yields the key too — for consumers that must recover it (e.g. the
+    /// relationship tensor's edge-id store rebuilding `(src, dst, edge_id)`). Owns a snapshot.
+    #[must_use]
+    pub fn range_tuples(
+        &self,
+        lo: u64,
+        hi: u64,
+    ) -> RangeIter<LEAF_MAX, BRANCH_MAX, TupleExtract> {
+        RangeIter::new(&self.root, (lo, 0), hi)
+    }
+
+    /// Approximate resident heap bytes: the sum of every leaf's byte blob plus branch child/separator
+    /// vectors. Walks all pages (`O(pages)`), so call it off hot paths (memory reporting).
+    #[must_use]
+    pub fn heap_bytes(&self) -> usize {
+        fn walk<const LEAF_MAX: usize, const BRANCH_MAX: usize>(
+            node: &Node<LEAF_MAX, BRANCH_MAX>,
+            acc: &mut usize,
+        ) {
+            match node {
+                Node::Leaf(leaf) => *acc += leaf.raw().len(),
+                Node::Branch(branch) => {
+                    *acc += branch.seps.len() * std::mem::size_of::<u64>()
+                        + branch.children.len() * std::mem::size_of::<Node<LEAF_MAX, BRANCH_MAX>>();
+                    branch.children.iter().for_each(|c| walk(c, acc));
+                }
+            }
+        }
+        let mut acc = 0;
+        walk(&self.root, &mut acc);
+        acc
     }
 
     /// Total number of live tuples. Test-only (`O(n)` page walk) — prefer [`is_empty`] in non-test code.
