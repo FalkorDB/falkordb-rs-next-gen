@@ -276,7 +276,44 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
         &self,
         key: u64,
     ) -> bool {
-        self.point(key).next().is_some()
+        self.first_doc(key).is_some()
+    }
+
+    /// The smallest doc stored under `key`, or `None`. A direct reference-descent
+    /// to the leaf — unlike [`point`](Self::point) it clones no page `Arc`s and
+    /// allocates no cursor stack, so it's the cheap primitive for the hot
+    /// "one representative edge per pair" lookups (traversal / expand-into).
+    #[must_use]
+    pub fn first_doc(
+        &self,
+        key: u64,
+    ) -> Option<u64> {
+        let mut node = &self.root;
+        // The first entry immediately to the right of the descent path. When a
+        // key's entries begin exactly at a child boundary (the key is the min of
+        // `children[ci + 1]`), `child_index(key, 0)` steers into the *previous*
+        // child, whose leaf then has no matching entry — the answer is this
+        // recorded separator. (The cursor instead advances leaves via its stack.)
+        let mut right_sep: Option<(u64, u64)> = None;
+        loop {
+            match node {
+                Node::Leaf(leaf) => {
+                    let pos = leaf.lower_bound(key);
+                    if pos < leaf.count() && leaf.key(pos) == key {
+                        return Some(leaf.doc(pos));
+                    }
+                    // Overshot this leaf: the next entry is the right separator.
+                    return right_sep.filter(|s| s.0 == key).map(|s| s.1);
+                }
+                Node::Branch(branch) => {
+                    let ci = branch.child_index(key, 0);
+                    if ci < branch.seps.len() {
+                        right_sep = Some(branch.seps[ci]); // == min(children[ci + 1])
+                    }
+                    node = &branch.children[ci];
+                }
+            }
+        }
     }
 
     /// Lazily iterate the full `(key, doc)` tuples whose key lies in `[lo, hi]`, in `(key, doc)` order.

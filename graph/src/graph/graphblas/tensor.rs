@@ -114,6 +114,18 @@ impl Tensor {
         self.ids.ids_iter(compound_key(src, dest))
     }
 
+    /// The smallest edge id for `(src, dest)`, or `None` if the pair has no edge.
+    /// Cheap single descent (no cursor) — for the "one representative edge" hot
+    /// path; callers needing all ids or a specific one use [`get`](Self::get).
+    #[must_use]
+    pub fn first_edge(
+        &self,
+        src: u64,
+        dest: u64,
+    ) -> Option<u64> {
+        self.ids.first_id(compound_key(src, dest))
+    }
+
     /// Insert edge `id` for `(src, dest)`. Structure flips on the 0→1
     /// transition; the id always lands in the store.
     pub fn set(

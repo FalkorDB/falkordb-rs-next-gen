@@ -196,17 +196,31 @@ impl<'a> ExpandIntoOp<'a> {
             let mat_src = u64::from(edge_src);
             let mat_dst = u64::from(edge_dst);
             if !emit_relationship && !has_edge_filter {
-                // One representative edge per (src, dst) pair.
+                // One representative edge per (src, dst) pair. Try the cheap
+                // single-descent `first_edge` (no cursor / no Arc-clone); only if
+                // that id is filtered out (deleted / already used — rare) scan the
+                // pair's remaining ids.
+                let usable = |id: RelationshipId| {
+                    !pending.is_relationship_deleted(id)
+                        && !super::edge_already_used(&env, id, rp.alias.id, sibling_edges)
+                };
                 let mut found_id: Option<RelationshipId> = None;
                 'outer: for &tidx in edge_type_indices.iter() {
-                    for raw_id in g.relationship_tensors()[tidx].get(mat_src, mat_dst) {
-                        let id = RelationshipId::from(raw_id);
-                        if !pending.is_relationship_deleted(id)
-                            && !super::edge_already_used(&env, id, rp.alias.id, sibling_edges)
-                        {
-                            found_id = Some(id);
-                            break 'outer;
-                        }
+                    let t = &g.relationship_tensors()[tidx];
+                    let Some(first) = t.first_edge(mat_src, mat_dst).map(RelationshipId::from)
+                    else {
+                        continue;
+                    };
+                    let hit = if usable(first) {
+                        Some(first)
+                    } else {
+                        t.get(mat_src, mat_dst)
+                            .map(RelationshipId::from)
+                            .find(|&id| usable(id))
+                    };
+                    if let Some(id) = hit {
+                        found_id = Some(id);
+                        break 'outer;
                     }
                 }
                 if let Some(id) = found_id {

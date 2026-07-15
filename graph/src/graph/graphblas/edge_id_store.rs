@@ -154,6 +154,18 @@ impl EdgeIdStore {
         self.tree.contains_key(key)
     }
 
+    /// The smallest edge id under `key`, or `None`. A direct B-tree descent that
+    /// clones no page `Arc`s and allocates no cursor — the cheap primitive for
+    /// the "one representative edge per pair" hot path (traversal / expand-into),
+    /// which almost always wants exactly this (single-edge pairs are the norm).
+    #[must_use]
+    pub fn first_id(
+        &self,
+        key: u64,
+    ) -> Option<u64> {
+        self.tree.first_doc(key)
+    }
+
     /// Lazily stream all live `(key, id)` pairs whose key is in `[min_key,
     /// max_key]`, ascending by `(key, id)`. Owns a snapshot; no allocation.
     #[must_use]

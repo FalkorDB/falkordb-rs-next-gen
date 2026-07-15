@@ -586,8 +586,10 @@ impl<'a> CondTraverseOp<'a> {
                 let mat_dst = u64::from(dest_id);
                 let mut found_id: Option<RelationshipId> = None;
                 for &tidx in &state.edge_type_indices {
+                    // Cheap single descent (no cursor); `first_edge` == the min id
+                    // == what `get(..).next()` yields, but without the Arc-clone.
                     if let Some(raw_id) =
-                        g.relationship_tensors()[tidx].get(mat_src, mat_dst).next()
+                        g.relationship_tensors()[tidx].first_edge(mat_src, mat_dst)
                     {
                         found_id = Some(RelationshipId::from(raw_id));
                         break;

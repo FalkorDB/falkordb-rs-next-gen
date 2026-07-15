@@ -59,6 +59,77 @@ fn empty_and_single() {
     assert_eq!(t.point(6).count(), 0);
 }
 
+/// `first_doc(k)` must equal the smallest doc for `k` in the `BTreeSet` oracle
+/// (independent of the cursor, so a shared bug can't hide both), and also agree
+/// with the range cursor — for every present key plus its absent neighbours and
+/// the `u64::MAX` sentinel. Shared across the format-specific tests so the cheap
+/// representative-edge lookup is exercised on AoS, Compact, and CompactIndexed
+/// leaves at both doc widths.
+fn assert_first_doc_matches<const L: usize, const B: usize, const D: usize>(
+    t: &CowBTree<L, B, D>,
+    r: &BTreeSet<(u64, u64)>,
+) {
+    let ref_first = |k: u64| r.range((k, 0)..=(k, u64::MAX)).next().map(|&(_, d)| d);
+    let keys: BTreeSet<u64> = r.iter().map(|&(k, _)| k).collect();
+    for &k in &keys {
+        assert_eq!(t.first_doc(k), ref_first(k), "first_doc({k}) vs oracle");
+        assert_eq!(
+            t.first_doc(k),
+            t.point(k).next(),
+            "first_doc({k}) vs cursor"
+        );
+        for kk in [k.wrapping_sub(1), k + 1] {
+            if !keys.contains(&kk) {
+                assert_eq!(
+                    t.first_doc(kk),
+                    ref_first(kk),
+                    "first_doc({kk}) absent vs oracle"
+                );
+            }
+        }
+    }
+    assert_eq!(
+        t.first_doc(u64::MAX),
+        ref_first(u64::MAX),
+        "first_doc(u64::MAX)"
+    );
+}
+
+#[test]
+fn first_doc_matches_reference_across_configs() {
+    // Empty + single-entry edge cases.
+    assert_first_doc_matches(&CowBTree::<4, 4, 8>::new(), &BTreeSet::new());
+    let mut one = CowBTree::<4, 4, 4>::new();
+    one.insert(7, 42);
+    assert_first_doc_matches(&one, &[(7u64, 42u64)].into_iter().collect());
+
+    // Small fan-out => deep trees with many leaf/branch boundaries; heavy key
+    // collisions => multi-doc keys; docs strictly > 0 to exercise the case where
+    // a key's first entry is the min of a child (the boundary path a naive
+    // stackless descent gets wrong). Both doc widths (incl. the store's u32).
+    for seed in 0..10u64 {
+        let mut z = seed.wrapping_add(1);
+        let mut pairs = Vec::new();
+        for _ in 0..600 {
+            z = splitmix(z);
+            let k = z % 80;
+            z = splitmix(z);
+            let d = (z % 400) + 1;
+            pairs.push((k, d));
+        }
+        let mut r: BTreeSet<(u64, u64)> = BTreeSet::new();
+        let mut t8 = CowBTree::<4, 4, 8>::new();
+        let mut t4 = CowBTree::<4, 4, 4>::new();
+        for &(k, d) in &pairs {
+            t8.insert(k, d);
+            t4.insert(k, d);
+            r.insert((k, d));
+        }
+        assert_first_doc_matches(&t8, &r);
+        assert_first_doc_matches(&t4, &r);
+    }
+}
+
 #[test]
 fn insert_split_parity() {
     // enough inserts to force several levels of splits
@@ -684,6 +755,7 @@ fn compact_splice_arms_parity() {
         // doc parity via the cursor, *and* full (key, doc) parity decoded from the leaf bytes
         assert_eq!(tree_range(t, 0, u64::MAX), ref_range(r, 0, u64::MAX));
         assert_eq!(tree_pairs(t), r.iter().copied().collect::<Vec<_>>());
+        assert_first_doc_matches(t, r); // first_doc on Compact leaves
     };
 
     // insert: existing distinct value (no distinct-table change), new doc within width.
@@ -762,6 +834,7 @@ fn no_index_compact_splice_arms() {
     let check = |t: &CowBTree, r: &BTreeSet<(u64, u64)>| {
         assert_eq!(t.len(), r.len());
         assert_eq!(tree_pairs(t), r.iter().copied().collect::<Vec<_>>());
+        assert_first_doc_matches(t, r); // first_doc on CompactIndexed leaves
     };
     // new value (fits widths) ⇒ stays no-index.
     t.insert(250, 250);
