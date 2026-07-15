@@ -495,6 +495,30 @@ impl<T> Matrix<T> {
         *self.m
     }
 
+    /// Consume the wrapper and return the raw GrB_Matrix handle, transferring
+    /// ownership to the caller — who becomes responsible for freeing it (e.g.
+    /// by handing it to `LAGraph_New`, whose `LAGraph_Delete` frees it).
+    ///
+    /// Panics if the matrix is shared (a `Clone` exists): releasing the
+    /// handle while other wrappers still reference it would double-free.
+    #[must_use]
+    pub fn into_raw(self) -> GrB_Matrix {
+        let mut this = std::mem::ManuallyDrop::new(self);
+        assert!(
+            Arc::get_mut(&mut this.m).is_some(),
+            "Matrix::into_raw called on a shared (cloned) matrix"
+        );
+        let handle = *this.m;
+        // Drop the Arc fields (freeing their heap allocations) without
+        // running Matrix::drop, so the GrB_Matrix itself is NOT freed.
+        unsafe {
+            std::ptr::drop_in_place(&mut this.m);
+            std::ptr::drop_in_place(&mut this.lock);
+            std::ptr::drop_in_place(&mut this.has_pending);
+        }
+        handle
+    }
+
     /// Whether an entry is stored at `(i, j)`, for **any** element type — a
     /// pure sparsity-pattern probe (`GxB_Matrix_isStoredElement`) that never
     /// reads or typecasts the element value.

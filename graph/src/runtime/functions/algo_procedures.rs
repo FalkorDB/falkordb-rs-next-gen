@@ -441,13 +441,6 @@ fn collect_node_ids(
     result
 }
 
-/// Build a HashSet of all active node IDs (regardless of label).
-fn active_node_set(g: &Graph) -> FxHashSet<u64> {
-    use crate::runtime::orderset::OrderSet;
-    let empty: OrderSet<Arc<String>> = OrderSet::default();
-    g.get_nodes(&empty, 0).map(u64::from).collect()
-}
-
 /// Build compact adjacency directly from relationship tensors.
 /// Avoids materializing the full node_cap × node_cap matrix.
 /// Returns (compact_matrix_handle, id_to_compact, compact_to_id, n).
@@ -2201,51 +2194,47 @@ fn register_harmonic_centrality(funcs: &mut Functions) {
                 return Ok(empty_procedure_batch());
             }
 
-            let node_set: FxHashSet<u64> = if node_labels.is_empty() {
-                active_node_set(&g)
-            } else {
-                collect_node_ids(&g, &node_labels).into_iter().collect()
-            };
-
-            if node_set.is_empty() {
-                return Ok(empty_procedure_batch());
-            }
-
             unsafe {
                 use crate::graph::graphblas::{
-                    GrB_Matrix, GrB_Matrix_eWiseMult_BinaryOp, GrB_Matrix_ncols,
-                    GrB_Matrix_new, GrB_Matrix_nrows, GrB_ONEB_BOOL,
+                    GrB_DESC_S, GrB_Matrix, GrB_Matrix_assign_BOOL,
                 };
 
                 // Match C implementation fast path for unfiltered run.
                 let (compact_adj, compact_to_id): (GrB_Matrix, Option<Vec<u64>>) = if node_labels.is_empty() {
-                    let adj = g.build_adjacency_matrix(&rel_types);
+                    // node_count() > 0 guarantees participating nodes exist, so
+                    // no need to materialize the active-node set here.
+                    let mut adj = g.build_adjacency_matrix(&rel_types);
                     // Hand LAGraph an ISO boolean matrix (a single shared `true`
                     // value), exactly as the C module's Delta_Matrix_export does via
                     // GrB_ONEB_BOOL. The generic HyperBall mxv inside
                     // LAGr_HarmonicCentrality only takes GraphBLAS's fast dot4 path
                     // when the adjacency is iso; a plain non-iso dup makes it punt to
-                    // the ~3x slower generic dot2. eWiseMult(adj, adj, ONEB) rebuilds
-                    // the same pattern with every value collapsed to iso `true`.
-                    let mut nrows: u64 = 0;
-                    let mut ncols: u64 = 0;
-                    GrB_Matrix_nrows(&raw mut nrows, adj.inner());
-                    GrB_Matrix_ncols(&raw mut ncols, adj.inner());
-                    let mut raw_adj: GrB_Matrix = std::ptr::null_mut();
-                    GrB_Matrix_new(&raw mut raw_adj, GrB_BOOL, nrows, ncols);
-                    GrB_Matrix_eWiseMult_BinaryOp(
-                        raw_adj,
-                        std::ptr::null_mut(),
-                        std::ptr::null_mut(),
-                        GrB_ONEB_BOOL,
+                    // the ~3x slower generic dot2. `C(:,:)<C,struct> = true` collapses
+                    // every stored value to iso `true` IN PLACE — SuiteSparse
+                    // subassign Method 05f, O(1), no pattern copy (unlike the
+                    // full-matrix eWiseMult rebuild this replaces).
+                    let nrows = adj.nrows();
+                    let ncols = adj.ncols();
+                    GrB_Matrix_assign_BOOL(
                         adj.inner(),
                         adj.inner(),
                         std::ptr::null_mut(),
+                        true,
+                        GrB_ALL,
+                        nrows,
+                        GrB_ALL,
+                        ncols,
+                        GrB_DESC_S,
                     );
                     let n = g.node_count() + g.deleted_nodes_count();
-                    crate::graph::graphblas::GrB_Matrix_resize(raw_adj, n, n);
-                    (raw_adj, None)
+                    adj.resize(n, n);
+                    (adj.into_raw(), None)
                 } else {
+                    let node_set: FxHashSet<u64> =
+                        collect_node_ids(&g, &node_labels).into_iter().collect();
+                    if node_set.is_empty() {
+                        return Ok(empty_procedure_batch());
+                    }
                     let (compact_adj, _id_to_compact, compact_to_id, _n) =
                         build_compact_adj_from_tensors(&g, &rel_types, &node_set);
                     (compact_adj, Some(compact_to_id))
