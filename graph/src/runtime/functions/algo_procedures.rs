@@ -104,6 +104,66 @@ fn msg_to_string(msg: &LagMsg) -> String {
         .into_owned()
 }
 
+/// Rebuild the ephemeral MSF matrices from a tensor's native edge-id store in a
+/// **single** store walk, for weighted `algo.MSF`: the `UINT64` forward matrix
+/// `(src, dst) → min edge id` (the first, hence minimum, id per pair) and the
+/// `bool` overflow matrix `me[compound_key(src,dst)][edge_id]` holding each
+/// pair's 2nd, 3rd, … edge, plus whether any multi-edge exists.
+///
+/// This is the sole place edge ids re-enter GraphBLAS, so it lives beside its
+/// only caller rather than in the generic tensor. It reaches the tensor only
+/// through the public `store()`/`matrix()` accessors. The forward matrix is
+/// returned bare (no `VersionedMatrix` delta wrapper): rebuilt fresh, its
+/// deltas would be empty, so the caller extracts straight from it.
+fn build_msf_matrices(
+    t: &crate::graph::graphblas::tensor::Tensor
+) -> (
+    crate::graph::graphblas::matrix::Matrix<u64>,
+    crate::graph::graphblas::versioned_matrix::VersionedMatrix<bool>,
+    bool,
+) {
+    use crate::graph::graphblas::matrix::Matrix;
+    use crate::graph::graphblas::tensor::{GrB_INDEX_MAX, split_key};
+    use crate::graph::graphblas::versioned_matrix::VersionedMatrix;
+
+    let store = t.store();
+    let m_bool = t.matrix();
+    // Forward has one entry per pair (≤ total edge count); pre-size to it so the
+    // pushes below never reallocate.
+    let cap = store.nvals() as usize;
+    let (mut fwd_rows, mut fwd_cols, mut fwd_vals): (Vec<u64>, Vec<u64>, Vec<u64>) = (
+        Vec::with_capacity(cap),
+        Vec::with_capacity(cap),
+        Vec::with_capacity(cap),
+    );
+    let (mut ov_rows, mut ov_cols) = (Vec::new(), Vec::new());
+    // One walk over the store (sorted by `(key, id)`): the first id per key is
+    // its min → forward; every 2nd+ id → overflow.
+    let mut prev: Option<u64> = None;
+    store.for_each_pair(|k, id| {
+        if prev == Some(k) {
+            ov_rows.push(k);
+            ov_cols.push(id);
+        } else {
+            let (s, d) = split_key(k);
+            fwd_rows.push(s);
+            fwd_cols.push(d);
+            fwd_vals.push(id);
+            prev = Some(k);
+        }
+    });
+    let mut m = Matrix::<u64>::new(m_bool.nrows(), m_bool.ncols());
+    m.build(&fwd_rows, &fwd_cols, &fwd_vals);
+    m.wait();
+    let mut me = Matrix::<bool>::new(GrB_INDEX_MAX, GrB_INDEX_MAX);
+    let has_multi = !ov_rows.is_empty();
+    if has_multi {
+        me.build(&ov_rows, &ov_cols);
+        me.wait();
+    }
+    (m, VersionedMatrix::<bool>::from_matrix(me), has_multi)
+}
+
 /// Context for the user-defined GraphBLAS weight operator used by `algo.MSF`.
 ///
 /// Holds a borrowed pointer to just the relationship [`AttributeStore`] — the
@@ -1381,16 +1441,11 @@ fn register_msf(funcs: &mut Functions) {
                         continue;
                     }
 
-                    // Inline pass: every pair's first edge id is the UINT64
-                    // *value* of the forward matrix `m`. Materialize the
-                    // effective matrix — (m ∖ dm) ∪ dp, a disjoint union by
-                    // the no-shadow invariant — then score every id
-                    // with one parallel apply directly into `{score, edge}`
-                    // pairs and bulk-extract them.
                     // Edge ids live in the tensor's native store; rebuild the
-                    // ephemeral UINT64 forward matrix (min id per pair) so the
-                    // parallel scoring pass below is unchanged. Deltas are empty.
-                    let (fwd, me_owned, has_multi) = tensor.build_msf_matrices();
+                    // ephemeral UINT64 forward matrix (min id per pair) + bool
+                    // overflow in one store walk so the parallel scoring pass
+                    // below is unchanged. The forward matrix's deltas are empty.
+                    let (fwd, me_owned, has_multi) = build_msf_matrices(tensor);
                     // Inline pass: the forward matrix's deltas are empty, so
                     // extract the compact A(I,I) STRAIGHT from it — the old
                     // `eff = m∖dm ∪ dp` copy + dp branch were pure overhead.

@@ -190,6 +190,7 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
 
     /// Insert a single `(key, doc)`. Idempotent: inserting an existing tuple is a no-op. Returns
     /// `true` iff the tuple was newly inserted (so callers can maintain an exact live count).
+    #[must_use]
     pub fn insert(
         &mut self,
         key: u64,
@@ -226,6 +227,7 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
 
     /// Remove a single `(key, doc)`; merges underflowing pages so the tree stays compact. A missing
     /// tuple is a no-op. Returns `true` iff a tuple was actually removed (for exact-count callers).
+    #[must_use]
     pub fn remove(
         &mut self,
         key: u64,
@@ -265,6 +267,16 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
         key: u64,
     ) -> RangeIter<LEAF_MAX, BRANCH_MAX, DOC_BYTES> {
         self.range(key, key)
+    }
+
+    /// Whether any doc is stored under `key`. Descends to the first matching entry
+    /// and stops — no full point scan.
+    #[must_use]
+    pub fn contains_key(
+        &self,
+        key: u64,
+    ) -> bool {
+        self.point(key).next().is_some()
     }
 
     /// Lazily iterate the full `(key, doc)` tuples whose key lies in `[lo, hi]`, in `(key, doc)` order.
@@ -315,7 +327,9 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
             match node {
                 Node::Leaf(leaf) => *acc += leaf.raw().len(),
                 Node::Branch(branch) => {
-                    *acc += branch.seps.len() * std::mem::size_of::<u64>()
+                    // `seps` is `Vec<(u64, u64)>` — each separator is a full
+                    // `(key, doc)` pair, not a bare key.
+                    *acc += branch.seps.len() * std::mem::size_of::<(u64, u64)>()
                         + branch.children.len()
                             * std::mem::size_of::<Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>>();
                     branch.children.iter().for_each(|c| walk(c, acc));

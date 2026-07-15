@@ -1,3 +1,7 @@
+// Many tests drive `insert`/`remove` (now `#[must_use]` for their exact-count
+// bool) purely for their side effect and assert on the tree afterwards.
+#![allow(unused_must_use)]
+
 use super::*;
 use std::collections::BTreeSet;
 

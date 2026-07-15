@@ -26,7 +26,8 @@
 //!
 //! The one consumer that needs edge ids inside GraphBLAS — weighted `algo.MSF` —
 //! rebuilds an ephemeral `UINT64` forward matrix and `bool` overflow matrix on
-//! demand via [`Tensor::build_msf_matrices`] (one store walk).
+//! demand in one store walk (`build_msf_matrices`, colocated with MSF in
+//! `runtime::functions::algo_procedures`).
 //!
 //! ## Compound Key Encoding
 //!
@@ -73,7 +74,7 @@ pub fn compound_key(
 
 /// Split a `compound_key` back into `(src, dst)`.
 #[inline]
-const fn split_key(key: u64) -> (u64, u64) {
+pub(crate) const fn split_key(key: u64) -> (u64, u64) {
     (key >> 32, key & COL_MASK)
 }
 
@@ -102,14 +103,15 @@ impl Tensor {
     }
 
     /// Edge ids for the `(src, dest)` pair, in ascending edge-id order. Returns
-    /// an owned iterator (borrows nothing).
+    /// a lazy owned cursor (borrows nothing, allocates nothing) over a snapshot
+    /// of the store.
     #[must_use]
     pub fn get(
         &self,
         src: u64,
         dest: u64,
-    ) -> std::vec::IntoIter<u64> {
-        self.ids.get(compound_key(src, dest)).into_iter()
+    ) -> impl Iterator<Item = u64> + use<> {
+        self.ids.ids_iter(compound_key(src, dest))
     }
 
     /// Insert edge `id` for `(src, dest)`. Structure flips on the 0→1
@@ -167,10 +169,11 @@ impl Tensor {
         if rels.is_empty() {
             return Vec::new();
         }
-        let store_batch: Vec<(u64, u64)> = rels
+        let mut store_batch: Vec<(u64, u64)> = rels
             .iter()
             .map(|&(id, src, dst)| (compound_key(src, dst), id))
             .collect();
+        store_batch.sort_unstable();
         self.ids.remove_batch(&store_batch);
         let touched: FxHashSet<(u64, u64)> = rels.iter().map(|&(_, s, d)| (s, d)).collect();
         let mut emptied = Vec::new();
@@ -259,7 +262,15 @@ impl Tensor {
                     .map(move |id| (src, dst, id))
             }))
         } else {
-            let min_key = min_row.checked_shl(32).unwrap_or(u64::MAX);
+            // A row > COL_MASK can't fit the 32-bit src half, so no key exists at
+            // or above it — clamp to u64::MAX (empty lower bound). Mirrors the
+            // max_key guard; `min_row << 32` would otherwise truncate the high
+            // bits and select a wrong range.
+            let min_key = if min_row > COL_MASK {
+                u64::MAX
+            } else {
+                min_row << 32
+            };
             let max_key = if max_row >= COL_MASK {
                 u64::MAX
             } else {
@@ -273,80 +284,13 @@ impl Tensor {
     }
 
     /// Whether this tensor has any `(src, dst)` pair with more than one edge.
+    /// `O(1)`: by the no-shadow invariant, `m`'s bool structure holds exactly one
+    /// cell per pair with ≥1 live id, so `m.nvals()` is the distinct-pair count
+    /// and `ids.nvals()` the total id count — a multi-edge exists iff the latter
+    /// exceeds the former. No store scan.
     #[must_use]
     pub fn has_multi_edge(&self) -> bool {
-        self.ids.has_multi_edge()
-    }
-
-    /// Ephemeral MSF matrices rebuilt from the native store in a **single**
-    /// store walk, for weighted `algo.MSF`: the `UINT64` forward matrix
-    /// `(src, dst) → min edge id` (inline pass), the `bool` overflow matrix
-    /// `me[compound_key(src,dst)][edge_id]` holding the 2nd, 3rd, … edge of each
-    /// multi-edge pair (overflow pass), and whether any multi-edge exists.
-    ///
-    /// Replaces the former three separate O(E) store passes (`build_msf_forward`,
-    /// `build_msf_overflow`, `has_multi_edge`). The forward matrix is returned
-    /// bare (no delta wrapper) so the caller extracts straight from it — its
-    /// deltas would be empty anyway, so the old `dm`/`dp` materialization was
-    /// pure overhead. The overflow keeps the `VersionedMatrix` shape (empty
-    /// deltas) the overflow pass already reads.
-    #[must_use]
-    pub fn build_msf_matrices(&self) -> (Matrix<u64>, VersionedMatrix<bool>, bool) {
-        // Forward has one entry per pair (≤ total edge count); pre-size to it.
-        let cap = self.ids.nvals() as usize;
-        let (mut fwd_rows, mut fwd_cols, mut fwd_vals): (Vec<u64>, Vec<u64>, Vec<u64>) = (
-            Vec::with_capacity(cap),
-            Vec::with_capacity(cap),
-            Vec::with_capacity(cap),
-        );
-        let (mut ov_rows, mut ov_cols) = (Vec::new(), Vec::new());
-        // Fill the forward COO by index through raw pointers into the pre-sized
-        // buffers instead of `Vec::push`: the walk is the MSF-rebuild hot spot
-        // (~6.5ns/entry, dominated by three per-push capacity-checks + len bumps),
-        // so one shared counter + direct stores removes that per-entry bookkeeping.
-        let (rp, cp, vp) = (
-            fwd_rows.as_mut_ptr(),
-            fwd_cols.as_mut_ptr(),
-            fwd_vals.as_mut_ptr(),
-        );
-        let mut n_fwd = 0usize;
-        let mut prev: Option<u64> = None;
-        // One walk over the store (sorted by `(key, id)`): the first id per key
-        // is its min → forward; every 2nd+ id → overflow.
-        self.ids.for_each_pair(|k, id| {
-            if prev == Some(k) {
-                ov_rows.push(k);
-                ov_cols.push(id);
-            } else {
-                let (s, d) = split_key(k);
-                // SAFETY: forward holds one entry per distinct pair, so
-                // `n_fwd <= nvals == cap`; every store is in-bounds and the
-                // pre-sized buffers are never reallocated (no push to them).
-                unsafe {
-                    *rp.add(n_fwd) = s;
-                    *cp.add(n_fwd) = d;
-                    *vp.add(n_fwd) = id;
-                }
-                n_fwd += 1;
-                prev = Some(k);
-            }
-        });
-        // SAFETY: `n_fwd` entries of each buffer were just initialized in order.
-        unsafe {
-            fwd_rows.set_len(n_fwd);
-            fwd_cols.set_len(n_fwd);
-            fwd_vals.set_len(n_fwd);
-        }
-        let mut m = Matrix::<u64>::new(self.m.nrows(), self.m.ncols());
-        m.build(&fwd_rows, &fwd_cols, &fwd_vals);
-        m.wait();
-        let mut me = Matrix::<bool>::new(GrB_INDEX_MAX, GrB_INDEX_MAX);
-        let has_multi = !ov_rows.is_empty();
-        if has_multi {
-            me.build(&ov_rows, &ov_cols);
-            me.wait();
-        }
-        (m, VersionedMatrix::<bool>::from_matrix(me), has_multi)
+        self.ids.nvals() > self.m.nvals()
     }
 
     pub fn wait(&mut self) {
@@ -391,6 +335,13 @@ mod repro_tests {
         assert_eq!(t.get(0, 1).collect::<Vec<_>>(), vec![100, 101]);
         assert_eq!(t.get(0, 2).collect::<Vec<_>>(), vec![103]);
         assert_eq!(t.edge_count(), 4);
+        // O(1) multi-edge: 4 ids over 3 distinct pairs ⇒ true.
+        assert_eq!(t.matrix().nvals(), 3);
+        assert!(t.has_multi_edge());
+        // A single-edge tensor: ids == pairs ⇒ false.
+        let mut single = Tensor::new(8, 8);
+        single.set_all_from_slices(&[0, 1], &[1, 2], &[10, 11]);
+        assert!(!single.has_multi_edge());
         assert_eq!(
             t.iter(0, u64::MAX, false).collect::<Vec<_>>(),
             vec![(0, 1, 100), (0, 1, 101), (0, 2, 103), (1, 2, 102)]

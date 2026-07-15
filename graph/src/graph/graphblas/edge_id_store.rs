@@ -103,18 +103,22 @@ impl EdgeIdStore {
         self.count += sorted.len() as u64;
     }
 
-    /// Batch-remove `(key, id)` pairs. Sorted first so consecutive removals
-    /// route through adjacent leaves/shared upper branches — with the tree's
-    /// copy-on-write (`Arc::make_mut`), each touched page is then copied once
-    /// per version instead of once per removal. Exact count (each removal is
+    /// Batch-remove `(key, id)` pairs, **assumed sorted ascending** by the caller
+    /// (mirrors [`insert_batch`]'s contract — the caller already owns the batch,
+    /// so it sorts in place rather than making us clone it). Sorted so consecutive
+    /// removals route through adjacent leaves/shared upper branches — with the
+    /// tree's copy-on-write (`Arc::make_mut`), each touched page is then copied
+    /// once per version instead of once per removal. Exact count (each removal is
     /// reported by the tree).
     pub fn remove_batch(
         &mut self,
         pairs: &[(u64, u64)],
     ) {
-        let mut sorted: Vec<(u64, u64)> = pairs.to_vec();
-        sorted.sort_unstable();
-        for (key, id) in sorted {
+        debug_assert!(
+            pairs.windows(2).all(|w| w[0] <= w[1]),
+            "remove_batch input must be sorted"
+        );
+        for &(key, id) in pairs {
             if self.tree.remove(key, id) {
                 self.count -= 1;
             }
@@ -122,12 +126,13 @@ impl EdgeIdStore {
     }
 
     /// Live edge ids for `key`, ascending — a lazy cursor owning a snapshot
-    /// (droppable mid-scan, no allocation).
+    /// (droppable mid-scan, no allocation). `use<>`: the cursor borrows nothing
+    /// from `self` (it clones the tree's root `Arc`), so it captures no lifetime.
     #[must_use]
     pub fn ids_iter(
         &self,
         key: u64,
-    ) -> impl Iterator<Item = u64> {
+    ) -> impl Iterator<Item = u64> + use<> {
         self.tree.point(key)
     }
 
@@ -146,7 +151,7 @@ impl EdgeIdStore {
         &self,
         key: u64,
     ) -> bool {
-        self.tree.point(key).next().is_some()
+        self.tree.contains_key(key)
     }
 
     /// Lazily stream all live `(key, id)` pairs whose key is in `[min_key,
@@ -198,21 +203,6 @@ impl EdgeIdStore {
         self.count
     }
 
-    /// Whether any key has more than one live id (multi-edge present). Scans the
-    /// tree for two consecutive tuples sharing a key, short-circuiting on the
-    /// first. Only weighted MSF / `COUNT` optimization call it, off hot paths.
-    #[must_use]
-    pub fn has_multi_edge(&self) -> bool {
-        let mut prev: Option<u64> = None;
-        for (k, _) in self.tree.range_tuples(0, u64::MAX) {
-            if prev == Some(k) {
-                return true;
-            }
-            prev = Some(k);
-        }
-        false
-    }
-
     /// Approximate resident bytes of the backing tree plus this wrapper.
     #[must_use]
     pub fn memory_usage(&self) -> usize {
@@ -224,6 +214,11 @@ impl EdgeIdStore {
 mod tests {
     use super::*;
 
+    // Multi-edge detection is a tensor-level concern (`Tensor::has_multi_edge`
+    // = `ids.nvals() > m.nvals()`), tested in `tensor.rs`. These store tests
+    // assert the concrete `(get, nvals)` contents, which already pin down
+    // whether a key holds multiple ids.
+
     #[test]
     fn single_edge_roundtrip() {
         let mut s = EdgeIdStore::new();
@@ -232,7 +227,6 @@ mod tests {
         assert!(s.pair_nonempty(10));
         assert!(!s.pair_nonempty(11));
         assert_eq!(s.nvals(), 1);
-        assert!(!s.has_multi_edge());
     }
 
     #[test]
@@ -243,7 +237,6 @@ mod tests {
         s.set(10, 200);
         assert_eq!(s.get(10), vec![100, 200, 300]);
         assert_eq!(s.nvals(), 3);
-        assert!(s.has_multi_edge());
     }
 
     #[test]
@@ -280,7 +273,8 @@ mod tests {
         );
         assert_eq!(s.nvals(), 6);
         assert_eq!(s.get(5), vec![40, 50, 60]);
-        s.remove_batch(&[(5, 40), (7, 70), (5, 60)]);
+        // remove_batch requires sorted input (the caller owns and sorts it).
+        s.remove_batch(&[(5, 40), (5, 60), (7, 70)]);
         assert_eq!(s.get(5), vec![50]);
         assert!(!s.pair_nonempty(7));
         assert_eq!(s.nvals(), 3);
@@ -366,7 +360,6 @@ mod tests {
             }
         }
         assert_eq!(s.nvals(), expected);
-        assert!(s.has_multi_edge());
         // Round-trip through all_pairs preserves everything.
         let pairs = s.all_pairs();
         assert_eq!(pairs.len() as u64, expected);
