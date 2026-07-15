@@ -129,9 +129,12 @@ impl Tensor {
         self.ids.set(compound_key(src, dest), id);
     }
 
-    /// Bulk insert from parallel slices. Materializes the currently-present pair
-    /// set once, so the forward/backward structure gets only genuinely-new pairs
-    /// (the store absorbs multiplicity) — avoiding a per-edge `m.get`/`wait`.
+    /// Bulk insert from parallel slices. The forward/backward structure gets only
+    /// genuinely-new pairs (the store absorbs multiplicity). A pair is new iff it
+    /// isn't already persisted (`pair_nonempty`, an O(log N) store point lookup on
+    /// the pre-batch state) and hasn't been seen earlier in this batch (the
+    /// batch-local `m_new` set). This avoids rebuilding the whole present-set —
+    /// O(N) per call — which dominated incremental writes on large graphs.
     pub fn set_all_from_slices(
         &mut self,
         srcs: &[u64],
@@ -143,20 +146,21 @@ impl Tensor {
         if srcs.is_empty() {
             return;
         }
-        let mut present: FxHashSet<(u64, u64)> = self.m.iter(0, u64::MAX).collect();
-        let mut m_new: Vec<(u64, u64)> = Vec::new();
-        let mut mt_new: Vec<(u64, u64)> = Vec::new();
+        // New (src, dst) pairs this batch — bounded by the batch size, not the
+        // graph. Doubles as the set_all source (order-independent: each set is
+        // an independent write).
+        let mut m_new: FxHashSet<(u64, u64)> = FxHashSet::default();
         let mut store_batch: Vec<(u64, u64)> = Vec::with_capacity(srcs.len());
         for ((&s, &d), &id) in srcs.iter().zip(dsts.iter()).zip(ids.iter()) {
-            store_batch.push((compound_key(s, d), id));
-            if present.insert((s, d)) {
-                m_new.push((s, d));
-                mt_new.push((d, s));
+            let key = compound_key(s, d);
+            store_batch.push((key, id));
+            if !m_new.contains(&(s, d)) && !self.ids.pair_nonempty(key) {
+                m_new.insert((s, d));
             }
         }
         self.ids.insert_batch(&store_batch);
-        self.m.set_all(m_new.into_iter());
-        self.mt.set_all(mt_new.into_iter());
+        self.m.set_all(m_new.iter().copied());
+        self.mt.set_all(m_new.into_iter().map(|(s, d)| (d, s)));
     }
 
     /// Bulk-remove specific edges. Each entry is `(edge_id, src, dst)`. Returns
@@ -375,24 +379,26 @@ impl Encode<19> for Tensor {
         let mut f_rows: Vec<u64> = Vec::new();
         let mut f_cols: Vec<u64> = Vec::new();
         let mut f_vals: Vec<u64> = Vec::new();
-        let mut multi: Vec<(u64, u64, Vec<u64>)> = Vec::new();
+        // Each multi-edge pair is a `[start, end)` slice of `pairs` (already
+        // materialized, ascending by id) — no per-pair Vec allocation.
+        let mut multi: Vec<(u64, u64, usize, usize)> = Vec::new();
 
         let mut i = 0;
         while i < pairs.len() {
             let key = pairs[i].0;
-            let mut edge_ids: Vec<u64> = Vec::new();
+            let start = i;
             while i < pairs.len() && pairs[i].0 == key {
-                edge_ids.push(pairs[i].1);
                 i += 1;
             }
             let (src, dst) = split_key(key);
             f_rows.push(src);
             f_cols.push(dst);
-            if edge_ids.len() == 1 {
-                f_vals.push(edge_ids[0]);
+            let count = i - start;
+            if count == 1 {
+                f_vals.push(pairs[start].1);
             } else {
-                f_vals.push(edge_ids.len() as u64 | MSB_MASK);
-                multi.push((src, dst, edge_ids));
+                f_vals.push(count as u64 | MSB_MASK);
+                multi.push((src, dst, start, i));
             }
         }
 
@@ -419,13 +425,13 @@ impl Encode<19> for Tensor {
         // pairs live in the base group; the delta-plus group is empty.
         let mut v = Vector::<u64>::new(GrB_INDEX_MAX);
         w.write_unsigned(multi.len() as u64);
-        for (src, dst, edge_ids) in &multi {
+        for &(src, dst, start, end) in &multi {
             v.clear();
-            for (idx, &edge_id) in edge_ids.iter().enumerate() {
+            for (idx, &(_, edge_id)) in pairs[start..end].iter().enumerate() {
                 v.set(idx as u64, edge_id);
             }
-            w.write_unsigned(*src);
-            w.write_unsigned(*dst);
+            w.write_unsigned(src);
+            w.write_unsigned(dst);
             v.encode(w);
         }
         w.write_unsigned(0); // empty delta-plus tensor group
