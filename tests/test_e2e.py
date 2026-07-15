@@ -1333,6 +1333,37 @@ def test_stdevp(a):
         assert_float_equal(res.result_set[0][0], math.sqrt(variance))
 
 
+def test_expansion_dst_label_filter():
+    """Mirrors the aggregate_expansion_1/2 benchmark shapes: 1-hop and fused
+    2-hop expansion with a destination label filter, plus a named path over
+    an anonymous edge (batched path must still bind a representative edge)."""
+    query(
+        "CREATE (s:User {id: 1})-[:Knows]->(a:User {id: 2}), "
+        "(s)-[:Knows]->(b:Bot {id: 3}), "
+        "(a)-[:Knows]->(c:User {id: 4}), "
+        "(b)-[:Knows]->(d:User {id: 5}), "
+        "(a)-[:Knows]->(e:Bot {id: 6})",
+        write=True,
+    )
+
+    # 1-hop expansion — Bot neighbor must be filtered out.
+    res = query("MATCH (s:User {id: 1})-->(n:User) RETURN n.id")
+    assert_result_set_equal_no_order(res, [[2]])
+
+    # 2-hop fused expansion — only :User destinations survive.
+    res = query("MATCH (s:User {id: 1})-->()-->(n:User) RETURN DISTINCT n.id")
+    assert_result_set_equal_no_order(res, [[4], [5]])
+
+    # Unlabeled destination — no label mask applied.
+    res = query("MATCH (s:User {id: 1})-->(n) RETURN n.id")
+    assert_result_set_equal_no_order(res, [[2], [3]])
+
+    # Named path over an anonymous edge — PathBuilder reads the edge alias,
+    # so the traversal must still produce a representative edge per pair.
+    res = query("MATCH p = (s:User {id: 1})-->(n:User) RETURN length(p), n.id")
+    assert_result_set_equal_no_order(res, [[1, 2]])
+
+
 def test_aggregation():
     res = query("UNWIND range(1, 10) AS x RETURN sum(x / 10.0)")
     assert_result_set_equal_no_order(res, [[5.5]])

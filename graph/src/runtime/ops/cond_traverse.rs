@@ -166,6 +166,12 @@ pub struct CondTraverseOp<'a> {
     /// uniqueness, and non-empty inline attribute predicates fall back to
     /// the per-row `expand_row` path.
     batched_eligible: bool,
+    /// Whether any ancestor operator (e.g. PathBuilder for a named path)
+    /// reads the edge alias column. When false, the batched F·A path skips
+    /// the per-pair representative-edge tensor probe and leaves the edge
+    /// column unbound — the probe cost scales with fan-out and is pure
+    /// overhead when nothing consumes the binding.
+    edge_alias_referenced: bool,
 }
 
 /// Build an `EdgeIter` over the union of relationship matrices for `types`,
@@ -291,6 +297,28 @@ impl<'a> CondTraverseOp<'a> {
                     && attrs_is_static_empty(&rp.to.attrs)))
             && chain.iter().all(|hop| !hop.bidirectional);
 
+        // Determine whether any ancestor operator reads the edge alias
+        // column (mirrors `reduce_expand_into`'s ancestor walk; the only
+        // consumer of an anonymous edge alias is PathBuilder, which always
+        // sits above the traversals producing its vars). Used by the
+        // batched path to skip the per-pair representative-edge probe.
+        let edge_alias_referenced = emit_relationship || {
+            let mut referenced = false;
+            let mut cur = idx;
+            while let Some(parent) = runtime.plan.node(cur).parent() {
+                if crate::planner::optimizer::ir_references_variable(
+                    parent.data(),
+                    rp.alias.id,
+                    rp.alias.scope_id,
+                ) {
+                    referenced = true;
+                    break;
+                }
+                cur = parent.idx();
+            }
+            referenced
+        };
+
         // Self-loop patterns like `MATCH (n)-[r:T]->(n)` share one alias on both
         // endpoints; bind it once (via `from`) and skip the `to` column so the
         // second insert can't overwrite the first. The per-row path resolves
@@ -330,6 +358,7 @@ impl<'a> CondTraverseOp<'a> {
             bidir_dedup,
             dedup_source_alias,
             batched_eligible,
+            edge_alias_referenced,
         }
     }
 
@@ -553,8 +582,6 @@ impl<'a> CondTraverseOp<'a> {
             hop_m.delta_lmxm_into(&mut f);
         }
 
-        // Flush pending mxm work before attaching the row iterator.
-        f.wait();
         // For fused chains all hops are storage-direction (the fusion pass
         // refuses to fuse when transposed differs), so `transposed` applies
         // only to the first hop and the final destination alias comes from
@@ -574,20 +601,29 @@ impl<'a> CondTraverseOp<'a> {
         } else {
             (&rp.to.alias, state.fwd_dst_label_ids.as_slice())
         };
+
+        // Post-filter final-hop dst labels algebraically (= F * A * L_dst in
+        // C's algebra): label matrices are diagonal, so multiplying keeps
+        // only columns whose destination node carries the label. This avoids
+        // one extractElement FFI probe per output pair — a cost that scales
+        // with fan-out and dominates on hub nodes.
+        for &lid in dst_label_ids {
+            f.delta_lmxm(&g.label_matrices()[lid.0]);
+        }
+
+        // Flush pending mxm work before attaching the row iterator.
+        f.wait();
         let chain_is_empty = self.chain.is_empty();
+        // Only pay the per-pair representative-edge probe when something
+        // downstream actually reads the edge alias column (e.g. PathBuilder
+        // for a named path over an anonymous edge).
+        let bind_edge = chain_is_empty && self.edge_alias_referenced;
         let mut out_indices = Vec::new();
         let mut out_dest_ids = Vec::new();
         let mut out_edge_ids = Vec::new();
 
         for (row_i, dest_raw) in f.iter(0, u64::MAX) {
             let dest_id = NodeId::from(dest_raw);
-            // Post-filter final-hop dst label (= F * A * R_dst in C's algebra).
-            if !dst_label_ids
-                .iter()
-                .all(|&lid| g.node_has_label_id(dest_id, lid))
-            {
-                continue;
-            }
             let row_idx = active_subset[row_i as usize];
             // If the to-alias is already bound on the input batch row, the
             // planner should have inserted ExpandInto, not CondTraverse —
@@ -598,7 +634,7 @@ impl<'a> CondTraverseOp<'a> {
                 continue;
             }
 
-            if chain_is_empty {
+            if bind_edge {
                 // Look up one representative edge id (mirrors expand_row's
                 // anonymous-edge fast path). Required because downstream
                 // PathBuilder reads the edge alias even when emit_relationship
@@ -627,16 +663,17 @@ impl<'a> CondTraverseOp<'a> {
                     out_edge_ids.push(edge_id);
                 }
             } else {
-                // Fused chain: edges across hops are anonymous & unreferenced
-                // (enforced by the fusion pass), so no edge id is bound and
-                // no intermediate node alias is exposed.
+                // Edge alias unreferenced downstream (single-hop) or fused
+                // chain: edges are anonymous & unreferenced (enforced by the
+                // fusion pass), so no edge id is bound and no intermediate
+                // node alias is exposed.
                 out_indices.push(row_idx);
                 out_dest_ids.push(dest_id);
             }
 
             if out_indices.len() >= BATCH_SIZE {
                 let mut out_batch = batch.gather(&out_indices);
-                if chain_is_empty {
+                if bind_edge {
                     out_batch.set_column(
                         rp.alias.id,
                         Column::RelIds(std::mem::take(&mut out_edge_ids)),
@@ -653,7 +690,7 @@ impl<'a> CondTraverseOp<'a> {
 
         if !out_indices.is_empty() {
             let mut out_batch = batch.gather(&out_indices);
-            if chain_is_empty {
+            if bind_edge {
                 out_batch.set_column(rp.alias.id, Column::RelIds(out_edge_ids));
             }
             out_batch.set_column(to_alias.id, Column::NodeIds(out_dest_ids));
