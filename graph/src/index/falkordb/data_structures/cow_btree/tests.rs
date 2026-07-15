@@ -9,8 +9,8 @@ fn splitmix(mut z: u64) -> u64 {
 }
 
 /// Sorted doc ids the tree yields for `[lo, hi]`.
-fn tree_range<const LEAF_MAX: usize, const BRANCH_MAX: usize>(
-    t: &CowBTree<LEAF_MAX, BRANCH_MAX>,
+fn tree_range<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>(
+    t: &CowBTree<LEAF_MAX, BRANCH_MAX, DOC_BYTES>,
     lo: u64,
     hi: u64,
 ) -> Vec<u64> {
@@ -32,13 +32,13 @@ fn ref_range(
 /// The full `(key, doc)` multiset the tree stores, decoded straight from the leaf bytes (so it verifies
 /// the *value* column, not just docs — a full-range cursor scan skips key reads on interior leaves).
 /// Generic over `LEAF_MAX` so the const-generic parity test can drive a non-default leaf size through it.
-fn tree_pairs<const LEAF_MAX: usize, const BRANCH_MAX: usize>(
-    t: &CowBTree<LEAF_MAX, BRANCH_MAX>
+fn tree_pairs<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>(
+    t: &CowBTree<LEAF_MAX, BRANCH_MAX, DOC_BYTES>
 ) -> Vec<(u64, u64)> {
     let mut v: Vec<(u64, u64)> = t
         .leaves()
         .into_iter()
-        .flat_map(|(fmt, bytes)| Leaf::<LEAF_MAX>::from_parts(fmt, bytes).to_pairs())
+        .flat_map(|(fmt, bytes)| Leaf::<LEAF_MAX, DOC_BYTES>::from_parts(fmt, bytes).to_pairs())
         .collect();
     v.sort_unstable();
     v
@@ -246,7 +246,7 @@ fn leaf_bytes_round_trip_through_a_byte_store() {
     let want = 1234u64;
     let mut found = None;
     for (fmt, blob) in &store {
-        let leaf = Leaf::<256>::from_parts(*fmt, Arc::from(blob.as_slice())); // re-wrap — proving they're usable as-is
+        let leaf = Leaf::<256, 8>::from_parts(*fmt, Arc::from(blob.as_slice())); // re-wrap — proving they're usable as-is
         if leaf.count() > 0 && leaf.key(0) <= want && leaf.key(leaf.count() - 1) >= want {
             let i = leaf.lower_bound(want);
             if i < leaf.count() && leaf.key(i) == want {
@@ -275,7 +275,7 @@ fn leaf_format_roundtrip() {
         pairs: &[(u64, u64)],
         want: Option<&Want>,
     ) {
-        let leaf = Leaf::<256>::from_pairs(pairs);
+        let leaf = Leaf::<256, 8>::from_pairs(pairs);
         assert_eq!(leaf.count(), pairs.len(), "count for {pairs:?}");
         assert_eq!(leaf.to_pairs(), pairs, "to_pairs for {pairs:?}");
         for (i, &(k, d)) in pairs.iter().enumerate() {
@@ -284,7 +284,7 @@ fn leaf_format_roundtrip() {
         }
         let blob = leaf.bytes();
         assert_eq!(
-            Leaf::<256>::from_parts(leaf.format(), blob).to_pairs(),
+            Leaf::<256, 8>::from_parts(leaf.format(), blob).to_pairs(),
             pairs,
             "bytes round-trip for {pairs:?}"
         );
@@ -617,7 +617,9 @@ fn cow_writer_shares_committed_nodes_then_privatizes_on_write() {
     // node is always shared, so make_mut would copy anyway — see `node::make_private`.)
     use super::node::Node;
     use std::sync::Arc;
-    fn root_rc<const L: usize, const B: usize>(t: &CowBTree<L, B>) -> usize {
+    fn root_rc<const L: usize, const B: usize, const DOC_BYTES: usize>(
+        t: &CowBTree<L, B, DOC_BYTES>
+    ) -> usize {
         match &t.root {
             Node::Branch(b) => Arc::strong_count(b),
             Node::Leaf(_) => panic!("test needs a multi-level tree"),
@@ -747,7 +749,7 @@ fn no_index_compact_splice_arms() {
     let no_index = |t: &CowBTree| {
         t.leaves()
             .into_iter()
-            .all(|(f, b)| matches!(Leaf::<256>::from_parts(f, b), Leaf::Compact(_)))
+            .all(|(f, b)| matches!(Leaf::<256, 8>::from_parts(f, b), Leaf::Compact(_)))
     };
     assert!(
         no_index(&t),
@@ -810,7 +812,7 @@ fn block_copy_merge_parity() {
     assert!(
         t.leaves()
             .into_iter()
-            .all(|(f, b)| matches!(Leaf::<256>::from_parts(f, b), Leaf::CompactIndexed(_))),
+            .all(|(f, b)| matches!(Leaf::<256, 8>::from_parts(f, b), Leaf::CompactIndexed(_))),
         "setup should be a single indexed leaf"
     );
     // B = 8 (< 200/4), keys all existing distinct (0/1000/2000/3000), docs fit. (2000,102) is a
@@ -838,7 +840,7 @@ fn block_copy_merge_parity() {
     assert!(
         t.leaves()
             .into_iter()
-            .all(|(f, b)| matches!(Leaf::<256>::from_parts(f, b), Leaf::CompactIndexed(_))),
+            .all(|(f, b)| matches!(Leaf::<256, 8>::from_parts(f, b), Leaf::CompactIndexed(_))),
         "block-copy merge must keep the leaf indexed"
     );
     // A *large* all-existing-distinct batch (no size guard now — galloping keeps block-copy ≥ the walk).
@@ -1011,14 +1013,14 @@ fn const_generic_branch_size_parity() {
 /// Walk the whole tree and assert every structural invariant. `min_fill` gates the occupancy check: pass
 /// `true` for trees grown by `insert`/`remove` from empty (splits + rebalance keep non-root pages at least
 /// half full), `false` for a fresh `from_sorted` bulk build (whose last leaf may be short by construction).
-fn check_invariants<const L: usize, const B: usize>(
-    t: &CowBTree<L, B>,
+fn check_invariants<const L: usize, const B: usize, const DOC_BYTES: usize>(
+    t: &CowBTree<L, B, DOC_BYTES>,
     min_fill: bool,
 ) {
     use super::node::Node;
     // Returns (subtree min (key,doc), subtree max (key,doc), depth, entry count).
-    fn walk<const L: usize, const B: usize>(
-        node: &Node<L, B>,
+    fn walk<const L: usize, const B: usize, const DOC_BYTES: usize>(
+        node: &Node<L, B, DOC_BYTES>,
         is_root: bool,
         min_fill: bool,
     ) -> ((u64, u64), (u64, u64), usize, usize) {
@@ -1049,7 +1051,7 @@ fn check_invariants<const L: usize, const B: usize>(
                     "to_pairs disagrees with key/doc accessors"
                 );
                 assert_eq!(
-                    Leaf::<L>::from_pairs(&pairs).to_pairs(),
+                    Leaf::<L, DOC_BYTES>::from_pairs(&pairs).to_pairs(),
                     pairs,
                     "leaf encoder round-trip mismatch"
                 );
@@ -1119,12 +1121,12 @@ fn check_invariants<const L: usize, const B: usize>(
 /// Drive random mixed insert/remove against a `BTreeSet<(key, doc)>` oracle, asserting content parity,
 /// read-path (`range`/`point`) parity, AND every structural invariant after each op — the core integrity
 /// harness, run below at several sizes.
-fn differential<const L: usize, const B: usize>(
+fn differential<const L: usize, const B: usize, const DOC_BYTES: usize>(
     seed: u64,
     ops: usize,
     key_space: u64,
 ) {
-    let mut tree: CowBTree<L, B> = CowBTree::new();
+    let mut tree: CowBTree<L, B, DOC_BYTES> = CowBTree::new();
     let mut oracle: BTreeSet<(u64, u64)> = BTreeSet::new();
     let mut rng = seed;
     for _ in 0..ops {
@@ -1179,19 +1181,29 @@ fn differential<const L: usize, const B: usize>(
 fn integrity_differential_across_sizes() {
     // Tiny capacities make split/merge/borrow/collapse fire on almost every op (at 256 the FIRST split
     // needs 257 inserts, so structural code is otherwise unexercised); the default confirms production width.
-    differential::<4, 4>(0x1111_1111, 3000, 30);
-    differential::<5, 5>(0x2222_2222, 3000, 30);
-    differential::<8, 8>(0x3333_3333, 3000, 50);
-    differential::<8, 32>(0x4444_4444, 3000, 50); // wide branch, narrow leaf
-    differential::<32, 8>(0x5555_5555, 3000, 80); // narrow branch, wide leaf
-    differential::<256, 256>(0x6666_6666, 4000, 800);
+    differential::<4, 4, 8>(0x1111_1111, 3000, 30);
+    differential::<5, 5, 8>(0x2222_2222, 3000, 30);
+    differential::<8, 8, 8>(0x3333_3333, 3000, 50);
+    differential::<8, 32, 8>(0x4444_4444, 3000, 50); // wide branch, narrow leaf
+    differential::<32, 8, 8>(0x5555_5555, 3000, 80); // narrow branch, wide leaf
+    differential::<256, 256, 8>(0x6666_6666, 4000, 800);
+
+    // Same sweep at the narrow (u32) doc width — the 12 B/entry AoS layout the
+    // tensor's EdgeIdStore uses. Docs are `rng % key_space` (well under u32), so
+    // this stresses split/merge/borrow/collapse + leaf round-trip at DOC_BYTES=4.
+    differential::<4, 4, 4>(0x1111_2222, 3000, 30);
+    differential::<5, 5, 4>(0x2222_3333, 3000, 30);
+    differential::<8, 8, 4>(0x3333_4444, 3000, 50);
+    differential::<8, 32, 4>(0x4444_5555, 3000, 50);
+    differential::<32, 8, 4>(0x5555_6666, 3000, 80);
+    differential::<256, 256, 4>(0x6666_7777, 4000, 800);
 }
 
 #[test]
 fn integrity_from_sorted_well_formed_across_sizes() {
     // Bulk build must produce a valid tree at every size + boundary count. `min_fill` off: the last leaf
     // may be short by construction (`chunks(LEAF_MAX)`).
-    fn build<const L: usize, const B: usize>(n: u64) {
+    fn build<const L: usize, const B: usize, const DOC_BYTES: usize>(n: u64) {
         let t = CowBTree::<L, B>::from_sorted(&(0..n).map(|i| (i, i)).collect::<Vec<_>>());
         assert_eq!(t.len() as u64, n, "len != n for n={n}");
         check_invariants(&t, false);
@@ -1199,9 +1211,9 @@ fn integrity_from_sorted_well_formed_across_sizes() {
         // re-encoding its own contents — proving the encoding is deterministic AND the smaller (AoS vs
         // compact) format was chosen.
         for (fmt, bytes) in t.leaves() {
-            let pairs = Leaf::<L>::from_parts(fmt, bytes.clone()).to_pairs();
+            let pairs = Leaf::<L, DOC_BYTES>::from_parts(fmt, bytes.clone()).to_pairs();
             assert_eq!(
-                Leaf::<L>::from_pairs(&pairs).bytes(),
+                Leaf::<L, DOC_BYTES>::from_pairs(&pairs).bytes(),
                 bytes,
                 "from_sorted leaf not byte-identical to its from_pairs re-encode (n={n})"
             );
@@ -1210,10 +1222,10 @@ fn integrity_from_sorted_well_formed_across_sizes() {
     for &n in &[
         0u64, 1, 2, 3, 7, 8, 9, 15, 16, 17, 63, 64, 65, 256, 257, 1000,
     ] {
-        build::<4, 4>(n);
-        build::<8, 8>(n);
-        build::<16, 4>(n);
-        build::<256, 256>(n);
+        build::<4, 4, 8>(n);
+        build::<8, 8, 8>(n);
+        build::<16, 4, 8>(n);
+        build::<256, 256, 8>(n);
     }
 }
 

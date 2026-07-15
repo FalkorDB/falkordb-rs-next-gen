@@ -52,10 +52,15 @@ impl Extract for TupleExtract {
 
 /// A lazy, droppable cursor over the entries in a key range. Owns a snapshot of
 /// the tree. Yields per [`Extract`] `E` (doc id by default).
-pub struct RangeIter<const LEAF_MAX: usize, const BRANCH_MAX: usize, E: Extract = DocExtract> {
-    _root: Node<LEAF_MAX, BRANCH_MAX>, // keeps the snapshot (and all its pages) alive for the cursor's lifetime
-    stack: Vec<(Arc<Branch<LEAF_MAX, BRANCH_MAX>>, usize)>, // (branch, next child index to descend)
-    leaf: Option<Leaf<LEAF_MAX>>,
+pub struct RangeIter<
+    const LEAF_MAX: usize,
+    const BRANCH_MAX: usize,
+    const DOC_BYTES: usize,
+    E: Extract = DocExtract,
+> {
+    _root: Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>, // keeps the snapshot (and all its pages) alive for the cursor's lifetime
+    stack: Vec<(Arc<Branch<LEAF_MAX, BRANCH_MAX, DOC_BYTES>>, usize)>, // (branch, next child index to descend)
+    leaf: Option<Leaf<LEAF_MAX, DOC_BYTES>>,
     leaf_count: usize, // entry count of `leaf`, read once per leaf rather than per entry
     whole: bool,       // every entry of `leaf` is `<= hi_key` ⇒ skip the per-entry bound check
     // Cached doc decode layout `(base, stride, width)` for the current leaf — read once in `set_leaf`
@@ -70,11 +75,11 @@ pub struct RangeIter<const LEAF_MAX: usize, const BRANCH_MAX: usize, E: Extract 
     _extract: PhantomData<E>,
 }
 
-impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, E: Extract>
-    RangeIter<LEAF_MAX, BRANCH_MAX, E>
+impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize, E: Extract>
+    RangeIter<LEAF_MAX, BRANCH_MAX, DOC_BYTES, E>
 {
     pub(super) fn new(
-        root: &Node<LEAF_MAX, BRANCH_MAX>,
+        root: &Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>,
         lo: (u64, u64),
         hi_key: u64,
     ) -> Self {
@@ -116,7 +121,7 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, E: Extract>
     /// per-entry checks.
     fn set_leaf(
         &mut self,
-        leaf: Leaf<LEAF_MAX>,
+        leaf: Leaf<LEAF_MAX, DOC_BYTES>,
         pos: usize,
     ) {
         let count = leaf.count();
@@ -133,7 +138,7 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, E: Extract>
     /// Descend a node's left spine to its first leaf, pushing branch frames.
     fn descend_left(
         &mut self,
-        mut node: Node<LEAF_MAX, BRANCH_MAX>,
+        mut node: Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>,
     ) {
         loop {
             match node {
@@ -167,8 +172,8 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, E: Extract>
     }
 }
 
-impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, E: Extract> Iterator
-    for RangeIter<LEAF_MAX, BRANCH_MAX, E>
+impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize, E: Extract> Iterator
+    for RangeIter<LEAF_MAX, BRANCH_MAX, DOC_BYTES, E>
 {
     type Item = E::Item;
 

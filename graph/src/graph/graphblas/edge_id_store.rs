@@ -30,7 +30,10 @@ use crate::index::falkordb::data_structures::cow_btree::CowBTree;
 #[derive(Clone, Default)]
 pub struct EdgeIdStore {
     /// `(compound_key, edge_id)` tuples, sorted by `(key, id)`.
-    tree: CowBTree,
+    /// `DOC_BYTES = 4`: edge ids are u32-ranged (reused, `Vec`-indexed), so the
+    /// doc packs into 4 bytes — 12 B/entry (8 B compound key + 4 B id) instead
+    /// of 16. A `> u32` edge id panics loudly (see `cow_btree::doc_le_bytes`).
+    tree: CowBTree<256, 256, 4>,
     /// Live tuple count (exact; maintained on every mutation).
     count: u64,
 }

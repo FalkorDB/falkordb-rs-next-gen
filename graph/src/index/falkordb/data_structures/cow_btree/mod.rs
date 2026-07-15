@@ -53,10 +53,25 @@ use node::{Branch, Node, Split, build_root};
 // Max children per branch page (fan-out) is the `BRANCH_MAX` const generic on [`CowBTree`] (default 256):
 // a branch splits on overflow and merges below `BRANCH_MAX / 2`.
 
-/// Byte width of one `u64` field (a key or a doc).
+/// Byte width of the `u64` key field.
 const FIELD: usize = std::mem::size_of::<u64>();
-/// Byte stride of one `(key, doc)` entry in the [`AosLeaf`] layout.
-const STRIDE: usize = 2 * FIELD;
+
+/// Little-endian `DOC_BYTES` bytes of `doc` for the [`AosLeaf`] layout. The AoS
+/// entry is `key:8 + doc:DOC_BYTES`, so a tree built with `DOC_BYTES = 4` stores
+/// 12 B/entry (docs — node/edge ids — are u32-ranged) while `DOC_BYTES = 8`
+/// keeps the full-width 16 B/entry. Panics if `doc` does not fit the configured
+/// width: ids are width-bounded by construction, so a loud failure beats
+/// silently truncating an id.
+fn doc_le_bytes<const DOC_BYTES: usize>(doc: u64) -> [u8; DOC_BYTES] {
+    let le = doc.to_le_bytes();
+    assert!(
+        le[DOC_BYTES..].iter().all(|&b| b == 0),
+        "cow_btree doc exceeds the configured doc width (DOC_BYTES)"
+    );
+    let mut out = [0u8; DOC_BYTES];
+    out.copy_from_slice(&le[..DOC_BYTES]);
+    out
+}
 
 /// Read the little-endian `u64` at byte offset `off`. The `unwrap` is infallible: `b[off..off + FIELD]`
 /// is always exactly `FIELD` bytes; an out-of-bounds `off` means a malformed page — a build bug, since the
@@ -104,11 +119,17 @@ fn read_width(
 /// [`CowBTree::new`] / [`CowBTree::from_sorted`] / `Default` trips any out-of-range monomorphization that
 /// builds a tree.
 #[derive(Clone)]
-pub struct CowBTree<const LEAF_MAX: usize = 256, const BRANCH_MAX: usize = 256> {
-    root: Node<LEAF_MAX, BRANCH_MAX>,
+pub struct CowBTree<
+    const LEAF_MAX: usize = 256,
+    const BRANCH_MAX: usize = 256,
+    const DOC_BYTES: usize = 8,
+> {
+    root: Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>,
 }
 
-impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Default for CowBTree<LEAF_MAX, BRANCH_MAX> {
+impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize> Default
+    for CowBTree<LEAF_MAX, BRANCH_MAX, DOC_BYTES>
+{
     fn default() -> Self {
         const {
             assert!(
@@ -122,7 +143,9 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Default for CowBTree<LEAF_M
     }
 }
 
-impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> CowBTree<LEAF_MAX, BRANCH_MAX> {
+impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
+    CowBTree<LEAF_MAX, BRANCH_MAX, DOC_BYTES>
+{
     /// An empty tree.
     #[must_use]
     pub fn new() -> Self {
@@ -156,7 +179,7 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> CowBTree<LEAF_MAX, BRANCH_M
         if pairs.is_empty() {
             return Self::default();
         }
-        let leaves: Vec<Node<LEAF_MAX, BRANCH_MAX>> = pairs
+        let leaves: Vec<Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>> = pairs
             .chunks(LEAF_MAX)
             .map(|chunk| Node::Leaf(Leaf::from_pairs(chunk)))
             .collect();
@@ -231,7 +254,7 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> CowBTree<LEAF_MAX, BRANCH_M
         &self,
         lo: u64,
         hi: u64,
-    ) -> RangeIter<LEAF_MAX, BRANCH_MAX> {
+    ) -> RangeIter<LEAF_MAX, BRANCH_MAX, DOC_BYTES> {
         RangeIter::new(&self.root, (lo, 0), hi)
     }
 
@@ -240,7 +263,7 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> CowBTree<LEAF_MAX, BRANCH_M
     pub fn point(
         &self,
         key: u64,
-    ) -> RangeIter<LEAF_MAX, BRANCH_MAX> {
+    ) -> RangeIter<LEAF_MAX, BRANCH_MAX, DOC_BYTES> {
         self.range(key, key)
     }
 
@@ -252,7 +275,7 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> CowBTree<LEAF_MAX, BRANCH_M
         &self,
         lo: u64,
         hi: u64,
-    ) -> RangeIter<LEAF_MAX, BRANCH_MAX, TupleExtract> {
+    ) -> RangeIter<LEAF_MAX, BRANCH_MAX, DOC_BYTES, TupleExtract> {
         RangeIter::new(&self.root, (lo, 0), hi)
     }
 
@@ -264,8 +287,13 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> CowBTree<LEAF_MAX, BRANCH_M
         &self,
         mut f: F,
     ) {
-        fn walk<F: FnMut(u64, u64), const LEAF_MAX: usize, const BRANCH_MAX: usize>(
-            node: &Node<LEAF_MAX, BRANCH_MAX>,
+        fn walk<
+            F: FnMut(u64, u64),
+            const LEAF_MAX: usize,
+            const BRANCH_MAX: usize,
+            const DOC_BYTES: usize,
+        >(
+            node: &Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>,
             f: &mut F,
         ) {
             match node {
@@ -280,15 +308,16 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> CowBTree<LEAF_MAX, BRANCH_M
     /// vectors. Walks all pages (`O(pages)`), so call it off hot paths (memory reporting).
     #[must_use]
     pub fn heap_bytes(&self) -> usize {
-        fn walk<const LEAF_MAX: usize, const BRANCH_MAX: usize>(
-            node: &Node<LEAF_MAX, BRANCH_MAX>,
+        fn walk<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>(
+            node: &Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>,
             acc: &mut usize,
         ) {
             match node {
                 Node::Leaf(leaf) => *acc += leaf.raw().len(),
                 Node::Branch(branch) => {
                     *acc += branch.seps.len() * std::mem::size_of::<u64>()
-                        + branch.children.len() * std::mem::size_of::<Node<LEAF_MAX, BRANCH_MAX>>();
+                        + branch.children.len()
+                            * std::mem::size_of::<Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>>();
                     branch.children.iter().for_each(|c| walk(c, acc));
                 }
             }
@@ -302,8 +331,8 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> CowBTree<LEAF_MAX, BRANCH_M
     #[cfg(test)]
     #[must_use]
     pub fn len(&self) -> usize {
-        fn count<const LEAF_MAX: usize, const BRANCH_MAX: usize>(
-            node: &Node<LEAF_MAX, BRANCH_MAX>
+        fn count<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>(
+            node: &Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>
         ) -> usize {
             match node {
                 Node::Leaf(leaf) => leaf.count(),
@@ -328,8 +357,8 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> CowBTree<LEAF_MAX, BRANCH_M
     #[cfg(test)]
     #[must_use]
     pub fn leaves(&self) -> Vec<(LeafFormat, Arc<[u8]>)> {
-        fn walk<const LEAF_MAX: usize, const BRANCH_MAX: usize>(
-            node: &Node<LEAF_MAX, BRANCH_MAX>,
+        fn walk<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>(
+            node: &Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>,
             out: &mut Vec<(LeafFormat, Arc<[u8]>)>,
         ) {
             match node {
