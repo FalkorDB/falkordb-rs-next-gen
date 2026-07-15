@@ -48,6 +48,16 @@ use orx_tree::{Dyn, NodeIdx, NodeRef};
 
 use super::batched_result_emitter::{BatchedResultEmitter, EdgeEndpoints, RowIter};
 
+/// Minimum number of active input rows for the batched F·A path to pay off.
+/// Each `mxm` carries a fixed cost (frontier-matrix build, GraphBLAS dispatch,
+/// OpenMP parallel-region setup) of tens of microseconds, while the per-row
+/// path enumerates a single adjacency-matrix row nearly for free. Tiny batches
+/// — most notably the single-row argument batches produced by correlated
+/// `CALL {}` subqueries (Apply) — are therefore routed to the per-row path.
+/// Fused multi-hop chains are exempt: `expand_row` only handles single hops,
+/// so the batched path is the only correct path for them.
+const MIN_BATCHED_ROWS: usize = 16;
+
 /// Base matrix for the batched mxm path. Relationship matrices store inline
 /// edge ids (`u64`) while the adjacency matrix and merged multi-type matrices
 /// are `bool`; traversal only consumes the sparsity pattern (`ANY_PAIR`
@@ -1135,13 +1145,18 @@ impl<'a> Iterator for CondTraverseOp<'a> {
                             // fully handles the batch (`true`) its output is
                             // queued on `pending_batches` and the emitter is left
                             // idle; on fallback (`false`) seed the emitter to
-                            // expand the batch row-by-row.
+                            // expand the batch row-by-row. Small single-hop
+                            // batches skip the mxm entirely: its fixed dispatch
+                            // cost dwarfs the per-row enumeration for a handful
+                            // of source rows (see `MIN_BATCHED_ROWS`).
                             let mut handled = false;
                             if self.batched_eligible {
                                 let active: Vec<usize> = b.active_indices().collect();
-                                let mut pending = std::mem::take(&mut self.pending_batches);
-                                handled = self.expand_batch(&b, &active, &mut pending);
-                                self.pending_batches = pending;
+                                if !self.chain.is_empty() || active.len() >= MIN_BATCHED_ROWS {
+                                    let mut pending = std::mem::take(&mut self.pending_batches);
+                                    handled = self.expand_batch(&b, &active, &mut pending);
+                                    self.pending_batches = pending;
+                                }
                             }
                             if !handled {
                                 self.emitter.seed(b);
