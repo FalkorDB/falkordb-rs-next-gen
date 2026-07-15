@@ -646,8 +646,13 @@ mod tests {
 
     mod extraction {
         use super::*;
-        use crate::runtime::functions::{FnType, Type, get_functions};
+        use crate::runtime::functions::{FnType, Type, get_functions, init_functions};
         use crate::tree;
+
+        fn functions() -> &'static crate::runtime::functions::Functions {
+            let _ = init_functions();
+            get_functions()
+        }
 
         fn var() -> Variable {
             Variable {
@@ -668,7 +673,7 @@ mod tests {
         #[test]
         fn test_extract_is_not_null() {
             // u.embedding IS NOT NULL
-            let f = get_functions().get("is_null", &FnType::Internal).unwrap();
+            let f = functions().get("is_null", &FnType::Internal).unwrap();
             let expr = tree!(
                 ExprIR::FuncInvocation(f),
                 tree!(ExprIR::Constant(Value::Bool(true))),
@@ -687,7 +692,7 @@ mod tests {
         #[test]
         fn test_extract_is_null() {
             // u.embedding IS NULL
-            let f = get_functions().get("is_null", &FnType::Internal).unwrap();
+            let f = functions().get("is_null", &FnType::Internal).unwrap();
             let expr = tree!(
                 ExprIR::FuncInvocation(f),
                 tree!(ExprIR::Constant(Value::Bool(false))),
@@ -709,7 +714,7 @@ mod tests {
                 ("ends_with", StringMatchOp::EndsWith),
             ] {
                 // u.ft_text CONTAINS/STARTS WITH/ENDS WITH 'fixture_alice'
-                let f = get_functions().get(name, &FnType::Internal).unwrap();
+                let f = functions().get(name, &FnType::Internal).unwrap();
                 let expr = tree!(
                     ExprIR::FuncInvocation(f),
                     prop_access("ft_text"),
@@ -739,7 +744,7 @@ mod tests {
         #[test]
         fn test_extract_string_match_parameter() {
             // u.ft_text CONTAINS $pat
-            let f = get_functions().get("contains", &FnType::Internal).unwrap();
+            let f = functions().get("contains", &FnType::Internal).unwrap();
             let expr = tree!(
                 ExprIR::FuncInvocation(f),
                 prop_access("ft_text"),
@@ -767,7 +772,7 @@ mod tests {
         #[test]
         fn test_extract_string_match_non_string_pattern_falls_back() {
             // u.ft_text CONTAINS 42 — not vectorizable, falls back to per-row
-            let f = get_functions().get("contains", &FnType::Internal).unwrap();
+            let f = functions().get("contains", &FnType::Internal).unwrap();
             let expr = tree!(
                 ExprIR::FuncInvocation(f),
                 prop_access("ft_text"),
@@ -793,8 +798,8 @@ mod tests {
         #[test]
         fn test_extract_conjunction_with_new_predicates() {
             // u.embedding IS NOT NULL AND u.ft_text CONTAINS 'alice'
-            let is_null = get_functions().get("is_null", &FnType::Internal).unwrap();
-            let contains = get_functions().get("contains", &FnType::Internal).unwrap();
+            let is_null = functions().get("is_null", &FnType::Internal).unwrap();
+            let contains = functions().get("contains", &FnType::Internal).unwrap();
             let expr = tree!(
                 ExprIR::And,
                 tree!(
@@ -830,6 +835,7 @@ mod tests {
             use crate::parser::cypher::Parser;
             use crate::planner::binder::Binder;
 
+            let _ = init_functions();
             let ir = Parser::new(query).parse().expect("query should parse");
             let (bound, _) = Binder::default().bind(ir).expect("query should bind");
             let QueryIR::Query { clauses, .. } = bound else {
