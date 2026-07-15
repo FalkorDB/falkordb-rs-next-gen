@@ -28,9 +28,9 @@ use crate::runtime::{
     runtime::Runtime,
     value::Value,
     vectorized::{
-        SimplePredicate, VectorizablePredicate, compare_f64_column, compare_i64_column,
-        compare_string_column, mask_intersect_selection, mask_to_selection,
-        try_extract_vectorizable_predicate,
+        PredicateTest, SimplePredicate, VectorizablePredicate, compare_f64_column,
+        compare_i64_column, compare_string_column, mask_intersect_selection, mask_to_selection,
+        match_string_column, null_check_mask, try_extract_vectorizable_predicate,
     },
 };
 use orx_tree::{Dyn, NodeIdx, NodeRef};
@@ -195,25 +195,36 @@ impl<'a> FilterOp<'a> {
             .runtime
             .materialize_node_property(&node_ids, &pred.attr);
 
-        let mask = match (&col, &pred.constant) {
-            (Column::Ints(data), Value::Int(threshold)) => {
-                compare_i64_column(data, pred.op, *threshold, &nulls)
-            }
-            (Column::Ints(data), Value::Float(threshold)) => {
-                // Promote int column to float for comparison.
-                let floats: Vec<f64> = data.iter().map(|&i| i as f64).collect();
-                compare_f64_column(&floats, pred.op, *threshold, &nulls)
-            }
-            (Column::Floats(data), Value::Float(threshold)) => {
-                compare_f64_column(data, pred.op, *threshold, &nulls)
-            }
-            (Column::Floats(data), Value::Int(threshold)) => {
-                compare_f64_column(data, pred.op, *threshold as f64, &nulls)
-            }
-            (Column::Values(data), Value::String(threshold)) => {
-                compare_string_column(data, pred.op, threshold)
-            }
-            _ => return Err(()), // type mismatch, fall back to per-row
+        let mask = match &pred.test {
+            PredicateTest::Cmp { op, constant } => match (&col, constant) {
+                (Column::Ints(data), Value::Int(threshold)) => {
+                    compare_i64_column(data, *op, *threshold, &nulls)
+                }
+                (Column::Ints(data), Value::Float(threshold)) => {
+                    // Promote int column to float for comparison.
+                    let floats: Vec<f64> = data.iter().map(|&i| i as f64).collect();
+                    compare_f64_column(&floats, *op, *threshold, &nulls)
+                }
+                (Column::Floats(data), Value::Float(threshold)) => {
+                    compare_f64_column(data, *op, *threshold, &nulls)
+                }
+                (Column::Floats(data), Value::Int(threshold)) => {
+                    compare_f64_column(data, *op, *threshold as f64, &nulls)
+                }
+                (Column::Values(data), Value::String(threshold)) => {
+                    compare_string_column(data, *op, threshold)
+                }
+                _ => return Err(()), // type mismatch, fall back to per-row
+            },
+            PredicateTest::IsNull { negated } => null_check_mask(&nulls, node_ids.len(), *negated),
+            PredicateTest::StringMatch { op, pattern } => match &col {
+                Column::Values(data) => match_string_column(data, *op, pattern),
+                // A typed numeric column can't contain strings, so no row
+                // matches (`non-string CONTAINS x` evaluates to NULL, which
+                // the filter drops).
+                Column::Ints(_) | Column::Floats(_) => vec![false; node_ids.len()],
+                _ => return Err(()), // fall back to per-row
+            },
         };
 
         Ok(mask)
