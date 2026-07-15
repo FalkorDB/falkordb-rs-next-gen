@@ -177,11 +177,11 @@ impl Tensor {
     /// inline in `m`/`mt`; any additional edges between an already-present pair
     /// overflow to `me`.
     ///
-    /// Avoids the per-edge `get_uint64` (which would sync pending GraphBLAS work
-    /// on every call, making bulk insertion quadratic): the set of pairs that
-    /// already have an inline first edge is materialized once, then updated
-    /// in-batch so the first occurrence of each pair is detected without
-    /// touching GraphBLAS per edge.
+    /// Membership probes run before any write to `m`, so `m` syncs pending
+    /// GraphBLAS work at most once for the whole batch (a per-edge
+    /// get-after-set pattern would re-sync per edge, going quadratic).
+    /// In-batch duplicates are caught by a batch-local set, keeping the cost
+    /// O(batch) instead of scanning all committed pairs.
     pub fn set_all_from_slices(
         &mut self,
         srcs: &[u64],
@@ -194,15 +194,14 @@ impl Tensor {
             return;
         }
 
-        // Pairs that already have an inline first edge (committed or pending).
-        let mut present: FxHashSet<(u64, u64)> =
-            self.m.iter(0, u64::MAX).map(|(s, d, _)| (s, d)).collect();
+        // Pairs first seen in this batch (their inline edge is queued below).
+        let mut batch_pairs: FxHashSet<(u64, u64)> = FxHashSet::default();
 
         let mut m_srcs: Vec<u64> = Vec::with_capacity(srcs.len());
         let mut m_dsts: Vec<u64> = Vec::with_capacity(srcs.len());
         let mut m_ids: Vec<u64> = Vec::with_capacity(srcs.len());
         for ((&s, &d), &id) in srcs.iter().zip(dsts.iter()).zip(ids.iter()) {
-            if present.insert((s, d)) {
+            if self.m.get(s, d).is_none() && batch_pairs.insert((s, d)) {
                 // First edge for this pair → inline.
                 m_srcs.push(s);
                 m_dsts.push(d);
