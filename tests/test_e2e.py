@@ -1335,10 +1335,10 @@ def test_stdevp(a):
 
 def test_expansion_dst_label_filter():
     """Mirrors the aggregate_expansion_1/2 benchmark shapes: 1-hop and fused
-    2-hop expansion with a destination label filter, plus a named path over
-    an anonymous edge (batched path must still bind a representative edge)."""
+    2-hop expansion with a destination label filter, plus consumers of the
+    edge variable that the emit_relationship reduction must account for."""
     query(
-        "CREATE (s:User {id: 1})-[:Knows]->(a:User {id: 2}), "
+        "CREATE (s:User {id: 1})-[:Knows {weight: 7}]->(a:User {id: 2}), "
         "(s)-[:Knows]->(b:Bot {id: 3}), "
         "(a)-[:Knows]->(c:User {id: 4}), "
         "(b)-[:Knows]->(d:User {id: 5}), "
@@ -1358,10 +1358,48 @@ def test_expansion_dst_label_filter():
     res = query("MATCH (s:User {id: 1})-->(n) RETURN n.id")
     assert_result_set_equal_no_order(res, [[2], [3]])
 
-    # Named path over an anonymous edge — PathBuilder reads the edge alias,
-    # so the traversal must still produce a representative edge per pair.
+    # Named path — the planner marks path-member edges emit_relationship,
+    # so this routes to the per-row path; kept as a semantic guard that the
+    # batched path isn't wrongly taken without a bound edge.
     res = query("MATCH p = (s:User {id: 1})-->(n:User) RETURN length(p), n.id")
     assert_result_set_equal_no_order(res, [[1, 2]])
+
+    # Edge consumed only inside a CREATE pattern's inline attrs —
+    # ir_references_variable must see it so emit_relationship stays true and
+    # the real weight is copied instead of silently writing null.
+    query(
+        "MATCH (s:User {id: 1})-[r:Knows]->(n:User) CREATE (:Copy {w: r.weight})",
+        write=True,
+    )
+    res = query("MATCH (c:Copy) RETURN c.w")
+    assert_result_set_equal_no_order(res, [[7]])
+
+    # Edge consumed only inside an UNWIND list expression — same requirement.
+    res = query(
+        "MATCH (s:User {id: 1})-[r:Knows]->(n:User) UNWIND [r.weight] AS w RETURN w"
+    )
+    assert_result_set_equal_no_order(res, [[7]])
+
+    # Edge consumed only inside a MERGE pattern's inline attrs.
+    query(
+        "MATCH (s:User {id: 1})-[r:Knows]->(n:User) MERGE (:MCopy {w: r.weight})",
+        write=True,
+    )
+    res = query("MATCH (c:MCopy) RETURN c.w")
+    assert_result_set_equal_no_order(res, [[7]])
+
+    # Parallel edges consumed only through UNWIND/CREATE: emit_relationship
+    # must stay true so each parallel edge yields its own row (regression:
+    # the reduction pass missed these consumers and collapsed the rows).
+    query(
+        "CREATE (x:P {id: 1})-[:R {w: 1}]->(y:Q {id: 2}), (x)-[:R {w: 2}]->(y)",
+        write=True,
+    )
+    res = query("MATCH (x:P)-[r:R]->(y:Q) UNWIND [r.w] AS w RETURN w")
+    assert_result_set_equal_no_order(res, [[1], [2]])
+    query("MATCH (x:P)-[r:R]->(y:Q) CREATE (:PCopy {w: r.w})", write=True)
+    res = query("MATCH (c:PCopy) RETURN c.w")
+    assert_result_set_equal_no_order(res, [[1], [2]])
 
 
 def test_aggregation():

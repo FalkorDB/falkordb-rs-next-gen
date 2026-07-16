@@ -298,10 +298,13 @@ impl<'a> CondTraverseOp<'a> {
             && chain.iter().all(|hop| !hop.bidirectional);
 
         // Determine whether any ancestor operator reads the edge alias
-        // column (mirrors `reduce_expand_into`'s ancestor walk; the only
-        // consumer of an anonymous edge alias is PathBuilder, which always
-        // sits above the traversals producing its vars). Used by the
-        // batched path to skip the per-pair representative-edge probe.
+        // column (mirrors `reduce_expand_into`'s ancestor walk). When the
+        // planner marked this edge `emit_relationship = false` the walk
+        // should never find a consumer — path-member edges get
+        // `emit_relationship = true` at planning time, and the reduction
+        // pass only clears the flag after this same walk finds nothing —
+        // so this re-check is a cheap defensive guard: a false positive
+        // merely keeps the per-pair representative-edge probe.
         let edge_alias_referenced = emit_relationship || {
             let mut referenced = false;
             let mut cur = idx;
@@ -558,7 +561,10 @@ impl<'a> CondTraverseOp<'a> {
                 drop(g);
                 return false;
             };
-            // Pre-filter src by label (= L_src * F in C's algebra).
+            // Pre-filter src by label (= L_src * F in C's algebra). Kept as
+            // per-row probes (unlike the dst-label filter below): the cost
+            // here is bounded by the input-row count, not the post-fan-out
+            // pair count, so converting it to an mxm buys far less.
             if !state
                 .fwd_src_label_ids
                 .iter()
@@ -611,12 +617,18 @@ impl<'a> CondTraverseOp<'a> {
             f.delta_lmxm(&g.label_matrices()[lid.0]);
         }
 
-        // Flush pending mxm work before attaching the row iterator.
+        // Flush pending mxm work before attaching the row iterator. Like the
+        // chain's `delta_lmxm_into` calls above, the label-filter
+        // `delta_lmxm` calls issue `GrB_mxm` with debug-only status asserts
+        // and no error return, so moving `wait()` below them doesn't change
+        // when a GraphBLAS error would surface.
         f.wait();
         let chain_is_empty = self.chain.is_empty();
         // Only pay the per-pair representative-edge probe when something
-        // downstream actually reads the edge alias column (e.g. PathBuilder
-        // for a named path over an anonymous edge).
+        // downstream actually reads the edge alias column. With a complete
+        // `ir_references_variable` this shouldn't happen for a batched op
+        // (any consumer keeps `emit_relationship = true`, which routes to
+        // the per-row path) — kept as a defensive guard.
         let bind_edge = chain_is_empty && self.edge_alias_referenced;
         let mut out_indices = Vec::new();
         let mut out_dest_ids = Vec::new();
@@ -636,13 +648,12 @@ impl<'a> CondTraverseOp<'a> {
 
             if bind_edge {
                 // Look up one representative edge id (mirrors expand_row's
-                // anonymous-edge fast path). Required because downstream
-                // PathBuilder reads the edge alias even when emit_relationship
-                // is false. Storage matrix orientation: src=F's seed
-                // (matrix-src), dst=F*A result (matrix-dst), regardless of
-                // self.transposed (which only affects alias→storage mapping,
-                // not the underlying matrix orientation since
-                // build_relationship_matrix_unrestricted is non-transposed).
+                // anonymous-edge fast path). Storage matrix orientation:
+                // src=F's seed (matrix-src), dst=F*A result (matrix-dst),
+                // regardless of self.transposed (which only affects
+                // alias→storage mapping, not the underlying matrix
+                // orientation since build_relationship_matrix_unrestricted
+                // is non-transposed).
                 let Some(Value::Node(src_id)) = batch.value_at(from_alias.id, row_idx) else {
                     continue;
                 };
