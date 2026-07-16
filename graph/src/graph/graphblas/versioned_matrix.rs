@@ -70,7 +70,10 @@ use super::{
 };
 use crate::graph::{
     cow::Cow,
-    graphblas::matrix::{BoolExtract, IterExtract, Uint64Extract},
+    graphblas::{
+        matrix::{BoolExtract, IterExtract, Uint64Extract},
+        versioned_vector::VersionedVector,
+    },
 };
 
 /// A matrix with MVCC delta tracking for snapshot isolation.
@@ -218,6 +221,11 @@ impl<T> VersionedMatrix<T> {
     /// but executes in two GraphBLAS bulk operations instead of N individual calls:
     /// - Entries in base `m` matching `mask` are marked deleted in `dm`
     /// - Entries in delta-plus `dp` matching `mask` are removed from `dp`
+    ///
+    /// For `VersionedMatrix<VersionedVector>` this performs no inner
+    /// releases: the tensor only takes this path when it holds no multi-edge
+    /// pairs (`multi_pair_count == 0`), which by the no-shadow invariant
+    /// means neither `m` nor `dp` contains any pointer word.
     pub fn remove_mask(
         &mut self,
         mask: &Matrix<bool>,
@@ -363,133 +371,6 @@ impl<T> Dup<Self> for VersionedMatrix<T> {
     }
 }
 
-/// UINT64-valued overlay support.
-///
-/// A UINT64 `VersionedMatrix` carries a `u64` *value* at each `(i, j)` (e.g. an
-/// edge id) rather than a plain boolean presence bit. The base `m` and
-/// delta-plus `dp` are UINT64-typed; the delta-minus `dm` stays BOOL (it is a
-/// pure deletion mask).
-///
-/// Unlike the bool model, a committed entry's *value* can change in place
-/// (e.g. an edge id changes on multi-edge promotion, or delete-then-re-add
-/// within one transaction). [`Self::set`] handles this by masking the old
-/// committed entry in `dm` and writing the new value to `dp`, preserving the
-/// no-shadow invariant `dp ∩ (m ∖ dm) = ∅`: the effective content is always
-/// `(m ∖ dm) ∪ dp` with the union disjoint, so iterators and `nvals()` need
-/// no overlap handling. Note this means `dp ∩ dm` may be non-empty (an
-/// in-place update has the pair in both), unlike the bool model.
-impl VersionedMatrix<u64> {
-    /// Construct a UINT64-valued versioned matrix: `m`/`dp` UINT64, `dm` BOOL.
-    #[must_use]
-    pub fn new(
-        nrows: u64,
-        ncols: u64,
-    ) -> Self {
-        Self {
-            m: Cow::new(Matrix::<u64>::new(nrows, ncols)),
-            dp: Cow::new(Matrix::<u64>::new(nrows, ncols)),
-            dm: Cow::new(Matrix::<bool>::new(nrows, ncols)),
-        }
-    }
-
-    /// Stream effective UINT64 `(row, col, value)` triples over rows in
-    /// `[min_row, max_row]`: `(m ∖ dm) ∪ dp`.
-    #[must_use]
-    pub fn iter(
-        &self,
-        min_row: u64,
-        max_row: u64,
-    ) -> Iter<Uint64Extract> {
-        self.wait();
-        Iter::<Uint64Extract>::new(self, min_row, max_row)
-    }
-
-    /// Structure-only `(row, col)` iterator over the effective matrix,
-    /// ignoring the stored edge-id values. Same semantics as the bool
-    /// [`VersionedMatrix::iter`].
-    #[must_use]
-    pub fn structural_iter(
-        &self,
-        min_row: u64,
-        max_row: u64,
-    ) -> Iter {
-        self.wait();
-        Iter::<BoolExtract>::new(self, min_row, max_row)
-    }
-
-    /// Write `value` at `(i, j)`: the new value lands in `dp`, and if the
-    /// committed base holds an entry at `(i, j)` it is masked in `dm` so the
-    /// old value never shadows the new one (`dp ∩ (m ∖ dm) = ∅`).
-    pub fn set(
-        &mut self,
-        i: u64,
-        j: u64,
-        value: u64,
-    ) {
-        debug_assert!(!self.m.pending());
-        self.dp.set(i, j, value);
-        if self.m.contains(i, j) {
-            self.dm.set(i, j, true);
-        }
-    }
-
-    /// Bulk UINT64 set. Unlike per-element [`VersionedMatrix::set`] callers,
-    /// this checks base emptiness once up front and never calls `get`/`wait`
-    /// per entry, so it stays O(n) for a batch of `n` writes (critical for
-    /// bulk edge creation).
-    pub fn set_all(
-        &mut self,
-        entries: impl Iterator<Item = (u64, u64, u64)>,
-    ) {
-        debug_assert!(!self.m.pending());
-        if self.m.nvals() == 0 {
-            for (i, j, v) in entries {
-                self.dp.set(i, j, v);
-            }
-        } else {
-            for (i, j, v) in entries {
-                self.dp.set(i, j, v);
-                if self.m.contains(i, j) {
-                    self.dm.set(i, j, true);
-                }
-            }
-        }
-    }
-
-    /// Effective UINT64 value at `(i, j)`: `dp` wins, then `m` unless masked by
-    /// `dm`. Returns `None` if absent or deleted.
-    #[must_use]
-    pub fn get(
-        &self,
-        i: u64,
-        j: u64,
-    ) -> Option<u64> {
-        self.wait();
-        if let Some(v) = self.dp.get(i, j) {
-            return Some(v);
-        }
-        if self.dm.nvals() != 0 && self.dm.get(i, j).is_some() {
-            return None;
-        }
-        self.m.get(i, j)
-    }
-
-    /// Remove `(i, j)` (value-agnostic): drop any pending add and mask the
-    /// committed entry as deleted.
-    pub fn remove(
-        &mut self,
-        i: u64,
-        j: u64,
-    ) {
-        if self.dp.get(i, j).is_some() {
-            self.dp.remove(i, j);
-        }
-        if self.m.get(i, j).is_some() {
-            self.dm.set(i, j, true);
-        }
-    }
-}
-
 impl VersionedMatrix<bool> {
     /// Transposes the matrix.
     ///
@@ -505,6 +386,148 @@ impl VersionedMatrix<bool> {
     }
 }
 
+impl VersionedMatrix<VersionedVector> {
+    pub fn new(
+        nrows: u64,
+        ncols: u64,
+    ) -> Self {
+        let mut m = Matrix::<VersionedVector>::new(nrows, ncols);
+        m.set_owns_inners();
+        let mut dp = Matrix::<VersionedVector>::new(nrows, ncols);
+        dp.set_owns_inners();
+        Self {
+            m: Cow::new(m),
+            dp: Cow::new(dp),
+            dm: Cow::new(Matrix::<bool>::new(nrows, ncols)),
+        }
+    }
+
+    #[must_use]
+    pub fn get(
+        &self,
+        i: u64,
+        j: u64,
+    ) -> Option<VersionedVector> {
+        self.wait();
+        if let Some(v) = self.dp.get(i, j) {
+            return Some(v);
+        }
+        if let Some(v) = self.m.get(i, j)
+            && self.dm.get(i, j).is_none()
+        {
+            return Some(v);
+        }
+        None
+    }
+
+    /// Write the tagged word at `(i, j)`: the new value lands in `dp`, and
+    /// any committed base entry is masked in `dm` so the old word never
+    /// shadows the new one (same no-shadow invariant as the `u64` impl).
+    pub fn set(
+        &mut self,
+        i: u64,
+        j: u64,
+        value: VersionedVector,
+    ) {
+        debug_assert!(!self.m.pending());
+        let old = self.dp.get(i, j);
+        self.dp.set(i, j, value);
+        // The overwritten dp word is gone from the (possibly just Cow-duped)
+        // matrix; drop its inner reference.
+        if let Some(old) = old
+            && !old.is_scalar()
+            && old != value
+        {
+            old.release();
+        }
+        if self.m.contains(i, j) {
+            self.dm.set(i, j, true);
+        }
+    }
+
+    /// Like [`Self::set`], but the caller guarantees the current dp word at
+    /// `(i, j)` is absent or scalar, so no inner release is needed and the
+    /// dp read is skipped. Bulk loops need this: a per-entry `dp.get` after
+    /// a prior `dp.set` forces a full `GB_wait` rebuild, going quadratic.
+    pub fn set_fresh(
+        &mut self,
+        i: u64,
+        j: u64,
+        value: VersionedVector,
+    ) {
+        debug_assert!(!self.m.pending());
+        self.dp.set(i, j, value);
+        if self.m.contains(i, j) {
+            self.dm.set(i, j, true);
+        }
+    }
+
+    /// Bulk set of scalar-edge-id entries; checks base emptiness once up
+    /// front (see `VersionedMatrix::<u64>::set_all`). Callers only pass
+    /// brand-new pairs, so no dp pointer word is ever overwritten here —
+    /// no inner release is needed. (Not debug-asserted: a `dp.get` per
+    /// entry forces a full `GB_wait` pending-tuple rebuild, turning bulk
+    /// insert quadratic.)
+    pub fn set_all(
+        &mut self,
+        entries: impl Iterator<Item = (u64, u64, u64)>,
+    ) {
+        debug_assert!(!self.m.pending());
+        if self.m.nvals() == 0 {
+            for (i, j, id) in entries {
+                self.dp.set(i, j, VersionedVector::new_scalar(id));
+            }
+        } else {
+            for (i, j, id) in entries {
+                self.dp.set(i, j, VersionedVector::new_scalar(id));
+                if self.m.contains(i, j) {
+                    self.dm.set(i, j, true);
+                }
+            }
+        }
+    }
+
+    /// Remove `(i, j)`: drop any pending add and mask the committed entry.
+    pub fn remove(
+        &mut self,
+        i: u64,
+        j: u64,
+    ) {
+        if let Some(old) = self.dp.get(i, j) {
+            self.dp.remove(i, j);
+            if !old.is_scalar() {
+                old.release();
+            }
+        }
+        if self.m.contains(i, j) {
+            self.dm.set(i, j, true);
+        }
+    }
+
+    /// Stream effective `(row, col, raw_tagged_word)` triples over rows in
+    /// `[min_row, max_row]`: `(m ∖ dm) ∪ dp`.
+    #[must_use]
+    pub fn iter(
+        &self,
+        min_row: u64,
+        max_row: u64,
+    ) -> Iter<Uint64Extract> {
+        self.wait();
+        Iter::<Uint64Extract>::new(self, min_row, max_row)
+    }
+
+    /// Structure-only `(row, col)` iterator over the effective matrix,
+    /// ignoring the tagged words.
+    #[must_use]
+    pub fn structural_iter(
+        &self,
+        min_row: u64,
+        max_row: u64,
+    ) -> Iter {
+        self.wait();
+        Iter::<BoolExtract>::new(self, min_row, max_row)
+    }
+}
 impl<V> Encode<19> for VersionedMatrix<V> {
     fn encode(
         &self,

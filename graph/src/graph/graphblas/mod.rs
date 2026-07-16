@@ -58,6 +58,7 @@ pub mod serialization;
 pub mod tensor;
 pub mod vector;
 pub mod versioned_matrix;
+pub mod versioned_vector;
 
 /// Process-wide GraphBLAS initialization for unit tests. `GrB_init` may only
 /// be called once per process, so every `#[cfg(test)]` module must go through

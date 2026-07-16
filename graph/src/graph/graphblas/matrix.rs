@@ -60,7 +60,7 @@ use std::{
     os::raw::c_void,
     ptr::null_mut,
     sync::{
-        Arc,
+        Arc, OnceLock,
         atomic::{AtomicBool, Ordering},
     },
 };
@@ -70,6 +70,7 @@ use parking_lot::Mutex;
 use crate::graph::graphblas::{
     lagraph_bindings::{LAGraph_Finalize, LAGraph_Init},
     serialization::{Decode, Encode, Reader, Writer},
+    versioned_vector::{MSB_MASK, VersionedVector},
 };
 
 /// Size of the `GxB_Container_struct` in bytes.
@@ -83,20 +84,21 @@ use super::{
     GrB_DESC_RT0T1, GrB_DESC_RT1, GrB_DESC_S, GrB_DESC_SC, GrB_DESC_SCT0, GrB_DESC_SCT0T1,
     GrB_DESC_SCT1, GrB_DESC_ST0, GrB_DESC_ST0T1, GrB_DESC_ST1, GrB_DESC_T0, GrB_DESC_T0T1,
     GrB_DESC_T1, GrB_Descriptor, GrB_GLOBAL, GrB_Global_set_INT32, GrB_Info, GrB_Matrix,
-    GrB_Matrix_build_BOOL, GrB_Matrix_build_UINT64, GrB_Matrix_clear, GrB_Matrix_dup,
-    GrB_Matrix_eWiseAdd_BinaryOp, GrB_Matrix_eWiseAdd_Semiring, GrB_Matrix_eWiseMult_Semiring,
-    GrB_Matrix_extractElement_BOOL, GrB_Matrix_extractElement_UINT64, GrB_Matrix_free,
-    GrB_Matrix_get_INT32, GrB_Matrix_ncols, GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals,
-    GrB_Matrix_removeElement, GrB_Matrix_resize, GrB_Matrix_setElement_BOOL,
-    GrB_Matrix_setElement_UINT64, GrB_Matrix_wait, GrB_Mode, GrB_SECOND_UINT64, GrB_Type,
-    GrB_UINT64, GrB_WaitMode, GrB_finalize, GrB_mxm, GrB_transpose, GxB_ANY_BOOL,
-    GxB_ANY_PAIR_BOOL, GxB_ANY_UINT64, GxB_Container_free, GxB_Container_new,
-    GxB_Global_Option_set_INT32, GxB_Iterator, GxB_Iterator_free, GxB_Iterator_new,
-    GxB_JIT_Control, GxB_Matrix_fprint, GxB_Matrix_isStoredElement, GxB_Matrix_memoryUsage,
-    GxB_Matrix_type, GxB_NTHREADS, GxB_Option_Field, GxB_Print_Level, GxB_init,
-    GxB_load_Matrix_from_Container, GxB_rowIterator_attach, GxB_rowIterator_getColIndex,
-    GxB_rowIterator_getRowIndex, GxB_rowIterator_nextCol, GxB_rowIterator_nextRow,
-    GxB_rowIterator_seekRow, GxB_unload_Matrix_into_Container,
+    GrB_Matrix_apply, GrB_Matrix_build_BOOL, GrB_Matrix_build_UINT64, GrB_Matrix_clear,
+    GrB_Matrix_dup, GrB_Matrix_eWiseAdd_BinaryOp, GrB_Matrix_eWiseAdd_Semiring,
+    GrB_Matrix_eWiseMult_Semiring, GrB_Matrix_extractElement_BOOL,
+    GrB_Matrix_extractElement_UINT64, GrB_Matrix_free, GrB_Matrix_get_INT32, GrB_Matrix_ncols,
+    GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals, GrB_Matrix_removeElement,
+    GrB_Matrix_resize, GrB_Matrix_setElement_BOOL, GrB_Matrix_setElement_UINT64, GrB_Matrix_wait,
+    GrB_Mode, GrB_SECOND_UINT64, GrB_Type, GrB_UINT64, GrB_UnaryOp, GrB_UnaryOp_new, GrB_WaitMode,
+    GrB_finalize, GrB_mxm, GrB_transpose, GxB_ANY_BOOL, GxB_ANY_PAIR_BOOL, GxB_ANY_UINT64,
+    GxB_Container_free, GxB_Container_new, GxB_Global_Option_set_INT32, GxB_Iterator,
+    GxB_Iterator_free, GxB_Iterator_new, GxB_JIT_Control, GxB_Matrix_fprint,
+    GxB_Matrix_isStoredElement, GxB_Matrix_memoryUsage, GxB_Matrix_type, GxB_NTHREADS,
+    GxB_Option_Field, GxB_Print_Level, GxB_init, GxB_load_Matrix_from_Container,
+    GxB_rowIterator_attach, GxB_rowIterator_getColIndex, GxB_rowIterator_getRowIndex,
+    GxB_rowIterator_nextCol, GxB_rowIterator_nextRow, GxB_rowIterator_seekRow,
+    GxB_unload_Matrix_into_Container,
 };
 
 /// Initializes the GraphBLAS library in non-blocking mode.
@@ -292,6 +294,65 @@ impl From<Descriptor> for GrB_Descriptor {
     }
 }
 
+/// Identity pass-through that additionally bumps the inner refcount of every
+/// MSB-tagged pointer word (see [`Matrix::for_each_inner_word`]).
+unsafe extern "C" fn retain_inner_word(
+    z: *mut c_void,
+    x: *const c_void,
+) {
+    let raw = unsafe { *x.cast::<u64>() };
+    unsafe { *z.cast::<u64>() = raw };
+    if raw & MSB_MASK != 0 {
+        VersionedVector::from_raw(raw).retain();
+    }
+}
+
+/// Identity pass-through that additionally drops one inner reference of every
+/// MSB-tagged pointer word (see [`Matrix::for_each_inner_word`]).
+unsafe extern "C" fn release_inner_word(
+    z: *mut c_void,
+    x: *const c_void,
+) {
+    let raw = unsafe { *x.cast::<u64>() };
+    unsafe { *z.cast::<u64>() = raw };
+    if raw & MSB_MASK != 0 {
+        VersionedVector::from_raw(raw).release();
+    }
+}
+
+/// Raw `GrB_UnaryOp` handle, created once and never freed.
+struct UnaryOpHandle(GrB_UnaryOp);
+unsafe impl Send for UnaryOpHandle {}
+unsafe impl Sync for UnaryOpHandle {}
+
+static RETAIN_INNER_WORD_OP: OnceLock<UnaryOpHandle> = OnceLock::new();
+static RELEASE_INNER_WORD_OP: OnceLock<UnaryOpHandle> = OnceLock::new();
+
+fn inner_word_op(
+    cell: &OnceLock<UnaryOpHandle>,
+    f: unsafe extern "C" fn(*mut c_void, *const c_void),
+) -> GrB_UnaryOp {
+    cell.get_or_init(|| unsafe {
+        let mut op: MaybeUninit<GrB_UnaryOp> = MaybeUninit::uninit();
+        let info = GrB_UnaryOp_new(op.as_mut_ptr(), Some(f), GrB_UINT64, GrB_UINT64);
+        assert_eq!(
+            info,
+            GrB_Info::GrB_SUCCESS,
+            "GrB_UnaryOp_new failed: {info:?}"
+        );
+        UnaryOpHandle(op.assume_init())
+    })
+    .0
+}
+
+fn retain_inner_word_op() -> GrB_UnaryOp {
+    inner_word_op(&RETAIN_INNER_WORD_OP, retain_inner_word)
+}
+
+fn release_inner_word_op() -> GrB_UnaryOp {
+    inner_word_op(&RELEASE_INNER_WORD_OP, release_inner_word)
+}
+
 /// A wrapper around a GraphBLAS matrix.
 ///
 /// The type parameter `T` is a compile-time tag for the element type the matrix
@@ -306,6 +367,11 @@ pub struct Matrix<T> {
     /// Set to `true` by every mutating op; `wait()` short-circuits when `false`
     /// to skip the lock + GrB_Matrix_wait FFI under read-heavy contention.
     has_pending: Arc<AtomicBool>,
+    /// True only for tensor forward matrices whose MSB-tagged UINT64 entries
+    /// are refcounted [`VersionedVectorInner`](super::versioned_vector::VersionedVectorInner)
+    /// pointers. Encode temporaries and freshly-decoded matrices hold *count*
+    /// words under the MSB tag instead, so they must keep this `false`.
+    owns_inners: bool,
     phantom: PhantomData<T>,
 }
 
@@ -318,6 +384,7 @@ impl<T> Clone for Matrix<T> {
             m: self.m.clone(),
             lock: self.lock.clone(),
             has_pending: self.has_pending.clone(),
+            owns_inners: self.owns_inners,
             phantom: PhantomData,
         }
     }
@@ -328,6 +395,15 @@ unsafe impl<T> Sync for Matrix<T> {}
 
 impl<T> Drop for Matrix<T> {
     fn drop(&mut self) {
+        // strong_count == 1 means we hold the only reference, and no other
+        // thread can be cloning it concurrently.
+        if Arc::strong_count(&self.m) != 1 {
+            return;
+        }
+        if self.owns_inners {
+            self.wait();
+            self.for_each_inner_word(release_inner_word_op());
+        }
         if let Some(m) = Arc::get_mut(&mut self.m) {
             unsafe {
                 let info = GrB_Matrix_free(m);
@@ -406,6 +482,7 @@ impl<T> Decode<19> for Matrix<T> {
                 m: Arc::new(m),
                 lock: Arc::new(Mutex::new(())),
                 has_pending: Arc::new(AtomicBool::new(false)),
+                owns_inners: false,
                 phantom: PhantomData,
             })
         }
@@ -480,6 +557,7 @@ impl<T> Matrix<T> {
                 m: Arc::new(m.assume_init()),
                 lock: Arc::new(Mutex::new(())),
                 has_pending: Arc::new(AtomicBool::new(true)),
+                owns_inners: false,
                 phantom: PhantomData,
             };
             let info = GrB_transpose(*transpose.m, null_mut(), null_mut(), *self.m, null_mut());
@@ -493,6 +571,27 @@ impl<T> Matrix<T> {
     #[must_use]
     pub fn inner(&self) -> GrB_Matrix {
         *self.m
+    }
+
+    /// Retain or release every MSB-tagged (multi-edge pointer) word stored in
+    /// the matrix, in parallel: an in-place identity `GrB_Matrix_apply` lets
+    /// GraphBLAS fan the op out over all entries with OpenMP. The op runs
+    /// exactly once per stored entry and the refcounts are atomic, so the
+    /// side effects are sound. (An iso matrix would evaluate the op once for
+    /// all entries, but N>1 entries sharing one value would mean one inner
+    /// stored under two pairs, which the tensor never produces.)
+    ///
+    /// Pending work must be flushed (`wait`) first. Only meaningful when
+    /// `owns_inners` — callers pass [`retain_inner_word_op`] /
+    /// [`release_inner_word_op`].
+    fn for_each_inner_word(
+        &self,
+        op: GrB_UnaryOp,
+    ) {
+        unsafe {
+            let info = GrB_Matrix_apply(*self.m, null_mut(), null_mut(), op, *self.m, null_mut());
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
     }
 
     /// Whether an entry is stored at `(i, j)`, for **any** element type — a
@@ -771,7 +870,7 @@ impl<T> Dup<Self> for Matrix<T> {
         } else {
             false
         };
-        Self {
+        let dup = Self {
             m: Arc::new(unsafe {
                 let mut m: MaybeUninit<GrB_Matrix> = MaybeUninit::uninit();
                 let info = GrB_Matrix_dup(m.as_mut_ptr(), *self.m);
@@ -784,103 +883,16 @@ impl<T> Dup<Self> for Matrix<T> {
             }),
             lock: Arc::new(Mutex::new(())),
             has_pending: Arc::new(AtomicBool::new(dup_pending)),
+            owns_inners: self.owns_inners,
             phantom: PhantomData,
+        };
+        if dup.owns_inners {
+            // The bit-copied tagged words alias the same inners; account for
+            // the new matrix's references.
+            dup.wait();
+            dup.for_each_inner_word(retain_inner_word_op());
         }
-    }
-}
-
-impl Matrix<u64> {
-    /// Create a new UINT64 matrix (for C-compatible tensor encoding and inline
-    /// edge-id storage).
-    pub fn new(
-        nrows: u64,
-        ncols: u64,
-    ) -> Self {
-        unsafe {
-            let mut m: MaybeUninit<GrB_Matrix> = MaybeUninit::uninit();
-            let info = GrB_Matrix_new(m.as_mut_ptr(), GrB_UINT64, nrows, ncols);
-            assert_eq!(
-                info,
-                GrB_Info::GrB_SUCCESS,
-                "GrB_Matrix_new failed: {info:?}"
-            );
-            Self {
-                m: Arc::new(m.assume_init()),
-                lock: Arc::new(Mutex::new(())),
-                has_pending: Arc::new(AtomicBool::new(false)),
-                phantom: PhantomData,
-            }
-        }
-    }
-
-    /// Set a UINT64 value at (i, j).
-    pub fn set(
-        &mut self,
-        i: u64,
-        j: u64,
-        value: u64,
-    ) {
-        unsafe {
-            let info = GrB_Matrix_setElement_UINT64(*self.m, value, i, j);
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
-        }
-        self.has_pending.store(true, Ordering::Relaxed);
-    }
-
-    /// Read the UINT64 value at (i, j). Returns `None` if no entry exists.
-    #[must_use]
-    pub fn get(
-        &self,
-        i: u64,
-        j: u64,
-    ) -> Option<u64> {
-        unsafe {
-            let mut val: MaybeUninit<u64> = MaybeUninit::uninit();
-            let info = GrB_Matrix_extractElement_UINT64(val.as_mut_ptr(), *self.m, i, j);
-            if info == GrB_Info::GrB_SUCCESS {
-                Some(val.assume_init())
-            } else {
-                None
-            }
-        }
-    }
-
-    /// UINT64 row-range iterator yielding `(row, col, value)` triples over rows
-    /// in `[min_row, max_row]`. Supports `seek` for amortized per-row scans.
-    #[must_use]
-    pub fn iter(
-        &self,
-        min_row: u64,
-        max_row: u64,
-    ) -> Iter<Uint64Extract> {
-        Iter::new(self, min_row, max_row)
-    }
-
-    /// Bulk-insert UINT64 entries from (row, col, val) arrays. Matrix must be empty and UINT64 typed.
-    pub fn build(
-        &mut self,
-        rows: &[u64],
-        cols: &[u64],
-        vals: &[u64],
-    ) {
-        debug_assert_eq!(rows.len(), cols.len());
-        debug_assert_eq!(rows.len(), vals.len());
-        if rows.is_empty() {
-            return;
-        }
-        let nvals = rows.len() as u64;
-        unsafe {
-            let info = GrB_Matrix_build_UINT64(
-                *self.m,
-                rows.as_ptr(),
-                cols.as_ptr(),
-                vals.as_ptr(),
-                nvals,
-                GxB_ANY_UINT64,
-            );
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
-        }
-        self.has_pending.store(true, Ordering::Relaxed);
+        dup
     }
 }
 
@@ -901,6 +913,7 @@ impl Matrix<bool> {
                 m: Arc::new(m.assume_init()),
                 lock: Arc::new(Mutex::new(())),
                 has_pending: Arc::new(AtomicBool::new(false)),
+                owns_inners: false,
                 phantom: PhantomData,
             }
         }
@@ -1075,6 +1088,105 @@ impl Matrix<bool> {
     }
 }
 
+impl Matrix<VersionedVector> {
+    pub fn new(
+        nrows: u64,
+        ncols: u64,
+    ) -> Self {
+        unsafe {
+            let mut m: MaybeUninit<GrB_Matrix> = MaybeUninit::uninit();
+            let info = GrB_Matrix_new(m.as_mut_ptr(), GrB_UINT64, nrows, ncols);
+            assert_eq!(
+                info,
+                GrB_Info::GrB_SUCCESS,
+                "GrB_Matrix_new failed: {info:?}"
+            );
+            Self {
+                m: Arc::new(m.assume_init()),
+                lock: Arc::new(Mutex::new(())),
+                has_pending: Arc::new(AtomicBool::new(false)),
+                owns_inners: false,
+                phantom: PhantomData,
+            }
+        }
+    }
+
+    /// Mark this matrix as holding refcounted inner pointers under its
+    /// MSB-tagged words. Dropping the last handle (or `dup`-ing) then
+    /// releases (retains) those inners. Must NOT be set on encode
+    /// temporaries or freshly-decoded matrices, whose MSB words are counts.
+    pub(crate) const fn set_owns_inners(&mut self) {
+        self.owns_inners = true;
+    }
+
+    #[must_use]
+    pub fn get(
+        &self,
+        i: u64,
+        j: u64,
+    ) -> Option<VersionedVector> {
+        unsafe {
+            let mut val: MaybeUninit<u64> = MaybeUninit::uninit();
+            let info = GrB_Matrix_extractElement_UINT64(val.as_mut_ptr(), *self.m, i, j);
+            if info == GrB_Info::GrB_SUCCESS {
+                Some(VersionedVector::from(val.assume_init()))
+            } else {
+                None
+            }
+        }
+    }
+
+    /// Store the tagged word at `(i, j)`.
+    pub fn set(
+        &mut self,
+        i: u64,
+        j: u64,
+        value: VersionedVector,
+    ) {
+        unsafe {
+            let info = GrB_Matrix_setElement_UINT64(*self.m, value.raw(), i, j);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+        self.has_pending.store(true, Ordering::Relaxed);
+    }
+
+    /// Bulk-insert tagged words from (row, col, raw) arrays. Matrix must be
+    /// empty. Uses a single GraphBLAS FFI call instead of N setElement calls.
+    pub fn build(
+        &mut self,
+        rows: &[u64],
+        cols: &[u64],
+        vals: &[u64],
+    ) {
+        debug_assert_eq!(rows.len(), cols.len());
+        debug_assert_eq!(rows.len(), vals.len());
+        if rows.is_empty() {
+            return;
+        }
+        unsafe {
+            let info = GrB_Matrix_build_UINT64(
+                *self.m,
+                rows.as_ptr(),
+                cols.as_ptr(),
+                vals.as_ptr(),
+                rows.len() as u64,
+                GxB_ANY_UINT64,
+            );
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+        self.has_pending.store(true, Ordering::Relaxed);
+    }
+
+    /// Row-range iterator yielding `(row, col, raw_tagged_word)` triples.
+    #[must_use]
+    pub fn iter(
+        &self,
+        min_row: u64,
+        max_row: u64,
+    ) -> Iter<Uint64Extract> {
+        Iter::new(self, min_row, max_row)
+    }
+}
 /// Strategy for extracting values from a GraphBLAS row iterator position.
 ///
 /// # Safety

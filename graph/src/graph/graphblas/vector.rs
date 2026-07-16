@@ -40,7 +40,9 @@ use std::{
     ptr::{addr_of_mut, null_mut},
 };
 
-use crate::graph::graphblas::{GrB_UINT64, GrB_Vector_clear, GrB_Vector_setElement_UINT64};
+use crate::graph::graphblas::{
+    GrB_UINT64, GrB_Vector_clear, GrB_Vector_dup, GrB_Vector_nvals, GrB_Vector_setElement_UINT64,
+};
 
 use super::serialization::{Decode, Encode, Reader, Writer};
 use super::{
@@ -99,6 +101,33 @@ impl<T> Vector<T> {
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
     }
+
+    #[must_use]
+    pub fn nvals(&self) -> u64 {
+        unsafe {
+            let mut nvals: u64 = 0;
+            let info = GrB_Vector_nvals(&raw mut nvals, self.v);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            nvals
+        }
+    }
+
+    #[must_use]
+    pub fn dup(&self) -> Self {
+        unsafe {
+            let mut v: MaybeUninit<GrB_Vector> = MaybeUninit::uninit();
+            let info = GrB_Vector_dup(v.as_mut_ptr(), self.v);
+            assert_eq!(
+                info,
+                GrB_Info::GrB_SUCCESS,
+                "GrB_Vector_dup failed: {info:?}"
+            );
+            Self {
+                v: v.assume_init(),
+                phantom: PhantomData,
+            }
+        }
+    }
 }
 
 impl Vector<bool> {
@@ -145,49 +174,6 @@ impl Vector<bool> {
     #[allow(clippy::iter_without_into_iter)]
     pub fn iter(&self) -> Iter<bool> {
         Iter::new(self)
-    }
-}
-
-impl Encode<19> for Vector<u64> {
-    fn encode(
-        &self,
-        w: &mut dyn Writer,
-    ) {
-        unsafe {
-            let mut blob: *mut c_void = null_mut();
-            let mut blob_size: u64 = 0;
-
-            let info = GxB_Vector_serialize(&raw mut blob, &raw mut blob_size, self.v, null_mut());
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
-
-            let blob_slice = std::slice::from_raw_parts(blob.cast::<u8>(), blob_size as usize);
-            w.write_buffer(blob_slice);
-
-            let layout = std::alloc::Layout::from_size_align(blob_size as usize, 8).unwrap();
-            std::alloc::dealloc(blob.cast::<u8>(), layout);
-        }
-    }
-}
-
-impl Decode<19> for Vector<u64> {
-    fn decode(r: &mut dyn Reader) -> Result<Self, String> {
-        let blob = r.read_buffer()?;
-        unsafe {
-            let mut v: MaybeUninit<GrB_Vector> = MaybeUninit::uninit();
-            let info = GxB_Vector_deserialize(
-                v.as_mut_ptr(),
-                null_mut(),
-                blob.as_ptr().cast(),
-                blob.len() as u64,
-                null_mut(),
-            );
-            assert_eq!(
-                info,
-                GrB_Info::GrB_SUCCESS,
-                "GxB_Vector_deserialize failed: {info:?}"
-            );
-            Ok(Self::from(v.assume_init()))
-        }
     }
 }
 

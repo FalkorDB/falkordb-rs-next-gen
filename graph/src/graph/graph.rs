@@ -1995,6 +1995,15 @@ impl Graph {
         self.relationship_type_matrix.flush();
     }
 
+    /// Mark all multi-edge vector versions written by this (writer) graph as
+    /// committed. Part of the MVCC commit path; must run before readers can
+    /// observe this graph as the committed snapshot.
+    pub fn commit_tensors(&mut self) {
+        for t in &mut self.relationship_matrices {
+            t.commit();
+        }
+    }
+
     /// Materialize all pending GraphBLAS operations on every matrix.
     /// Called from pthread_atfork prepare handler to ensure no internal
     /// GraphBLAS locks are held at fork time.

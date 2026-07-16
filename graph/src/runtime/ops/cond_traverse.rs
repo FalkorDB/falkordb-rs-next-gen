@@ -34,6 +34,7 @@ use std::sync::Arc;
 use crate::graph::graph::{LabelId, NodeId, RelationshipId};
 use crate::graph::graphblas::matrix::Matrix;
 use crate::graph::graphblas::versioned_matrix::{Iter, VersionedMatrix};
+use crate::graph::graphblas::versioned_vector::VersionedVector;
 use crate::parser::ast::{ExprIR, QueryExpr, QueryRelationship, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
@@ -55,14 +56,14 @@ use super::batched_result_emitter::{BatchedResultEmitter, EdgeEndpoints, RowIter
 /// (`Arc` handle clones, no data copy).
 enum TraversalMatrix {
     Bool(VersionedMatrix<bool>),
-    U64(VersionedMatrix<u64>),
+    Tensor(VersionedMatrix<VersionedVector>),
 }
 
 impl TraversalMatrix {
     fn ncols(&self) -> u64 {
         match self {
             Self::Bool(m) => m.ncols(),
-            Self::U64(m) => m.ncols(),
+            Self::Tensor(m) => m.ncols(),
         }
     }
 
@@ -73,7 +74,20 @@ impl TraversalMatrix {
     ) {
         match self {
             Self::Bool(m) => f.delta_lmxm(m),
-            Self::U64(m) => f.delta_lmxm(m),
+            Self::Tensor(m) => f.delta_lmxm(m),
+        }
+    }
+
+    /// Structure-only iterator over the effective matrix; only the sparsity
+    /// pattern is read, so both variants traverse identically.
+    fn iter(
+        &self,
+        min_row: u64,
+        max_row: u64,
+    ) -> Iter {
+        match self {
+            Self::Bool(m) => m.iter(min_row, max_row),
+            Self::Tensor(m) => m.structural_iter(min_row, max_row),
         }
     }
 }
@@ -100,10 +114,10 @@ struct CtState {
     /// output rows, since `unwrap_or_default()` would otherwise turn an
     /// unknown label into "no label restriction".
     no_match: bool,
-    /// Materialized base matrix for batched mxm path. Built lazily on
-    /// first `expand_batch`. Cached for op lifetime; safe because writes
-    /// are serialized w.r.t. read queries.
-    batched_matrix: Option<TraversalMatrix>,
+    /// Resolved base matrix, shared by the batched mxm path and the
+    /// per-row iterators. `None` iff `no_match`. Cached for op lifetime;
+    /// safe because writes are serialized w.r.t. read queries.
+    base_matrix: Option<TraversalMatrix>,
     /// Per-hop matrices for fused chain (same lifetime/safety rules as
     /// `batched_matrix`). `chain_matrices[i]` corresponds to `chain[i]`.
     chain_matrices: Vec<TraversalMatrix>,
@@ -168,22 +182,26 @@ pub struct CondTraverseOp<'a> {
     batched_eligible: bool,
 }
 
-/// Build an `EdgeIter` over the union of relationship matrices for `types`,
-/// avoiding the dup+merge cost of materializing a fresh `Matrix`.
-fn build_unrestricted_iter(
+/// Resolve the traversal base matrix for `types`: the adjacency matrix
+/// (untyped), a single relationship tensor's pair matrix, or a merged
+/// multi-type matrix. Returns `None` when a requested type is unknown.
+/// Resolved once per operator: both the batched mxm and the per-row
+/// iterators derive from the same `TraversalMatrix`, so the multi-type
+/// O(E) merge is paid once instead of once per consumer.
+fn build_traversal_matrix(
     g: &crate::graph::graph::Graph,
     types: &[Arc<String>],
-) -> Option<Iter> {
+) -> Option<TraversalMatrix> {
     if types.is_empty() {
-        return Some(g.adjacency_matrix().iter(0, u64::MAX));
+        return Some(TraversalMatrix::Bool(g.adjacency_matrix().clone()));
     }
     if types.len() == 1 {
         return g
             .get_relationship_matrix(&types[0])
-            .map(|t| t.matrix().structural_iter(0, u64::MAX));
+            .map(|t| TraversalMatrix::Tensor(t.matrix().clone()));
     }
-    let merged = g.build_relationship_matrix_unrestricted(types)?;
-    Some(VersionedMatrix::from_matrix(merged).iter(0, u64::MAX))
+    g.build_relationship_matrix_unrestricted(types)
+        .map(|m| TraversalMatrix::Bool(VersionedMatrix::from_matrix(m)))
 }
 
 fn empty_edge_iter() -> Iter {
@@ -365,31 +383,27 @@ impl<'a> CondTraverseOp<'a> {
             (Some(Vec::new()), Some(Vec::new()))
         };
 
-        let fwd_iter_opt = build_unrestricted_iter(&g, &rp.types);
-        let rev_iter_opt = if rp.bidirectional {
-            build_unrestricted_iter(&g, &rp.types)
-        } else {
-            None
-        };
+        let base_matrix = build_traversal_matrix(&g, &rp.types);
 
         let no_match = fwd_src_label_ids.is_none()
             || fwd_dst_label_ids.is_none()
             || rev_src_label_ids.is_none()
             || rev_dst_label_ids.is_none()
-            || fwd_iter_opt.is_none()
-            || (rp.bidirectional && rev_iter_opt.is_none());
+            || base_matrix.is_none();
 
         let fwd_src_label_ids = fwd_src_label_ids.unwrap_or_default();
         let fwd_dst_label_ids = fwd_dst_label_ids.unwrap_or_default();
         let rev_src_label_ids = rev_src_label_ids.unwrap_or_default();
         let rev_dst_label_ids = rev_dst_label_ids.unwrap_or_default();
 
-        let fwd_iter = fwd_iter_opt.unwrap_or_else(empty_edge_iter);
-        let rev_iter = if rp.bidirectional {
-            Some(rev_iter_opt.unwrap_or_else(empty_edge_iter))
-        } else {
-            None
-        };
+        let fwd_iter = base_matrix
+            .as_ref()
+            .map_or_else(empty_edge_iter, |m| m.iter(0, u64::MAX));
+        let rev_iter = rp.bidirectional.then(|| {
+            base_matrix
+                .as_ref()
+                .map_or_else(empty_edge_iter, |m| m.iter(0, u64::MAX))
+        });
 
         let edge_type_indices: Vec<usize> = if rp.types.is_empty() {
             (0..g.relationship_tensors().len()).collect()
@@ -410,7 +424,7 @@ impl<'a> CondTraverseOp<'a> {
             rev_dst_label_ids,
             edge_type_indices,
             no_match,
-            batched_matrix: None,
+            base_matrix,
             chain_matrices: Vec::new(),
             chain_dst_label_ids: Vec::new(),
         }
@@ -450,47 +464,15 @@ impl<'a> CondTraverseOp<'a> {
 
         let g = runtime.g.borrow();
 
-        if state.batched_matrix.is_none() {
-            let m = if rp.types.is_empty() {
-                TraversalMatrix::Bool(g.adjacency_matrix().clone())
-            } else if rp.types.len() == 1 {
-                if let Some(t) = g.get_relationship_matrix(&rp.types[0]) {
-                    TraversalMatrix::U64(t.matrix().clone())
-                } else {
-                    state.no_match = true;
-                    return true;
-                }
-            } else {
-                if let Some(m) = g.build_relationship_matrix_unrestricted(&rp.types) {
-                    TraversalMatrix::Bool(VersionedMatrix::from_matrix(m))
-                } else {
-                    state.no_match = true;
-                    return true;
-                }
-            };
-            state.batched_matrix = Some(m);
-
-            // Build per-hop matrices and label-id vectors for the fused chain.
-            // If any hop's relationship type is unknown, mark no_match — that
-            // hop can produce no rows, so the overall fused traversal can't
-            // either.
+        // Build per-hop matrices and label-id vectors for the fused chain,
+        // lazily on the first batched expansion. If any hop's relationship
+        // type is unknown, mark no_match — that hop can produce no rows, so
+        // the overall fused traversal can't either.
+        if !self.chain.is_empty() && state.chain_matrices.is_empty() {
             for hop in self.chain {
-                let hm = if hop.types.is_empty() {
-                    TraversalMatrix::Bool(g.adjacency_matrix().clone())
-                } else if hop.types.len() == 1 {
-                    if let Some(t) = g.get_relationship_matrix(&hop.types[0]) {
-                        TraversalMatrix::U64(t.matrix().clone())
-                    } else {
-                        state.no_match = true;
-                        return true;
-                    }
-                } else {
-                    if let Some(m) = g.build_relationship_matrix_unrestricted(&hop.types) {
-                        TraversalMatrix::Bool(VersionedMatrix::from_matrix(m))
-                    } else {
-                        state.no_match = true;
-                        return true;
-                    }
+                let Some(hm) = build_traversal_matrix(&g, &hop.types) else {
+                    state.no_match = true;
+                    return true;
                 };
                 state.chain_matrices.push(hm);
                 let Some(dst_labels) = g.resolve_label_ids(&hop.to.labels) else {
@@ -500,7 +482,10 @@ impl<'a> CondTraverseOp<'a> {
                 state.chain_dst_label_ids.push(dst_labels);
             }
         }
-        let m_merged = state.batched_matrix.as_ref().unwrap();
+        let m_merged = state
+            .base_matrix
+            .as_ref()
+            .expect("no_match returned above, so the base matrix resolved");
         let ncols = m_merged.ncols();
 
         let transposed = self.transposed;
