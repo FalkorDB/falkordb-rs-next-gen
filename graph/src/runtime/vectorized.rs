@@ -22,11 +22,14 @@
 //! - [`CmpOp`] -- comparison operator enum (Eq, Neq, Lt, Le, Gt, Ge)
 //! - Comparison kernels: [`compare_i64_column`], [`compare_f64_column`],
 //!   [`compare_string_column`] -- tight indexed loops for auto-vectorization
+//! - [`TriMask`] -- three-valued (Kleene) row mask; each row is true, false,
+//!   or NULL, so `NOT`/`AND`/`OR` combine with correct Cypher NULL semantics
 //! - [`SimplePredicate`] / [`VectorizablePredicate`] -- detected filter patterns
 //!   that can use the bulk path instead of per-row expression evaluation
-//! - [`try_extract_vectorizable_predicate`] -- analyzes a filter expression tree
-//!   to detect `entity.property <cmp> constant`, `entity.property IS [NOT] NULL`,
-//!   and `entity.property CONTAINS/STARTS WITH/ENDS WITH 'pattern'` patterns
+//! - [`try_extract_vectorizable_predicate`] -- recursively analyzes a filter
+//!   expression tree: any `AND`/`OR`/`NOT` combination of
+//!   `entity.property <cmp> constant`, `entity.property IS [NOT] NULL`,
+//!   and `entity.property CONTAINS/STARTS WITH/ENDS WITH 'pattern'` leaves
 //! - [`mask_to_selection`] / [`mask_intersect_selection`] -- convert boolean
 //!   masks to/from the selection vector used by [`Batch`](super::batch::Batch)
 //!
@@ -201,52 +204,78 @@ pub fn compare_f64_column(
     result
 }
 
-/// Compares string values in a `Value` slice against `threshold`.
-/// Non-string and Null values produce `false`.
+/// Compares string values in a `Value` slice against `threshold`,
+/// producing a three-valued mask that matches the scalar comparison
+/// semantics ([`compare_value`](crate::runtime::value::CompareValue)):
+///
+/// - `String` rows compare normally (byte-wise `str` ordering).
+/// - `Null` rows are NULL for every operator.
+/// - Rows of any other type are disjoint from a string: `=` is false,
+///   `<>` is true, and ordering comparisons (`<`, `<=`, `>`, `>=`) are NULL.
+#[allow(clippy::needless_range_loop)]
 #[must_use]
 pub fn compare_string_column(
     data: &[Value],
     op: CmpOp,
     threshold: &str,
-) -> Vec<bool> {
+) -> TriMask {
     let len = data.len();
-    let mut result = vec![false; len];
+    let mut truthy = vec![false; len];
+    let mut nulls = vec![false; len];
     for i in 0..len {
-        if let Value::String(s) = &data[i] {
-            result[i] = match op {
-                CmpOp::Eq => s.as_str() == threshold,
-                CmpOp::Neq => s.as_str() != threshold,
-                CmpOp::Lt => s.as_str() < threshold,
-                CmpOp::Le => s.as_str() <= threshold,
-                CmpOp::Gt => s.as_str() > threshold,
-                CmpOp::Ge => s.as_str() >= threshold,
-            };
+        match &data[i] {
+            Value::String(s) => {
+                truthy[i] = match op {
+                    CmpOp::Eq => s.as_str() == threshold,
+                    CmpOp::Neq => s.as_str() != threshold,
+                    CmpOp::Lt => s.as_str() < threshold,
+                    CmpOp::Le => s.as_str() <= threshold,
+                    CmpOp::Gt => s.as_str() > threshold,
+                    CmpOp::Ge => s.as_str() >= threshold,
+                };
+            }
+            Value::Null => nulls[i] = true,
+            _ => match op {
+                // Disjoint types are simply not equal.
+                CmpOp::Eq => {}
+                CmpOp::Neq => truthy[i] = true,
+                // Ordering across disjoint types is NULL.
+                CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge => nulls[i] = true,
+            },
         }
     }
-    result
+    TriMask::new(truthy, nulls)
 }
 
 /// Runs a substring/prefix/suffix match on string values in a `Value` slice.
-/// Non-string and Null values produce `false` (Cypher: `NULL CONTAINS x` is
-/// NULL, which the filter drops).
+/// Non-string and Null rows produce NULL, mirroring the scalar
+/// `internal_contains`/`internal_starts_with`/`internal_ends_with` functions.
+///
+/// Matching is intentionally byte-wise (`str::contains`/`starts_with`/
+/// `ends_with` — UTF-8 byte sequences, not Unicode graphemes), exactly like
+/// the scalar internal functions this kernel mirrors.
+#[allow(clippy::needless_range_loop)]
 #[must_use]
 pub fn match_string_column(
     data: &[Value],
     op: StringMatchOp,
     pattern: &str,
-) -> Vec<bool> {
+) -> TriMask {
     let len = data.len();
-    let mut result = vec![false; len];
+    let mut truthy = vec![false; len];
+    let mut nulls = vec![false; len];
     for i in 0..len {
         if let Value::String(s) = &data[i] {
-            result[i] = match op {
+            truthy[i] = match op {
                 StringMatchOp::Contains => s.contains(pattern),
                 StringMatchOp::StartsWith => s.starts_with(pattern),
                 StringMatchOp::EndsWith => s.ends_with(pattern),
             };
+        } else {
+            nulls[i] = true;
         }
     }
-    result
+    TriMask::new(truthy, nulls)
 }
 
 /// Builds a boolean mask from a property column's null bitmap.
@@ -282,6 +311,98 @@ pub fn mask_intersect_selection(
         .copied()
         .filter(|&i| mask[i as usize])
         .collect()
+}
+
+// ---------------------------------------------------------------------------
+// TriMask — three-valued (Kleene) row mask
+// ---------------------------------------------------------------------------
+
+/// A three-valued (Kleene logic) row mask: each row's predicate result is
+/// `true`, `false`, or NULL.
+///
+/// A plain boolean "row passed" mask is not enough once `NOT` and `OR` enter
+/// the picture: in Cypher `NOT NULL` is NULL (the row is still dropped), so
+/// complementing a boolean mask would incorrectly resurrect NULL rows.
+/// Tracking NULL separately lets `AND`/`OR`/`NOT` combine with exactly the
+/// same semantics as the per-row evaluator.
+#[derive(Debug)]
+pub struct TriMask {
+    /// Rows where the predicate evaluated to exactly `true`.
+    truthy: Vec<bool>,
+    /// Rows where the predicate evaluated to NULL.
+    nulls: Vec<bool>,
+}
+
+impl TriMask {
+    /// Creates a mask from separate `true` and NULL row vectors.
+    /// A row must not be flagged in both.
+    #[must_use]
+    pub fn new(
+        truthy: Vec<bool>,
+        nulls: Vec<bool>,
+    ) -> Self {
+        debug_assert_eq!(truthy.len(), nulls.len());
+        Self { truthy, nulls }
+    }
+
+    /// Creates a mask from a plain boolean result (no NULL rows).
+    #[must_use]
+    pub fn from_bools(truthy: Vec<bool>) -> Self {
+        let nulls = vec![false; truthy.len()];
+        Self { truthy, nulls }
+    }
+
+    /// The rows where the predicate evaluated to exactly `true` — the rows a
+    /// filter keeps (both `false` and NULL are dropped).
+    #[must_use]
+    pub fn truthy(&self) -> &[bool] {
+        &self.truthy
+    }
+
+    /// Logical `AND` (Kleene): `false AND x = false`, `true AND true = true`,
+    /// everything else is NULL.
+    #[must_use]
+    pub fn and(
+        mut self,
+        other: &Self,
+    ) -> Self {
+        for i in 0..self.truthy.len() {
+            let any_false =
+                (!self.truthy[i] && !self.nulls[i]) || (!other.truthy[i] && !other.nulls[i]);
+            self.truthy[i] &= other.truthy[i];
+            self.nulls[i] = !self.truthy[i] && !any_false;
+        }
+        self
+    }
+
+    /// Logical `OR` (Kleene): `true OR x = true`, `false OR false = false`,
+    /// everything else is NULL.
+    #[must_use]
+    pub fn or(
+        mut self,
+        other: &Self,
+    ) -> Self {
+        for i in 0..self.truthy.len() {
+            let all_false =
+                !self.truthy[i] && !self.nulls[i] && !other.truthy[i] && !other.nulls[i];
+            self.truthy[i] |= other.truthy[i];
+            self.nulls[i] = !self.truthy[i] && !all_false;
+        }
+        self
+    }
+}
+
+/// Logical `NOT` (Kleene): `NOT true = false`, `NOT false = true`,
+/// `NOT NULL = NULL`.
+impl std::ops::Not for TriMask {
+    type Output = Self;
+
+    fn not(mut self) -> Self {
+        for i in 0..self.truthy.len() {
+            self.truthy[i] = !self.truthy[i] && !self.nulls[i];
+        }
+        self
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -341,53 +462,87 @@ pub struct SimplePredicate {
     pub test: PredicateTest,
 }
 
-/// A vectorizable predicate — either a single comparison or a conjunction.
+/// A vectorizable predicate — a boolean expression tree whose leaves are
+/// [`SimplePredicate`]s, combined with `AND`/`OR`/`NOT`. Each node evaluates
+/// to a [`TriMask`], so NULL propagates exactly like the per-row evaluator.
 #[derive(Debug)]
 pub enum VectorizablePredicate {
-    Single(SimplePredicate),
-    Conjunction(Vec<SimplePredicate>),
+    Leaf(SimplePredicate),
+    And(Vec<VectorizablePredicate>),
+    Or(Vec<VectorizablePredicate>),
+    Not(Box<VectorizablePredicate>),
 }
 
 /// Tries to extract a vectorizable predicate from a filter expression tree.
 ///
-/// Detects patterns like:
-/// - `n.age > 30` → `Single(SimplePredicate { var: n, attr: "age", op: Gt, constant: Int(30) })`
-/// - `n.age > 30 AND n.name = 'Alice'` → `Conjunction([...])`
+/// Recursively walks `AND`/`OR`/`NOT` nodes; leaves must be one of:
+/// - `n.age > 30` (comparison against a literal or `$parameter`)
+/// - `n.embedding IS [NOT] NULL`
+/// - `n.name CONTAINS / STARTS WITH / ENDS WITH 'pattern'`
 ///
-/// Returns `None` for complex predicates that cannot be vectorized.
+/// e.g. `NOT (n.age > 30 OR n.name CONTAINS 'x')` →
+/// `Not(Or([Leaf(..), Leaf(..)]))`.
+///
+/// Returns `None` when any part of the expression cannot be vectorized
+/// (the filter then falls back to per-row evaluation).
 #[allow(clippy::implicit_hasher)]
 pub fn try_extract_vectorizable_predicate(
     tree: &DynTree<ExprIR<Variable>>,
     params: &HashMap<String, Value>,
 ) -> Option<VectorizablePredicate> {
-    let root = tree.root();
-    let root_data = root.data();
+    extract_predicate_expr(tree, tree.root().idx(), params)
+}
 
-    // Check for AND (conjunction of simple predicates)
-    if matches!(root_data, ExprIR::And) {
-        let mut preds = Vec::new();
-        for child in root.children() {
-            let child_tree = child.clone_as_tree();
-            preds.push(try_extract_single_predicate(&child_tree, params)?);
+/// Recursive worker for [`try_extract_vectorizable_predicate`]: converts the
+/// boolean expression rooted at `idx` into a [`VectorizablePredicate`] tree.
+fn extract_predicate_expr(
+    tree: &DynTree<ExprIR<Variable>>,
+    idx: NodeIdx<Dyn<ExprIR<Variable>>>,
+    params: &HashMap<String, Value>,
+) -> Option<VectorizablePredicate> {
+    let node = tree.node(idx);
+    match node.data() {
+        ExprIR::And | ExprIR::Or => {
+            let mut children = Vec::with_capacity(node.num_children());
+            for child in node.children() {
+                children.push(extract_predicate_expr(tree, child.idx(), params)?);
+            }
+            if children.is_empty() {
+                return None;
+            }
+            Some(if matches!(node.data(), ExprIR::And) {
+                VectorizablePredicate::And(children)
+            } else {
+                VectorizablePredicate::Or(children)
+            })
         }
-        if preds.is_empty() {
-            return None;
+        ExprIR::Not => {
+            if node.num_children() != 1 {
+                return None;
+            }
+            let inner = extract_predicate_expr(tree, node.child(0).idx(), params)?;
+            Some(VectorizablePredicate::Not(Box::new(inner)))
         }
-        return Some(VectorizablePredicate::Conjunction(preds));
+        // Transparent wrapper — recurse into the single child.
+        ExprIR::Paren => {
+            if node.num_children() != 1 {
+                return None;
+            }
+            extract_predicate_expr(tree, node.child(0).idx(), params)
+        }
+        _ => try_extract_single_predicate(tree, idx, params).map(VectorizablePredicate::Leaf),
     }
-
-    // Single predicate
-    try_extract_single_predicate(tree, params).map(VectorizablePredicate::Single)
 }
 
 /// Tries to extract a single `SimplePredicate` from a comparison,
 /// `IS [NOT] NULL`, or string-match (`CONTAINS`/`STARTS WITH`/`ENDS WITH`)
-/// expression.
+/// expression rooted at `idx`.
 fn try_extract_single_predicate(
     tree: &DynTree<ExprIR<Variable>>,
+    idx: NodeIdx<Dyn<ExprIR<Variable>>>,
     params: &HashMap<String, Value>,
 ) -> Option<SimplePredicate> {
-    let root = tree.root();
+    let root = tree.node(idx);
 
     if let Some(op) = CmpOp::from_expr_ir(root.data()) {
         if root.num_children() != 2 {
@@ -586,9 +741,18 @@ mod tests {
             Value::String(Arc::new("Bob".to_string())),
             Value::Null,
             Value::String(Arc::new("Alice".to_string())),
+            Value::Int(42),
         ];
-        let result = compare_string_column(&data, CmpOp::Eq, "Alice");
-        assert_eq!(result, vec![true, false, false, true]);
+        let mask = compare_string_column(&data, CmpOp::Eq, "Alice");
+        assert_eq!(mask.truthy(), &[true, false, false, true, false]);
+        assert_eq!(mask.nulls, vec![false, false, true, false, false]);
+
+        // Disjoint types: `<>` is true, ordering is NULL.
+        let mask = compare_string_column(&data, CmpOp::Neq, "Alice");
+        assert_eq!(mask.truthy(), &[false, true, false, false, true]);
+        let mask = compare_string_column(&data, CmpOp::Lt, "Bob");
+        assert_eq!(mask.truthy(), &[true, false, false, true, false]);
+        assert_eq!(mask.nulls, vec![false, false, true, false, true]);
     }
 
     #[test]
@@ -610,18 +774,51 @@ mod tests {
             Value::Int(42),
             Value::String(Arc::new("x_fixture_alice".to_string())),
         ];
+        let mask = match_string_column(&data, StringMatchOp::Contains, "fixture_alice");
+        assert_eq!(mask.truthy(), &[true, false, false, false, true]);
+        // Non-string rows are NULL, matching the scalar internal functions.
+        assert_eq!(mask.nulls, vec![false, false, true, true, false]);
         assert_eq!(
-            match_string_column(&data, StringMatchOp::Contains, "fixture_alice"),
-            vec![true, false, false, false, true]
+            match_string_column(&data, StringMatchOp::StartsWith, "fixture_").truthy(),
+            &[true, true, false, false, false]
         );
         assert_eq!(
-            match_string_column(&data, StringMatchOp::StartsWith, "fixture_"),
-            vec![true, true, false, false, false]
+            match_string_column(&data, StringMatchOp::EndsWith, "alice").truthy(),
+            &[false, false, false, false, true]
         );
-        assert_eq!(
-            match_string_column(&data, StringMatchOp::EndsWith, "alice"),
-            vec![false, false, false, false, true]
-        );
+    }
+
+    #[test]
+    fn test_tri_mask_kleene_ops() {
+        // Rows: [true, false, null]
+        let m = || TriMask::new(vec![true, false, false], vec![false, false, true]);
+
+        // NOT: [false, true, null]
+        let not = !m();
+        assert_eq!(not.truthy(), &[false, true, false]);
+        assert_eq!(not.nulls, vec![false, false, true]);
+
+        // AND with [true, true, true]: [true, false, null]
+        let all_true = TriMask::from_bools(vec![true, true, true]);
+        let and = m().and(&all_true);
+        assert_eq!(and.truthy(), &[true, false, false]);
+        assert_eq!(and.nulls, vec![false, false, true]);
+        // null AND false = false; null AND null = null
+        let nulls = TriMask::new(vec![false; 3], vec![true; 3]);
+        let and = nulls.and(&m());
+        assert_eq!(and.truthy(), &[false, false, false]);
+        assert_eq!(and.nulls, vec![true, false, true]);
+
+        // null OR true = true; null OR false = null; null OR null = null
+        let nulls = TriMask::new(vec![false; 3], vec![true; 3]);
+        let or = nulls.or(&m());
+        assert_eq!(or.truthy(), &[true, false, false]);
+        assert_eq!(or.nulls, vec![false, true, true]);
+        // false OR false = false
+        let all_false = TriMask::from_bools(vec![false, false, false]);
+        let or = m().or(&all_false);
+        assert_eq!(or.truthy(), &[true, false, false]);
+        assert_eq!(or.nulls, vec![false, false, true]);
     }
 
     #[test]
@@ -681,7 +878,7 @@ mod tests {
             );
             let pred = try_extract_vectorizable_predicate(&expr, &HashMap::new())
                 .expect("IS NOT NULL should be vectorizable");
-            let VectorizablePredicate::Single(p) = pred else {
+            let VectorizablePredicate::Leaf(p) = pred else {
                 panic!("expected single predicate");
             };
             assert_eq!(p.var.id, 7);
@@ -700,7 +897,7 @@ mod tests {
             );
             let pred = try_extract_vectorizable_predicate(&expr, &HashMap::new())
                 .expect("IS NULL should be vectorizable");
-            let VectorizablePredicate::Single(p) = pred else {
+            let VectorizablePredicate::Leaf(p) = pred else {
                 panic!("expected single predicate");
             };
             assert!(matches!(p.test, PredicateTest::IsNull { negated: false }));
@@ -724,7 +921,7 @@ mod tests {
                 );
                 let pred = try_extract_vectorizable_predicate(&expr, &HashMap::new())
                     .unwrap_or_else(|| panic!("{name} should be vectorizable"));
-                let VectorizablePredicate::Single(p) = pred else {
+                let VectorizablePredicate::Leaf(p) = pred else {
                     panic!("expected single predicate");
                 };
                 assert_eq!(p.attr.as_str(), "ft_text");
@@ -757,7 +954,7 @@ mod tests {
             );
             let pred = try_extract_vectorizable_predicate(&expr, &params)
                 .expect("CONTAINS $param should be vectorizable");
-            let VectorizablePredicate::Single(p) = pred else {
+            let VectorizablePredicate::Leaf(p) = pred else {
                 panic!("expected single predicate");
             };
             assert!(matches!(
@@ -817,15 +1014,21 @@ mod tests {
             );
             let pred = try_extract_vectorizable_predicate(&expr, &HashMap::new())
                 .expect("conjunction should be vectorizable");
-            let VectorizablePredicate::Conjunction(preds) = pred else {
+            let VectorizablePredicate::And(preds) = pred else {
                 panic!("expected conjunction");
             };
             assert_eq!(preds.len(), 2);
+            let VectorizablePredicate::Leaf(first) = &preds[0] else {
+                panic!("expected leaf");
+            };
+            let VectorizablePredicate::Leaf(second) = &preds[1] else {
+                panic!("expected leaf");
+            };
             assert!(matches!(
-                preds[0].test,
+                first.test,
                 PredicateTest::IsNull { negated: true }
             ));
-            assert!(matches!(preds[1].test, PredicateTest::StringMatch { .. }));
+            assert!(matches!(second.test, PredicateTest::StringMatch { .. }));
         }
 
         /// Parses and binds a full query, returning the MATCH clause's
@@ -858,7 +1061,7 @@ mod tests {
                 bind_where_expr("MATCH (u:User) WHERE u.embedding IS NOT NULL RETURN count(u)");
             let pred = try_extract_vectorizable_predicate(&expr, &HashMap::new())
                 .expect("parsed IS NOT NULL filter should be vectorizable");
-            let VectorizablePredicate::Single(p) = pred else {
+            let VectorizablePredicate::Leaf(p) = pred else {
                 panic!("expected single predicate");
             };
             assert_eq!(p.attr.as_str(), "embedding");
@@ -872,7 +1075,7 @@ mod tests {
             );
             let pred = try_extract_vectorizable_predicate(&expr, &HashMap::new())
                 .expect("parsed CONTAINS filter should be vectorizable");
-            let VectorizablePredicate::Single(p) = pred else {
+            let VectorizablePredicate::Leaf(p) = pred else {
                 panic!("expected single predicate");
             };
             assert_eq!(p.attr.as_str(), "ft_text");
@@ -891,7 +1094,7 @@ mod tests {
                 bind_where_expr("MATCH (u:User) WHERE u.name STARTS WITH 'fix' RETURN count(u)");
             let pred = try_extract_vectorizable_predicate(&expr, &HashMap::new())
                 .expect("parsed STARTS WITH filter should be vectorizable");
-            let VectorizablePredicate::Single(p) = pred else {
+            let VectorizablePredicate::Leaf(p) = pred else {
                 panic!("expected single predicate");
             };
             assert!(matches!(
@@ -906,7 +1109,7 @@ mod tests {
                 bind_where_expr("MATCH (u:User) WHERE u.name ENDS WITH 'ice' RETURN count(u)");
             let pred = try_extract_vectorizable_predicate(&expr, &HashMap::new())
                 .expect("parsed ENDS WITH filter should be vectorizable");
-            let VectorizablePredicate::Single(p) = pred else {
+            let VectorizablePredicate::Leaf(p) = pred else {
                 panic!("expected single predicate");
             };
             assert!(matches!(
@@ -916,6 +1119,78 @@ mod tests {
                     ..
                 }
             ));
+        }
+
+        #[test]
+        fn test_extract_from_parsed_not_contains_query() {
+            let expr = bind_where_expr(
+                "MATCH (u:User) WHERE NOT u.ft_text CONTAINS 'fixture_alice' RETURN count(u)",
+            );
+            let pred = try_extract_vectorizable_predicate(&expr, &HashMap::new())
+                .expect("parsed NOT ... CONTAINS filter should be vectorizable");
+            let VectorizablePredicate::Not(inner) = pred else {
+                panic!("expected NOT predicate");
+            };
+            let VectorizablePredicate::Leaf(p) = *inner else {
+                panic!("expected leaf under NOT");
+            };
+            assert!(matches!(
+                p.test,
+                PredicateTest::StringMatch {
+                    op: StringMatchOp::Contains,
+                    ..
+                }
+            ));
+        }
+
+        #[test]
+        fn test_extract_from_parsed_or_query() {
+            let expr = bind_where_expr(
+                "MATCH (u:User) WHERE u.embedding IS NULL OR u.age > 30 RETURN count(u)",
+            );
+            let pred = try_extract_vectorizable_predicate(&expr, &HashMap::new())
+                .expect("parsed OR filter should be vectorizable");
+            let VectorizablePredicate::Or(children) = pred else {
+                panic!("expected OR predicate");
+            };
+            assert_eq!(children.len(), 2);
+            let VectorizablePredicate::Leaf(first) = &children[0] else {
+                panic!("expected leaf");
+            };
+            let VectorizablePredicate::Leaf(second) = &children[1] else {
+                panic!("expected leaf");
+            };
+            assert!(matches!(
+                first.test,
+                PredicateTest::IsNull { negated: false }
+            ));
+            assert!(matches!(
+                second.test,
+                PredicateTest::Cmp { op: CmpOp::Gt, .. }
+            ));
+        }
+
+        #[test]
+        fn test_extract_from_parsed_nested_boolean_query() {
+            let expr = bind_where_expr(
+                "MATCH (u:User) WHERE NOT (u.age > 30 OR u.name CONTAINS 'x') RETURN count(u)",
+            );
+            let pred = try_extract_vectorizable_predicate(&expr, &HashMap::new())
+                .expect("nested NOT/OR filter should be vectorizable");
+            let VectorizablePredicate::Not(inner) = pred else {
+                panic!("expected NOT predicate");
+            };
+            assert!(matches!(*inner, VectorizablePredicate::Or(_)));
+        }
+
+        #[test]
+        fn test_extract_or_with_unsupported_side_falls_back() {
+            // One OR branch is not vectorizable — the whole predicate must
+            // fall back to per-row evaluation.
+            let expr = bind_where_expr(
+                "MATCH (u:User) WHERE u.age > 30 OR size(u.name) > 3 RETURN count(u)",
+            );
+            assert!(try_extract_vectorizable_predicate(&expr, &HashMap::new()).is_none());
         }
     }
 }

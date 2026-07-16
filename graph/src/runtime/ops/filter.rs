@@ -28,9 +28,9 @@ use crate::runtime::{
     runtime::Runtime,
     value::Value,
     vectorized::{
-        PredicateTest, SimplePredicate, VectorizablePredicate, compare_f64_column,
-        compare_i64_column, compare_string_column, mask_intersect_selection, mask_to_selection,
-        match_string_column, null_check_mask, try_extract_vectorizable_predicate,
+        PredicateTest, SimplePredicate, TriMask, VectorizablePredicate, compare_f64_column,
+        compare_i64_column, compare_string_column, mask_to_selection, match_string_column,
+        null_check_mask, try_extract_vectorizable_predicate,
     },
 };
 use orx_tree::{Dyn, NodeIdx, NodeRef};
@@ -147,82 +147,88 @@ impl<'a> FilterOp<'a> {
         batch: &Batch<'a>,
         pred: &VectorizablePredicate,
     ) -> Result<Option<Vec<u16>>, ()> {
+        let mask = self.eval_tri_mask(batch, pred)?;
+        let sel = mask_to_selection(mask.truthy());
+        Ok((!sel.is_empty()).then_some(sel))
+    }
+
+    /// Recursively evaluates a predicate tree into a three-valued row mask,
+    /// combining child masks with Kleene `AND`/`OR`/`NOT` — the same NULL
+    /// semantics as the per-row evaluator.
+    fn eval_tri_mask(
+        &self,
+        batch: &Batch<'a>,
+        pred: &VectorizablePredicate,
+    ) -> Result<TriMask, ()> {
         match pred {
-            VectorizablePredicate::Single(p) => {
-                let sel = self.eval_single_predicate(batch, p)?;
-                Ok((!sel.is_empty()).then_some(sel))
+            VectorizablePredicate::Leaf(p) => self.eval_leaf_mask(batch, p),
+            VectorizablePredicate::And(preds) => {
+                let mut iter = preds.iter();
+                let first = self.eval_tri_mask(batch, iter.next().ok_or(())?)?;
+                iter.try_fold(first, |acc, p| Ok(acc.and(&self.eval_tri_mask(batch, p)?)))
             }
-            VectorizablePredicate::Conjunction(preds) => {
-                let mut sel: Option<Vec<u16>> = None;
-                for p in preds {
-                    let mask = self.eval_single_mask(batch, p)?;
-                    sel = Some(sel.map_or_else(
-                        || mask_to_selection(&mask),
-                        |existing| mask_intersect_selection(&mask, &existing),
-                    ));
-                    // Early exit if nothing passes.
-                    if sel.as_ref().is_some_and(Vec::is_empty) {
-                        return Ok(None);
-                    }
-                }
-                match sel {
-                    Some(s) if s.is_empty() => Ok(None),
-                    Some(s) => Ok(Some(s)),
-                    None => Ok(None), // empty conjunction
-                }
+            VectorizablePredicate::Or(preds) => {
+                let mut iter = preds.iter();
+                let first = self.eval_tri_mask(batch, iter.next().ok_or(())?)?;
+                iter.try_fold(first, |acc, p| Ok(acc.or(&self.eval_tri_mask(batch, p)?)))
             }
+            VectorizablePredicate::Not(inner) => Ok(!self.eval_tri_mask(batch, inner)?),
         }
     }
 
-    /// Evaluates a single predicate and returns a selection vector of passing row indices.
-    fn eval_single_predicate(
+    /// Evaluates a single leaf predicate into a three-valued row mask by
+    /// materializing the property column and running the matching kernel.
+    fn eval_leaf_mask(
         &self,
         batch: &Batch<'a>,
         pred: &SimplePredicate,
-    ) -> Result<Vec<u16>, ()> {
-        let mask = self.eval_single_mask(batch, pred)?;
-        Ok(mask_to_selection(&mask))
-    }
-
-    /// Evaluates a single predicate and returns a boolean mask.
-    fn eval_single_mask(
-        &self,
-        batch: &Batch<'a>,
-        pred: &SimplePredicate,
-    ) -> Result<Vec<bool>, ()> {
+    ) -> Result<TriMask, ()> {
         let node_ids = batch.extract_node_ids(pred.var.id).ok_or(())?;
         let (col, nulls) = self
             .runtime
             .materialize_node_property(&node_ids, &pred.attr);
+        let len = node_ids.len();
+        let null_vec = || (0..len).map(|i| nulls.is_null(i)).collect::<Vec<bool>>();
 
         let mask = match &pred.test {
             PredicateTest::Cmp { op, constant } => match (&col, constant) {
-                (Column::Ints(data), Value::Int(threshold)) => {
-                    compare_i64_column(data, *op, *threshold, &nulls)
-                }
+                (Column::Ints(data), Value::Int(threshold)) => TriMask::new(
+                    compare_i64_column(data, *op, *threshold, &nulls),
+                    null_vec(),
+                ),
                 (Column::Ints(data), Value::Float(threshold)) => {
                     // Promote int column to float for comparison.
                     let floats: Vec<f64> = data.iter().map(|&i| i as f64).collect();
-                    compare_f64_column(&floats, *op, *threshold, &nulls)
+                    TriMask::new(
+                        compare_f64_column(&floats, *op, *threshold, &nulls),
+                        null_vec(),
+                    )
                 }
-                (Column::Floats(data), Value::Float(threshold)) => {
-                    compare_f64_column(data, *op, *threshold, &nulls)
-                }
-                (Column::Floats(data), Value::Int(threshold)) => {
-                    compare_f64_column(data, *op, *threshold as f64, &nulls)
-                }
+                (Column::Floats(data), Value::Float(threshold)) => TriMask::new(
+                    compare_f64_column(data, *op, *threshold, &nulls),
+                    null_vec(),
+                ),
+                (Column::Floats(data), Value::Int(threshold)) => TriMask::new(
+                    compare_f64_column(data, *op, *threshold as f64, &nulls),
+                    null_vec(),
+                ),
                 (Column::Values(data), Value::String(threshold)) => {
                     compare_string_column(data, *op, threshold)
                 }
                 _ => return Err(()), // type mismatch, fall back to per-row
             },
-            PredicateTest::IsNull { negated } => null_check_mask(&nulls, node_ids.len(), *negated),
+            PredicateTest::IsNull { negated } => {
+                // IS [NOT] NULL never evaluates to NULL itself.
+                TriMask::from_bools(null_check_mask(&nulls, len, *negated))
+            }
             PredicateTest::StringMatch { op, pattern } => match &col {
                 Column::Values(data) => match_string_column(data, *op, pattern),
-                // A typed numeric column can't contain strings, so no row
-                // matches (`non-string CONTAINS x` evaluates to NULL, which
-                // the filter drops).
-                Column::Ints(_) | Column::Floats(_) => vec![false; node_ids.len()],
+                // A typed numeric column can't contain strings, so every row
+                // is NULL (`non-string CONTAINS x` evaluates to NULL, which
+                // the filter drops but `NOT` must preserve as NULL).
+                Column::Ints(_) | Column::Floats(_) => {
+                    TriMask::new(vec![false; len], vec![true; len])
+                }
                 _ => return Err(()), // fall back to per-row
             },
         };

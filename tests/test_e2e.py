@@ -1872,3 +1872,77 @@ def test_optional_match_null_merge():
         [None, [2]],
     ]
 
+
+
+def test_vectorized_filter_predicates():
+    # Exercises FilterOp's vectorized mask dispatch end-to-end: the
+    # IS [NOT] NULL and CONTAINS/STARTS WITH/ENDS WITH predicates (and their
+    # NOT/OR combinations) take the columnar kernel path over a label scan,
+    # so these queries validate the mask wiring — including NULL rows,
+    # non-string values in a mixed column, and all-numeric typed columns —
+    # not just the AST extraction.
+    query(
+        """
+        CREATE (:VUser {id: 1, embedding: [1.0], ft_text: 'fixture_alice_1'}),
+               (:VUser {id: 2, ft_text: 'fixture_bob_2'}),
+               (:VUser {id: 3, embedding: [3.0], ft_text: 42}),
+               (:VUser {id: 4}),
+               (:VUser {id: 5, embedding: [5.0], ft_text: 'x_fixture_alice'})
+        """,
+        write=True,
+    )
+
+    # IS [NOT] NULL over a column with missing values.
+    res = query("MATCH (u:VUser) WHERE u.embedding IS NOT NULL RETURN count(u)")
+    assert res.result_set == [[3]]
+    res = query("MATCH (u:VUser) WHERE u.embedding IS NULL RETURN count(u)")
+    assert res.result_set == [[2]]
+
+    # String matches over a mixed column (strings, an int, a missing value).
+    res = query(
+        "MATCH (u:VUser) WHERE u.ft_text CONTAINS 'fixture_alice' RETURN count(u)"
+    )
+    assert res.result_set == [[2]]
+    res = query(
+        "MATCH (u:VUser) WHERE u.ft_text STARTS WITH 'fixture_' RETURN count(u)"
+    )
+    assert res.result_set == [[2]]
+    res = query("MATCH (u:VUser) WHERE u.ft_text ENDS WITH 'alice' RETURN count(u)")
+    assert res.result_set == [[1]]
+
+    # NOT must preserve NULL rows (int/missing ft_text stay dropped): only
+    # the string row that does not contain the pattern survives.
+    res = query(
+        "MATCH (u:VUser) WHERE NOT u.ft_text CONTAINS 'fixture_alice' RETURN count(u)"
+    )
+    assert res.result_set == [[1]]
+
+    # OR and AND combinations of vectorized leaves.
+    res = query(
+        """
+        MATCH (u:VUser)
+        WHERE u.embedding IS NULL OR u.ft_text CONTAINS 'fixture_alice'
+        RETURN count(u)
+        """
+    )
+    assert res.result_set == [[4]]
+    res = query(
+        """
+        MATCH (u:VUser)
+        WHERE u.embedding IS NOT NULL AND u.ft_text STARTS WITH 'fixture_'
+        RETURN count(u)
+        """
+    )
+    assert res.result_set == [[1]]
+
+    # A typed all-numeric column can never string-match: every row is NULL,
+    # so both the match and its negation return nothing.
+    res = query("MATCH (u:VUser) WHERE u.id CONTAINS '1' RETURN count(u)")
+    assert res.result_set == [[0]]
+    res = query("MATCH (u:VUser) WHERE NOT u.id CONTAINS '1' RETURN count(u)")
+    assert res.result_set == [[0]]
+
+    # Comparison leaf against a mixed-type column: `<>` is true for disjoint
+    # types (the int row), NULL for the missing row.
+    res = query("MATCH (u:VUser) WHERE u.ft_text <> 'fixture_bob_2' RETURN count(u)")
+    assert res.result_set == [[3]]
