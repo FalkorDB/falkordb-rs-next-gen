@@ -77,24 +77,24 @@ const CONTAINER_STRUCT_SIZE: usize = std::mem::size_of::<super::GxB_Container_st
 
 use super::vector::Vector;
 use super::{
-    GrB_BOOL, GrB_DESC_C, GrB_DESC_CT0, GrB_DESC_CT0T1, GrB_DESC_CT1, GrB_DESC_R, GrB_DESC_RC,
-    GrB_DESC_RCT0, GrB_DESC_RCT0T1, GrB_DESC_RCT1, GrB_DESC_RS, GrB_DESC_RSC, GrB_DESC_RSCT0,
-    GrB_DESC_RSCT0T1, GrB_DESC_RSCT1, GrB_DESC_RST0, GrB_DESC_RST0T1, GrB_DESC_RST1, GrB_DESC_RT0,
-    GrB_DESC_RT0T1, GrB_DESC_RT1, GrB_DESC_S, GrB_DESC_SC, GrB_DESC_SCT0, GrB_DESC_SCT0T1,
-    GrB_DESC_SCT1, GrB_DESC_ST0, GrB_DESC_ST0T1, GrB_DESC_ST1, GrB_DESC_T0, GrB_DESC_T0T1,
-    GrB_DESC_T1, GrB_Descriptor, GrB_GLOBAL, GrB_Global_set_INT32, GrB_Info, GrB_Matrix,
-    GrB_Matrix_build_BOOL, GrB_Matrix_build_UINT64, GrB_Matrix_clear, GrB_Matrix_dup,
-    GrB_Matrix_eWiseAdd_BinaryOp, GrB_Matrix_eWiseAdd_Semiring, GrB_Matrix_eWiseMult_Semiring,
-    GrB_Matrix_extractElement_BOOL, GrB_Matrix_extractElement_UINT64, GrB_Matrix_free,
-    GrB_Matrix_get_INT32, GrB_Matrix_ncols, GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals,
-    GrB_Matrix_removeElement, GrB_Matrix_resize, GrB_Matrix_setElement_BOOL,
-    GrB_Matrix_setElement_UINT64, GrB_Matrix_wait, GrB_Mode, GrB_SECOND_UINT64, GrB_Type,
-    GrB_UINT64, GrB_WaitMode, GrB_finalize, GrB_mxm, GrB_transpose, GxB_ANY_BOOL,
-    GxB_ANY_PAIR_BOOL, GxB_ANY_UINT64, GxB_Container_free, GxB_Container_new,
-    GxB_Global_Option_set_INT32, GxB_Iterator, GxB_Iterator_free, GxB_Iterator_new,
-    GxB_JIT_Control, GxB_Matrix_fprint, GxB_Matrix_isStoredElement, GxB_Matrix_memoryUsage,
-    GxB_Matrix_type, GxB_NTHREADS, GxB_Option_Field, GxB_Print_Level, GxB_init,
-    GxB_load_Matrix_from_Container, GxB_rowIterator_attach, GxB_rowIterator_getColIndex,
+    GrB_ALL, GrB_BOOL, GrB_DESC_C, GrB_DESC_CT0, GrB_DESC_CT0T1, GrB_DESC_CT1, GrB_DESC_R,
+    GrB_DESC_RC, GrB_DESC_RCT0, GrB_DESC_RCT0T1, GrB_DESC_RCT1, GrB_DESC_RS, GrB_DESC_RSC,
+    GrB_DESC_RSCT0, GrB_DESC_RSCT0T1, GrB_DESC_RSCT1, GrB_DESC_RST0, GrB_DESC_RST0T1,
+    GrB_DESC_RST1, GrB_DESC_RT0, GrB_DESC_RT0T1, GrB_DESC_RT1, GrB_DESC_S, GrB_DESC_SC,
+    GrB_DESC_SCT0, GrB_DESC_SCT0T1, GrB_DESC_SCT1, GrB_DESC_ST0, GrB_DESC_ST0T1, GrB_DESC_ST1,
+    GrB_DESC_T0, GrB_DESC_T0T1, GrB_DESC_T1, GrB_Descriptor, GrB_GLOBAL, GrB_Global_set_INT32,
+    GrB_Info, GrB_Matrix, GrB_Matrix_assign_BOOL, GrB_Matrix_build_BOOL, GrB_Matrix_build_UINT64,
+    GrB_Matrix_clear, GrB_Matrix_dup, GrB_Matrix_eWiseAdd_BinaryOp, GrB_Matrix_eWiseAdd_Semiring,
+    GrB_Matrix_eWiseMult_Semiring, GrB_Matrix_extractElement_BOOL,
+    GrB_Matrix_extractElement_UINT64, GrB_Matrix_free, GrB_Matrix_get_INT32, GrB_Matrix_ncols,
+    GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals, GrB_Matrix_removeElement,
+    GrB_Matrix_resize, GrB_Matrix_setElement_BOOL, GrB_Matrix_setElement_UINT64, GrB_Matrix_wait,
+    GrB_Mode, GrB_SECOND_UINT64, GrB_Type, GrB_UINT64, GrB_WaitMode, GrB_finalize, GrB_mxm,
+    GrB_transpose, GxB_ANY_BOOL, GxB_ANY_PAIR_BOOL, GxB_ANY_UINT64, GxB_Container_free,
+    GxB_Container_new, GxB_Global_Option_set_INT32, GxB_Iterator, GxB_Iterator_free,
+    GxB_Iterator_new, GxB_JIT_Control, GxB_Matrix_fprint, GxB_Matrix_isStoredElement,
+    GxB_Matrix_memoryUsage, GxB_Matrix_type, GxB_NTHREADS, GxB_Option_Field, GxB_Print_Level,
+    GxB_init, GxB_load_Matrix_from_Container, GxB_rowIterator_attach, GxB_rowIterator_getColIndex,
     GxB_rowIterator_getRowIndex, GxB_rowIterator_nextCol, GxB_rowIterator_nextRow,
     GxB_rowIterator_seekRow, GxB_unload_Matrix_into_Container,
 };
@@ -502,7 +502,7 @@ impl<T> Matrix<T> {
     /// Panics if the matrix is shared (a `Clone` exists): releasing the
     /// handle while other wrappers still reference it would double-free.
     #[must_use]
-    pub fn into_raw(self) -> GrB_Matrix {
+    pub(crate) fn into_raw(self) -> GrB_Matrix {
         let mut this = std::mem::ManuallyDrop::new(self);
         assert!(
             Arc::get_mut(&mut this.m).is_some(),
@@ -970,6 +970,38 @@ impl Matrix<bool> {
         self.has_pending.store(true, Ordering::Relaxed);
     }
 
+    /// Collapse every stored value to a single shared iso `true` IN PLACE:
+    /// `C(:,:)<C,struct> = true`.
+    ///
+    /// The sparsity pattern (and `nvals`) is unchanged; only the value
+    /// storage becomes iso, which lets GraphBLAS `mxv`/`mxm` kernels take
+    /// their fast iso paths (e.g. dot4 in LAGraph's HyperBall instead of the
+    /// ~3x slower generic dot2).
+    ///
+    /// Relies on a SuiteSparse-internal behavior verified against the pinned
+    /// GraphBLAS version in `graphblas.sh` (`GRAPHBLAS_VERSION`, currently
+    /// v10.3.1): `C == M` + whole-matrix + structural mask + scalar selects
+    /// subassign Method 05f, where `GB_assign_prep` simply marks the matrix
+    /// iso in O(1) with no pattern copy. Re-verify (the unit test below
+    /// asserts the iso flag flips) when bumping `GRAPHBLAS_VERSION`.
+    pub fn collapse_to_iso(&mut self) {
+        unsafe {
+            let info = GrB_Matrix_assign_BOOL(
+                *self.m,
+                *self.m,
+                null_mut(),
+                true,
+                GrB_ALL,
+                self.nrows(),
+                GrB_ALL,
+                self.ncols(),
+                GrB_DESC_S,
+            );
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+        self.has_pending.store(true, Ordering::Relaxed);
+    }
+
     /// Bulk-insert entries from (row, col) arrays. Matrix must be empty.
     /// Uses a single GraphBLAS FFI call instead of N individual setElement calls.
     pub fn build(
@@ -1284,5 +1316,50 @@ impl<E: IterExtract> Iterator for Iter<E> {
             }
             Some(item)
         }
+    }
+}
+
+#[cfg(test)]
+mod iso_tests {
+    use super::*;
+    use crate::graph::graphblas::{GxB_Matrix_iso, test_init};
+
+    fn is_iso(m: &Matrix<bool>) -> bool {
+        let mut iso = false;
+        let info = unsafe { GxB_Matrix_iso(&raw mut iso, m.inner()) };
+        assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        iso
+    }
+
+    /// Guards the SuiteSparse-internal side effect `collapse_to_iso` relies
+    /// on (subassign Method 05f flipping the matrix to iso in place). If this
+    /// fails after bumping `GRAPHBLAS_VERSION` in `graphblas.sh`, re-verify
+    /// the method selection in the new SuiteSparse sources.
+    #[test]
+    fn collapse_to_iso_flips_iso_flag_without_changing_pattern() {
+        test_init::ensure_init();
+        let mut m = Matrix::<bool>::new(4, 4);
+        // A stored explicit `false` guarantees the matrix is NOT iso before
+        // the collapse (an all-`true` build could already be detected as iso).
+        m.set(0, 1, true);
+        m.set(1, 2, false);
+        m.set(3, 0, true);
+        m.wait();
+        assert!(!is_iso(&m));
+        assert_eq!(m.nvals(), 3);
+
+        m.collapse_to_iso();
+        m.wait();
+        assert!(
+            is_iso(&m),
+            "C(:,:)<C,struct> = true no longer yields an iso matrix; re-verify \
+             subassign Method 05f against the GRAPHBLAS_VERSION pinned in graphblas.sh"
+        );
+        // Pattern and nvals unchanged; every stored value collapsed to `true`.
+        assert_eq!(m.nvals(), 3);
+        assert_eq!(m.get(0, 1), Some(true));
+        assert_eq!(m.get(1, 2), Some(true));
+        assert_eq!(m.get(3, 0), Some(true));
+        assert_eq!(m.get(2, 2), None);
     }
 }

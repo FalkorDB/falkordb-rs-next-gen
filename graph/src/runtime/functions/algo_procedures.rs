@@ -633,8 +633,7 @@ fn register_pagerank(funcs: &mut Functions) {
 
             unsafe {
                 use crate::graph::graphblas::{
-                    lagraph_bindings, GrB_Matrix, GrB_Matrix_dup, GrB_Matrix_resize, GrB_Vector,
-                    GrB_Vector_free,
+                    lagraph_bindings, GrB_Matrix, GrB_Vector, GrB_Vector_free,
                 };
 
                 // Match C implementation fast path for unfiltered run.
@@ -645,12 +644,10 @@ fn register_pagerank(funcs: &mut Functions) {
                     .is_none_or(|lbl| g.label_node_count(lbl.as_str()) == g.node_count());
 
                 let (lag_adj, compact_to_id): (GrB_Matrix, Option<Vec<u64>>) = if use_unfiltered {
-                    let adj = g.build_adjacency_matrix(&rel_types);
-                    let mut raw_adj: GrB_Matrix = std::ptr::null_mut();
-                    GrB_Matrix_dup(&raw mut raw_adj, adj.inner());
+                    let mut adj = g.build_adjacency_matrix(&rel_types);
                     let n = g.node_count() + g.deleted_nodes_count();
-                    GrB_Matrix_resize(raw_adj, n, n);
-                    (raw_adj, None)
+                    adj.resize(n, n);
+                    (adj.into_raw(), None)
                 } else {
                     let active = collect_node_ids(&g, std::slice::from_ref(label.as_ref().unwrap()))
                         .into_iter()
@@ -737,18 +734,15 @@ fn register_wcc(funcs: &mut Functions) {
 
             unsafe {
                 use crate::graph::graphblas::{
-                    lagraph_bindings, GrB_Matrix, GrB_Matrix_dup, GrB_Matrix_resize, GrB_Vector,
-                    GrB_Vector_free,
+                    lagraph_bindings, GrB_Matrix, GrB_Vector, GrB_Vector_free,
                 };
 
                 // Match C implementation fast path for unfiltered run.
                 let (lag_adj, compact_to_id): (GrB_Matrix, Option<Vec<u64>>) = if node_labels.is_empty() {
-                    let adj = g.build_symmetric_adjacency_matrix(&rel_types);
-                    let mut raw_adj: GrB_Matrix = std::ptr::null_mut();
-                    GrB_Matrix_dup(&raw mut raw_adj, adj.inner());
+                    let mut adj = g.build_symmetric_adjacency_matrix(&rel_types);
                     let n = g.node_count() + g.deleted_nodes_count();
-                    GrB_Matrix_resize(raw_adj, n, n);
-                    (raw_adj, None)
+                    adj.resize(n, n);
+                    (adj.into_raw(), None)
                 } else {
                     let a: FxHashSet<u64> =
                         collect_node_ids(&g, &node_labels).into_iter().collect();
@@ -849,18 +843,15 @@ fn register_betweenness(funcs: &mut Functions) {
 
             unsafe {
                 use crate::graph::graphblas::{
-                    lagraph_bindings, GrB_Matrix, GrB_Matrix_dup, GrB_Matrix_resize, GrB_Vector,
-                    GrB_Vector_free,
+                    lagraph_bindings, GrB_Matrix, GrB_Vector, GrB_Vector_free,
                 };
 
                 // Match C implementation fast path for unfiltered run.
                 let (compact_adj, compact_to_id): (GrB_Matrix, Option<Vec<u64>>) = if node_labels.is_empty() {
-                    let adj = g.build_adjacency_matrix(&rel_types);
-                    let mut raw_adj: GrB_Matrix = std::ptr::null_mut();
-                    GrB_Matrix_dup(&raw mut raw_adj, adj.inner());
+                    let mut adj = g.build_adjacency_matrix(&rel_types);
                     let n = g.node_count() + g.deleted_nodes_count();
-                    GrB_Matrix_resize(raw_adj, n, n);
-                    (raw_adj, None)
+                    adj.resize(n, n);
+                    (adj.into_raw(), None)
                 } else {
                     let node_set: FxHashSet<u64> =
                         collect_node_ids(&g, &node_labels).into_iter().collect();
@@ -982,18 +973,16 @@ fn register_bfs(funcs: &mut Functions) {
 
             unsafe {
                 use crate::graph::graphblas::{
-                    lagraph_bindings, GrB_Matrix, GrB_Matrix_dup, GrB_Vector,
+                    lagraph_bindings, GrB_Vector,
                     lagraphx_bindings, GrB_Vector_free,
                 };
 
                 // Run directly on full adjacency; no compaction needed for BFS.
-                // Duplicate the raw matrix directly so LAGraph_New takes sole
-                // ownership — adj.dup().inner() would double-free because the
-                // temporary Matrix wrapper also calls GrB_Matrix_free on drop.
+                // `into_raw` hands LAGraph_New sole ownership of the freshly
+                // built matrix — no dup copy, and no double-free since the
+                // wrapper's drop (which would call GrB_Matrix_free) is skipped.
                 let compact_source = u64::from(source_id);
-                let mut raw_adj: GrB_Matrix = std::ptr::null_mut();
-                GrB_Matrix_dup(&raw mut raw_adj, adj.inner());
-                let mut lag_g = create_lagraph_graph(raw_adj, LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED)?;
+                let mut lag_g = create_lagraph_graph(adj.into_raw(), LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED)?;
 
                 let mut msg = new_msg();
                 lagraph_bindings::LAGraph_Cached_AT(lag_g, msg.as_mut_ptr());
@@ -1109,18 +1098,16 @@ fn register_cdlp(funcs: &mut Functions) {
 
             unsafe {
                 use crate::graph::graphblas::{
-                    GrB_Matrix, GrB_Matrix_dup, GrB_Matrix_resize, GrB_Vector, lagraphx_bindings,
+                    GrB_Matrix, GrB_Vector, lagraphx_bindings,
                     GrB_Vector_free,
                 };
 
                 // Match C implementation fast path for unfiltered run.
                 let (lag_adj, compact_to_id): (GrB_Matrix, Option<Vec<u64>>) = if node_labels.is_empty() {
-                    let adj = g.build_symmetric_adjacency_matrix(&rel_types);
-                    let mut raw_adj: GrB_Matrix = std::ptr::null_mut();
-                    GrB_Matrix_dup(&raw mut raw_adj, adj.inner());
+                    let mut adj = g.build_symmetric_adjacency_matrix(&rel_types);
                     let n = g.node_count() + g.deleted_nodes_count();
-                    GrB_Matrix_resize(raw_adj, n, n);
-                    (raw_adj, None)
+                    adj.resize(n, n);
+                    (adj.into_raw(), None)
                 } else {
                     let a: FxHashSet<u64> =
                         collect_node_ids(&g, &node_labels).into_iter().collect();
@@ -2195,9 +2182,7 @@ fn register_harmonic_centrality(funcs: &mut Functions) {
             }
 
             unsafe {
-                use crate::graph::graphblas::{
-                    GrB_DESC_S, GrB_Matrix, GrB_Matrix_assign_BOOL,
-                };
+                use crate::graph::graphblas::GrB_Matrix;
 
                 // Match C implementation fast path for unfiltered run.
                 let (compact_adj, compact_to_id): (GrB_Matrix, Option<Vec<u64>>) = if node_labels.is_empty() {
@@ -2209,23 +2194,10 @@ fn register_harmonic_centrality(funcs: &mut Functions) {
                     // GrB_ONEB_BOOL. The generic HyperBall mxv inside
                     // LAGr_HarmonicCentrality only takes GraphBLAS's fast dot4 path
                     // when the adjacency is iso; a plain non-iso dup makes it punt to
-                    // the ~3x slower generic dot2. `C(:,:)<C,struct> = true` collapses
-                    // every stored value to iso `true` IN PLACE — SuiteSparse
-                    // subassign Method 05f, O(1), no pattern copy (unlike the
-                    // full-matrix eWiseMult rebuild this replaces).
-                    let nrows = adj.nrows();
-                    let ncols = adj.ncols();
-                    GrB_Matrix_assign_BOOL(
-                        adj.inner(),
-                        adj.inner(),
-                        std::ptr::null_mut(),
-                        true,
-                        GrB_ALL,
-                        nrows,
-                        GrB_ALL,
-                        ncols,
-                        GrB_DESC_S,
-                    );
+                    // the ~3x slower generic dot2. `collapse_to_iso` rewrites every
+                    // stored value to iso `true` IN PLACE in O(1) — no pattern copy
+                    // (unlike the full-matrix eWiseMult rebuild this replaces).
+                    adj.collapse_to_iso();
                     let n = g.node_count() + g.deleted_nodes_count();
                     adj.resize(n, n);
                     (adj.into_raw(), None)
