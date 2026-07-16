@@ -56,6 +56,26 @@ use super::batched_result_emitter::{BatchedResultEmitter, EdgeEndpoints, RowIter
 /// `CALL {}` subqueries (Apply) — are therefore routed to the per-row path.
 /// Fused multi-hop chains are exempt: `expand_row` only handles single hops,
 /// so the batched path is the only correct path for them.
+///
+/// Derived from an in-process sweep of `MATCH (a:Src) MATCH (a)-->(b) RETURN
+/// count(b)` over batch sizes {1..64} × fan-outs {4, 100, 10⁴} (release
+/// build, 4-vCPU AMD EPYC 7763), comparing forced-per-row vs forced-mxm
+/// (µs/query):
+///
+/// | rows | fan-out | per-row |   mxm |
+/// |-----:|--------:|--------:|------:|
+/// |    1 |       4 |     8.9 |  38.2 |
+/// |    8 |       4 |    15.0 |  39.9 |
+/// |    8 |     100 |   158.6 | 151.5 |
+/// |   16 |     100 |   314.9 | 252.9 |
+/// |    1 |     10⁴ |  1864.9 | 1718.7|
+/// |    8 |     10⁴ | 15027.7 |13244.0|
+///
+/// The crossover sits at ~8–16 rows for fan-out 100 and above 64 rows for
+/// fan-out 4. Sub-threshold hub-heavy batches (few rows, huge fan-out) pay at
+/// most ~14% vs mxm — bounded, since per-row enumeration is O(deg) just like
+/// the mxm — while typical small batches gain up to ~4x, so a pure row-count
+/// gate at 16 is a good trade without needing a degree estimate.
 const MIN_BATCHED_ROWS: usize = 16;
 
 /// Base matrix for the batched mxm path. Relationship matrices store inline
