@@ -48,8 +48,8 @@ use rustc_hash::FxHashMap;
 use crate::graph::graphblas::{
     matrix::{BoolExtract, Uint64Extract},
     versioned_vector::{
-        TensorEntryVector, TensorEntryVectorRef, VersionedVector, VersionedVectorInner, next_epoch,
-        release_inner,
+        IdsIter, TensorEntryVector, TensorEntryVectorRef, VersionedVector, VersionedVectorInner,
+        next_epoch, release_inner,
     },
 };
 
@@ -151,17 +151,18 @@ impl Tensor {
     }
 
     /// Edge ids for the `(src, dest)` pair visible at this tensor's epoch, in
-    /// ascending edge-id order. Returns an owned iterator (borrows nothing).
+    /// ascending edge-id order. Lock-free: a multi-edge pair's visible
+    /// vector is read in place (see
+    /// [`VersionedVector::ids`](super::versioned_vector::VersionedVector::ids)).
     #[must_use]
     pub fn get(
         &self,
         src: u64,
         dest: u64,
-    ) -> std::vec::IntoIter<u64> {
+    ) -> IdsIter {
         self.m
             .get(src, dest)
-            .map_or_else(Vec::new, |vv| vv.ids(self.epoch))
-            .into_iter()
+            .map_or_else(IdsIter::empty, |vv| vv.ids(self.epoch))
     }
 
     /// Record an inner mutated by this transaction, taking a +1 refcount so
@@ -351,7 +352,7 @@ impl Tensor {
                 } else if remaining == 1 {
                     // Demote back to an inline scalar; old snapshots keep
                     // reading the vector word from their own matrix copy.
-                    let last = vv.ids(self.epoch)[0];
+                    let last = vv.ids(self.epoch).next().unwrap();
                     self.m.set(src, dst, VersionedVector::new_scalar(last));
                     self.multi_pair_count -= 1;
                 }
@@ -437,13 +438,9 @@ impl Tensor {
     pub fn iter_edges(&self) -> impl Iterator<Item = (u64, u64, u64)> + '_ {
         let epoch = self.epoch;
         self.m.iter(0, u64::MAX).flat_map(move |(src, dst, raw)| {
-            let vv = VersionedVector::from_raw(raw);
-            let (scalar, ids) = if vv.is_scalar() {
-                (Some(vv.scalar()), Vec::new())
-            } else {
-                (None, vv.ids(epoch))
-            };
-            scalar.into_iter().chain(ids).map(move |id| (src, dst, id))
+            VersionedVector::from_raw(raw)
+                .ids(epoch)
+                .map(move |id| (src, dst, id))
         })
     }
 
@@ -519,7 +516,7 @@ impl Encode<19> for Tensor {
             } else {
                 let n = vv.count(self.epoch);
                 if n == 1 {
-                    f_vals.push(vv.ids(self.epoch)[0]);
+                    f_vals.push(vv.ids(self.epoch).next().unwrap());
                 } else {
                     f_vals.push(n | MSB_MASK);
                     multi.push((src, dst, vv));
@@ -694,7 +691,7 @@ impl Iterator for Iter<'_> {
         if vv.is_scalar() {
             return Some((src, dest, vv.scalar()));
         }
-        self.buf = vv.ids(self.t.epoch);
+        self.buf = vv.ids(self.t.epoch).collect();
         self.buf_pos = 1;
         self.buf.first().map(|&id| (src, dest, id))
     }

@@ -20,12 +20,17 @@
 //!   after rollback, so they cannot tag shared state).
 //! - A writer only mutates a vector in place when its epoch tag equals the
 //!   writer's own epoch (i.e. it was created in this transaction); otherwise
-//!   it clones the newest *committed* vector and appends a new version.
+//!   it clones the newest *committed* vector and prepends a new version.
 //! - Commit marks the transaction's versions `committed`. A reader at epoch
 //!   `E` sees the newest version that is either its own (`epoch == E`) or
 //!   committed with `epoch <= E`. Rolled-back versions are never marked
-//!   committed, stay invisible to everyone, and are pruned lazily by the next
-//!   writer that touches the same inner.
+//!   committed, stay invisible to everyone, and remain linked (as unreachable
+//!   garbage) until the inner itself is freed.
+//!
+//! The version list is **lock-free**: writes are serialized system-wide, so
+//! the single writer prepends fully-built nodes with a release store and
+//! readers traverse with acquire loads. Nodes are never unlinked or freed
+//! while the inner is alive, so traversal needs no reclamation scheme.
 //!
 //! ## Ownership
 //!
@@ -38,20 +43,18 @@
 //! arbitrarily old snapshots may still read them.
 
 use std::{
+    cell::UnsafeCell,
     mem::MaybeUninit,
     os::raw::c_void,
     ptr::{NonNull, null_mut},
-    sync::atomic::{AtomicU64, AtomicUsize, Ordering, fence},
+    sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, AtomicUsize, Ordering, fence},
 };
-
-use parking_lot::Mutex;
-use thin_vec::ThinVec;
 
 use super::{
     GrB_Info, GxB_Vector_deserialize, GxB_Vector_serialize,
     serialization::{Decode, Encode, Reader, Writer},
 };
-use crate::graph::graphblas::vector::{Remove, Set, Vector};
+use crate::graph::graphblas::vector::{Iter as VectorIter, Remove, Set, Vector};
 
 /// MSB tag: set = pointer to [`VersionedVectorInner`], clear = scalar edge id.
 pub(crate) const MSB_MASK: u64 = 1u64 << 63;
@@ -118,11 +121,7 @@ impl VersionedVector {
         for id in ids {
             v.set(id, true);
         }
-        Self::register(VectorVersion {
-            epoch,
-            committed: false,
-            vector: v,
-        })
+        Self::register(epoch, false, v)
     }
 
     /// Wrap an already-populated bool vector (index = edge id) as the
@@ -130,19 +129,23 @@ impl VersionedVector {
     /// path.
     #[must_use]
     pub fn from_committed(v: Vector<bool>) -> Self {
-        Self::register(VectorVersion {
-            epoch: 0,
-            committed: true,
-            vector: v,
-        })
+        Self::register(0, true, v)
     }
 
-    fn register(version: VectorVersion) -> Self {
-        let mut versions = ThinVec::new();
-        versions.push(version);
+    fn register(
+        epoch: u64,
+        committed: bool,
+        v: Vector<bool>,
+    ) -> Self {
+        let node = Box::into_raw(Box::new(VersionNode {
+            epoch,
+            committed: AtomicBool::new(committed),
+            vector: UnsafeCell::new(v),
+            next: null_mut(),
+        }));
         let inner = Box::new(VersionedVectorInner {
             refs: AtomicUsize::new(1),
-            versions: Mutex::new(versions),
+            head: AtomicPtr::new(node),
         });
         let ptr = NonNull::from(Box::leak(inner));
         debug_assert!(ptr.as_ptr() as u64 & MSB_MASK == 0);
@@ -170,20 +173,23 @@ impl VersionedVector {
         f: impl FnOnce(&Vector<bool>) -> R,
     ) -> Option<R> {
         let inner = unsafe { self.inner().as_ref() };
-        let versions = inner.versions.lock();
-        VersionedVectorInner::visible_idx(&versions, epoch).map(|i| f(&versions[i].vector))
+        inner.visible(epoch).map(|node| f(node.vector()))
     }
 
-    /// Edge ids visible at `epoch`, ascending. Empty for a vector entry whose
-    /// versions are all invisible (cannot happen for entries reachable from a
-    /// consistent snapshot).
+    /// Edge ids visible at `epoch`, ascending, as a streaming iterator.
+    /// Empty for a vector entry whose versions are all invisible (cannot
+    /// happen for entries reachable from a consistent snapshot).
+    ///
+    /// Lock-free: the visible vector is immutable while reachable, so the
+    /// iterator reads it in place. As with every method here, the entry must
+    /// stay alive for the iterator's whole lifetime.
     #[must_use]
     pub fn ids(
         self,
         epoch: u64,
-    ) -> Vec<u64> {
+    ) -> IdsIter {
         if self.is_scalar() {
-            return vec![self.raw];
+            return IdsIter::scalar(self.raw);
         }
         unsafe { self.inner().as_ref() }.ids(epoch)
     }
@@ -232,12 +238,14 @@ impl VersionedVector {
             return 0;
         }
         let inner = unsafe { self.inner().as_ref() };
-        let versions = inner.versions.lock();
-        versions.len() * size_of::<VectorVersion>()
-            + versions
-                .iter()
-                .map(|v| v.vector.nvals() as usize * 16)
-                .sum::<usize>()
+        let mut usage = 0;
+        let mut p = inner.head.load(Ordering::Acquire);
+        while !p.is_null() {
+            let node = unsafe { &*p };
+            usage += size_of::<VersionNode>() + node.vector().nvals() as usize * 16;
+            p = node.next;
+        }
+        usage
     }
 }
 
@@ -309,79 +317,164 @@ impl Decode<19> for TensorEntryVector {
     }
 }
 
-struct VectorVersion {
+/// One version of a multi-edge id vector: a node in the inner's lock-free,
+/// prepend-only version list (newest first).
+struct VersionNode {
     epoch: u64,
-    committed: bool,
-    vector: Vector<bool>,
+    /// Flipped (release) by the commit hook; readers check it with acquire
+    /// loads, which also makes the fully-built `vector` visible to them.
+    committed: AtomicBool,
+    /// Only mutated by the single writer that created the node, while it is
+    /// still uncommitted — and an uncommitted node is invisible to every
+    /// reader, so no reader ever dereferences a vector under mutation.
+    vector: UnsafeCell<Vector<bool>>,
+    /// Next-older version. Immutable after the node is published.
+    next: *mut VersionNode,
 }
 
-/// Heap side of a multi-edge entry: a refcount and a version stack guarded
-/// by a mutex. Readers only hold the lock long enough to collect ids into a
-/// `Vec`.
+impl VersionNode {
+    /// Shared view of the id vector. Sound for any node the caller may
+    /// legitimately read: committed nodes are immutable, and an uncommitted
+    /// node is only visible to the writer that owns it.
+    fn vector(&self) -> &Vector<bool> {
+        unsafe { &*self.vector.get() }
+    }
+}
+
+/// Streaming iterator over the edge ids of a tensor entry, ascending.
+///
+/// The multi-edge arm reads the visible version's vector in place — no lock,
+/// no `Vec` materialization; the vector is immutable while reachable. See
+/// [`VersionedVector::ids`] for the keep-alive contract.
+pub struct IdsIter {
+    scalar: Option<u64>,
+    vector: Option<VectorIter<bool>>,
+}
+
+impl IdsIter {
+    const fn scalar(id: u64) -> Self {
+        Self {
+            scalar: Some(id),
+            vector: None,
+        }
+    }
+
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self {
+            scalar: None,
+            vector: None,
+        }
+    }
+}
+
+impl Iterator for IdsIter {
+    type Item = u64;
+
+    fn next(&mut self) -> Option<u64> {
+        if let Some(id) = self.scalar.take() {
+            return Some(id);
+        }
+        self.vector.as_mut()?.next()
+    }
+}
+
+/// Heap side of a multi-edge entry: a refcount and a lock-free version list
+/// (newest first). The single serialized writer prepends fully-built nodes
+/// with release stores; readers traverse with acquire loads. Nodes are never
+/// unlinked or freed before the inner itself drops.
 pub struct VersionedVectorInner {
     refs: AtomicUsize,
-    versions: Mutex<ThinVec<VectorVersion>>,
+    head: AtomicPtr<VersionNode>,
 }
 
-// The mutex serializes all access to the version stack; `Vector` is a plain
-// owning wrapper over a `GrB_Vector` handle.
+// The writer only mutates its own uncommitted (reader-invisible) node, every
+// other node is immutable, and nodes live as long as the inner — so shared
+// references across threads are sound.
 unsafe impl Send for VersionedVectorInner {}
 unsafe impl Sync for VersionedVectorInner {}
 
+impl Drop for VersionedVectorInner {
+    fn drop(&mut self) {
+        let mut p = *self.head.get_mut();
+        while !p.is_null() {
+            let node = unsafe { Box::from_raw(p) };
+            p = node.next;
+        }
+    }
+}
+
 impl VersionedVectorInner {
-    /// Index of the newest version visible at `epoch`.
-    fn visible_idx(
-        versions: &[VectorVersion],
+    /// Newest version visible at `epoch`, walking newest → oldest.
+    fn visible(
+        &self,
         epoch: u64,
-    ) -> Option<usize> {
-        versions
-            .iter()
-            .rposition(|v| v.epoch == epoch || (v.committed && v.epoch <= epoch))
+    ) -> Option<&VersionNode> {
+        let mut p = self.head.load(Ordering::Acquire);
+        while !p.is_null() {
+            let node = unsafe { &*p };
+            if node.epoch == epoch
+                || (node.committed.load(Ordering::Acquire) && node.epoch <= epoch)
+            {
+                return Some(node);
+            }
+            p = node.next;
+        }
+        None
     }
 
     fn ids(
         &self,
         epoch: u64,
-    ) -> Vec<u64> {
-        let versions = self.versions.lock();
-        Self::visible_idx(&versions, epoch)
-            .map(|i| versions[i].vector.iter().collect())
-            .unwrap_or_default()
+    ) -> IdsIter {
+        self.visible(epoch)
+            .map_or_else(IdsIter::empty, |node| IdsIter {
+                scalar: None,
+                vector: Some(node.vector().iter()),
+            })
     }
 
     fn count(
         &self,
         epoch: u64,
     ) -> u64 {
-        let versions = self.versions.lock();
-        Self::visible_idx(&versions, epoch).map_or(0, |i| versions[i].vector.nvals())
+        self.visible(epoch).map_or(0, |node| node.vector().nvals())
     }
 
-    /// Apply `f` to the writer's version at `epoch`, creating it by cloning
-    /// the newest visible version if needed. Prunes rolled-back garbage
-    /// (uncommitted versions from other epochs — unreachable by definition).
-    /// Returns the resulting entry count.
+    /// Apply `f` to the writer's version at `epoch`, creating it (from a
+    /// clone of the newest visible version) if this is the transaction's
+    /// first write to this inner. Returns the resulting entry count.
+    ///
+    /// Rolled-back nodes from dead epochs stay linked: they are invisible to
+    /// every reader and are freed with the inner.
     fn mutate(
         &self,
         epoch: u64,
         f: impl FnOnce(&mut Vector<bool>),
     ) -> u64 {
-        let mut versions = self.versions.lock();
-        versions.retain(|v| v.committed || v.epoch == epoch);
-        if versions.last().is_none_or(|v| v.epoch != epoch) {
-            let base = Self::visible_idx(&versions, epoch).map_or_else(
-                || Vector::<bool>::new(super::tensor::GrB_INDEX_MAX),
-                |i| versions[i].vector.dup(),
-            );
-            versions.push(VectorVersion {
-                epoch,
-                committed: false,
-                vector: base,
-            });
+        let head = self.head.load(Ordering::Acquire);
+        if !head.is_null() && unsafe { &*head }.epoch == epoch {
+            // The writer's own node — pushed by this transaction, still
+            // uncommitted (a transaction never writes after its commit), so
+            // no reader can observe the vector mid-mutation.
+            let vector = unsafe { &mut *(*head).vector.get() };
+            f(vector);
+            return vector.nvals();
         }
-        let last = versions.last_mut().unwrap();
-        f(&mut last.vector);
-        last.vector.nvals()
+        let mut base = self.visible(epoch).map_or_else(
+            || Vector::<bool>::new(super::tensor::GrB_INDEX_MAX),
+            |node| node.vector().dup(),
+        );
+        f(&mut base);
+        let nvals = base.nvals();
+        let node = Box::into_raw(Box::new(VersionNode {
+            epoch,
+            committed: AtomicBool::new(false),
+            vector: UnsafeCell::new(base),
+            next: head,
+        }));
+        self.head.store(node, Ordering::Release);
+        nvals
     }
 
     /// Mark the writer's version(s) at `epoch` committed. Called from the
@@ -390,11 +483,13 @@ impl VersionedVectorInner {
         &self,
         epoch: u64,
     ) {
-        let mut versions = self.versions.lock();
-        for v in versions.iter_mut() {
-            if v.epoch == epoch {
-                v.committed = true;
+        let mut p = self.head.load(Ordering::Acquire);
+        while !p.is_null() {
+            let node = unsafe { &*p };
+            if node.epoch == epoch {
+                node.committed.store(true, Ordering::Release);
             }
+            p = node.next;
         }
     }
 
