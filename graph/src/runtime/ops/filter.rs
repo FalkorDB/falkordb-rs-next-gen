@@ -29,8 +29,8 @@ use crate::runtime::{
     value::Value,
     vectorized::{
         PredicateTest, SimplePredicate, TriMask, VectorizablePredicate, compare_f64_column,
-        compare_i64_column, compare_string_column, mask_to_selection, match_string_column,
-        null_check_mask, try_extract_vectorizable_predicate,
+        compare_i64_column, compare_string_column, match_string_column, null_check_mask,
+        try_extract_vectorizable_predicate,
     },
 };
 use orx_tree::{Dyn, NodeIdx, NodeRef};
@@ -148,7 +148,7 @@ impl<'a> FilterOp<'a> {
         pred: &VectorizablePredicate,
     ) -> Result<Option<Vec<u16>>, ()> {
         let mask = self.eval_tri_mask(batch, pred)?;
-        let sel = mask_to_selection(mask.truthy());
+        let sel = mask.selection();
         Ok((!sel.is_empty()).then_some(sel))
     }
 
@@ -226,9 +226,7 @@ impl<'a> FilterOp<'a> {
                 // A typed numeric column can't contain strings, so every row
                 // is NULL (`non-string CONTAINS x` evaluates to NULL, which
                 // the filter drops but `NOT` must preserve as NULL).
-                Column::Ints(_) | Column::Floats(_) => {
-                    TriMask::new(vec![false; len], vec![true; len])
-                }
+                Column::Ints(_) | Column::Floats(_) => TriMask::all_null(len),
                 _ => return Err(()), // fall back to per-row
             },
         };

@@ -22,8 +22,12 @@
 //! - [`CmpOp`] -- comparison operator enum (Eq, Neq, Lt, Le, Gt, Ge)
 //! - Comparison kernels: [`compare_i64_column`], [`compare_f64_column`],
 //!   [`compare_string_column`] -- tight indexed loops for auto-vectorization
-//! - [`TriMask`] -- three-valued (Kleene) row mask; each row is true, false,
-//!   or NULL, so `NOT`/`AND`/`OR` combine with correct Cypher NULL semantics
+//! - [`Tri`] / [`TriMask`] -- three-valued (Kleene) row mask; each row is
+//!   `True`, `False`, or `Null`, so `NOT`/`AND`/`OR` combine with correct
+//!   Cypher NULL semantics. `Tri` is ordered `False < Null < True` so that
+//!   Kleene `AND`/`OR`/`NOT` reduce to `min`/`max`/`2 - x` over the
+//!   discriminant byte -- one byte per row instead of two, and the same
+//!   branch-free shape that lets the comparison kernels auto-vectorize
 //! - [`SimplePredicate`] / [`VectorizablePredicate`] -- detected filter patterns
 //!   that can use the bulk path instead of per-row expression evaluation
 //! - [`try_extract_vectorizable_predicate`] -- recursively analyzes a filter
@@ -212,39 +216,33 @@ pub fn compare_f64_column(
 /// - `Null` rows are NULL for every operator.
 /// - Rows of any other type are disjoint from a string: `=` is false,
 ///   `<>` is true, and ordering comparisons (`<`, `<=`, `>`, `>=`) are NULL.
-#[allow(clippy::needless_range_loop)]
 #[must_use]
 pub fn compare_string_column(
     data: &[Value],
     op: CmpOp,
     threshold: &str,
 ) -> TriMask {
-    let len = data.len();
-    let mut truthy = vec![false; len];
-    let mut nulls = vec![false; len];
-    for i in 0..len {
-        match &data[i] {
-            Value::String(s) => {
-                truthy[i] = match op {
+    TriMask::from_tri(
+        data.iter()
+            .map(|v| match v {
+                Value::String(s) => Tri::from_bool(match op {
                     CmpOp::Eq => s.as_str() == threshold,
                     CmpOp::Neq => s.as_str() != threshold,
                     CmpOp::Lt => s.as_str() < threshold,
                     CmpOp::Le => s.as_str() <= threshold,
                     CmpOp::Gt => s.as_str() > threshold,
                     CmpOp::Ge => s.as_str() >= threshold,
-                };
-            }
-            Value::Null => nulls[i] = true,
-            _ => match op {
-                // Disjoint types are simply not equal.
-                CmpOp::Eq => {}
-                CmpOp::Neq => truthy[i] = true,
-                // Ordering across disjoint types is NULL.
-                CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge => nulls[i] = true,
-            },
-        }
-    }
-    TriMask::new(truthy, nulls)
+                }),
+                Value::Null => Tri::Null,
+                // Disjoint types: `=` is false, `<>` is true, ordering is NULL.
+                _ => match op {
+                    CmpOp::Eq => Tri::False,
+                    CmpOp::Neq => Tri::True,
+                    CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge => Tri::Null,
+                },
+            })
+            .collect(),
+    )
 }
 
 /// Runs a substring/prefix/suffix match on string values in a `Value` slice.
@@ -254,28 +252,24 @@ pub fn compare_string_column(
 /// Matching is intentionally byte-wise (`str::contains`/`starts_with`/
 /// `ends_with` — UTF-8 byte sequences, not Unicode graphemes), exactly like
 /// the scalar internal functions this kernel mirrors.
-#[allow(clippy::needless_range_loop)]
 #[must_use]
 pub fn match_string_column(
     data: &[Value],
     op: StringMatchOp,
     pattern: &str,
 ) -> TriMask {
-    let len = data.len();
-    let mut truthy = vec![false; len];
-    let mut nulls = vec![false; len];
-    for i in 0..len {
-        if let Value::String(s) = &data[i] {
-            truthy[i] = match op {
-                StringMatchOp::Contains => s.contains(pattern),
-                StringMatchOp::StartsWith => s.starts_with(pattern),
-                StringMatchOp::EndsWith => s.ends_with(pattern),
-            };
-        } else {
-            nulls[i] = true;
-        }
-    }
-    TriMask::new(truthy, nulls)
+    TriMask::from_tri(
+        data.iter()
+            .map(|v| match v {
+                Value::String(s) => Tri::from_bool(match op {
+                    StringMatchOp::Contains => s.contains(pattern),
+                    StringMatchOp::StartsWith => s.starts_with(pattern),
+                    StringMatchOp::EndsWith => s.ends_with(pattern),
+                }),
+                _ => Tri::Null,
+            })
+            .collect(),
+    )
 }
 
 /// Builds a boolean mask from a property column's null bitmap.
@@ -317,89 +311,148 @@ pub fn mask_intersect_selection(
 // TriMask — three-valued (Kleene) row mask
 // ---------------------------------------------------------------------------
 
+/// A single row's three-valued (Kleene logic) predicate result.
+///
+/// Deliberately ordered `False(0) < Null(1) < True(2)` (as the `u8` repr) so
+/// that Kleene `AND`/`OR`/`NOT` reduce to `min`/`max`/`2 - x` on the
+/// discriminant — plain branch-free arithmetic over a byte, rather than a
+/// per-row match. One byte per row (same as `bool`), instead of the two
+/// separate `truthy`/`nulls` `bool` columns an earlier version of this type
+/// used.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tri {
+    False = 0,
+    Null = 1,
+    True = 2,
+}
+
+impl Tri {
+    #[must_use]
+    const fn from_bool(b: bool) -> Self {
+        if b {
+            Self::True
+        } else {
+            Self::False
+        }
+    }
+
+    #[must_use]
+    const fn from_u8(v: u8) -> Self {
+        match v {
+            0 => Self::False,
+            1 => Self::Null,
+            _ => Self::True,
+        }
+    }
+}
+
 /// A three-valued (Kleene logic) row mask: each row's predicate result is
-/// `true`, `false`, or NULL.
+/// `Tri::True`, `Tri::False`, or `Tri::Null`.
 ///
 /// A plain boolean "row passed" mask is not enough once `NOT` and `OR` enter
 /// the picture: in Cypher `NOT NULL` is NULL (the row is still dropped), so
 /// complementing a boolean mask would incorrectly resurrect NULL rows.
-/// Tracking NULL separately lets `AND`/`OR`/`NOT` combine with exactly the
-/// same semantics as the per-row evaluator.
+/// Tracking each row's `Tri` state lets `AND`/`OR`/`NOT` combine with exactly
+/// the same semantics as the per-row evaluator.
 #[derive(Debug)]
-pub struct TriMask {
-    /// Rows where the predicate evaluated to exactly `true`.
-    truthy: Vec<bool>,
-    /// Rows where the predicate evaluated to NULL.
-    nulls: Vec<bool>,
-}
+pub struct TriMask(Vec<Tri>);
 
 impl TriMask {
     /// Creates a mask from separate `true` and NULL row vectors.
-    /// A row must not be flagged in both.
+    /// A row must not be flagged in both (NULL wins if it is).
     #[must_use]
     pub fn new(
         truthy: Vec<bool>,
         nulls: Vec<bool>,
     ) -> Self {
         debug_assert_eq!(truthy.len(), nulls.len());
-        Self { truthy, nulls }
+        Self(
+            truthy
+                .into_iter()
+                .zip(nulls)
+                .map(|(t, n)| if n { Tri::Null } else { Tri::from_bool(t) })
+                .collect(),
+        )
+    }
+
+    /// Creates a mask directly from per-row three-valued results.
+    #[must_use]
+    pub fn from_tri(values: Vec<Tri>) -> Self {
+        Self(values)
     }
 
     /// Creates a mask from a plain boolean result (no NULL rows).
     #[must_use]
     pub fn from_bools(truthy: Vec<bool>) -> Self {
-        let nulls = vec![false; truthy.len()];
-        Self { truthy, nulls }
+        Self(truthy.into_iter().map(Tri::from_bool).collect())
+    }
+
+    /// Creates an all-NULL mask (e.g. a predicate that structurally cannot
+    /// apply to this column's type, which Cypher treats as NULL per row).
+    #[must_use]
+    pub fn all_null(len: usize) -> Self {
+        Self(vec![Tri::Null; len])
     }
 
     /// The rows where the predicate evaluated to exactly `true` — the rows a
     /// filter keeps (both `false` and NULL are dropped).
     #[must_use]
-    pub fn truthy(&self) -> &[bool] {
-        &self.truthy
+    pub fn truthy(&self) -> Vec<bool> {
+        self.0.iter().map(|&t| t == Tri::True).collect()
+    }
+
+    /// Selection vector of rows where the predicate evaluated to exactly
+    /// `true`, read directly off the packed `Tri` mask (no intermediate
+    /// boolean vector).
+    #[must_use]
+    pub fn selection(&self) -> Vec<u16> {
+        self.0
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &t)| (t == Tri::True).then_some(i as u16))
+            .collect()
     }
 
     /// Logical `AND` (Kleene): `false AND x = false`, `true AND true = true`,
-    /// everything else is NULL.
+    /// everything else is NULL. Encoded as `min` over `False(0) < Null(1) <
+    /// True(2)`.
     #[must_use]
     pub fn and(
         mut self,
         other: &Self,
     ) -> Self {
-        for i in 0..self.truthy.len() {
-            let any_false =
-                (!self.truthy[i] && !self.nulls[i]) || (!other.truthy[i] && !other.nulls[i]);
-            self.truthy[i] &= other.truthy[i];
-            self.nulls[i] = !self.truthy[i] && !any_false;
+        debug_assert_eq!(self.0.len(), other.0.len());
+        for (a, b) in self.0.iter_mut().zip(&other.0) {
+            *a = Tri::from_u8((*a as u8).min(*b as u8));
         }
         self
     }
 
     /// Logical `OR` (Kleene): `true OR x = true`, `false OR false = false`,
-    /// everything else is NULL.
+    /// everything else is NULL. Encoded as `max`.
     #[must_use]
     pub fn or(
         mut self,
         other: &Self,
     ) -> Self {
-        for i in 0..self.truthy.len() {
-            let all_false =
-                !self.truthy[i] && !self.nulls[i] && !other.truthy[i] && !other.nulls[i];
-            self.truthy[i] |= other.truthy[i];
-            self.nulls[i] = !self.truthy[i] && !all_false;
+        debug_assert_eq!(self.0.len(), other.0.len());
+        for (a, b) in self.0.iter_mut().zip(&other.0) {
+            *a = Tri::from_u8((*a as u8).max(*b as u8));
         }
         self
     }
 }
 
 /// Logical `NOT` (Kleene): `NOT true = false`, `NOT false = true`,
-/// `NOT NULL = NULL`.
+/// `NOT NULL = NULL`. Encoded as `2 - x`, which swaps `False`/`True` (0/2)
+/// and fixes `Null` (1).
 impl std::ops::Not for TriMask {
     type Output = Self;
 
     fn not(mut self) -> Self {
-        for i in 0..self.truthy.len() {
-            self.truthy[i] = !self.truthy[i] && !self.nulls[i];
+        for t in &mut self.0 {
+            *t = Tri::from_u8(2 - (*t as u8));
         }
         self
     }
@@ -744,15 +797,22 @@ mod tests {
             Value::Int(42),
         ];
         let mask = compare_string_column(&data, CmpOp::Eq, "Alice");
-        assert_eq!(mask.truthy(), &[true, false, false, true, false]);
-        assert_eq!(mask.nulls, vec![false, false, true, false, false]);
+        assert_eq!(
+            mask.0,
+            vec![Tri::True, Tri::False, Tri::Null, Tri::True, Tri::False]
+        );
 
         // Disjoint types: `<>` is true, ordering is NULL.
         let mask = compare_string_column(&data, CmpOp::Neq, "Alice");
-        assert_eq!(mask.truthy(), &[false, true, false, false, true]);
+        assert_eq!(
+            mask.0,
+            vec![Tri::False, Tri::True, Tri::Null, Tri::False, Tri::True]
+        );
         let mask = compare_string_column(&data, CmpOp::Lt, "Bob");
-        assert_eq!(mask.truthy(), &[true, false, false, true, false]);
-        assert_eq!(mask.nulls, vec![false, false, true, false, true]);
+        assert_eq!(
+            mask.0,
+            vec![Tri::True, Tri::False, Tri::Null, Tri::True, Tri::Null]
+        );
     }
 
     #[test]
@@ -775,50 +835,93 @@ mod tests {
             Value::String(Arc::new("x_fixture_alice".to_string())),
         ];
         let mask = match_string_column(&data, StringMatchOp::Contains, "fixture_alice");
-        assert_eq!(mask.truthy(), &[true, false, false, false, true]);
         // Non-string rows are NULL, matching the scalar internal functions.
-        assert_eq!(mask.nulls, vec![false, false, true, true, false]);
         assert_eq!(
-            match_string_column(&data, StringMatchOp::StartsWith, "fixture_").truthy(),
-            &[true, true, false, false, false]
+            mask.0,
+            vec![Tri::True, Tri::False, Tri::Null, Tri::Null, Tri::True]
         );
         assert_eq!(
-            match_string_column(&data, StringMatchOp::EndsWith, "alice").truthy(),
-            &[false, false, false, false, true]
+            match_string_column(&data, StringMatchOp::StartsWith, "fixture_").0,
+            vec![Tri::True, Tri::True, Tri::Null, Tri::Null, Tri::False]
+        );
+        assert_eq!(
+            match_string_column(&data, StringMatchOp::EndsWith, "alice").0,
+            vec![Tri::False, Tri::False, Tri::Null, Tri::Null, Tri::True]
         );
     }
 
     #[test]
     fn test_tri_mask_kleene_ops() {
-        // Rows: [true, false, null]
+        // Rows: [True, False, Null]
         let m = || TriMask::new(vec![true, false, false], vec![false, false, true]);
 
-        // NOT: [false, true, null]
+        // NOT: [False, True, Null]
         let not = !m();
-        assert_eq!(not.truthy(), &[false, true, false]);
-        assert_eq!(not.nulls, vec![false, false, true]);
+        assert_eq!(not.0, vec![Tri::False, Tri::True, Tri::Null]);
 
-        // AND with [true, true, true]: [true, false, null]
+        // AND with [True, True, True]: [True, False, Null]
         let all_true = TriMask::from_bools(vec![true, true, true]);
         let and = m().and(&all_true);
-        assert_eq!(and.truthy(), &[true, false, false]);
-        assert_eq!(and.nulls, vec![false, false, true]);
+        assert_eq!(and.0, vec![Tri::True, Tri::False, Tri::Null]);
         // null AND false = false; null AND null = null
         let nulls = TriMask::new(vec![false; 3], vec![true; 3]);
         let and = nulls.and(&m());
-        assert_eq!(and.truthy(), &[false, false, false]);
-        assert_eq!(and.nulls, vec![true, false, true]);
+        assert_eq!(and.0, vec![Tri::Null, Tri::False, Tri::Null]);
 
         // null OR true = true; null OR false = null; null OR null = null
         let nulls = TriMask::new(vec![false; 3], vec![true; 3]);
         let or = nulls.or(&m());
-        assert_eq!(or.truthy(), &[true, false, false]);
-        assert_eq!(or.nulls, vec![false, true, true]);
+        assert_eq!(or.0, vec![Tri::True, Tri::Null, Tri::Null]);
         // false OR false = false
         let all_false = TriMask::from_bools(vec![false, false, false]);
         let or = m().or(&all_false);
-        assert_eq!(or.truthy(), &[true, false, false]);
-        assert_eq!(or.nulls, vec![false, false, true]);
+        assert_eq!(or.0, vec![Tri::True, Tri::False, Tri::Null]);
+    }
+
+    /// Exhaustively checks `and`/`or`/`not` against the Kleene truth table for
+    /// every one of the 9 `(Tri, Tri)` input pairs, independent of the
+    /// `min`/`max`/`2 - x` encoding used to implement them.
+    #[test]
+    fn test_tri_exhaustive_truth_table() {
+        fn expected_and(
+            a: Tri,
+            b: Tri,
+        ) -> Tri {
+            match (a, b) {
+                (Tri::False, _) | (_, Tri::False) => Tri::False,
+                (Tri::True, Tri::True) => Tri::True,
+                _ => Tri::Null,
+            }
+        }
+        fn expected_or(
+            a: Tri,
+            b: Tri,
+        ) -> Tri {
+            match (a, b) {
+                (Tri::True, _) | (_, Tri::True) => Tri::True,
+                (Tri::False, Tri::False) => Tri::False,
+                _ => Tri::Null,
+            }
+        }
+        fn expected_not(a: Tri) -> Tri {
+            match a {
+                Tri::True => Tri::False,
+                Tri::False => Tri::True,
+                Tri::Null => Tri::Null,
+            }
+        }
+
+        let states = [Tri::True, Tri::False, Tri::Null];
+        for &a in &states {
+            for &b in &states {
+                let and = TriMask::from_tri(vec![a]).and(&TriMask::from_tri(vec![b]));
+                assert_eq!(and.0[0], expected_and(a, b), "{a:?} AND {b:?}");
+                let or = TriMask::from_tri(vec![a]).or(&TriMask::from_tri(vec![b]));
+                assert_eq!(or.0[0], expected_or(a, b), "{a:?} OR {b:?}");
+            }
+            let not = !TriMask::from_tri(vec![a]);
+            assert_eq!(not.0[0], expected_not(a), "NOT {a:?}");
+        }
     }
 
     #[test]
