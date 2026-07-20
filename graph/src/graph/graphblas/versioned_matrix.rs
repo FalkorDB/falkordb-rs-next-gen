@@ -222,8 +222,8 @@ impl<T> VersionedMatrix<T> {
     /// - Entries in base `m` matching `mask` are marked deleted in `dm`
     /// - Entries in delta-plus `dp` matching `mask` are removed from `dp`
     ///
-    /// For `VersionedMatrix<VersionedVector>` this performs no inner
-    /// releases: the tensor only takes this path when it holds no multi-edge
+    /// For `VersionedMatrix<VersionedVector>` no pointer word is ever masked
+    /// here: the tensor only takes this path when it holds no multi-edge
     /// pairs (`multi_pair_count == 0`), which by the no-shadow invariant
     /// means neither `m` nor `dp` contains any pointer word.
     pub fn remove_mask(
@@ -387,17 +387,14 @@ impl VersionedMatrix<bool> {
 }
 
 impl VersionedMatrix<VersionedVector> {
+    #[must_use]
     pub fn new(
         nrows: u64,
         ncols: u64,
     ) -> Self {
-        let mut m = Matrix::<VersionedVector>::new(nrows, ncols);
-        m.set_owns_inners();
-        let mut dp = Matrix::<VersionedVector>::new(nrows, ncols);
-        dp.set_owns_inners();
         Self {
-            m: Cow::new(m),
-            dp: Cow::new(dp),
+            m: Cow::new(Matrix::<VersionedVector>::new(nrows, ncols)),
+            dp: Cow::new(Matrix::<VersionedVector>::new(nrows, ncols)),
             dm: Cow::new(Matrix::<bool>::new(nrows, ncols)),
         }
     }
@@ -423,33 +420,12 @@ impl VersionedMatrix<VersionedVector> {
     /// Write the tagged word at `(i, j)`: the new value lands in `dp`, and
     /// any committed base entry is masked in `dm` so the old word never
     /// shadows the new one (same no-shadow invariant as the `u64` impl).
+    ///
+    /// Node lifetime is the tensor's business: when a pointer word is
+    /// overwritten, the tensor has already chained or retired the old node.
+    /// No dp probe happens here — a per-entry `dp.get` after a prior `dp.set`
+    /// forces a full `GB_wait` rebuild, turning bulk loops quadratic.
     pub fn set(
-        &mut self,
-        i: u64,
-        j: u64,
-        value: VersionedVector,
-    ) {
-        debug_assert!(!self.m.pending());
-        let old = self.dp.get(i, j);
-        self.dp.set(i, j, value);
-        // The overwritten dp word is gone from the (possibly just Cow-duped)
-        // matrix; drop its inner reference.
-        if let Some(old) = old
-            && !old.is_scalar()
-            && old != value
-        {
-            old.release();
-        }
-        if self.m.contains(i, j) {
-            self.dm.set(i, j, true);
-        }
-    }
-
-    /// Like [`Self::set`], but the caller guarantees the current dp word at
-    /// `(i, j)` is absent or scalar, so no inner release is needed and the
-    /// dp read is skipped. Bulk loops need this: a per-entry `dp.get` after
-    /// a prior `dp.set` forces a full `GB_wait` rebuild, going quadratic.
-    pub fn set_fresh(
         &mut self,
         i: u64,
         j: u64,
@@ -464,10 +440,9 @@ impl VersionedMatrix<VersionedVector> {
 
     /// Bulk set of scalar-edge-id entries; checks base emptiness once up
     /// front (see `VersionedMatrix::<u64>::set_all`). Callers only pass
-    /// brand-new pairs, so no dp pointer word is ever overwritten here —
-    /// no inner release is needed. (Not debug-asserted: a `dp.get` per
-    /// entry forces a full `GB_wait` pending-tuple rebuild, turning bulk
-    /// insert quadratic.)
+    /// brand-new pairs, so no dp pointer word is ever overwritten here.
+    /// (Not debug-asserted: a `dp.get` per entry forces a full `GB_wait`
+    /// pending-tuple rebuild, turning bulk insert quadratic.)
     pub fn set_all(
         &mut self,
         entries: impl Iterator<Item = (u64, u64, u64)>,
@@ -488,17 +463,14 @@ impl VersionedMatrix<VersionedVector> {
     }
 
     /// Remove `(i, j)`: drop any pending add and mask the committed entry.
+    /// As with [`Self::set`], any pointer word removed here was already
+    /// unlinked by the tensor.
     pub fn remove(
         &mut self,
         i: u64,
         j: u64,
     ) {
-        if let Some(old) = self.dp.get(i, j) {
-            self.dp.remove(i, j);
-            if !old.is_scalar() {
-                old.release();
-            }
-        }
+        self.dp.remove(i, j);
         if self.m.contains(i, j) {
             self.dm.set(i, j, true);
         }

@@ -833,9 +833,13 @@ impl Graph {
         let relationship_attrs = self.relationship_attrs.new_version();
 
         // Tensor::dup() is copy-on-write; the graph-wide edge_endpoints vec is
-        // cloned once below.
-        let relationship_matrices: Vec<Tensor> =
-            self.relationship_matrices.iter().map(Tensor::dup).collect();
+        // cloned once below. The new tensors read/write multi-edge vectors at
+        // the new transaction's graph version.
+        let relationship_matrices: Vec<Tensor> = self
+            .relationship_matrices
+            .iter()
+            .map(|t| t.dup(self.version + 1))
+            .collect();
 
         Self {
             name: self.name.clone(),
@@ -1077,7 +1081,7 @@ impl Graph {
             .push(Arc::new(relationship_type.to_string()));
         self.relationship_matrices.insert(
             self.relationship_types.len() - 1,
-            Tensor::new(self.node_cap, self.node_cap),
+            Tensor::new(self.node_cap, self.node_cap, self.version),
         );
         TypeId(self.relationship_types.len() - 1)
     }
@@ -1192,7 +1196,7 @@ impl Graph {
 
             self.relationship_matrices.insert(
                 self.relationship_types.len() - 1,
-                Tensor::new(self.node_cap, self.node_cap),
+                Tensor::new(self.node_cap, self.node_cap, self.version),
             );
         }
 
@@ -1993,15 +1997,6 @@ impl Graph {
         }
         self.adjacancy_matrix.flush();
         self.relationship_type_matrix.flush();
-    }
-
-    /// Mark all multi-edge vector versions written by this (writer) graph as
-    /// committed. Part of the MVCC commit path; must run before readers can
-    /// observe this graph as the committed snapshot.
-    pub fn commit_tensors(&mut self) {
-        for t in &mut self.relationship_matrices {
-            t.commit();
-        }
     }
 
     /// Materialize all pending GraphBLAS operations on every matrix.

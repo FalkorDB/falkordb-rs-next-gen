@@ -26,14 +26,47 @@
 //! ## MVCC
 //!
 //! The matrices get snapshot isolation from [`VersionedMatrix`] (delta
-//! tracking + `Cow`). The heap vectors behind multi-edge entries are *shared*
-//! across snapshots (`GrB_Matrix_dup` bit-copies the tagged words), so they
-//! carry their own version stacks — see [`VersionedVector`]. Each `Tensor`
-//! value is pinned to an **epoch**: a fresh, never-reused number drawn from
-//! the global counter ([`next_epoch`]) on every [`Tensor::dup`] (i.e. per
-//! write transaction). Reads resolve multi-edge ids at that epoch; writes tag
-//! new vector versions with it; [`Tensor::commit`] marks every inner touched
-//! by the transaction as committed.
+//! tracking + `Cow`). The heap nodes behind multi-edge entries are *shared*
+//! across snapshots (`GrB_Matrix_dup` bit-copies the tagged words) but
+//! immutable once published — a writer never mutates a node it did not
+//! create in the current transaction; it clones the node and replaces the
+//! tagged word in its own COW delta instead (see [`VersionedVector`]). Each
+//! `Tensor` value carries an **epoch**: the graph version of the transaction
+//! that created it (passed into [`Tensor::dup`] per write transaction),
+//! which stamps new nodes and identifies the writer's own nodes for in-place
+//! mutation.
+//!
+//! ## Node lifetime
+//!
+//! Multi-edge nodes are freed by version chains, not refcounts or a live-
+//! version registry. When a writer supersedes a foreign node it chains the
+//! fresh node to the old one (`VersionNode::next`), so the newest word of a
+//! cell reaches every older version of its vector. Every instance in a
+//! tensor's version chain shares one graveyard of unlinked chains — an
+//! `Arc`-shared list whose reference count doubles as the chain's instance
+//! count. Nodes are freed at exactly two points:
+//!
+//! - **Rollback**: dropping an uncommitted instance frees the nodes it
+//!   created — stamped with its own epoch, visible only to itself. Its
+//!   retire buffer is discarded (the buffered chains are still linked in
+//!   committed versions).
+//! - **Chain death**: dropping the last instance (the one that takes the
+//!   graveyard `Arc` to zero) frees every node reachable from its effective
+//!   matrix, the graveyard, and its own retire buffer, deduplicated by
+//!   address (a graveyard chain can reach the same node an old snapshot's
+//!   word points at).
+//!
+//! Unlinking a word (edge deletion, demotion to scalar) buffers the pair's
+//! chain in the instance's `retired` list; [`Tensor::commit`] moves the
+//! buffer to the shared graveyard and marks the instance committed. A
+//! writer's own head (same epoch, never published) is freed on the spot and
+//! only its committed tail is buffered.
+//!
+//! Superseded committed nodes therefore stay allocated until their pair's
+//! chain reaches the graveyard or the tensor dies. One bounded, deliberate
+//! leak: if the newest version drops while an older snapshot is still live
+//! (graph deletion racing an in-flight read), nodes reachable only from the
+//! newest matrix are never freed.
 //!
 //! ## Iteration
 //!
@@ -41,16 +74,18 @@
 //! `(src, dst, edge_id)` triples, expanding multi-edge entries in ascending
 //! edge-id order.
 
-use std::ptr::NonNull;
+use std::{ptr::null_mut, sync::Arc};
 
-use rustc_hash::FxHashMap;
+use parking_lot::Mutex;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::graph::graphblas::{
+    GrB_Index, GrB_IndexUnaryOp, GrB_IndexUnaryOp_free, GrB_IndexUnaryOp_new, GrB_Info, GrB_Matrix,
+    GrB_Matrix_apply, GrB_Matrix_apply_IndexOp_UDT, GrB_Matrix_apply_IndexOp_UINT64,
+    GrB_Matrix_free, GrB_Matrix_new, GrB_Matrix_reduce_UINT64, GrB_PLUS_MONOID_UINT64, GrB_Type,
+    GrB_Type_new, GrB_UINT64, GrB_UnaryOp, GrB_UnaryOp_new,
     matrix::{BoolExtract, Uint64Extract},
-    versioned_vector::{
-        IdsIter, TensorEntryVector, TensorEntryVectorRef, VersionedVector, VersionedVectorInner,
-        next_epoch, release_inner,
-    },
+    versioned_vector::{IdsIter, TensorEntryVector, TensorEntryVectorRef, VersionedVector},
 };
 
 use super::{
@@ -104,33 +139,20 @@ pub struct Tensor {
     /// stored here — they are recovered from `m` when iterating incoming
     /// edges, avoiding a redundant copy of every id.
     mt: VersionedMatrix<bool>,
-    /// Epoch this tensor value reads/writes multi-edge vectors at. Fresh per
-    /// write transaction (see [`Tensor::dup`]); never reused, even after
-    /// rollback.
+    /// Epoch this tensor writes multi-edge nodes at: the graph version of
+    /// the transaction that created it (see [`Tensor::dup`]). New nodes are
+    /// stamped with it; a node whose stamp matches is the writer's own and
+    /// is mutated in place.
     epoch: u64,
-    /// Inners mutated by this (writer) tensor, to be flipped to committed by
-    /// [`Tensor::commit`]. Each entry holds a +1 refcount on its inner
-    /// (released by commit or by [`Drop`] on rollback), so a promotion
-    /// followed by a demotion in the same transaction can't leave a dangling
-    /// pointer here. Never marked committed on rollback.
-    touched: Vec<NonNull<VersionedVectorInner>>,
-    /// Total edge count visible at `epoch`.
+    /// Total edge count.
     count: u64,
     /// Number of pairs whose entry is a multi-edge vector word.
     multi_pair_count: u64,
 }
 
-// `touched` holds refcounted pointers to inners whose version stacks are
-// mutex-guarded.
-unsafe impl Send for Tensor {}
-unsafe impl Sync for Tensor {}
-
 impl Drop for Tensor {
     fn drop(&mut self) {
-        // Rollback path: commit never drained `touched`, drop its refs.
-        for inner in self.touched.drain(..) {
-            unsafe { release_inner(inner) };
-        }
+        self.release(self.epoch);
     }
 }
 
@@ -139,20 +161,19 @@ impl Tensor {
     pub fn new(
         nrows: u64,
         ncols: u64,
+        epoch: u64,
     ) -> Self {
         Self {
             m: VersionedMatrix::<VersionedVector>::new(nrows, ncols),
             mt: VersionedMatrix::<bool>::new(ncols, nrows),
-            epoch: next_epoch(),
-            touched: Vec::new(),
+            epoch,
             count: 0,
             multi_pair_count: 0,
         }
     }
 
-    /// Edge ids for the `(src, dest)` pair visible at this tensor's epoch, in
-    /// ascending edge-id order. Lock-free: a multi-edge pair's visible
-    /// vector is read in place (see
+    /// Edge ids for the `(src, dest)` pair, in ascending edge-id order.
+    /// Lock-free: a multi-edge pair's vector is read in place (see
     /// [`VersionedVector::ids`](super::versioned_vector::VersionedVector::ids)).
     #[must_use]
     pub fn get(
@@ -163,17 +184,6 @@ impl Tensor {
         self.m
             .get(src, dest)
             .map_or_else(IdsIter::empty, |vv| vv.ids(self.epoch))
-    }
-
-    /// Record an inner mutated by this transaction, taking a +1 refcount so
-    /// it stays alive until commit/rollback even if its word is later
-    /// removed from the matrices.
-    fn touch(
-        &mut self,
-        inner: NonNull<VersionedVectorInner>,
-    ) {
-        unsafe { inner.as_ref() }.retain();
-        self.touched.push(inner);
     }
 
     pub fn set(
@@ -191,13 +201,17 @@ impl Tensor {
             Some(vv) if vv.is_scalar() => {
                 // Second edge: promote scalar → vector.
                 let vec = VersionedVector::new_vec(self.epoch, [vv.scalar(), id]);
-                self.touch(vec.inner());
                 self.m.set(src, dest, vec);
                 self.multi_pair_count += 1;
             }
             Some(vv) => {
-                let inner = vv.push(self.epoch, id);
-                self.touch(inner);
+                let new_vv = vv.push(self.epoch, id);
+                if new_vv != vv {
+                    // Another transaction's node was cloned; publish the new
+                    // word. The old node stays chained behind it (`next`) for
+                    // older snapshots and end-of-life freeing — no unlink.
+                    self.m.set(src, dest, new_vv);
+                }
             }
         }
         self.count += 1;
@@ -229,24 +243,42 @@ impl Tensor {
         // Committed/pending scalar pairs gaining edges this batch:
         // [inline first id, new ids...].
         let mut promoted: FxHashMap<(u64, u64), Vec<u64>> = FxHashMap::default();
+        // Pre-existing multi-edge pairs whose node another transaction owns:
+        // the replacement word (this transaction's node, so later pushes
+        // mutate in place). Written back after the probe loop so no dp write
+        // lands between membership probes.
+        let mut updated: FxHashMap<(u64, u64), VersionedVector> = FxHashMap::default();
 
         for ((&s, &d), &id) in srcs.iter().zip(dsts.iter()).zip(ids.iter()) {
             if let Some(pair_ids) = new_pairs.get_mut(&(s, d)) {
                 pair_ids.push(id);
             } else if let Some(pair_ids) = promoted.get_mut(&(s, d)) {
                 pair_ids.push(id);
+            } else if let Some(&w) = updated.get(&(s, d)) {
+                // This transaction owns the node — pushed in place.
+                let _ = w.push(self.epoch, id);
             } else if let Some(vv) = self.m.get(s, d) {
                 if vv.is_scalar() {
                     promoted.insert((s, d), vec![vv.scalar(), id]);
                 } else {
-                    let inner = vv.push(self.epoch, id);
-                    self.touch(inner);
+                    let new_vv = vv.push(self.epoch, id);
+                    if new_vv != vv {
+                        // Foreign node cloned; the old one stays chained
+                        // behind the new word — no unlink.
+                        updated.insert((s, d), new_vv);
+                    }
                 }
             } else {
                 new_pairs.insert((s, d), vec![id]);
             }
         }
         self.count += srcs.len() as u64;
+
+        // Publish the replacement words for multi-edge pairs whose old nodes
+        // were superseded (and chained) above.
+        for ((s, d), w) in updated {
+            self.m.set(s, d, w);
+        }
 
         // New pairs: single-edge pairs go through the bulk scalar path;
         // in-batch multi-edge pairs get a vector word directly.
@@ -262,18 +294,14 @@ impl Tensor {
                 m_ids.push(id);
             } else {
                 let vec = VersionedVector::new_vec(self.epoch, pair_ids);
-                self.touch(vec.inner());
-                // Pair was effectively absent, so the dp word is absent too
-                // (no-shadow invariant) — safe to skip the release probe.
-                self.m.set_fresh(s, d, vec);
+                self.m.set(s, d, vec);
                 self.multi_pair_count += 1;
             }
         }
         for ((s, d), pair_ids) in promoted {
             let vec = VersionedVector::new_vec(self.epoch, pair_ids);
-            self.touch(vec.inner());
-            // Old effective word was a scalar, never a pointer — no release.
-            self.m.set_fresh(s, d, vec);
+            // Old effective word was a scalar, never a pointer — no unlink.
+            self.m.set(s, d, vec);
             self.multi_pair_count += 1;
         }
 
@@ -328,8 +356,8 @@ impl Tensor {
 
         // Slow path: some pairs have multi-edge vectors. Handle per edge:
         //  - scalar entry: the pair becomes empty.
-        //  - vector entry: drop the id from the vector at this epoch; demote
-        //    to a scalar word when one id remains, empty the pair at zero.
+        //  - vector entry: drop the id from the vector; demote to a scalar
+        //    word when one id remains, empty the pair at zero.
         let mut emptied = Vec::new();
         for &(id, src, dst) in rels {
             let Some(vv) = self.m.get(src, dst) else {
@@ -342,9 +370,11 @@ impl Tensor {
                 self.mt.remove(dst, src);
                 emptied.push((src, dst));
             } else {
-                let (remaining, inner) = vv.remove(self.epoch, id);
-                self.touch(inner);
+                let (remaining, new_vv) = vv.remove(self.epoch, id);
                 if remaining == 0 {
+                    // `new_vv` is this transaction's own node (fresh clone
+                    // chained to `vv`, or `vv` itself mutated in place), so
+                    // one unlink frees it and retires the committed chain.
                     self.m.remove(src, dst);
                     self.mt.remove(dst, src);
                     self.multi_pair_count -= 1;
@@ -352,9 +382,14 @@ impl Tensor {
                 } else if remaining == 1 {
                     // Demote back to an inline scalar; old snapshots keep
                     // reading the vector word from their own matrix copy.
-                    let last = vv.ids(self.epoch).next().unwrap();
+                    // As above, one unlink retires the pair's whole chain.
+                    let last = new_vv.ids(self.epoch).next().unwrap();
                     self.m.set(src, dst, VersionedVector::new_scalar(last));
                     self.multi_pair_count -= 1;
+                } else if new_vv != vv {
+                    // Another transaction's node was cloned; publish the new
+                    // word. The old node stays chained behind it — no unlink.
+                    self.m.set(src, dst, new_vv);
                 }
             }
             self.count -= 1;
@@ -381,27 +416,19 @@ impl Tensor {
     }
 
     /// Snapshot this tensor for a new write transaction: `Cow`-shares the
-    /// matrices and pins the copy to a fresh, never-reused epoch.
+    /// matrices, pins the copy to the transaction's graph version, and joins
+    /// the chain's shared graveyard.
     #[must_use]
-    pub fn dup(&self) -> Self {
+    pub fn dup(
+        &self,
+        epoch: u64,
+    ) -> Self {
         Self {
             m: self.m.dup(),
             mt: self.mt.dup(),
-            epoch: next_epoch(),
-            touched: Vec::new(),
+            epoch,
             count: self.count,
             multi_pair_count: self.multi_pair_count,
-        }
-    }
-
-    /// Mark every multi-edge vector version written by this transaction as
-    /// committed, making it visible to future epochs. Called from the MVCC
-    /// commit path; never called on rollback (uncommitted versions stay
-    /// invisible and are pruned lazily).
-    pub fn commit(&mut self) {
-        for inner in self.touched.drain(..) {
-            unsafe { inner.as_ref() }.mark_committed(self.epoch);
-            unsafe { release_inner(inner) };
         }
     }
 
@@ -418,12 +445,6 @@ impl Tensor {
         &self.mt
     }
 
-    /// Epoch this tensor reads multi-edge vectors at.
-    #[must_use]
-    pub const fn epoch(&self) -> u64 {
-        self.epoch
-    }
-
     /// Total number of edges in this tensor.
     #[must_use]
     pub const fn edge_count(&self) -> u64 {
@@ -432,9 +453,9 @@ impl Tensor {
 
     /// Iterate every `(src, dst, edge_id)` triple in the tensor.
     ///
-    /// Streams the forward matrix, expanding multi-edge vector entries at
-    /// this tensor's epoch. On a single-edge graph this is one streaming pass
-    /// over `m` with no per-pair work.
+    /// Streams the forward matrix, expanding multi-edge vector entries. On a
+    /// single-edge graph this is one streaming pass over `m` with no
+    /// per-pair work.
     pub fn iter_edges(&self) -> impl Iterator<Item = (u64, u64, u64)> + '_ {
         let epoch = self.epoch;
         self.m.iter(0, u64::MAX).flat_map(move |(src, dst, raw)| {
@@ -482,11 +503,124 @@ impl Tensor {
     pub fn memory_usage(&self) -> usize {
         let mut usage = self.m.memory_usage() + self.mt.memory_usage();
         if self.multi_pair_count != 0 {
-            for (_, _, raw) in self.m.iter(0, u64::MAX) {
-                usage += VersionedVector::from_raw(raw).memory_usage();
-            }
+            usage += self.multi_edge_memory_usage();
         }
         usage
+    }
+
+    /// Heap usage of the multi-edge id vectors, computed like C's
+    /// `Tensor_memoryUsage`: a GraphBLAS index op maps every tagged word to
+    /// the size of its node visible at this tensor's epoch (scalar words map
+    /// to 0), and a plus-reduction sums the per-entry sizes. Runs over the
+    /// base and delta-plus matrices; as in C, entries masked in delta-minus
+    /// still count.
+    fn multi_edge_memory_usage(&self) -> usize {
+        self.m.wait();
+        let mut total = 0u64;
+        unsafe {
+            let mut size_op: GrB_IndexUnaryOp = null_mut();
+            let info = GrB_IndexUnaryOp_new(
+                &raw mut size_op,
+                Some(memory_usage_fn),
+                GrB_UINT64,
+                GrB_UINT64,
+                GrB_UINT64,
+            );
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+
+            for words in [self.m.m().inner(), self.m.dp().inner()] {
+                let mut sizes: GrB_Matrix = null_mut();
+                let info =
+                    GrB_Matrix_new(&raw mut sizes, GrB_UINT64, self.m.nrows(), self.m.ncols());
+                debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+
+                let info = GrB_Matrix_apply_IndexOp_UINT64(
+                    sizes,
+                    null_mut(),
+                    null_mut(),
+                    size_op,
+                    words,
+                    self.epoch,
+                    null_mut(),
+                );
+                debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+
+                let mut sum = 0u64;
+                let info = GrB_Matrix_reduce_UINT64(
+                    &raw mut sum,
+                    null_mut(),
+                    GrB_PLUS_MONOID_UINT64,
+                    sizes,
+                    null_mut(),
+                );
+                debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+                total += sum;
+
+                GrB_Matrix_free(&raw mut sizes);
+            }
+
+            GrB_IndexUnaryOp_free(&raw mut size_op);
+        }
+        total as usize
+    }
+
+    pub fn release(
+        &self,
+        version: u64,
+    ) {
+        unsafe {
+            let mut release_op: GrB_IndexUnaryOp = null_mut();
+            GrB_IndexUnaryOp_new(
+                &raw mut release_op,
+                Some(release_fn),
+                GrB_UINT64,
+                GrB_UINT64,
+                GrB_UINT64,
+            );
+
+            GrB_Matrix_apply_IndexOp_UDT(
+                self.m.m().inner(),
+                null_mut(),
+                null_mut(),
+                release_op,
+                self.m.m().inner(),
+                (&raw const version).cast(),
+                null_mut(),
+            );
+        }
+    }
+}
+
+unsafe extern "C" fn release_fn(
+    z: *mut std::os::raw::c_void,
+    x: *const std::os::raw::c_void,
+    _i: crate::graph::graphblas::GrB_Index,
+    _j: crate::graph::graphblas::GrB_Index,
+    y: *const std::os::raw::c_void,
+) {
+    let version = unsafe { *y.cast::<u64>() };
+    let raw = unsafe { *x.cast::<u64>() };
+    let vv = VersionedVector::from_raw(raw);
+    if !vv.is_scalar() {
+        // TODO
+        println!("vector");
+    }
+}
+
+/// `GrB_IndexUnaryOp`: `z` = heap size of the entry's id vector visible at
+/// epoch `y`, `0` for scalar words — the Rust counterpart of C's
+/// `_multiedge_memory`.
+unsafe extern "C" fn memory_usage_fn(
+    z: *mut std::os::raw::c_void,
+    x: *const std::os::raw::c_void,
+    _i: GrB_Index,
+    _j: GrB_Index,
+    y: *const std::os::raw::c_void,
+) {
+    unsafe {
+        let epoch = *y.cast::<u64>();
+        let vv = VersionedVector::from_raw(*x.cast::<u64>());
+        *z.cast::<u64>() = vv.memory_usage(epoch) as u64;
     }
 }
 
@@ -552,8 +686,7 @@ impl Encode<19> for Tensor {
         for (src, dst, vv) in &multi {
             w.write_unsigned(*src);
             w.write_unsigned(*dst);
-            vv.read_visible(self.epoch, |v| TensorEntryVectorRef(v).encode(w))
-                .expect("multi-edge entry must have a visible version");
+            vv.read(self.epoch, |v| TensorEntryVectorRef(v).encode(w));
         }
         w.write_unsigned(0); // empty delta-plus tensor group
     }
@@ -567,10 +700,9 @@ impl Decode<19> for Tensor {
 
         // The on-disk forward matrix (C-compatible) stores single-edge ids
         // directly (MSB clear) and `(count | MSB)` for multi-edge pairs,
-        // whose real id lists follow in the tensor section. Note `forward`
-        // holds count words, not pointers, so it must stay non-owning
-        // (`owns_inners` false, the decode default); the real pointer words
-        // are built into the fresh, owning `m` below.
+        // whose real id lists follow in the tensor section. `forward` holds
+        // count words, not pointers — the real pointer words are built into
+        // the fresh `m` below.
         let mut m = VersionedMatrix::<VersionedVector>::new(nrows, ncols);
         let mut count = 0u64;
         let mut multi_pair_count = 0u64;
@@ -594,8 +726,8 @@ impl Decode<19> for Tensor {
                     let dst = r.read_unsigned()?;
                     let v = TensorEntryVector::decode(r)?.0;
                     count += v.nvals();
-                    // Decoded state is the committed baseline: epoch 0 (below
-                    // any writer epoch) marked committed, visible to everyone.
+                    // Decoded state is the committed baseline: epoch 0, below
+                    // any writer epoch.
                     let vec = VersionedVector::from_committed(v);
                     m.set(src, dst, vec);
                     multi_pair_count += 1;
@@ -605,12 +737,12 @@ impl Decode<19> for Tensor {
         debug_assert_eq!(multi_pair_count, total_tensors);
 
         // Backward matrix is rebuilt from `m` by the caller (`rebuild_backward`)
-        // after decode, so leave it empty here.
+        // after decode, so leave it empty here. Decoded graphs start at
+        // version 0, matching the epoch the entries were registered with.
         Ok(Self {
             m,
             mt: VersionedMatrix::<bool>::new(0, 0),
-            epoch: next_epoch(),
-            touched: Vec::new(),
+            epoch: 0,
             count,
             multi_pair_count,
         })

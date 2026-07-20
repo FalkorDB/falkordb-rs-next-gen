@@ -124,8 +124,8 @@ struct MsfWeightCtx {
     /// Unweighted MSF: every edge scores `1.0`, skipping the attribute lookup so
     /// the unweighted path shares the weighted path's parallel apply.
     unit: bool,
-    /// Snapshot epoch of the tensor currently being scored; multi-edge
-    /// pointer words expand to the edge ids visible at this epoch.
+    /// Snapshot epoch (graph version): multi-edge entries read the id-vector
+    /// version visible at it.
     epoch: u64,
 }
 
@@ -170,14 +170,13 @@ unsafe fn msf_score(
 /// edge id or a tagged pointer word to a multi-edge id vector (C FalkorDB
 /// parity: the vector is dereferenced right here, inside the parallel
 /// apply). Scalar entries score their single edge; multi-edge entries score
-/// every id visible at the snapshot epoch and keep the minimum (same
+/// every id in the pair's vector and keep the minimum (same
 /// tie-break as [`msf_keep_min_score`]). Writes the full `{score, edge}`
 /// pair so one apply produces everything the min-by-score build needs.
 ///
 /// # Panic safety
 /// Runs on GraphBLAS worker threads; see [`msf_score`]. The multi-edge path
-/// additionally takes the inner's `parking_lot` versions lock (read-only,
-/// never poisoned, writers are serialized away from this read snapshot).
+/// reads the pair's immutable id vector in place — lock-free.
 unsafe extern "C" fn msf_scored_edge_value_op(
     z: *mut std::os::raw::c_void,
     x: *const std::os::raw::c_void,
@@ -198,8 +197,8 @@ unsafe extern "C" fn msf_scored_edge_value_op(
         }
     } else {
         // `msf_score` maps a missing weight to +inf for either objective, so
-        // this init is never preferred over a real edge (and an empty visible
-        // set cannot happen for entries reachable from a consistent snapshot).
+        // this init is never preferred over a real edge (and a multi-edge
+        // entry's vector is never empty).
         let mut best = ScoredEdge {
             score: f64::INFINITY,
             edge: u64::MAX,
@@ -1315,12 +1314,12 @@ fn register_msf(funcs: &mut Functions) {
                 } else {
                     (0u16, true)
                 };
-                let mut ctx = MsfWeightCtx {
+                let ctx = MsfWeightCtx {
                     attrs: &raw const *g.relationship_attrs(),
                     attr_idx,
                     maximize,
                     unit,
-                    epoch: 0,
+                    epoch: g.version,
                 };
                 let mut ctx_type: GrB_Type = null_mut();
                 GrB_Type_new(&raw mut ctx_type, std::mem::size_of::<MsfWeightCtx>());
@@ -1361,7 +1360,7 @@ fn register_msf(funcs: &mut Functions) {
                     // disjoint union by the no-shadow invariant — then score
                     // every entry with one parallel apply directly into
                     // `{score, edge}` pairs (the operator expands pointer
-                    // words at this snapshot's epoch).
+                    // words in place).
                     let vm = tensor.matrix();
                     vm.wait();
                     let mut eff: GrB_Matrix = null_mut();
@@ -1387,7 +1386,6 @@ fn register_msf(funcs: &mut Functions) {
                             null_mut(),
                         );
                     }
-                    ctx.epoch = tensor.epoch();
                     let mut eff_nvals: GrB_Index = 0;
                     GrB_Matrix_nvals(&raw mut eff_nvals, eff);
                     if eff_nvals != 0 {

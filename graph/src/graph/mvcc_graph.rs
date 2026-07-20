@@ -162,11 +162,6 @@ impl MvccGraph {
 
         new_graph.borrow_mut().trim_attr_stores();
 
-        // Flip the multi-edge tensor versions written by this transaction to
-        // committed before publishing the graph — readers of the new snapshot
-        // resolve multi-edge ids through these version flags.
-        new_graph.borrow_mut().commit_tensors();
-
         // Use an immutable borrow here: `set_indexer_graph` only publishes
         // `new_graph` into the indexers' own `Mutex`-guarded fields. Holding
         // a mutable borrow across this call previously created a race with
@@ -180,6 +175,7 @@ impl MvccGraph {
         self.write.store(false, Ordering::Release);
     }
 
+    /// Release the write slot after a failed/abandoned transaction.
     pub fn rollback(&self) {
         self.write.store(false, Ordering::Release);
     }
