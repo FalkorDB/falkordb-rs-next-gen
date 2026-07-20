@@ -169,6 +169,13 @@ pub struct Parser<'a> {
 /// process-exiting panic hook — takes down the whole server.
 pub const DEFAULT_MAX_EXPRESSION_DEPTH: usize = 512;
 
+/// Lowest value accepted for the `MAX_EXPRESSION_DEPTH` module argument.
+/// Ordinary queries routinely nest a couple of dozen levels (function calls,
+/// arithmetic, list/map literals), so a misconfigured single-digit limit
+/// would make essentially all queries fail to parse — reject it at load time
+/// instead of letting the operator foot-gun the server.
+pub const MIN_EXPRESSION_DEPTH: usize = 32;
+
 /// Maximum nesting depth for expression parsing and binding. Configurable at
 /// module load time via the `MAX_EXPRESSION_DEPTH` module argument (read-only
 /// afterwards); defaults to [`DEFAULT_MAX_EXPRESSION_DEPTH`].
@@ -746,7 +753,21 @@ impl<'a> Parser<'a> {
         // CALL { subquery } — parse body as a self-contained query
         if self.lexer.current()? == Token::LBracket {
             self.lexer.next();
-            let body = self.parse_query()?;
+            // `parse_query` recurses back into this function for nested
+            // `CALL { ... }` blocks, so share the expression-depth guard:
+            // thousands of nested subqueries would otherwise overflow the
+            // native stack exactly like a deeply nested expression.
+            self.expr_depth += 1;
+            if self.expr_depth > self.max_expr_depth {
+                self.expr_depth -= 1;
+                return Err(ExpressionTooDeepError {
+                    max: self.max_expr_depth,
+                }
+                .into());
+            }
+            let body = self.parse_query();
+            self.expr_depth -= 1;
+            let body = body?;
             match_token!(self.lexer, RBracket);
             let is_returning = Self::body_has_return(&body);
             return Ok(vec![QueryIR::CallSubquery {
@@ -3044,6 +3065,27 @@ mod recursion_guard_tests {
     #[test]
     fn accepts_moderately_nested_expression() {
         let mut parser = Parser::new("RETURN [[1, 2], [3, [4, 5]]], {a: {b: {c: 1}}}");
+        assert!(parser.parse().is_ok());
+    }
+
+    #[test]
+    fn rejects_deeply_nested_call_subqueries() {
+        // `CALL { ... }` recurses through `parse_query` independently of
+        // expression parsing; without sharing the depth guard, thousands of
+        // nested subqueries overflow the native stack.
+        let depth = MAX_EXPRESSION_DEPTH.load(Ordering::Relaxed) + 100;
+        let query = format!("{}RETURN 1 {}", "CALL { ".repeat(depth), "} ".repeat(depth));
+        let mut parser = Parser::new(&query);
+        let result = parser.parse();
+        assert!(
+            result.is_err_and(|e| e.contains("expression nesting exceeds the maximum depth")),
+            "deeply nested CALL subqueries should be rejected, not crash the stack"
+        );
+    }
+
+    #[test]
+    fn accepts_moderately_nested_call_subqueries() {
+        let mut parser = Parser::new("CALL { CALL { RETURN 1 AS a } RETURN a AS b } RETURN b");
         assert!(parser.parse().is_ok());
     }
 }

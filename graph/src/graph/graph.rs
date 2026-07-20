@@ -1353,8 +1353,9 @@ impl Graph {
     }
 
     /// # Errors
-    /// Returns [`EntityIdError`] (without mutating any graph state) if `nodes` contains
-    /// an id exceeding [`MAX_UNTRUSTED_ENTITY_ID`]. `nodes` may be
+    /// Returns [`EntityIdError::ExceedsMaximum`] — before mutating any graph
+    /// state — if `nodes` contains an id exceeding
+    /// [`MAX_UNTRUSTED_ENTITY_ID`]. `nodes` may be
     /// attacker-controlled (via `GRAPH.EFFECT`/`GRAPH.RESTORE`); an oversized
     /// id would otherwise be accepted here and later panic in
     /// `graphblas::tensor::compound_key` (which requires node ids to fit in
@@ -1975,13 +1976,21 @@ impl Graph {
     /// Avoids HashMap overhead while using individual GraphBLAS set calls.
     ///
     /// # Errors
-    /// Returns [`EntityIdError`] (without mutating any graph state) if any of `srcs`,
-    /// `dsts`, or `rel_ids` exceeds [`MAX_UNTRUSTED_ENTITY_ID`]. These values
-    /// may be attacker-controlled (via `GRAPH.EFFECT`/`GRAPH.RESTORE`), and
-    /// an oversized id would otherwise panic downstream — either directly
-    /// (`compound_key`'s `assert!`, or the `edge_endpoints` capacity-overflow
-    /// path) or indirectly by driving a multi-gigabyte/unbounded GraphBLAS
-    /// matrix resize.
+    /// Returns [`EntityIdError::ExceedsMaximum`] — before mutating any graph
+    /// state — if any of `srcs`, `dsts`, or `rel_ids` exceeds
+    /// [`MAX_UNTRUSTED_ENTITY_ID`]. These values may be attacker-controlled
+    /// (via `GRAPH.EFFECT`/`GRAPH.RESTORE`), and an oversized id would
+    /// otherwise panic downstream — either directly (`compound_key`'s
+    /// `assert!`, or the `edge_endpoints` capacity-overflow path) or
+    /// indirectly by driving a multi-gigabyte/unbounded GraphBLAS matrix
+    /// resize.
+    ///
+    /// Returns [`EntityIdError::EdgeEndpointIndexOverflow`] if growing
+    /// `edge_endpoints` fails (defense in depth; unreachable while the
+    /// upfront bound holds). Unlike `ExceedsMaximum`, this fallback can fire
+    /// *after* counters/matrix state have been touched — callers must treat
+    /// any `Err` as fatal for the surrounding MVCC transaction and roll it
+    /// back (as `effect.rs` and `bulk_insert.rs` do).
     pub fn create_relationships_bulk(
         &mut self,
         type_name: &Arc<String>,

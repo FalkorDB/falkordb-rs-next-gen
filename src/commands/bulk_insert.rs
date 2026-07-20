@@ -179,8 +179,13 @@ fn parse_header(
     // Read property count (4 bytes)
     let prop_count = read_u32_ne(data, idx)? as usize;
 
-    // Read property names
-    let mut prop_names = Vec::with_capacity(prop_count);
+    // Read property names. Cap the pre-allocation to the bytes that remain:
+    // every property name is a NUL-terminated C string consuming at least one
+    // byte from `data`, so a `prop_count` larger than the remaining input is
+    // malformed and must not drive a huge up-front allocation
+    // (memory-exhaustion DoS). The loop below still errors on truncated data
+    // via `read_cstring`.
+    let mut prop_names = Vec::with_capacity(prop_count.min(data.len().saturating_sub(*idx)));
     for _ in 0..prop_count {
         let name = read_cstring(data, idx)?;
         prop_names.push(Arc::new(name.to_string()));

@@ -209,14 +209,19 @@ pub fn graph_init(
             if name == "MAX_EXPRESSION_DEPTH" {
                 if i + 1 < args_str.len()
                     && let Ok(v) = args_str[i + 1].parse::<usize>()
-                    && v >= 1
+                    && v >= graph::parser::cypher::MIN_EXPRESSION_DEPTH
                 {
                     graph::parser::cypher::MAX_EXPRESSION_DEPTH
                         .store(v, std::sync::atomic::Ordering::Relaxed);
                     i += 2;
                     continue;
                 }
-                ctx.log_warning("Invalid value for MAX_EXPRESSION_DEPTH module argument");
+                // Values below MIN_EXPRESSION_DEPTH would make essentially
+                // all ordinary queries fail to parse — reject the footgun.
+                ctx.log_warning(&format!(
+                    "Invalid value for MAX_EXPRESSION_DEPTH module argument (minimum {})",
+                    graph::parser::cypher::MIN_EXPRESSION_DEPTH
+                ));
                 return Status::Err;
             }
             i += 1;

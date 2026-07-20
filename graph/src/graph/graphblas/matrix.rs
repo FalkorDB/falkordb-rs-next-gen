@@ -356,11 +356,17 @@ impl<T> Decode<19> for Matrix<T> {
         unsafe {
             let mut container: MaybeUninit<super::GxB_Container> = MaybeUninit::uninit();
             let info = GxB_Container_new(container.as_mut_ptr());
-            assert_eq!(
-                info,
-                GrB_Info::GrB_SUCCESS,
-                "GxB_Container_new failed: {info:?}"
-            );
+            // Like `GxB_load_Matrix_from_Container` below, failures on this
+            // decode path must surface as `Err`, not a panic: the
+            // process-exiting panic hook would turn e.g. an allocation
+            // failure while restoring attacker-supplied bytes into a DoS.
+            if info != GrB_Info::GrB_SUCCESS {
+                return Err(DecodeError::GraphBlasFailure {
+                    call: "GxB_Container_new",
+                    info,
+                }
+                .into());
+            }
             let container = container.assume_init();
 
             // Copy struct data into the allocated container
@@ -388,11 +394,17 @@ impl<T> Decode<19> for Matrix<T> {
             // Create matrix and load from container
             let mut m: MaybeUninit<GrB_Matrix> = MaybeUninit::uninit();
             let info = GrB_Matrix_new(m.as_mut_ptr(), GrB_BOOL, 0, 0);
-            assert_eq!(
-                info,
-                GrB_Info::GrB_SUCCESS,
-                "GrB_Matrix_new failed: {info:?}"
-            );
+            if info != GrB_Info::GrB_SUCCESS {
+                // Free the container (which owns the decoded vectors) before
+                // propagating; a panic here would exit the whole process.
+                let mut c = container;
+                let _ = GxB_Container_free(&raw mut c);
+                return Err(DecodeError::GraphBlasFailure {
+                    call: "GrB_Matrix_new",
+                    info,
+                }
+                .into());
+            }
             let m = m.assume_init();
 
             let info = GxB_load_Matrix_from_Container(m, container, null_mut());

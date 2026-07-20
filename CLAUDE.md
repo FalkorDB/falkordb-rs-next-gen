@@ -165,4 +165,4 @@ Cypher Query String
 
 - `CACHE_SIZE` - Query plan cache size (default: 25, range: 0-1000)
 - `IMPORT_FOLDER` - CSV import path (default: `/var/lib/FalkorDB/import/`)
-- `MAX_EXPRESSION_DEPTH` - Maximum expression nesting depth accepted by the Cypher parser/binder (default: 512, load-time only)
+- `MAX_EXPRESSION_DEPTH` - Maximum expression nesting depth accepted by the Cypher parser/binder (default: 512, minimum: 32, load-time only)
