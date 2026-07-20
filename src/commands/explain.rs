@@ -12,13 +12,46 @@
 //!  │   └─ Filter
 //!  │       └─ NodeByLabelScan
 //! ```
+//!
+//! Like `GRAPH.QUERY`, plan construction happens on the thread pool with the
+//! client blocked; the main thread only resolves the graph key.
 
-use crate::{commands::EMPTY_KEY_ERR, graph_core::ThreadedGraph, redis_type::GRAPH_TYPE};
-use graph::graph::graph::Plan;
+use crate::{
+    commands::EMPTY_KEY_ERR,
+    graph_core::{BlockedClient, ThreadedGraph, ffi},
+    redis_type::GRAPH_TYPE,
+};
+use graph::{graph::graph::Plan, threadpool::spawn};
 use orx_tree::{Dfs, NodeRef};
 use parking_lot::RwLock;
-use redis_module::{Context, NextArg, RedisError, RedisResult, RedisString, RedisValue, raw};
+use redis_module::{
+    Context, ContextFlags, NextArg, RedisError, RedisResult, RedisString, RedisValue, raw,
+};
 use std::{os::raw::c_char, sync::Arc};
+
+#[inline]
+fn explain(
+    ctx: &Context,
+    graph: &Arc<RwLock<ThreadedGraph>>,
+    query: &str,
+) -> RedisResult {
+    let graph_read = graph.read();
+    let Plan { plan, .. } = graph_read
+        .graph
+        .read()
+        .borrow()
+        .get_plan(query)
+        .map_err(RedisError::String)?;
+    let ops = plan.root().indices::<Dfs>().collect::<Vec<_>>();
+    raw::reply_with_array(ctx.ctx, ops.len() as _);
+    for idx in ops {
+        let node = plan.node(idx);
+        let depth = node.depth();
+        let str = format!("{}{}", " ".repeat(depth * 4), plan.node(idx).data());
+        raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
+    }
+    RedisResult::Ok(RedisValue::NoReply)
+}
 
 pub fn graph_explain(
     ctx: &Context,
@@ -30,22 +63,39 @@ pub fn graph_explain(
 
     let key = ctx.open_key(&key);
 
-    (key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)?).map_or(EMPTY_KEY_ERR, |graph| {
-        let graph_read = graph.read();
-        let Plan { plan, .. } = graph_read
-            .graph
-            .read()
-            .borrow()
-            .get_plan(query)
-            .map_err(RedisError::String)?;
-        let ops = plan.root().indices::<Dfs>().collect::<Vec<_>>();
-        raw::reply_with_array(ctx.ctx, ops.len() as _);
-        for idx in ops {
-            let node = plan.node(idx);
-            let depth = node.depth();
-            let str = format!("{}{}", " ".repeat(depth * 4), plan.node(idx).data());
-            raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
-        }
-        RedisResult::Ok(RedisValue::NoReply)
-    })
+    let Some(graph) = key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? else {
+        return EMPTY_KEY_ERR;
+    };
+    let graph = graph.clone();
+
+    // Blocking clients are not allowed inside MULTI/EXEC, and replicated
+    // commands must complete before the handler returns (same rules as
+    // GRAPH.QUERY) — run synchronously in those cases.
+    if ctx.get_flags().contains(ContextFlags::MULTI)
+        || ctx.get_flags().contains(ContextFlags::REPLICATED)
+    {
+        return explain(ctx, &graph, query);
+    }
+
+    // Run on the thread pool like GRAPH.QUERY. Executing on the main thread
+    // deadlocks the server: the handler holds the GIL while waiting for the
+    // ThreadedGraph read lock, while a committing write query holds the
+    // write lock and waits for the GIL.
+    let bc = unsafe { BlockedClient::new(ctx.ctx) };
+    let query: Arc<str> = Arc::from(query);
+    spawn(
+        move || {
+            let ctx = unsafe { ffi::get_thread_safe_context(bc.inner) };
+            let ctx = Context::new(ctx);
+            if let Err(err) = explain(&ctx, &graph, &query) {
+                let cerr = ffi::sanitise_error(err.to_string());
+                unsafe { ffi::reply_error(ctx.ctx, cerr.as_ptr()) };
+            }
+            drop(bc);
+            unsafe { ffi::free_thread_safe_context(ctx.ctx) };
+        },
+        None,
+    );
+
+    RedisResult::Ok(RedisValue::NoReply)
 }
