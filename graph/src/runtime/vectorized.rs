@@ -330,11 +330,7 @@ pub enum Tri {
 impl Tri {
     #[must_use]
     const fn from_bool(b: bool) -> Self {
-        if b {
-            Self::True
-        } else {
-            Self::False
-        }
+        if b { Self::True } else { Self::False }
     }
 
     #[must_use]
