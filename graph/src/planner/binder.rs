@@ -60,6 +60,8 @@ pub struct Binder {
     /// property access like `r.prop` is allowed (per-edge predicate)
     /// whereas it is rejected on named-path Path variables.
     varlen_rel_var_ids: std::collections::HashSet<(u32, u32)>,
+    /// Largest variable table seen for each independent UNION branch scope.
+    union_scope_vars: Vec<Vec<Variable>>,
 }
 
 impl Default for Binder {
@@ -71,6 +73,7 @@ impl Default for Binder {
             copy_from_parent: HashMap::new(),
             node_labels: HashMap::new(),
             varlen_rel_var_ids: std::collections::HashSet::new(),
+            union_scope_vars: Vec::new(),
         }
     }
 }
@@ -93,16 +96,36 @@ impl Binder {
     ) -> Result<(BoundQueryIR, Vec<Vec<Variable>>), String> {
         let mut bound = self.bind_ir(ir)?;
         self.update_all_node_labels(&mut bound);
-        let scope_vars = self
+        let scope_vars = self.into_scope_vars();
+        Ok((bound, scope_vars))
+    }
+
+    fn into_scope_vars(self) -> Vec<Vec<Variable>> {
+        let mut scope_vars = self
             .env_stack
-            .iter()
+            .into_iter()
             .map(|env| {
-                let mut vars = env.values().cloned().collect::<Vec<_>>();
+                let mut vars = env.into_values().collect::<Vec<_>>();
                 vars.sort_by_key(|v| v.id);
                 vars
             })
-            .collect();
-        Ok((bound, scope_vars))
+            .collect::<Vec<_>>();
+        Self::merge_scope_vars(&mut scope_vars, self.union_scope_vars);
+        scope_vars
+    }
+
+    fn merge_scope_vars(
+        target: &mut Vec<Vec<Variable>>,
+        source: Vec<Vec<Variable>>,
+    ) {
+        if target.len() < source.len() {
+            target.resize_with(source.len(), Vec::new);
+        }
+        for (scope_id, vars) in source.into_iter().enumerate() {
+            if vars.len() > target[scope_id].len() {
+                target[scope_id] = vars;
+            }
+        }
     }
 
     /// Post-process the bound IR: update every QueryNode's labels to the
@@ -235,7 +258,8 @@ impl Binder {
                 let mut first_columns: Option<Vec<String>> = None;
                 for branch in branches {
                     let binder = Self::default();
-                    let (bound, _) = binder.bind(branch)?;
+                    let (bound, scope_vars) = binder.bind(branch)?;
+                    Self::merge_scope_vars(&mut self.union_scope_vars, scope_vars);
                     let columns = bound.return_column_names();
                     if let Some(ref expected) = first_columns {
                         if columns != *expected {
@@ -805,6 +829,7 @@ impl Binder {
                         copy_from_parent: HashMap::new(),
                         node_labels: HashMap::new(),
                         varlen_rel_var_ids: std::collections::HashSet::new(),
+                        union_scope_vars: Vec::new(),
                     };
 
                     // Build bound clauses: explicit import WITH + remaining
@@ -852,6 +877,8 @@ impl Binder {
                     }
                     // Capture the binder's final env (RETURN-projected vars)
                     last_binder_env = Some(binder.current_env().clone());
+                    let branch_scope_vars = binder.into_scope_vars();
+                    Self::merge_scope_vars(&mut self.union_scope_vars, branch_scope_vars);
                     bound_branches.push(bound);
                 }
                 // Set current env to the returned columns from the last branch
