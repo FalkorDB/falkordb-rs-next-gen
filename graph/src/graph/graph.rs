@@ -286,7 +286,7 @@ pub struct Graph {
     all_nodes_matrix: VersionedMatrix<bool>,
     /// Per-label matrices (label ID → node membership)
     labels_matices: Vec<VersionedMatrix<bool>>,
-    /// Per-type relationship tensors (type ID → src×dst×edge_id)
+    /// Per-type relationship tensors (type ID → `src×dst×edge_id`)
     relationship_matrices: Vec<Tensor>,
     /// Graph-wide reverse index: `edge_id` → `compound_key(src, dst)` for O(1)
     /// endpoint lookup, stored as a dense vector indexed by edge id. Edge IDs
@@ -631,12 +631,12 @@ fn drop_index_bg(
     );
 }
 
-/// Default for the NODE_CREATION_BUFFER configuration; the config
+/// Default for the `NODE_CREATION_BUFFER` configuration; the config
 /// registration and `CONFIGURATION_NODE_CREATION_BUFFER` in the root crate
 /// reference this constant so the default lives in one place.
 pub const DEFAULT_NODE_CREATION_BUFFER: u64 = 16384;
 
-/// Effective NODE_CREATION_BUFFER configuration value: the chunk size (in
+/// Effective `NODE_CREATION_BUFFER` configuration value: the chunk size (in
 /// entities) that matrix capacities grow by.
 ///
 /// Set once at module init from the normalized config (power of two, >= 128);
@@ -646,9 +646,9 @@ pub static NODE_CREATION_BUFFER: AtomicU64 = AtomicU64::new(DEFAULT_NODE_CREATIO
 /// Capacity growth step for entity matrices. Sparse matrices carry a
 /// row-pointer array sized by the matrix dimension, so doubling the
 /// capacity wastes up to `4 * cap` bytes per matrix at large graph sizes.
-/// Growing 25% at a time (rounded up to a NODE_CREATION_BUFFER chunk)
+/// Growing 25% at a time (rounded up to a `NODE_CREATION_BUFFER` chunk)
 /// bounds that slop while keeping resizes rare: each resize triggers
-/// GraphBLAS format conversions costing O(entries), so smaller growth
+/// `GraphBLAS` format conversions costing O(entries), so smaller growth
 /// steps measurably slow bulk inserts.
 fn grow_cap(
     mut cap: u64,
@@ -1409,7 +1409,7 @@ impl Graph {
     }
 
     /// Import pre-resolved node attributes directly into the cache.
-    /// Used by bulk insert to avoid per-node OrderMap allocations.
+    /// Used by bulk insert to avoid per-node `OrderMap` allocations.
     pub fn import_node_attrs_resolved(
         &mut self,
         data: &mut Vec<(u64, Vec<(u16, Value)>)>,
@@ -1921,7 +1921,7 @@ impl Graph {
     }
 
     /// Create relationships of a single type using flat arrays.
-    /// Avoids HashMap overhead while using individual GraphBLAS set calls.
+    /// Avoids `HashMap` overhead while using individual `GraphBLAS` set calls.
     pub fn create_relationships_bulk(
         &mut self,
         type_name: &Arc<String>,
@@ -1995,9 +1995,9 @@ impl Graph {
         self.relationship_type_matrix.flush();
     }
 
-    /// Materialize all pending GraphBLAS operations on every matrix.
-    /// Called from pthread_atfork prepare handler to ensure no internal
-    /// GraphBLAS locks are held at fork time.
+    /// Materialize all pending `GraphBLAS` operations on every matrix.
+    /// Called from `pthread_atfork` prepare handler to ensure no internal
+    /// `GraphBLAS` locks are held at fork time.
     pub fn wait_all(&self) {
         self.zero_matrix.wait_all();
         self.adjacancy_matrix.wait_all();
@@ -2015,7 +2015,7 @@ impl Graph {
     /// Returns true if every matrix is fully synced — i.e. `wait_all`
     /// has been called and no writer has since enqueued pending ops.
     /// Used by the post-fork child handler to verify the parent's
-    /// pre_fork sync took effect before emitting an RDB.
+    /// `pre_fork` sync took effect before emitting an RDB.
     #[must_use]
     pub fn is_synced(&self) -> bool {
         self.zero_matrix.is_synced()
@@ -2481,7 +2481,7 @@ impl Graph {
     }
 
     /// Decode the (src, dst) endpoints for an edge from the graph-wide reverse
-    /// index. Returns None if the edge_id is not present.
+    /// index. Returns None if the `edge_id` is not present.
     #[must_use]
     fn endpoints_for_edge(
         &self,
@@ -2552,7 +2552,7 @@ impl Graph {
 
     /// Borrow the relationship attribute store directly.
     ///
-    /// Lets a caller hand a GraphBLAS user-defined operator a minimal, read-only
+    /// Lets a caller hand a `GraphBLAS` user-defined operator a minimal, read-only
     /// handle to just the relationship weights (see `algo.MSF`'s weight operator)
     /// rather than a raw pointer to the whole graph.
     #[must_use]
@@ -3139,7 +3139,7 @@ impl Graph {
     /// distance.
     ///
     /// Distances are computed manually from the query vector and each
-    /// entity's stored vector — RediSearch's per-result score is *not*
+    /// entity's stored vector — `RediSearch`'s per-result score is *not*
     /// the KNN distance, and reading it returns 0. For each result we
     /// look up the entity's vector property and apply the index's
     /// similarity function. Results are eagerly materialized into a
@@ -3641,7 +3641,7 @@ impl Graph {
     }
 
     /// Build a diagonal boolean matrix of nodes matching any of the given labels.
-    /// If `labels` is empty, returns the all_nodes matrix.
+    /// If `labels` is empty, returns the `all_nodes` matrix.
     #[must_use]
     pub fn build_node_mask_matrix(
         &self,

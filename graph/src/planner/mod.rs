@@ -20,10 +20,10 @@
 //!
 //! ## IR Operators
 //!
-//! - **NodeByLabelScan**: Scan all nodes with a label
-//! - **NodeByIndexScan**: Use an index for node lookup
-//! - **CondTraverse**: Traverse relationships conditionally
-//! - **ExpandInto**: Check for relationship between known nodes
+//! - **`NodeByLabelScan`**: Scan all nodes with a label
+//! - **`NodeByIndexScan`**: Use an index for node lookup
+//! - **`CondTraverse`**: Traverse relationships conditionally
+//! - **`ExpandInto`**: Check for relationship between known nodes
 //! - **Filter**: Apply predicate to filter tuples
 //! - **Project**: Compute new values from existing
 //! - **Aggregate**: Group and aggregate tuples
@@ -116,7 +116,7 @@ pub enum IR {
         index: Arc<String>,
         query: Arc<IndexQuery<QueryExpr<Variable>>>,
     },
-    /// Scan edges using an index, replacing CondTraverse when a filter
+    /// Scan edges using an index, replacing `CondTraverse` when a filter
     /// can be pushed into the edge index.
     EdgeByIndexScan {
         relationship: Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>,
@@ -183,7 +183,7 @@ pub enum IR {
         /// scan accordingly.
         transposed: bool,
         /// Additional hops fused by `fuse_anonymous_traverse`, in traversal
-        /// order. Empty for a single-hop CondTraverse. Each chain hop is an
+        /// order. Empty for a single-hop `CondTraverse`. Each chain hop is an
         /// anonymous-edge, anonymous-intermediate-node traversal — only the
         /// final hop's `to` alias is bound at runtime.
         chain: Vec<Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>>,
@@ -216,9 +216,9 @@ pub enum IR {
     Filter(QueryExpr<Variable>),
     /// Cartesian product of child results
     CartesianProduct,
-    /// Value Hash Join: replaces CartesianProduct + equality Filter.
+    /// Value Hash Join: replaces `CartesianProduct` + equality Filter.
     /// Children: child(0) = left sub-plan, child(1) = right sub-plan.
-    /// The join expressions (lhs_exp evaluated on left rows, rhs_exp on right rows)
+    /// The join expressions (`lhs_exp` evaluated on left rows, `rhs_exp` on right rows)
     /// are stored here so the runtime can build a hash table.
     ValueHashJoin {
         lhs_exp: QueryExpr<Variable>,
@@ -250,7 +250,7 @@ pub enum IR {
     Skip(QueryExpr<Variable>),
     /// Limit to N rows
     Limit(QueryExpr<Variable>),
-    /// Aggregate with grouping keys, aggregations, copy_from_parent, and projections
+    /// Aggregate with grouping keys, aggregations, `copy_from_parent`, and projections
     Aggregate {
         names: Vec<Variable>,
         keys: Vec<(Variable, QueryExpr<Variable>)>,
@@ -269,7 +269,7 @@ pub enum IR {
     Union,
     /// Commit write operations to graph
     Commit,
-    /// FOREACH(var IN list | body_plan)
+    /// FOREACH(var IN list | `body_plan`)
     /// Children: child(0) = body sub-plan
     ForEach {
         list: QueryExpr<Variable>,
@@ -303,14 +303,14 @@ pub fn subtree_contains(
         .any(|n| predicate(n.data()))
 }
 
-/// Returns true if a QueryExpr tree contains any non-deterministic function call.
+/// Returns true if a `QueryExpr` tree contains any non-deterministic function call.
 fn expr_has_non_deterministic(expr: &DynTree<ExprIR<Variable>>) -> bool {
     expr.root()
         .walk_with(&mut Traversal.bfs().over_nodes())
         .any(|n| matches!(n.data(), ExprIR::FuncInvocation(func) if func.non_deterministic))
 }
 
-/// Returns true if a SetItem references any non-deterministic expression.
+/// Returns true if a `SetItem` references any non-deterministic expression.
 fn set_item_has_non_deterministic(item: &SetItem<Arc<String>, Variable>) -> bool {
     match item {
         SetItem::Attribute { target, value, .. } => {
@@ -320,7 +320,7 @@ fn set_item_has_non_deterministic(item: &SetItem<Arc<String>, Variable>) -> bool
     }
 }
 
-/// Returns true if a QueryGraph (CREATE/MERGE pattern) contains non-deterministic expressions.
+/// Returns true if a `QueryGraph` (CREATE/MERGE pattern) contains non-deterministic expressions.
 fn query_graph_has_non_deterministic(qg: &QueryGraph<Arc<String>, Arc<String>, Variable>) -> bool {
     for node in qg.nodes() {
         if expr_has_non_deterministic(&node.attrs) {
@@ -335,7 +335,7 @@ fn query_graph_has_non_deterministic(qg: &QueryGraph<Arc<String>, Arc<String>, V
     false
 }
 
-/// Returns true if an IndexQuery tree contains any non-deterministic function call.
+/// Returns true if an `IndexQuery` tree contains any non-deterministic function call.
 fn index_query_has_non_deterministic(query: &IndexQuery<QueryExpr<Variable>>) -> bool {
     match query {
         IndexQuery::Range { min, max, .. } => {
@@ -631,7 +631,7 @@ pub(super) fn inline_attrs_to_filter(
 ///   during pattern-predicate decomposition without collisions.
 #[derive(Default)]
 pub struct Planner {
-    /// Variable (id, scope_id) pairs that are already bound in the current
+    /// Variable (id, `scope_id`) pairs that are already bound in the current
     /// execution stream.  Tracking scope alongside id prevents inner-scope
     /// variables from shadowing outer-scope variables with the same id.
     visited: HashSet<(u32, u32)>,
@@ -668,7 +668,7 @@ impl Planner {
 
     /// Attach `Argument` nodes to every leaf in the plan tree.
     ///
-    /// When a sub-plan is used inside a correlated join (Apply, SemiApply, etc.),
+    /// When a sub-plan is used inside a correlated join (Apply, `SemiApply`, etc.),
     /// its leaves must receive the current row from the outer stream.  `Argument`
     /// is the operator that feeds the outer row into the sub-plan.
     ///
@@ -1097,7 +1097,7 @@ impl Planner {
     /// (e.g. `WHERE EXISTS { (a)-[:KNOWS]->(b) }`) from scalar predicates.
     ///
     /// Pattern predicates cannot be evaluated as simple filters -- they require
-    /// building a sub-plan (SemiApply / AntiSemiApply).  This function rebuilds
+    /// building a sub-plan (`SemiApply` / `AntiSemiApply`).  This function rebuilds
     /// the expression tree with patterns replaced by either:
     ///
     /// - **Extractable** patterns (`can_extract = true`): removed from the
@@ -1108,7 +1108,7 @@ impl Planner {
     /// - **Inline** patterns (`can_extract = false`): replaced with a fresh
     ///   synthetic variable and collected in `inline`.  These appear under OR
     ///   or other operators where they cannot be independently extracted and
-    ///   must be handled by `expr_to_plan` (OrApplyMultiplexer, etc.).
+    ///   must be handled by `expr_to_plan` (`OrApplyMultiplexer`, etc.).
     ///
     /// `can_extract` propagates through AND (conjuncts are independently
     /// extractable) but resets to `false` under OR, NOT, and other operators.
@@ -1210,7 +1210,7 @@ impl Planner {
     ///
     /// The pattern graph is decomposed into connected components.  Each component
     /// produces a sub-plan (scan + traversals), and disconnected components are
-    /// joined with a CartesianProduct.  The optional WHERE filter is then applied
+    /// joined with a `CartesianProduct`.  The optional WHERE filter is then applied
     /// on top, with pattern predicates decomposed into SemiApply/AntiSemiApply.
     ///
     /// The `visited` set is updated as variables are bound, so subsequent clauses
@@ -2079,12 +2079,12 @@ impl Planner {
         res
     }
 
-    /// Returns true if a plan `n` being stitched into a CartesianProduct
+    /// Returns true if a plan `n` being stitched into a `CartesianProduct`
     /// requires Apply wrapping. Plans from data-producing clauses (LOAD CSV,
     /// UNWIND, WITH/RETURN projections) produce variables that may be referenced
-    /// inside the CartesianProduct — these need Apply + Argument propagation.
+    /// inside the `CartesianProduct` — these need Apply + Argument propagation.
     /// Plans from MATCH components (scans, traversals) are just additional
-    /// cross-product branches and should be inserted as CartesianProduct children.
+    /// cross-product branches and should be inserted as `CartesianProduct` children.
     fn needs_apply_wrapping(n: &DynTree<IR>) -> bool {
         // Walk to the root of n and check its type.
         // Match-produced plans have scan/traversal/filter/argument at root.

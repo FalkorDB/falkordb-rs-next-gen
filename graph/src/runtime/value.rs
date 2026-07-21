@@ -7,7 +7,7 @@
 //! - Temporal: Datetime, Date, Time, Duration
 //! - Collections: List, Map
 //! - Graph entities: Node, Relationship, Path
-//! - Special: Point (geographic), VecF32 (vector embeddings)
+//! - Special: Point (geographic), `VecF32` (vector embeddings)
 //!
 //! ## Type Coercion
 //!
@@ -205,7 +205,7 @@ pub enum Value {
     VecF32(Arc<ThinVec<f32>>),
     /// Geographic point (latitude, longitude)
     Point(Point),
-    /// DateTime as Unix timestamp in seconds
+    /// `DateTime` as Unix timestamp in seconds
     Datetime(i64),
     /// Date as Unix timestamp in seconds (midnight UTC)
     Date(i64),

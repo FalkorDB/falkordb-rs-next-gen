@@ -18,7 +18,7 @@
 //! 3. **Labeled** (score 1) -- has at least one label
 //! 4. **Cardinality** (tiebreaker) -- label with fewer nodes wins
 //!
-//! ## Single CondTraverse
+//! ## Single `CondTraverse`
 //!
 //! ```text
 //! Before (to is better):          After (swap + transposed):
@@ -32,7 +32,7 @@
 //!
 //! ## Chain Reversal
 //!
-//! For chains of CondTraverse operators (CT_0 -> CT_1 -> ... -> CT_n), if
+//! For chains of `CondTraverse` operators (`CT_0` -> `CT_1` -> ... -> `CT_n`), if
 //! the best endpoint is at the top of the chain, the entire chain order is
 //! reversed and each relationship's from/to is swapped:
 //!
@@ -269,14 +269,14 @@ fn resolve_path(
 
 /// Selects the optimal scan node for leaf `CondTraverse` operators.
 ///
-/// For each bottom-of-chain CondTraverse (leaf or with a non-CT child),
+/// For each bottom-of-chain `CondTraverse` (leaf or with a non-CT child),
 /// determines the best endpoint to scan from based on: (1) bound variables
 /// from child, (2) filter presence, (3) label presence, (4) label cardinality.
 /// Adds a `NodeByLabelScan` or `AllNodeScan` child for leaf chains, and
 /// optionally swaps from/to with `transposed=true` if the better endpoint is
 /// at the other end.
 ///
-/// For chains of CondTraverse operators, walks up to find the best endpoint
+/// For chains of `CondTraverse` operators, walks up to find the best endpoint
 /// across the entire chain. If the best endpoint is not at the bottom, reverses
 /// the chain direction.
 pub(super) fn select_scan_node(

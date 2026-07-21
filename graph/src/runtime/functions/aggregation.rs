@@ -120,8 +120,8 @@ pub fn register(funcs: &mut Functions) {
             let mut iter = args.iter().cloned();
             match (iter.next(), iter.next()) {
                 (Some(a), Some(b)) => {
-                    if let (ord, cmp) = b.compare_value(&a) &&
-                    (ord == Ordering::Less || cmp == DisjointOrNull::ComparedNull) {
+                    let (ord, cmp) = b.compare_value(&a);
+                    if ord == Ordering::Less || cmp == DisjointOrNull::ComparedNull {
                         return Ok(a);
                     }
                     Ok(b)
@@ -141,8 +141,8 @@ pub fn register(funcs: &mut Functions) {
             let mut iter = args.iter().cloned();
             match (iter.next(), iter.next()) {
                 (Some(a), Some(b)) => {
-                    if let (ord, cmp) = b.compare_value(&a) &&
-                    (ord == Ordering::Greater || cmp == DisjointOrNull::ComparedNull) {
+                    let (ord, cmp) = b.compare_value(&a);
+                    if ord == Ordering::Greater || cmp == DisjointOrNull::ComparedNull {
                         return Ok(a);
                     }
                     Ok(b)

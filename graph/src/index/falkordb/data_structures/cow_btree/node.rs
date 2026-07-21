@@ -335,7 +335,7 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Node<LEAF_MAX, BRANCH_MAX> 
         }
     }
 
-    /// Join two ordered AoS sibling leaves. Their buffers are tag-free `[(key, doc) × n]` and `left`
+    /// Join two ordered `AoS` sibling leaves. Their buffers are tag-free `[(key, doc) × n]` and `left`
     /// precedes `right`, so the merge is a plain byte concat — no decode. If the result overflows
     /// `LEAF_MAX` we split at the midpoint entry; the fixed `STRIDE` makes that a balanced split (both
     /// halves `>= LEAF_MAX / 2`), and `mid_sep` (the first entry of the right half) is the new separator.

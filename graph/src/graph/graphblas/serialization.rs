@@ -74,7 +74,7 @@ pub trait Decode<const VERSION: u64>: Sized {
     }
 }
 
-/// Index field type bitmask matching C FalkorDB index_field.h.
+/// Index field type bitmask matching C `FalkorDB` `index_field.h`.
 pub mod index_field_type {
     pub const INDEX_FLD_FULLTEXT: u64 = 0x01;
     pub const INDEX_FLD_NUMERIC: u64 = 0x02;
@@ -83,7 +83,7 @@ pub mod index_field_type {
     pub const INDEX_FLD_VECTOR: u64 = 0x10;
 }
 
-/// SIValue type tags for binary serialization (matching C FalkorDB format).
+/// `SIValue` type tags for binary serialization (matching C `FalkorDB` format).
 pub mod si_type {
     pub const T_ARRAY: u64 = 1 << 3;
     pub const T_DATETIME: u64 = 1 << 5;

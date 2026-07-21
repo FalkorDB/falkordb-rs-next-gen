@@ -607,8 +607,8 @@ fn list_has_nested_list(
 /// Tries to convert an `IN` filter into an index scan against `subject`.
 ///
 /// Handles two patterns:
-/// 1. `property IN [list]` — converts to InList index query
-/// 2. `value IN property` — converts to ArrayContains index query
+/// 1. `property IN [list]` — converts to `InList` index query
+/// 2. `value IN property` — converts to `ArrayContains` index query
 fn try_in_filter_scan<T: IndexSubject>(
     subject: &T,
     filter: &DynTree<ExprIR<Variable>>,
@@ -930,7 +930,7 @@ fn is_non_indexable_subexpr(
 /// Drives a local rewrite to a fixed point: walks the plan in BFS
 /// order and applies `try_rewrite` at each index; when a rewrite
 /// succeeds (returns `true`), restart the walk against the new plan
-/// because the NodeIdx list may be invalidated by structural changes
+/// because the `NodeIdx` list may be invalidated by structural changes
 /// (orx-tree's Auto memory policy). Stop once a full pass produces no
 /// change.
 fn rewrite_until_stable<F>(
@@ -1182,7 +1182,7 @@ fn add_to_labels_filter(
 /// up the plan after edge-index rewrites.
 ///
 /// Four passes, each driven to a fixed point independently to avoid
-/// NodeIdx invalidation under orx-tree's Auto memory policy:
+/// `NodeIdx` invalidation under orx-tree's Auto memory policy:
 ///
 /// 1. Push property filters into `NodeByIndexScan`.
 /// 2. Push property filters into `EdgeByIndexScan`.

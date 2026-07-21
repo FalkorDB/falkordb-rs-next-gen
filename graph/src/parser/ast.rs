@@ -225,14 +225,14 @@ pub enum ExprIR<TVar> {
     /// List comprehension [x IN list | expr]
     ListComprehension(TVar),
     /// Reduce expression: reduce(acc = init, var IN list | expr)
-    /// Children: [init_expr, list_expr, body_expr]
+    /// Children: [`init_expr`, `list_expr`, `body_expr`]
     ///
     /// Boxed: two inline `TVar`s (2 × 32 bytes once bound to `Variable`)
-    /// would cap the whole enum; reduce() is rare.
+    /// would cap the whole enum; `reduce()` is rare.
     Reduce(Box<ReduceVars<TVar>>),
     /// Pattern comprehension [(pattern) WHERE cond | expr]
     /// Stores the graph pattern for runtime traversal.
-    /// Children: [where_condition, result_expression]
+    /// Children: [`where_condition`, `result_expression`]
     ///
     /// Boxed: `QueryGraph` is 72 bytes but this variant is rare, so inlining
     /// it would bloat every node of every expression tree.
@@ -243,10 +243,10 @@ pub enum ExprIR<TVar> {
     /// `PatternComprehension`).
     Pattern(Box<QueryGraph<Arc<String>, Arc<String>, TVar>>),
     /// shortestPath((a)-[*]->(b)) or allShortestPaths((a)-[*]->(b))
-    /// Children: [source_var_expr, dest_var_expr]
+    /// Children: [`source_var_expr`, `dest_var_expr`]
     ///
     /// Boxed: the inline payload (rel-type list, hop bounds, flags) is
-    /// ~40 bytes and shortestPath() is rare.
+    /// ~40 bytes and `shortestPath()` is rare.
     ShortestPath(Box<ShortestPathInfo>),
     /// Map projection: base { .prop, .*, key: expr, var }
     /// First child is the base expression, remaining children are projection items
@@ -814,7 +814,7 @@ impl<L: Display + PartialEq, TVar: Display + std::fmt::Debug> Display for SetIte
 pub enum QueryIR<TVar> {
     /// CALL procedure(args) YIELD outputs WHERE filter
     /// The bool indicates whether YIELD was explicitly written (true) or default outputs are used (false).
-    /// yield_aliases stores the original field names when AS aliasing is used;
+    /// `yield_aliases` stores the original field names when AS aliasing is used;
     /// yields then holds the alias names (scope-visible).
     Call {
         func: Arc<GraphFn>,
@@ -904,15 +904,15 @@ pub enum QueryIR<TVar> {
         clauses: Vec<Self>,
         write: bool,
     },
-    /// FOREACH(var IN list_expr | body_clauses)
+    /// FOREACH(var IN `list_expr` | `body_clauses`)
     ForEach {
         list: QueryExpr<TVar>,
         var: TVar,
         body: Vec<Self>,
     },
-    /// CALL { subquery_body }
-    /// is_returning = body ends with RETURN
-    /// remap = return remapping: (inner_var, outer_var) pairs
+    /// CALL { `subquery_body` }
+    /// `is_returning` = body ends with RETURN
+    /// remap = return remapping: (`inner_var`, `outer_var`) pairs
     CallSubquery {
         body: Box<Self>,
         is_returning: bool,

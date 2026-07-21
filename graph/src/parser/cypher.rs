@@ -1,4 +1,4 @@
-//! Cypher query parser for FalkorDB.
+//! Cypher query parser for `FalkorDB`.
 //!
 //! This module implements a hand-written recursive descent parser for the
 //! Cypher query language. It converts Cypher query strings into an Abstract
@@ -2418,7 +2418,7 @@ impl<'a> Parser<'a> {
 
     /// Parses a pattern comprehension after the opening `[`.
     ///
-    /// Grammar: `[` (path_var `=`)? relationship_pattern (`WHERE` cond)? `|` expr `]`
+    /// Grammar: `[` (`path_var` `=`)? `relationship_pattern` (`WHERE` cond)? `|` expr `]`
     ///
     /// Collects the graph pattern into a `PatternComprehension` node
     /// for execution by the runtime.

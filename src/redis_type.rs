@@ -4,9 +4,9 @@
 //! and `GRAPHMETA_TYPE` -- a Redis module type named `"graphmeta"` --
 //! along with RDB and lifecycle callbacks that Redis invokes automatically.
 //!
-//! `GRAPHMETA_TYPE` is needed to load C FalkorDB RDB files, which use
+//! `GRAPHMETA_TYPE` is needed to load C `FalkorDB` RDB files, which use
 //! `"graphmeta"` for virtual keys and AUX data. Rust's own virtual keys
-//! use `"graphdata"` so that C FalkorDB can also load them.
+//! use `"graphdata"` so that C `FalkorDB` can also load them.
 //!
 //! ## Callbacks
 //!
@@ -269,15 +269,15 @@ unsafe extern "C" fn graph_aux_load(
 // Persistence event handler -- creates/deletes virtual keys
 // ---------------------------------------------------------------------------
 
-/// pthread_atfork prepare handler: materialize all pending GraphBLAS operations
+/// `pthread_atfork` prepare handler: materialize all pending `GraphBLAS` operations
 /// before fork so the child process doesn't encounter held internal locks.
 ///
 /// Only runs on the main thread (BGSAVE path). For non-main-thread forks
-/// (RediSearch's ForkGC), we return immediately — mirroring the C port's
+/// (`RediSearch`'s `ForkGC`), we return immediately — mirroring the C port's
 /// `_ForkPrepare`, which also opts out of graph-side synchronization for
-/// ForkGC forks. That avoids a three-way deadlock between the writer's
-/// RediSearch FFI calls (which take RediSearch's internal RWLock) and
-/// ForkGC (which holds that RWLock across `fork()`).
+/// `ForkGC` forks. That avoids a three-way deadlock between the writer's
+/// `RediSearch` FFI calls (which take `RediSearch`'s internal `RWLock`) and
+/// `ForkGC` (which holds that `RWLock` across `fork()`).
 ///
 /// On the main thread, BGSAVE is invoked from the Redis command loop which
 /// already holds the GIL. Writers cannot be mid-mutation against the graph
@@ -285,7 +285,7 @@ unsafe extern "C" fn graph_aux_load(
 /// GIL during its commit phase, and the main thread holds it now.
 ///
 /// # Safety
-/// Called by libc before fork. Accesses graphs via data_ptr() (bypassing RwLock).
+/// Called by libc before fork. Accesses graphs via `data_ptr()` (bypassing `RwLock`).
 pub unsafe extern "C" fn pre_fork_prepare() {
     if !graph::thread_id::is_main_thread() {
         return;
@@ -593,7 +593,7 @@ unsafe fn scan_and_clean_graphdata_keys(
     }
 }
 
-/// Delete stale graphmeta keys (from C FalkorDB RDB loads).
+/// Delete stale graphmeta keys (from C `FalkorDB` RDB loads).
 unsafe fn delete_stale_graphmeta_keys(ctx: *mut RedisModuleCtx) {
     unsafe {
         let scan_cmd = CString::new("SCAN").unwrap();
@@ -716,14 +716,14 @@ unsafe fn scan_keys_by_type(
     }
 }
 
-/// Finalize any pending multi-key graph loads from DECODE_STATE.
+/// Finalize any pending multi-key graph loads from `DECODE_STATE`.
 ///
 /// This handles two scenarios:
-/// 1. Graphs already finalized inline (stored in decode_state.finalized)
-/// 2. Graphs with keys_remaining == 0 that haven't been finalized yet
+/// 1. Graphs already finalized inline (stored in `decode_state.finalized`)
+/// 2. Graphs with `keys_remaining` == 0 that haven't been finalized yet
 ///
-/// In both cases, the placeholder ThreadedGraph's inner MvccGraph is replaced
-/// using the raw pointer stored during graph_rdb_load.
+/// In both cases, the placeholder `ThreadedGraph`'s inner `MvccGraph` is replaced
+/// using the raw pointer stored during `graph_rdb_load`.
 pub fn finalize_pending_graphs() {
     let mut decode_state = DECODE_STATE.lock();
 
@@ -758,7 +758,7 @@ pub fn finalize_pending_graphs() {
     }
 }
 
-/// Install a finalized Graph into the placeholder ThreadedGraph.
+/// Install a finalized Graph into the placeholder `ThreadedGraph`.
 fn install_graph(
     graph_name: &str,
     graph: graph::graph::graph::Graph,
@@ -851,7 +851,7 @@ pub static GRAPH_TYPE: RedisType = RedisType::new(
 // AUX data (which C can't load since it doesn't register "graphmeta" either).
 // ---------------------------------------------------------------------------
 
-/// Load a C FalkorDB graphmeta virtual key.
+/// Load a C `FalkorDB` graphmeta virtual key.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn graphmeta_rdb_load(
     rdb: *mut RedisModuleIO,
@@ -892,7 +892,7 @@ unsafe extern "C" fn graphmeta_free(value: *mut c_void) {
     }
 }
 
-/// Consume C FalkorDB's graphmeta AUX data during RDB load.
+/// Consume C `FalkorDB`'s graphmeta AUX data during RDB load.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn graphmeta_aux_load(
     rdb: *mut RedisModuleIO,

@@ -52,8 +52,8 @@ pub struct Binder {
     copy_from_parent: HashMap<Arc<String>, (Variable, Variable)>,
     /// Accumulated labels for each node variable across all MATCH clauses.
     /// When `MATCH (n:N) ... MATCH (n:O)` is encountered, this maps
-    /// n's (scope_id, variable ID) → {N, O} so the planner can create a single
-    /// NodeByLabelScan with the full label set.
+    /// n's (`scope_id`, variable ID) → {N, O} so the planner can create a single
+    /// `NodeByLabelScan` with the full label set.
     node_labels: HashMap<(u32, u32), OrderSet<Arc<String>>>,
     /// Variables bound from variable-length relationship patterns (e.g. `[r*]`).
     /// These are typed as `Type::Path` but represent a list of edges, so
@@ -105,7 +105,7 @@ impl Binder {
         Ok((bound, scope_vars))
     }
 
-    /// Post-process the bound IR: update every QueryNode's labels to the
+    /// Post-process the bound IR: update every `QueryNode`'s labels to the
     /// full accumulated set from `self.node_labels`.  This ensures that
     /// the first MATCH occurrence of a node has labels from all later
     /// MATCH clauses, so the planner can create efficient scans directly.
@@ -141,7 +141,7 @@ impl Binder {
         }
     }
 
-    /// Replace QueryNode labels in the graph with the full accumulated set.
+    /// Replace `QueryNode` labels in the graph with the full accumulated set.
     fn update_graph_labels(
         graph: &mut QueryGraph<Arc<String>, Arc<String>, Variable>,
         node_labels: &HashMap<(u32, u32), OrderSet<Arc<String>>>,

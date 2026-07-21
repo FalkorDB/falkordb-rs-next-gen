@@ -204,10 +204,10 @@ fn main() {
     link_static(&patched);
 }
 
-/// RediSearch's Rust archive carries a second copy of the `redis-module` crate
-/// whose linkme `#[distributed_slice]` markers collide with FalkorDB's at load
+/// `RediSearch`'s Rust archive carries a second copy of the `redis-module` crate
+/// whose linkme `#[distributed_slice]` markers collide with `FalkorDB`'s at load
 /// time. Produce a copy in `OUT_DIR` with every linkme section removed and return
-/// its path. The slices are empty in RediSearch's library build, so dropping them
+/// its path. The slices are empty in `RediSearch`'s library build, so dropping them
 /// only removes dead bookkeeping.
 fn strip_linkme_sections(archive: &std::path::Path) -> std::path::PathBuf {
     println!("cargo:rerun-if-changed={}", archive.display());

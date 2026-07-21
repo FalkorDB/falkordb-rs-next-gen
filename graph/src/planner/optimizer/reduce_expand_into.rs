@@ -18,7 +18,7 @@ use crate::parser::ast::SetItem;
 use super::super::IR;
 
 /// Check if any expression in an IR node references a variable with the
-/// given (id, scope_id) pair.
+/// given (id, `scope_id`) pair.
 pub(super) fn ir_references_variable(
     ir: &IR,
     var_id: u32,
