@@ -375,13 +375,25 @@ impl Runtime<'_> {
                     // Already pending deletion, nothing to do
                 } else if self.pending.borrow().is_node_created(id) {
                     // Node was created in this transaction but not yet committed.
-                    let (label_ids, attrs, pending_rels) =
-                        self.pending.borrow_mut().delete_pending_node(id);
-                    // Return the node ID and relationship IDs to the graph for reuse.
-                    self.g.borrow_mut().return_node_id(id);
-                    for (rel_id, _, _) in &pending_rels {
-                        self.g.borrow_mut().return_relationship_id(*rel_id);
+                    // Cascade-delete pending-created relationships incident on
+                    // this node first, snapshotting them so later references
+                    // (e.g. startNode()/endNode()) resolve safely instead of
+                    // falling through to the committed graph and panicking.
+                    let pending_rels = self
+                        .pending
+                        .borrow_mut()
+                        .remove_pending_relationships_for_node(id);
+                    for (rel_id, src, dest, type_name, attrs) in pending_rels {
+                        self.g.borrow_mut().return_relationship_id(rel_id);
+                        let attrs = rel_attrs_to_map(&self.g.borrow(), attrs.unwrap_or_default());
+                        self.deleted_relationships.borrow_mut().insert(
+                            rel_id,
+                            DeletedRelationship::new(src, dest, type_name, attrs),
+                        );
                     }
+                    let (label_ids, attrs, _) = self.pending.borrow_mut().delete_pending_node(id);
+                    // Return the node ID to the graph for reuse.
+                    self.g.borrow_mut().return_node_id(id);
                     self.deleted_nodes.borrow_mut().insert(
                         id,
                         DeletedNode::new(

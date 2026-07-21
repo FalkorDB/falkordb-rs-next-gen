@@ -438,3 +438,38 @@ class testResultSetFlow(FlowTestsBase):
         query = """CREATE (a:Person {name: 'Alice', age: 30})-[r:KNOWS {since: 2020}]->(a) WITH r, a DELETE a RETURN typeof(r)"""
         result = self.graph.query(query)
         self.env.assertEqual(result.result_set[0][0], "Edge")
+
+    # Regression test for FalkorDB/FalkorDB#2049:
+    # startNode()/endNode() on a relationship whose endpoints were
+    # DETACH DELETEd earlier in the same query (with no RETURN clause)
+    # must not crash the server; deleting the resulting entity again
+    # should be a safe no-op.
+    def test19_detach_delete_then_start_end_node(self):
+        # startNode variant (self-loop)
+        query = """CREATE (a:EdgeCluster)-[r:R]->(a) WITH r, a DETACH DELETE a WITH startNode(r) AS ec DETACH DELETE ec"""
+        result = self.graph.query(query)
+        self.env.assertEqual(result.nodes_deleted, 1)
+        self.env.assertEqual(result.relationships_deleted, 1)
+
+        # endNode variant (self-loop)
+        query = """CREATE (a:EdgeCluster)-[r:R]->(a) WITH r, a DETACH DELETE a WITH endNode(r) AS ec DETACH DELETE ec"""
+        result = self.graph.query(query)
+        self.env.assertEqual(result.nodes_deleted, 1)
+        self.env.assertEqual(result.relationships_deleted, 1)
+
+        # non-self-loop variant
+        query = """CREATE (a:A)-[r:R]->(b:B) WITH r, a DETACH DELETE a WITH startNode(r) AS ec DETACH DELETE ec"""
+        result = self.graph.query(query)
+        self.env.assertEqual(result.nodes_deleted, 1)
+        self.env.assertEqual(result.relationships_deleted, 1)
+
+        # committed (MATCH-based) variant
+        self.graph.query("CREATE (a:C2049)-[:R]->(a)")
+        query = """MATCH (a:C2049)-[r:R]->(a) WITH r, a DETACH DELETE a WITH startNode(r) AS ec DETACH DELETE ec"""
+        result = self.graph.query(query)
+        self.env.assertEqual(result.nodes_deleted, 1)
+        self.env.assertEqual(result.relationships_deleted, 1)
+
+        # server must still be responsive
+        result = self.graph.query("RETURN 1")
+        self.env.assertEqual(result.result_set[0][0], 1)
