@@ -18,8 +18,9 @@
 //!
 //! Every node is stamped with the graph version (*epoch*) of the transaction
 //! that created it, and chained (`next`) to the version it superseded, so
-//! chain epochs strictly decrease. Every read walks from its own copy of the
-//! word to the newest version stamped at or below the reader's epoch.
+//! chain epochs strictly decrease (asserted in `register`). Every read walks
+//! from its own copy of the word to the newest version stamped at or below
+//! the reader's epoch.
 //!
 //! The single serialized writer mutates a node in place only when the stamp
 //! equals its own epoch — the node was created in this transaction and is
@@ -28,28 +29,56 @@
 //! tagged word in its own COW delta; older snapshots keep reading their own
 //! visible version.
 //!
-//! Rollback needs no bookkeeping: nodes created by a rolled-back transaction
-//! are referenced only by that transaction's matrices, so dropping the write
-//! graph frees them. Graph versions are reused after rollback, but a fresh
-//! writer dups from the committed graph, whose words never point at
-//! rolled-back nodes.
+//! ## Node lifetime: released-version tracking
 //!
-//! ## Ownership
+//! Only **released** versions are tracked — nodes a transaction superseded
+//! (clone-on-write) or unlinked (pair emptied / demoted to a scalar). The
+//! *current* heads are never registered anywhere: they are reachable from
+//! the matrices and freed by the last `Tensor` instance's drop (one pass
+//! over its effective forward matrix, heads only — their tails are all in
+//! the released lists).
 //!
-//! Nodes are neither reference counted nor tracked in a registry. Instead
-//! every node keeps a `next` pointer to the version of the pair's vector it
-//! superseded, so the newest word of a cell reaches every older version of
-//! its vector. Nodes are freed at exactly two points (see the tensor's
-//! module docs): when the transaction that created them rolls back, and when
-//! the tensor's whole version chain dies — superseded committed nodes stay
-//! chained (readable by older snapshots) until then.
+//! All tensors of a graph share one [`Lineage`] (`Arc`) — epochs are graph
+//! versions, so live-version tracking is graph-wide. It holds a bitmap of
+//! live version numbers plus an ordered map with the released node
+//! addresses per version:
+//!
+//! - **`live`** — the graph versions with a live `Graph` instance
+//!   (registered by the graph layer once per version, deregistered on its
+//!   drop). This is what answers "which released version can be freed":
+//!   a node released at epoch `R` is readable only by snapshots with epoch
+//!   `< R` (snapshots at `≥ R` see the replacement word in their matrix
+//!   copy), so
+//! - **`nodes`** — the released nodes keyed by release version; everything
+//!   released at `R` is freed as soon as `min(live) ≥ R`, re-checked on
+//!   every commit and drop.
+//!
+//! A release becomes visible to the lineage only when the releasing
+//! transaction **commits**
+//! ([`Tensor::commit`](super::tensor::Tensor::commit) drains the instance's
+//! retire buffer into the lineage). Until then it is provisional:
+//!
+//! - **Rollback** (dropping an uncommitted instance) discards the buffer —
+//!   the buffered nodes are still current in the committed graph — and
+//!   frees the transaction's own nodes with one `GrB_apply` over its
+//!   effective forward matrix, filtered by its epoch stamp (nothing else
+//!   can reach them). Dropping the instance's COW matrices *is* the return
+//!   to the previous version.
+//! - A writer's **own** node unlinked mid-transaction was never published
+//!   and is freed on the spot; its committed tail was already buffered for
+//!   release when the node was cloned.
 
 use std::{
     cell::UnsafeCell,
+    collections::BTreeMap,
     mem::MaybeUninit,
     os::raw::c_void,
     ptr::{NonNull, null_mut},
+    sync::Arc,
 };
+
+use parking_lot::Mutex;
+use roaring::RoaringTreemap;
 
 use super::{
     GrB_Info, GxB_Vector_deserialize, GxB_Vector_serialize,
@@ -100,11 +129,18 @@ impl VersionedVector {
         NonNull::new((self.raw & !MSB_MASK) as *mut VersionNode).unwrap()
     }
 
+    /// Address handle of this entry's node for release bookkeeping.
+    /// Only valid on vector entries.
+    #[must_use]
+    pub(crate) fn node_ptr(self) -> NodePtr {
+        NodePtr(self.node())
+    }
+
     /// Allocate a new multi-edge node containing `ids`, stamped with the
     /// writer's `epoch`, and return the tagged pointer word. The node starts
-    /// a fresh chain (its cell had no vector before); it lives until its
-    /// transaction rolls back or the tensor's version chain dies (see the
-    /// module docs).
+    /// a fresh chain (its cell had no vector before). It is not registered
+    /// anywhere: while current it is owned by the matrices; it is only
+    /// tracked once *released* (superseded or unlinked).
     #[must_use]
     pub fn new_vec(
         epoch: u64,
@@ -129,6 +165,13 @@ impl VersionedVector {
         next: *mut VersionNode,
         mut v: Vector<bool>,
     ) -> Self {
+        // Chain epochs must strictly decrease — `visible()` relies on it to
+        // terminate, and a violation means the single-writer discipline (or
+        // the dup-per-transaction protocol) was broken upstream.
+        debug_assert!(
+            next.is_null() || unsafe { (*next).epoch } < epoch,
+            "version chain epoch not strictly decreasing",
+        );
         // Materialize pending GraphBLAS work before the vector becomes
         // reachable: readers attach iterators to published vectors in place,
         // and an attach on a vector with pending tuples triggers an internal
@@ -150,24 +193,6 @@ impl VersionedVector {
     #[must_use]
     pub(crate) fn epoch(self) -> u64 {
         unsafe { self.node().as_ref() }.epoch
-    }
-
-    /// The older vector version this node superseded, if any. Only valid on
-    /// vector entries.
-    #[must_use]
-    pub(crate) fn next(self) -> Option<Self> {
-        let next = unsafe { self.node().as_ref() }.next;
-        (!next.is_null()).then_some(Self {
-            raw: next as u64 | MSB_MASK,
-        })
-    }
-
-    /// Free this node alone — its `next` chain is untouched. Only valid on
-    /// vector entries, and only when the caller has proven no live graph
-    /// version can reach the node (rollback of its creating transaction, or
-    /// tensor chain death — see the tensor's module docs).
-    pub(crate) fn free(self) {
-        drop(unsafe { Box::from_raw(self.node().as_ptr()) });
     }
 
     /// The newest version of this entry visible at `epoch`: the first node
@@ -231,14 +256,40 @@ impl VersionedVector {
     /// Add `id` for the writer at `epoch`. Mutates the node in place when the
     /// writer owns it (created it in this transaction); otherwise clones the
     /// vector into a fresh node and returns its tagged word — the caller must
-    /// store it back over this entry. Only valid on vector entries.
+    /// store it back over this entry and **buffer this superseded node for
+    /// release**. Only valid on vector entries.
     #[must_use]
     pub fn push(
         self,
         epoch: u64,
         id: u64,
     ) -> Self {
-        self.mutate(epoch, |v| v.set(id, true)).1
+        self.push_all(epoch, &[id])
+    }
+
+    /// Add every id in `ids` for the writer at `epoch`, materializing the
+    /// vector **once** for the whole batch (a per-id `push` would `GrB_wait`
+    /// per element, going quadratic on large multi-edge batches). Same
+    /// release contract as [`Self::push`].
+    #[must_use]
+    pub fn push_all(
+        self,
+        epoch: u64,
+        ids: &[u64],
+    ) -> Self {
+        let before = self.count(epoch);
+        let (after, w) = self.mutate(epoch, |v| {
+            for &id in ids {
+                v.set(id, true);
+            }
+        });
+        debug_assert_eq!(
+            after,
+            before + ids.len() as u64,
+            "duplicate edge id inserted into multi-edge vector",
+        );
+        let _ = (before, after);
+        w
     }
 
     /// Remove `id` for the writer at `epoch`; returns the remaining count and
@@ -250,7 +301,23 @@ impl VersionedVector {
         epoch: u64,
         id: u64,
     ) -> (u64, Self) {
-        self.mutate(epoch, |v| v.remove(id))
+        self.remove_ids(epoch, &[id])
+    }
+
+    /// Remove every id in `ids` for the writer at `epoch`, materializing the
+    /// vector once for the whole batch. Same release contract as
+    /// [`Self::push`].
+    #[must_use]
+    pub fn remove_ids(
+        self,
+        epoch: u64,
+        ids: &[u64],
+    ) -> (u64, Self) {
+        self.mutate(epoch, |v| {
+            for &id in ids {
+                v.remove(id);
+            }
+        })
     }
 
     fn mutate(
@@ -275,8 +342,8 @@ impl VersionedVector {
         f(&mut v);
         let nvals = v.nvals();
         // Chain the fresh node to the one it supersedes: older snapshots keep
-        // reading their own visible version through the chain, and the chain
-        // keeps every superseded version reachable for end-of-life freeing.
+        // reading their own visible version through the chain. The caller
+        // buffers the superseded node for release.
         (nvals, Self::register(epoch, self.node().as_ptr(), v))
     }
 
@@ -300,6 +367,143 @@ impl From<u64> for VersionedVector {
         Self::from_raw(raw)
     }
 }
+
+//------------------------------------------------------------------------------
+// Node lifetime
+//------------------------------------------------------------------------------
+
+/// Address handle of a [`VersionNode`]. Used by the release bookkeeping.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) struct NodePtr(NonNull<VersionNode>);
+
+// An inert address; the pointee is Send/Sync (see `VersionNode`) and only
+// freed under the release discipline described in the module docs.
+unsafe impl Send for NodePtr {}
+unsafe impl Sync for NodePtr {}
+
+impl NodePtr {
+    /// Free the node this handle points at — its `next` chain is untouched.
+    ///
+    /// # Safety
+    /// The caller must guarantee no live snapshot can still reach the node
+    /// (the release rules in the module docs) and that each node is freed
+    /// exactly once: released nodes are freed by the [`Lineage`], current
+    /// heads by the last `Tensor` instance's drop, a rolled-back writer's
+    /// own nodes by its drop — three disjoint sets.
+    pub(crate) unsafe fn free(self) {
+        drop(unsafe { Box::from_raw(self.0.as_ptr()) });
+    }
+}
+
+/// Shared, `Arc`-owned tracker of **released** vector versions for one
+/// graph — the authority on *which released version can be freed*. All of a
+/// graph's tensors publish into the same lineage (epochs are graph
+/// versions). Current heads are never tracked here; they belong to the
+/// matrices. See the module docs for the rules.
+///
+/// The version arithmetic lives in the `live` roaring bitmap plus an
+/// ordered map of the node addresses released at each version.
+///
+/// `live` is a set, not a multiset: the graph layer registers each graph
+/// version exactly once — one `Graph` value (holding one instance of every
+/// tensor) per version, shared by its readers — which `register`
+/// debug_asserts.
+pub(crate) struct Lineage {
+    inner: Mutex<LineageInner>,
+}
+
+#[derive(Default)]
+struct LineageInner {
+    /// Graph versions with a live `Graph` instance.
+    live: RoaringTreemap,
+    /// The nodes released at each version, keyed by release version. A
+    /// version released at `R` is readable only by snapshots with epoch
+    /// < `R`, so everything released at `R` is freed once `min(live) ≥ R` —
+    /// the ordered map lets `reclaim` take exactly that prefix.
+    nodes: BTreeMap<u64, Vec<NodePtr>>,
+}
+
+impl Lineage {
+    pub(crate) fn new() -> Arc<Self> {
+        Arc::new(Self {
+            inner: Mutex::new(LineageInner::default()),
+        })
+    }
+
+    /// Register the live graph version reading/writing at `epoch`.
+    pub(crate) fn register(
+        &self,
+        epoch: u64,
+    ) {
+        let fresh = self.inner.lock().live.insert(epoch);
+        debug_assert!(fresh, "one Graph instance per version");
+    }
+
+    /// Deregister a dropped graph version and free newly unreachable versions.
+    pub(crate) fn deregister(
+        &self,
+        epoch: u64,
+    ) {
+        let mut g = self.inner.lock();
+        let present = g.live.remove(epoch);
+        debug_assert!(present, "deregistering unregistered epoch {epoch}");
+        Self::reclaim(&mut g);
+    }
+
+    /// Publish a committing transaction's release buffer: each buffered
+    /// version is unreadable to snapshots at or above `release_epoch`, so it
+    /// is freed once `min(live) >= release_epoch`.
+    pub(crate) fn retire_committed(
+        &self,
+        release_epoch: u64,
+        buf: impl IntoIterator<Item = NodePtr>,
+    ) {
+        let mut g = self.inner.lock();
+        let mut buf = buf.into_iter().peekable();
+        if buf.peek().is_some() {
+            g.nodes.entry(release_epoch).or_default().extend(buf);
+        }
+        Self::reclaim(&mut g);
+    }
+
+    /// Free everything released at or below the oldest live version — no
+    /// snapshot that could still read those nodes remains.
+    fn reclaim(g: &mut LineageInner) {
+        let freeable = match g.live.min() {
+            None => std::mem::take(&mut g.nodes),
+            // Graph versions never reach u64::MAX, so `m + 1` cannot wrap.
+            Some(m) => {
+                let keep = g.nodes.split_off(&(m + 1));
+                std::mem::replace(&mut g.nodes, keep)
+            }
+        };
+        for nodes in freeable.into_values() {
+            for n in nodes {
+                unsafe { n.free() };
+            }
+        }
+    }
+}
+
+impl Drop for Lineage {
+    /// Graph fully gone: free the released versions that still had
+    /// potential readers. Current heads were already freed by each tensor
+    /// chain's last instance (`Tensor::free_versions`) — the sets are
+    /// disjoint, so every node is freed exactly once.
+    fn drop(&mut self) {
+        let g = self.inner.get_mut();
+        debug_assert!(g.live.is_empty(), "lineage dropped with live instances");
+        for nodes in g.nodes.values() {
+            for &n in nodes {
+                unsafe { n.free() };
+            }
+        }
+    }
+}
+
+//------------------------------------------------------------------------------
+// Serialization
+//------------------------------------------------------------------------------
 
 /// Borrowed view of a multi-edge entry's id vector, encoded as a
 /// `GxB_Vector_serialize` blob — the wire format FalkorDB C's tensor section
@@ -365,16 +569,17 @@ impl Decode<19> for TensorEntryVector {
 
 /// Heap side of a multi-edge entry: an id vector stamped with the graph
 /// version (epoch) of the transaction that created it, chained to the vector
-/// version it superseded. Freed on rollback or at chain death (see the
-/// module docs).
+/// version it superseded. Freed under the release discipline described in
+/// the module docs.
 pub struct VersionNode {
     /// Graph version of the creating transaction. The writer mutates the
     /// vector in place only when this equals its own epoch.
     epoch: u64,
     /// The older version of this pair's vector that this node superseded
     /// (null when none). Reads walk it to the newest version stamped at or
-    /// below their epoch, and it keeps every superseded version reachable
-    /// from the newest word for end-of-life freeing.
+    /// below their epoch. It may dangle once every snapshot that could walk
+    /// past this node is gone (the pointee is reclaimed first) — by
+    /// construction it is never dereferenced after that point.
     next: *mut VersionNode,
     /// Only mutated by the single writer that created the node, before its
     /// transaction is published — an unpublished node is invisible to every

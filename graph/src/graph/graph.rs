@@ -93,6 +93,7 @@ use crate::{
             serialization::{Encode, EncodeState, PayloadEntry, Writer},
             tensor::{Tensor, compound_key},
             versioned_matrix::{self, VersionedMatrix},
+            versioned_vector::Lineage,
         },
     },
     index::{
@@ -288,6 +289,10 @@ pub struct Graph {
     labels_matices: Vec<VersionedMatrix<bool>>,
     /// Per-type relationship tensors (type ID → src×dst×edge_id)
     relationship_matrices: Vec<Tensor>,
+    /// Graph-wide released-version tracker shared by every tensor. Each
+    /// `Graph` value is one version: registered here on construction,
+    /// deregistered on drop (see `impl Drop`).
+    lineage: Arc<Lineage>,
     /// Graph-wide reverse index: `edge_id` → `compound_key(src, dst)` for O(1)
     /// endpoint lookup, stored as a dense vector indexed by edge id. Edge IDs
     /// are densely allocated, so a `Vec` is far more compact than a hash map
@@ -661,6 +666,17 @@ fn grow_cap(
     cap
 }
 
+impl Drop for Graph {
+    /// Each `Graph` value is one graph version; retire it from the shared
+    /// lineage so released tensor nodes only readable by this version get
+    /// freed. Runs before the field drops, so the tensors (and the lineage
+    /// `Arc`, declared after them) are torn down against an already
+    /// deregistered version.
+    fn drop(&mut self) {
+        self.lineage.deregister(self.version);
+    }
+}
+
 impl Graph {
     #[must_use]
     pub fn new(
@@ -670,6 +686,8 @@ impl Graph {
         version: u64,
         name: &str,
     ) -> Self {
+        let lineage = Lineage::new();
+        lineage.register(version);
         Self {
             name: name.to_string(),
             node_cap: n,
@@ -687,6 +705,7 @@ impl Graph {
             all_nodes_matrix: VersionedMatrix::<bool>::new(n, n),
             labels_matices: Vec::new(),
             relationship_matrices: Vec::new(),
+            lineage,
             edge_endpoints: Vec::new(),
             node_attrs: AttributeStore::new(),
             relationship_attrs: AttributeStore::new(),
@@ -727,6 +746,14 @@ impl Graph {
         node_attrs: AttributeStore,
         relationship_attrs: AttributeStore,
     ) -> Self {
+        // Decoded tensors carry a dummy lineage (the Decode trait signature
+        // can't pass one); re-home them onto the graph's shared lineage.
+        let mut relationship_matrices = relationship_matrices;
+        let lineage = Lineage::new();
+        lineage.register(0);
+        for tensor in &mut relationship_matrices {
+            tensor.set_lineage(Arc::clone(&lineage));
+        }
         // Rebuild the graph-wide reverse index after RDB load to ensure
         // complete sync with the decoded edges.
         let mut edge_endpoints: Vec<u64> = Vec::new();
@@ -763,6 +790,7 @@ impl Graph {
             all_nodes_matrix,
             labels_matices,
             relationship_matrices,
+            lineage,
             edge_endpoints,
             node_attrs,
             relationship_attrs,
@@ -825,10 +853,21 @@ impl Graph {
         self.relationship_attrs.trim();
     }
 
+    /// Publish this write transaction's tensor state: marks every tensor
+    /// committed and releases their superseded multi-edge versions into the
+    /// graph lineage. Called exactly once, by `MvccGraph::commit`; dropping
+    /// the graph without it is rollback.
+    pub fn commit_tensors(&mut self) {
+        for tensor in &mut self.relationship_matrices {
+            tensor.commit();
+        }
+    }
+
     #[must_use]
     pub fn new_version(&self) -> Self {
         debug_assert_eq!(self.reserved_node_count, 0);
         debug_assert_eq!(self.reserved_relationship_count, 0);
+        self.lineage.register(self.version + 1);
         let node_attrs = self.node_attrs.new_version();
         let relationship_attrs = self.relationship_attrs.new_version();
 
@@ -862,6 +901,7 @@ impl Graph {
                 .map(VersionedMatrix::dup)
                 .collect(),
             relationship_matrices,
+            lineage: Arc::clone(&self.lineage),
             edge_endpoints: self.edge_endpoints.clone(),
             node_attrs,
             relationship_attrs,
@@ -1081,7 +1121,12 @@ impl Graph {
             .push(Arc::new(relationship_type.to_string()));
         self.relationship_matrices.insert(
             self.relationship_types.len() - 1,
-            Tensor::new(self.node_cap, self.node_cap, self.version),
+            Tensor::new(
+                self.node_cap,
+                self.node_cap,
+                self.version,
+                Arc::clone(&self.lineage),
+            ),
         );
         TypeId(self.relationship_types.len() - 1)
     }
@@ -1196,7 +1241,12 @@ impl Graph {
 
             self.relationship_matrices.insert(
                 self.relationship_types.len() - 1,
-                Tensor::new(self.node_cap, self.node_cap, self.version),
+                Tensor::new(
+                    self.node_cap,
+                    self.node_cap,
+                    self.version,
+                    Arc::clone(&self.lineage),
+                ),
             );
         }
 
