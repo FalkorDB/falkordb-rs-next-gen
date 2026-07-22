@@ -9,7 +9,7 @@
 //! - 2 (DOUBLE):  `[tag:u8][value:8 bytes]`
 //! - 3 (SIGNED):  `[tag:u8][value:8 bytes]`
 //! - 4 (UNSIGNED):`[tag:u8][value:8 bytes]`
-//! - 5 (`LONG_DOUBLE)`: not used in Rust
+//! - 5 (`LONG_DOUBLE`): not used in Rust
 //! - 6 (BLOB):    sentinel, next Redis chunk is standalone blob data
 
 use graph::graph::graphblas::serialization::Reader;
@@ -567,7 +567,7 @@ impl PipeReader {
 /// Writer that appends type-tagged values to a `Vec<u8>`.
 ///
 /// Same tag format as `BufferedWriter` but no chunking and no BLOB sentinel
-/// (always inlines buffers as `TYPE_BYTES`). Readable by `BufferedReader::from_vec()`.
+/// (always inlines buffers as `TYPE_BYTES`). Readable by [`BufferedReader::from_slice`].
 pub struct VecWriter {
     buf: Vec<u8>,
 }

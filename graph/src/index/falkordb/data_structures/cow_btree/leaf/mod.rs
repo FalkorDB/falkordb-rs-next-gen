@@ -428,8 +428,8 @@ impl<const LEAF_MAX: usize> Leaf<LEAF_MAX> {
 
     /// Remove one `(key, doc)`: the replacement leaf plus whether it underflowed (`< LEAF_MAX / 2`), or `None`
     /// if the tuple is absent. An [`AosLeaf`] is **spliced directly** (the 16-byte tuple is cut out); a
-    /// [`CompactLeaf`] is rebuilt via [`Leaf::from_pairs`]. Re-compacting an `AoS` leaf happens at its next
-    /// merge (which rebuilds through [`Leaf::from_pairs`]).
+    /// [`CompactLeaf`] is rebuilt via [`Leaf::from_pairs`]. An `AoS` leaf remains `AoS` when a merge fits
+    /// one page and is re-compacted only when the merge takes the rebuild path, such as on overflow.
     pub(super) fn remove(
         &self,
         key: u64,

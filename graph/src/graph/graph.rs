@@ -1921,7 +1921,8 @@ impl Graph {
     }
 
     /// Create relationships of a single type using flat arrays.
-    /// Avoids `HashMap` overhead while using individual `GraphBLAS` set calls.
+    /// Batches tensor writes through [`Tensor::set_all_from_slices`] and updates
+    /// the graph-wide matrices with `set_all`, avoiding `HashMap` overhead.
     pub fn create_relationships_bulk(
         &mut self,
         type_name: &Arc<String>,

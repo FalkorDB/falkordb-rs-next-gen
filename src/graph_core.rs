@@ -732,7 +732,7 @@ impl Drop for BlockedClient {
 /// Rules:
 /// - Per-query timeout cannot exceed `TIMEOUT_MAX` (if set).
 /// - Per-query timeout is only applied to read queries (write queries ignore it).
-/// - Falls back to `TIMEOUT_DEFAULT`, then deprecated TIMEOUT.
+/// - Falls back to `TIMEOUT_DEFAULT`, then `TIMEOUT_MAX`, then deprecated `TIMEOUT`.
 /// - Returns None for unlimited.
 fn compute_effective_timeout(
     per_query_timeout: Option<i64>,

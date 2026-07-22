@@ -225,7 +225,7 @@ struct ScoredEdge {
 }
 
 /// User-defined `GraphBLAS` **binary** operator combining two [`ScoredEdge`] by
-/// keeping the smaller score (ties keep the first operand). Used as the `dup`
+/// keeping the smaller score (ties keep the smaller edge ID). Used as the `dup`
 /// when building and symmetrizing `rel_adj`.
 ///
 /// # Panic safety

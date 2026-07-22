@@ -41,7 +41,8 @@ use std::rc::Rc;
 
 use rquickjs::{Ctx, Function, Object, Persistent};
 
-/// Set up globals for validation mode: `falkor.register()` just collects names.
+/// Set up validation globals that collect registered names and store registered
+/// functions in `globalThis.__falkor_registered_funcs`.
 pub fn setup_validate_globals(
     ctx: &Ctx<'_>,
     _names: Rc<RefCell<Vec<String>>>,
