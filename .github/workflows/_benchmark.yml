@@ -113,7 +113,7 @@ env:
   # jobs below). Kept apart from BENCHMARK_REF so the legacy ab-compare vendor mode above is never
   # perturbed. This is the merge commit of FalkorDB/benchmark#234 (adds `synthetic report
   # --regression`). Bump to a newer immutable commit SHA (with a `# <what>` note) to move it.
-  SYNTHETIC_BENCHMARK_REF: 470942f0fa65ca1bb8fe3c74588d451738780b45 # per-op regression (#234)
+  SYNTHETIC_BENCHMARK_REF: 03d8ef9f3640eca62f91dc1cba6e78130829bcb0 # per-op regression + report settings/compute-time (#234, #235)
 
 jobs:
   # Expand (size × variant) into a flat combo list the matrices below fan out

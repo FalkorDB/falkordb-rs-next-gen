@@ -94,6 +94,9 @@ measure() {
   echo "::endgroup::"
 }
 
+# Start the wall-clock for the "benchmark + reporting" time shown in the report header (covers the
+# digest pulls, the record, and both measurements — everything up to the report).
+SYNTHETIC_START_TS="$(date +%s)"
 echo "synthetic: resolving image digests"
 PR_DIGEST="$(resolve_digest "$IMAGE_PR")"
 MAIN_DIGEST="$(resolve_digest "$IMAGE_MAIN")"
@@ -113,12 +116,18 @@ measure "pr" "$PR_DIGEST" "$WORKDIR/pr.json"
 measure "main" "$MAIN_DIGEST" "$WORKDIR/main.json"
 [ -n "$RELEASE_DIGEST" ] && measure "$RELEASE_LABEL" "$RELEASE_DIGEST" "$WORKDIR/release.json"
 
+# Total wall-clock for the benchmark work above (digest pulls + record + both measurements), passed
+# to the report so the header shows how long the check took.
+ELAPSED_SECS=$(( $(date +%s) - SYNTHETIC_START_TS ))
+
 # Diff each baseline against the PR (candidate = pr, the second report). Non-fatal + colored.
 bench synthetic report --diff "$WORKDIR/main.json" "$WORKDIR/pr.json" \
-  --regression --thresholds "$THRESHOLDS" --out "$WORKDIR/reg-main.md" >/dev/null
+  --regression --thresholds "$THRESHOLDS" --elapsed-secs "$ELAPSED_SECS" \
+  --out "$WORKDIR/reg-main.md" >/dev/null
 if [ -n "$RELEASE_DIGEST" ]; then
   bench synthetic report --diff "$WORKDIR/release.json" "$WORKDIR/pr.json" \
-    --regression --thresholds "$THRESHOLDS" --out "$WORKDIR/reg-release.md" >/dev/null
+    --regression --thresholds "$THRESHOLDS" --elapsed-secs "$ELAPSED_SECS" \
+    --out "$WORKDIR/reg-release.md" >/dev/null
 fi
 
 # Assemble the sticky-comment body (arch-specific marker, mirroring the A/B comment).
