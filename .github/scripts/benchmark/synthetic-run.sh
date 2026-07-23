@@ -29,7 +29,9 @@ OUT_MD="${OUT_MD:-${CONFIG_DIR}/synthetic-report.md}"
 SAMPLES="${SAMPLES:-200}"
 WARMUP="${WARMUP:-50}"
 SWEEP="${SWEEP:-1,2,4,8,16,32}"
-DB_PORT="${DB_PORT:-6379}"
+# Host port for the DB container (mapped to the container's 6379). Default 16379 to match the other
+# benchmark scripts (run-variant.sh / profile.sh) and avoid colliding with any host Redis on 6379.
+DB_PORT="${DB_PORT:-16379}"
 DB_CPUS="${DB_CPUS:-$(nproc)}"
 DB_MEMORY="${DB_MEMORY:-12g}"
 # The uncached sweep at C=32 trips FalkorDB's default queued-query limit; raise it (as the tool's
