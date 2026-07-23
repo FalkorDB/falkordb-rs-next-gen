@@ -527,9 +527,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    # Expose the provision step's real outcome so `synthetic` can gate on it. We can't use
-    # `needs.synthetic-runner.result` because job-level `continue-on-error` would mask a failed
-    # provision as `success` and queue `synthetic` on a phantom runner.
+    # Expose the provision step's real outcome so `synthetic` can gate on it. The job result is an
+    # unreliable gate: the provision step below is `continue-on-error`, so a failed provision still
+    # leaves the job (and `needs.synthetic-runner.result`) reporting `success` — gating on that would
+    # queue `synthetic` on a phantom runner. The step's `outcome` stays `failure`, so we export it.
     outputs:
       provisioned: ${{ steps.provision.outcome }}
     steps:
