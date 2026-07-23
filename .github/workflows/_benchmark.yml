@@ -524,6 +524,10 @@ jobs:
   synthetic-runner:
     needs: [setup]
     if: ${{ needs.setup.result == 'success' && inputs.pr_number != '' && inputs.image_c != '' }}
+    # Non-blocking: a GCE stock-out here must not red the run. `synthetic` still gates on
+    # `needs.synthetic-runner.result == 'success'`, so a failed provision skips the measurement
+    # (never runs it on a phantom runner) and `synthetic-publish` posts the "unavailable" note.
+    continue-on-error: true
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -612,6 +616,8 @@ jobs:
     # Always attempt teardown on a PR run so a VM from a runner job that created-then-failed can't
     # leak until the create action's auto-delete backstop; cleanup-runner no-ops if there is none.
     if: ${{ always() && inputs.pr_number != '' && inputs.image_c != '' }}
+    # Best-effort teardown: a gcloud/API hiccup here must not red an informational benchmark.
+    continue-on-error: true
     runs-on: ubuntu-latest
     permissions:
       contents: read
