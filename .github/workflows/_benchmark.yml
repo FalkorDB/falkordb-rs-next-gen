@@ -588,6 +588,13 @@ jobs:
           CONFIG_DIR: ${{ github.workspace }}
           IMAGE_PR: ${{ inputs.image_c }}
           IMAGE_MAIN: ${{ inputs.image_b }}
+          # PR-vs-release is intentionally dormant: falkordb-rs-next-gen publishes no Rust *release*
+          # image tag (only `edge-rs` = main and `rc-pr-<N>` = the PR; docker `edge` is the C engine,
+          # not a Rust baseline), so per design we compare only PR-vs-main. When a Rust release image
+          # exists, set IMAGE_RELEASE (and optionally RELEASE_LABEL) here to add the extra column —
+          # synthetic-run.sh already resolves + measures it whenever IMAGE_RELEASE is non-empty:
+          #   IMAGE_RELEASE: ghcr.io/falkordb/falkordb-server:<release-tag>
+          #   RELEASE_LABEL: "release <version>"
           ARCH: ${{ inputs.arch }}
           OUT_MD: ${{ github.workspace }}/synthetic-report.md
         run: bash .github/scripts/benchmark/synthetic-run.sh

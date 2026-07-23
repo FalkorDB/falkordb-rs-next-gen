@@ -12,8 +12,11 @@
 #   concurrency = [1, 2, 4, 8, 16, 32]
 #   cache       = both
 #
-# Changing ANY value here (or the run knobs above) changes the workload and makes new reports
-# incomparable with old ones — bump it deliberately.
+# The values below — seed / graph / nodes / edges — DEFINE the recorded workload: changing any of
+# them changes `workload_hash`, so reports become incomparable with older ones. The measurement
+# knobs above (samples / warm-up / concurrency / cache) do NOT change the recorded workload, but
+# they change the measurement protocol, so altering them also breaks comparability with older
+# reports. Bump either deliberately.
 
 seed  = 7
 graph = "synthetic_regression"
