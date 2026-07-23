@@ -524,18 +524,25 @@ jobs:
   synthetic-runner:
     needs: [setup]
     if: ${{ needs.setup.result == 'success' && inputs.pr_number != '' && inputs.image_c != '' }}
-    # Non-blocking: a GCE stock-out here must not red the run. `synthetic` still gates on
-    # `needs.synthetic-runner.result == 'success'`, so a failed provision skips the measurement
-    # (never runs it on a phantom runner) and `synthetic-publish` posts the "unavailable" note.
-    continue-on-error: true
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    # Expose the provision step's real outcome so `synthetic` can gate on it. We can't use
+    # `needs.synthetic-runner.result` because job-level `continue-on-error` would mask a failed
+    # provision as `success` and queue `synthetic` on a phantom runner.
+    outputs:
+      provisioned: ${{ steps.provision.outcome }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
       - name: Create GCE runner (synthetic/${{ inputs.arch }})
+        id: provision
+        # Non-blocking: a GCE stock-out here must not red the run (continue-on-error at the STEP,
+        # so its `outcome` is still `failure`). `synthetic` gates on that outcome via the
+        # `provisioned` output, so a failed provision skips the measurement (never runs it on a
+        # phantom runner) and `synthetic-publish` posts the "unavailable" note.
+        continue-on-error: true
         uses: ./.github/actions/create-runner
         with:
           token: ${{ secrets.GH_SA_TOKEN }}
@@ -552,7 +559,7 @@ jobs:
   # Runs ONE VM: replay the recorded workload into PR then main sequentially, diff, write the report.
   synthetic:
     needs: [synthetic-runner]
-    if: ${{ needs.synthetic-runner.result == 'success' }}
+    if: ${{ needs.synthetic-runner.outputs.provisioned == 'success' }}
     continue-on-error: true
     runs-on: synthetic-${{ github.run_id }}-${{ github.run_number }}-${{ inputs.arch }}
     timeout-minutes: 60
