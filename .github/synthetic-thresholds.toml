@@ -1,0 +1,40 @@
+# Regression budget for the per-PR **synthetic** benchmark check (see
+# .github/workflows/benchmark.yml → the `synthetic-*` jobs, which run
+# `FalkorDB/benchmark synthetic report --diff … --regression --thresholds <this file>`).
+#
+# A cell (operation × concurrency × cache-mode) is flagged 🔴 only when the PR's p50 is slower
+# than the baseline (main / `edge-rs`) by MORE than `budget_pct` AND the absolute p50 increase
+# exceeds `floor_ms` (a noise guard for sub-millisecond ops). Faster — or slower within either
+# bound — is 🟢. The check is informational (non-blocking): it never fails the PR.
+#
+# Precedence, per field: `[op.<name>].concurrency.<C>` (budget only) > `[op.<name>]` > `[default]`.
+#
+# NOTE: these budgets are a *starting point*. Calibrate `budget_pct` / `floor_ms` from a few
+# same-image A/A runs per architecture (main-vs-main) so a 🔴 means signal, not runner jitter —
+# high-concurrency cached reads on the fastest ops can swing ±10–13 % run-to-run.
+
+[default]
+metric     = "p50"   # p50 (implemented). "throughput"/"both" are reserved for a later tool release.
+budget_pct = 10.0
+floor_ms   = 0.5
+
+# Point lookups / trivial round-trips are the fastest ops, so they're the noisiest at high
+# concurrency (queueing-dominated) — give them a little more headroom.
+[op.return_const]
+budget_pct = 15.0
+
+[op.match_by_index]
+budget_pct = 15.0
+
+[op.property_projection]
+budget_pct = 15.0
+
+# Heavy traversals have larger absolute latencies, so relative noise is lower; keep them tighter,
+# but allow the top of the concurrency sweep (most contended) a bit more slack.
+[op.expand_hops_5]
+budget_pct  = 12.0
+concurrency = { 16 = 18.0, 32 = 25.0 }
+
+[op.shortest_path]
+budget_pct  = 12.0
+concurrency = { 16 = 18.0, 32 = 25.0 }

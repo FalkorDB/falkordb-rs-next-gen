@@ -1,0 +1,21 @@
+# Pinned workload for the per-PR **synthetic** benchmark check. `FalkorDB/benchmark synthetic
+# record --config <this file> --op all` reads `seed` / `graph` / `nodes` / `edges` to build the
+# offline recording (its `workload_hash` must be identical for every image compared, which it is
+# since all images replay this one recorded bundle).
+#
+# The measurement knobs (samples / warm-up / the concurrency sweep + cache modes) are pinned in the
+# workflow itself (they're passed to `run --recording`, which can't also take `--config`); they are
+# repeated here only as documentation of the intended run:
+#
+#   samples     = 200
+#   warmup      = 50
+#   concurrency = [1, 2, 4, 8, 16, 32]
+#   cache       = both
+#
+# Changing ANY value here (or the run knobs above) changes the workload and makes new reports
+# incomparable with old ones — bump it deliberately.
+
+seed  = 7
+graph = "synthetic_regression"
+nodes = 10000
+edges = 50000

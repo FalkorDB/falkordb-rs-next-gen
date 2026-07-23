@@ -109,6 +109,11 @@ env:
   # (its grep -qF guards on the vendored ui/ source) when moving it.
   BENCHMARK_REPO: FalkorDB/benchmark
   BENCHMARK_REF: deca7752cbd8cdeb333493569472ede385d5b5db # v2.2
+  # Separate, independently-pinned ref for the SYNTHETIC per-op regression check (the `synthetic-*`
+  # jobs below). Kept apart from BENCHMARK_REF so the legacy ab-compare vendor mode above is never
+  # perturbed. This is the merge commit of FalkorDB/benchmark#234 (adds `synthetic report
+  # --regression`). Bump to a newer immutable commit SHA (with a `# <what>` note) to move it.
+  SYNTHETIC_BENCHMARK_REF: 470942f0fa65ca1bb8fe3c74588d451738780b45 # per-op regression (#234)
 
 jobs:
   # Expand (size × variant) into a flat combo list the matrices below fan out
@@ -507,4 +512,159 @@ jobs:
             gh api -X PATCH "repos/$REPO/issues/comments/$existing" -F body=@"$BODY.marked"
           else
             gh api -X POST "repos/$REPO/issues/$PR_NUMBER/comments" -F body=@"$BODY.marked"
+          fi
+
+  # ── Synthetic per-op regression check ───────────────────────────────────────────────────────
+  # A lighter, per-operation comparison that runs AFTER the A/B/C legs (`needs: benchmark`) on its
+  # OWN single GCE VM, so no two benchmarks ever share a machine and it never overlaps the A/B. It
+  # replays one recorded synthetic workload into the PR image and main (`edge-rs`) back-to-back and
+  # posts a colored 🟢/🔴/N-A regression report. PR-only and non-blocking (the measurement job is
+  # continue-on-error; a failure surfaces as an "unavailable" note, never a required red check).
+  synthetic-runner:
+    needs: [benchmark]
+    if: ${{ always() && inputs.pr_number != '' && inputs.image_c != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Create GCE runner (synthetic/${{ inputs.arch }})
+        uses: ./.github/actions/create-runner
+        with:
+          token: ${{ secrets.GH_SA_TOKEN }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          machine_zones: ${{ inputs.arch == 'arm' && (vars.GCP_ZONES_ARM || vars.GCP_ZONES) || vars.GCP_ZONES }}
+          machine_type: ${{ inputs.arch == 'arm' && (vars.BENCHMARK_MACHINE_TYPE_ARM || 'c4a-highcpu-16') || (vars.BENCHMARK_MACHINE_TYPE || 'n4-highcpu-16') }}
+          arm: ${{ inputs.arch == 'arm' }}
+          image_family: ${{ inputs.arch == 'arm' && (vars.BENCHMARK_IMAGE_FAMILY_ARM || 'debian-12-arm64') || '' }}
+          image_project: ${{ inputs.arch == 'arm' && (vars.BENCHMARK_IMAGE_PROJECT_ARM || 'debian-cloud') || '' }}
+          network: gh-runner
+          runner_label: synthetic-${{ github.run_id }}-${{ github.run_number }}-${{ inputs.arch }}
+
+  # Runs ONE VM: replay the recorded workload into PR then main sequentially, diff, write the report.
+  synthetic:
+    needs: [synthetic-runner]
+    if: ${{ needs.synthetic-runner.result == 'success' }}
+    continue-on-error: true
+    runs-on: synthetic-${{ github.run_id }}-${{ github.run_number }}-${{ inputs.arch }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      HOME: /root
+    steps:
+      - name: Install toolchain deps
+        run: |
+          set -euo pipefail
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            git curl ca-certificates build-essential pkg-config libssl-dev protobuf-compiler
+      - name: Install Rust
+        run: |
+          set -euo pipefail
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --default-toolchain stable --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: Checkout this repo (scripts + config)
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Checkout FalkorDB/benchmark@${{ env.SYNTHETIC_BENCHMARK_REF }}
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: ${{ env.BENCHMARK_REPO }}
+          ref: ${{ env.SYNTHETIC_BENCHMARK_REF }}
+          path: benchmark-tool
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: benchmark-tool
+      - name: Synthetic PR-vs-main regression (${{ inputs.arch }})
+        env:
+          BENCHMARK_DIR: ${{ github.workspace }}/benchmark-tool
+          CONFIG_DIR: ${{ github.workspace }}
+          IMAGE_PR: ${{ inputs.image_c }}
+          IMAGE_MAIN: ${{ inputs.image_b }}
+          ARCH: ${{ inputs.arch }}
+          OUT_MD: ${{ github.workspace }}/synthetic-report.md
+        run: bash .github/scripts/benchmark/synthetic-run.sh
+      - name: Upload synthetic report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: synthetic-report-${{ inputs.view }}-${{ inputs.arch }}
+          path: ${{ github.workspace }}/synthetic-report.md
+          if-no-files-found: ignore
+
+  synthetic-cleanup:
+    needs: [synthetic-runner, synthetic]
+    # Always attempt teardown on a PR run so a VM from a runner job that created-then-failed can't
+    # leak until the create action's auto-delete backstop; cleanup-runner no-ops if there is none.
+    if: ${{ always() && inputs.pr_number != '' && inputs.image_c != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/cleanup-runner
+        with:
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          instance_label: synthetic-${{ github.run_id }}-${{ github.run_number }}-${{ inputs.arch }}
+
+  # Publish the report to the job summary + upsert an arch-specific sticky PR comment. Runs on a
+  # trusted ubuntu runner (has gh + pull-requests: write); best-effort so a read-only fork token or
+  # a missing report can never fail the run.
+  synthetic-publish:
+    needs: [synthetic]
+    if: ${{ always() && inputs.pr_number != '' && inputs.image_c != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Download synthetic report
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: synthetic-report-${{ inputs.view }}-${{ inputs.arch }}
+          path: synthetic-out
+      - name: Publish to job summary + sticky PR comment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          ARCH: ${{ inputs.arch }}
+        run: |
+          set -euo pipefail
+          MARKER='<!-- synthetic-benchmark -->'
+          [ "$ARCH" = "arm" ] && MARKER='<!-- synthetic-benchmark-arm -->'
+          BODY=synthetic-out/synthetic-report.md
+          if [ ! -s "$BODY" ]; then
+            # The synthetic job failed / produced nothing — post an honest "unavailable" note so the
+            # sticky comment reflects this run instead of leaving a stale one.
+            BODY=unavailable.md
+            {
+              echo "$MARKER"
+              echo "## 🧪 Synthetic per-op regression (\`$ARCH\`)"
+              echo
+              echo "⚠ The synthetic benchmark did not produce a report for this run (build/measurement error, stock-out, or no PR image). See the \`synthetic\` job logs. This check is informational and never blocks the PR."
+            } > "$BODY"
+          fi
+          cat "$BODY" >> "$GITHUB_STEP_SUMMARY"
+          # Best-effort sticky comment (fork PRs get a read-only token → warn, don't fail).
+          warn() { echo "::warning::could not upsert the synthetic comment (read-only token on a fork PR?); see the job summary"; exit 0; }
+          existing="$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" --paginate \
+            --jq "map(select(.body | startswith(\"$MARKER\"))) | .[0].id // empty")" || warn
+          if [ -n "$existing" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$existing" -F body=@"$BODY" >/dev/null || warn
+            echo "updated sticky comment $existing"
+          else
+            gh api -X POST "repos/$REPO/issues/$PR_NUMBER/comments" -F body=@"$BODY" >/dev/null || warn
+            echo "created sticky comment"
           fi
