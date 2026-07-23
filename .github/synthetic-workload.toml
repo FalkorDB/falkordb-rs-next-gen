@@ -4,8 +4,9 @@
 # since all images replay this one recorded bundle).
 #
 # The measurement knobs (samples / warm-up / the concurrency sweep + cache modes) are pinned in the
-# workflow itself (they're passed to `run --recording`, which can't also take `--config`); they are
-# repeated here only as documentation of the intended run:
+# run script (.github/scripts/benchmark/synthetic-run.sh — the SAMPLES / WARMUP / SWEEP vars plus a
+# hard-coded `--cache both`), which passes them to `run --recording` (which can't also take
+# `--config`); they are repeated here only as documentation of the intended run:
 #
 #   samples     = 200
 #   warmup      = 50
