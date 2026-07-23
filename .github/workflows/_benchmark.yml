@@ -515,14 +515,15 @@ jobs:
           fi
 
   # ── Synthetic per-op regression check ───────────────────────────────────────────────────────
-  # A lighter, per-operation comparison that runs AFTER the A/B/C legs (`needs: benchmark`) on its
-  # OWN single GCE VM, so no two benchmarks ever share a machine and it never overlaps the A/B. It
+  # A lighter, per-operation comparison that runs on its OWN single GCE VM, in parallel with the
+  # A/B/C legs — each benchmark gets its own dedicated machine, so no two benchmarks ever share a
+  # machine (which would contaminate results); running on separate machines concurrently is fine. It
   # replays one recorded synthetic workload into the PR image and main (`edge-rs`) back-to-back and
   # posts a colored 🟢/🔴/N-A regression report. PR-only and non-blocking (the measurement job is
   # continue-on-error; a failure surfaces as an "unavailable" note, never a required red check).
   synthetic-runner:
-    needs: [benchmark]
-    if: ${{ always() && inputs.pr_number != '' && inputs.image_c != '' }}
+    needs: [setup]
+    if: ${{ needs.setup.result == 'success' && inputs.pr_number != '' && inputs.image_c != '' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
