@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Per-PR SYNTHETIC benchmark regression check (see .github/workflows/benchmark.yml).
+# Per-PR SYNTHETIC benchmark regression check (see the `synthetic-*` jobs in
+# .github/workflows/_benchmark.yml, invoked by benchmark.yml).
 #
 # Records the FalkorDB/benchmark `synthetic` workload ONCE (offline, deterministic), then measures
 # each engine image — the PR (`rc-pr-<N>`) and main (`edge-rs`), plus the last release when one
@@ -47,9 +48,14 @@ bench() { ( cd "$BENCHMARK_DIR" && cargo run --release --quiet --bin benchmark -
 # GCE image doesn't guarantee). `measure()` reuses the pulled layers by running the digest ref.
 resolve_digest() {
   local image="$1"
+  # Already a digest ref (repo@sha256:…)? Use it verbatim.
+  case "$image" in *@sha256:*) printf '%s' "$image"; return 0 ;; esac
   local repo="${image%:*}" digest
   docker pull -q "$image" >/dev/null
-  digest="$(docker inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$image" 2>/dev/null | grep "^${repo}@" | head -1)"
+  # Literal (non-regex) prefix match on `repo@`, and tolerate no-match without aborting under
+  # `set -o pipefail` (so the explicit error below runs instead of a bare pipeline failure).
+  digest="$(docker inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$image" 2>/dev/null \
+    | awk -v r="${repo}@" 'index($0, r) == 1 { print; exit }')" || true
   if [ -z "$digest" ]; then
     echo "::error::synthetic: could not resolve a repo digest for ${image}" >&2
     return 1

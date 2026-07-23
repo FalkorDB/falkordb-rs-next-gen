@@ -1,5 +1,5 @@
 # Regression budget for the per-PR **synthetic** benchmark check (see
-# .github/workflows/benchmark.yml → the `synthetic-*` jobs, which run
+# .github/workflows/_benchmark.yml → the `synthetic-*` jobs (invoked by benchmark.yml), which run
 # `FalkorDB/benchmark synthetic report --diff … --regression --thresholds <this file>`).
 #
 # A cell (operation × concurrency × cache-mode) is flagged 🔴 only when the PR's p50 is slower
