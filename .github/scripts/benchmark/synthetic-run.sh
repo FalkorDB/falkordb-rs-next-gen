@@ -59,7 +59,13 @@ resolve_digest() {
   local image="$1"
   # Already a digest ref (repo@sha256:…)? Use it verbatim.
   case "$image" in *@sha256:*) printf '%s' "$image"; return 0 ;; esac
-  local repo="${image%:*}" digest
+  # Strip a trailing :tag, but only when the ':' is in the LAST path segment — otherwise a registry
+  # port (e.g. localhost:5000/repo with no tag) would be mangled to the host. (Copilot review.)
+  local repo digest
+  case "${image##*/}" in
+    *:*) repo="${image%:*}" ;;
+    *) repo="$image" ;;
+  esac
   docker pull -q "$image" >/dev/null
   # Literal (non-regex) prefix match on `repo@`, and tolerate no-match without aborting under
   # `set -o pipefail` (so the explicit error below runs instead of a bare pipeline failure).

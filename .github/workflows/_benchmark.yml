@@ -649,6 +649,9 @@ jobs:
   synthetic-publish:
     needs: [synthetic]
     if: ${{ always() && inputs.pr_number != '' && inputs.image_c != '' }}
+    # Informational / non-blocking: a transient checkout, gh-pages, or comment failure must never red
+    # the PR. This is a LEAF job (nothing `needs` it), so continue-on-error can't mask a gate. (Copilot)
+    continue-on-error: true
     runs-on: ubuntu-latest
     permissions:
       contents: write # push the hosted report to the gh-pages branch

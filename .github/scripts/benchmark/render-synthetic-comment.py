@@ -22,6 +22,14 @@ SCHEMA_VERSION = 1
 VERDICT_EMOJI = {"pass": "🟢", "regressed": "🔴", "not_comparable": "⚠"}
 
 
+def _safe_int(value: Any, default: int = 0) -> int:
+    """int() that never raises — a malformed/None/schema-changed field must not block the comment."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _load(path: str) -> dict[str, Any] | None:
     try:
         with open(path, encoding="utf-8") as fh:
@@ -33,10 +41,12 @@ def _load(path: str) -> dict[str, Any] | None:
         return None
 
 
-def _counts_row(label: str, counts: dict[str, Any]) -> str:
-    p = int(counts.get("pass", 0))
-    r = int(counts.get("regressed", 0))
-    na = int(counts.get("not_applicable", 0))
+def _counts_row(label: str, counts: Any) -> str:
+    if not isinstance(counts, dict):
+        counts = {}
+    p = _safe_int(counts.get("pass", 0))
+    r = _safe_int(counts.get("regressed", 0))
+    na = _safe_int(counts.get("not_applicable", 0))
     return f"| {label} | {p} | {r} | {na} |"
 
 
@@ -47,7 +57,7 @@ def _offenders_line(offenders: list[dict[str, Any]]) -> str:
         if off.get("diverged"):
             parts.append(f"`{op}` (results differ)")
         else:
-            n = int(off.get("regressed_cells", 0))
+            n = _safe_int(off.get("regressed_cells", 0))
             cells = "cell" if n == 1 else "cells"
             parts.append(f"`{op}` ({n} {cells} over budget)")
     return ", ".join(parts)
@@ -96,7 +106,7 @@ def render_section(summary: dict[str, Any], url: str | None) -> str:
         lines.append(f"**Worst offenders:** {_offenders_line(offenders)}")
         lines.append("")
 
-    comparable = int(summary.get("comparable_cells", 0) or 0)
+    comparable = _safe_int(summary.get("comparable_cells", 0))
     tail = f"{comparable} comparable p50 cell(s)"
     if url:
         lines.append(f"📄 **[Full report →]({url})** · {tail}")
