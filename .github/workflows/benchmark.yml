@@ -376,14 +376,15 @@ jobs:
           # were published — same names prepare/_benchmark publish under.
           removed=0
           for VIEW in "pr-${PR_NUMBER}" "pr-${PR_NUMBER}-arm"; do
-            TARGET="benchmark/branch/${VIEW}"
-            if [ -d "$TARGET" ]; then
-              git rm -rq "$TARGET"
-              removed=1
-              echo "removed $TARGET"
-            else
-              echo "no published view at $TARGET — skipping"
-            fi
+            for TARGET in "benchmark/branch/${VIEW}" "synthetic-benchmark/branch/${VIEW}"; do
+              if [ -d "$TARGET" ]; then
+                git rm -rq "$TARGET"
+                removed=1
+                echo "removed $TARGET"
+              else
+                echo "no published view at $TARGET — skipping"
+              fi
+            done
           done
           if [ "$removed" -eq 0 ]; then
             echo "nothing to clean up"

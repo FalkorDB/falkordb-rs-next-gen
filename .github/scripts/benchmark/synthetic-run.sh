@@ -28,7 +28,14 @@ OUT_MD="${OUT_MD:-${CONFIG_DIR}/synthetic-report.md}"
 # Pinned measurement knobs (kept in step with .github/synthetic-workload.toml's doc comment).
 SAMPLES="${SAMPLES:-200}"
 WARMUP="${WARMUP:-50}"
-SWEEP="${SWEEP:-1,2,4,8,16,32}"
+# Per-PR default is the CHEAP matrix — every read shape but only concurrency 1 & 8, uncached — so a
+# PR check covers all shapes fast. Nightly/on-demand overrides SWEEP/CACHE to the full sweep + both
+# cache modes. REPO_READS selects the A/B baseline read shapes (`full` = all ~46; `core` = subset).
+SWEEP="${SWEEP:-1,8}"
+CACHE="${CACHE:-uncached}"
+REPO_READS="${REPO_READS:-full}"
+# Persistent dir (survives the $WORKDIR trap) for the machine-usable summaries the publish job reads.
+SUMMARY_DIR="${SUMMARY_DIR:-$(dirname "$OUT_MD")/synthetic-summaries}"
 # Host port for the DB container (mapped to the container's 6379). Default 16379 to match the other
 # benchmark scripts (run-variant.sh / profile.sh) and avoid colliding with any host Redis on 6379.
 DB_PORT="${DB_PORT:-16379}"
@@ -88,7 +95,7 @@ measure() {
   bench synthetic run --recording "$WORKDIR/rec" \
     --endpoint "falkor://127.0.0.1:${DB_PORT}" \
     --label "$label" --server-image "$digest" \
-    --concurrency "$SWEEP" --cache both --samples "$SAMPLES" --warmup "$WARMUP" \
+    --concurrency "$SWEEP" --cache "$CACHE" --samples "$SAMPLES" --warmup "$WARMUP" \
     --out "$out"
   docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
   echo "::endgroup::"
@@ -108,8 +115,10 @@ if [ -n "$IMAGE_RELEASE" ]; then RELEASE_DIGEST="$(resolve_digest "$IMAGE_RELEAS
 # (mirrors run-variant.sh / generate-queries.sh / profile.sh).
 grep -q '^\[workspace\]' "$BENCHMARK_DIR/Cargo.toml" || printf '\n[workspace]\n' >> "$BENCHMARK_DIR/Cargo.toml"
 
-# Record the workload once (offline; identical bundle replayed into every image).
-bench synthetic record --config "$WORKLOAD" --op all --out-dir "$WORKDIR/rec"
+# Record the workload once (offline; identical bundle replayed into every image). `--repo-reads`
+# records the A/B benchmark's baseline non-algorithm READ shapes (deterministic, record-once →
+# replay-verbatim) instead of the legacy catalog ops.
+bench synthetic record --config "$WORKLOAD" --repo-reads "$REPO_READS" --out-dir "$WORKDIR/rec"
 
 # Measure each build back-to-back (one container at a time).
 measure "pr" "$PR_DIGEST" "$WORKDIR/pr.json"
@@ -121,13 +130,16 @@ measure "main" "$MAIN_DIGEST" "$WORKDIR/main.json"
 ELAPSED_SECS=$(( $(date +%s) - SYNTHETIC_START_TS ))
 
 # Diff each baseline against the PR (candidate = pr, the second report). Non-fatal + colored.
+# Also emit the compact machine-usable summary (verdict + per-tier 🟢/🔴/N-A counts + worst offenders
+# + a stable slug) the publish job renders into the lean PR comment while hosting the full report.
+mkdir -p "$SUMMARY_DIR"
 bench synthetic report --diff "$WORKDIR/main.json" "$WORKDIR/pr.json" \
   --regression --thresholds "$THRESHOLDS" --elapsed-secs "$ELAPSED_SECS" \
-  --out "$WORKDIR/reg-main.md" >/dev/null
+  --out "$WORKDIR/reg-main.md" --summary "$SUMMARY_DIR/summary-main.json" >/dev/null
 if [ -n "$RELEASE_DIGEST" ]; then
   bench synthetic report --diff "$WORKDIR/release.json" "$WORKDIR/pr.json" \
     --regression --thresholds "$THRESHOLDS" --elapsed-secs "$ELAPSED_SECS" \
-    --out "$WORKDIR/reg-release.md" >/dev/null
+    --out "$WORKDIR/reg-release.md" --summary "$SUMMARY_DIR/summary-release.json" >/dev/null
 fi
 
 # Assemble the sticky-comment body (arch-specific marker, mirroring the A/B comment).

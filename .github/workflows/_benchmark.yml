@@ -113,7 +113,7 @@ env:
   # jobs below). Kept apart from BENCHMARK_REF so the legacy ab-compare vendor mode above is never
   # perturbed. This is the merge commit of FalkorDB/benchmark#234 (adds `synthetic report
   # --regression`). Bump to a newer immutable commit SHA (with a `# <what>` note) to move it.
-  SYNTHETIC_BENCHMARK_REF: b8fe38d24ffc9c8a252549082e0cc79681028e72 # per-op regression + settings/compute-time + per-line guard/tail-latencies (#234, #235, #238)
+  SYNTHETIC_BENCHMARK_REF: 068c2adffa2edb885eb7c6a09b44ddf894aca8d8 # Phase 3: A/B baseline read shapes via --repo-reads + tiers/budgets/--summary (#240-#248)
 
 jobs:
   # Expand (size × variant) into a flat combo list the matrices below fan out
@@ -616,7 +616,9 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: synthetic-report-${{ inputs.view }}-${{ inputs.arch }}
-          path: ${{ github.workspace }}/synthetic-report.md
+          path: |
+            ${{ github.workspace }}/synthetic-report.md
+            ${{ github.workspace }}/synthetic-summaries
           if-no-files-found: ignore
 
   synthetic-cleanup:
@@ -639,45 +641,75 @@ jobs:
           project_id: ${{ secrets.GCP_PROJECT_ID }}
           instance_label: synthetic-${{ github.run_id }}-${{ github.run_number }}-${{ inputs.arch }}
 
-  # Publish the report to the job summary + upsert an arch-specific sticky PR comment. Runs on a
-  # trusted ubuntu runner (has gh + pull-requests: write); best-effort so a read-only fork token or
-  # a missing report can never fail the run.
+  # Host the full report on gh-pages (isolated synthetic-benchmark/ subtree) and upsert an
+  # arch-specific LEAN sticky PR comment (verdict + per-tier 🟢/🔴/N-A counts + worst offenders +
+  # a link to the hosted report) — the full ~46-shape report is too big to inline. Runs on a trusted
+  # ubuntu runner; every step is best-effort so a gh-pages hiccup, read-only fork token, or missing
+  # report can never fail the run (informational / non-blocking).
   synthetic-publish:
     needs: [synthetic]
     if: ${{ always() && inputs.pr_number != '' && inputs.image_c != '' }}
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      pull-requests: write
+      contents: write # push the hosted report to the gh-pages branch
+      pull-requests: write # upsert the sticky comment
     steps:
-      - name: Download synthetic report
+      - name: Checkout this repo (scripts)
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Download synthetic artifacts
         continue-on-error: true
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: synthetic-report-${{ inputs.view }}-${{ inputs.arch }}
           path: synthetic-out
-      - name: Publish to job summary + sticky PR comment
+      - name: Checkout gh-pages
+        continue-on-error: true
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: gh-pages
+          path: gh-pages
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install Markdown renderer
+        continue-on-error: true
+        run: python3 -m pip install --quiet markdown
+      - name: Host full report on gh-pages
+        id: publish
+        continue-on-error: true
+        env:
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VIEW: ${{ inputs.view }}
+          IS_CANONICAL: "false"
+          REPORT_MD: ${{ github.workspace }}/synthetic-out/synthetic-report.md
+          SUMMARY_DIR: ${{ github.workspace }}/synthetic-out/synthetic-summaries
+          GH_PAGES_DIR: ${{ github.workspace }}/gh-pages
+        run: |
+          set -euo pipefail
+          url="$(bash .github/scripts/benchmark/synthetic-publish.sh | sed -n 's/^published_url=//p' | tail -1)"
+          printf 'url=%s\n' "$url" >> "$GITHUB_OUTPUT"
+      - name: Render + upsert lean sticky comment
+        if: ${{ always() }}
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ inputs.pr_number }}
           ARCH: ${{ inputs.arch }}
+          URL: ${{ steps.publish.outputs.url }}
         run: |
           set -euo pipefail
           MARKER='<!-- synthetic-benchmark -->'
           [ "$ARCH" = "arm" ] && MARKER='<!-- synthetic-benchmark-arm -->'
-          BODY=synthetic-out/synthetic-report.md
-          if [ ! -s "$BODY" ]; then
-            # The synthetic job failed / produced nothing — post an honest "unavailable" note so the
-            # sticky comment reflects this run instead of leaving a stale one.
-            BODY=unavailable.md
-            {
-              echo "$MARKER"
-              echo "## 🧪 Synthetic per-op regression (\`$ARCH\`)"
-              echo
-              echo "⚠ The synthetic benchmark did not produce a report for this run (build/measurement error, stock-out, or no PR image). See the \`synthetic\` job logs. This check is informational and never blocks the PR."
-            } > "$BODY"
-          fi
+          SUM_DIR=synthetic-out/synthetic-summaries
+          args=()
+          [ -f "$SUM_DIR/summary-main.json" ] && args+=(--summary "$SUM_DIR/summary-main.json")
+          [ -f "$SUM_DIR/summary-release.json" ] && args+=(--summary "$SUM_DIR/summary-release.json")
+          BODY=comment.md
+          python3 .github/scripts/benchmark/render-synthetic-comment.py \
+            ${args[@]+"${args[@]}"} --url "${URL:-}" --arch "$ARCH" --marker "$MARKER" --out "$BODY"
           cat "$BODY" >> "$GITHUB_STEP_SUMMARY"
           # Best-effort sticky comment (fork PRs get a read-only token → warn, don't fail).
           warn() { echo "::warning::could not upsert the synthetic comment (read-only token on a fork PR?); see the job summary"; exit 0; }
