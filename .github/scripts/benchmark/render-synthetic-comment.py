@@ -50,9 +50,11 @@ def _counts_row(label: str, counts: Any) -> str:
     return f"| {label} | {p} | {r} | {na} |"
 
 
-def _offenders_line(offenders: list[dict[str, Any]]) -> str:
+def _offenders_line(offenders: list[Any]) -> str:
     parts: list[str] = []
     for off in offenders:
+        if not isinstance(off, dict):
+            continue
         op = str(off.get("op", "?"))
         if off.get("diverged"):
             parts.append(f"`{op}` (results differ)")
