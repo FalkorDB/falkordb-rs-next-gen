@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "baseline_label": "main",
+  "candidate_label": "pr",
+  "slug": "synthetic-pr-vs-main-07fbcd8d1a0f",
+  "verdict": "pass",
+  "headline": "no p50 regression beyond budget across 2 comparable cell(s)",
+  "comparable_cells": 2,
+  "regressed_cells": 0,
+  "diverged_ops": [],
+  "totals": {
+    "pass": 1,
+    "regressed": 0,
+    "not_applicable": 49
+  },
+  "per_tier": [
+    {
+      "tier": "core",
+      "counts": {
+        "pass": 0,
+        "regressed": 0,
+        "not_applicable": 0
+      }
+    },
+    {
+      "tier": "full",
+      "counts": {
+        "pass": 1,
+        "regressed": 0,
+        "not_applicable": 0
+      }
+    }
+  ],
+  "worst_offenders": []
+}
