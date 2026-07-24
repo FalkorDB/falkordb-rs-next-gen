@@ -63,8 +63,12 @@ def render(md_text: str, title: str) -> str:
     try:
         import markdown  # type: ignore
 
+        # md_in_html only parses Markdown *inside* a raw HTML block when that block is marked
+        # `markdown="1"`. The report wraps each per-op table in a bare <details>, so without this the
+        # tables render as literal text. Add the marker (idempotently) before converting.
+        prepared = re.sub(r'<details(?![^>]*\bmarkdown=)', '<details markdown="1"', md_text)
         body = markdown.markdown(
-            md_text,
+            prepared,
             extensions=["tables", "fenced_code", "md_in_html", "sane_lists", "toc"],
             output_format="html5",
         )
