@@ -1,25 +1,37 @@
 #!/usr/bin/env python3
-"""Render the LEAN synthetic-regression PR comment from one or more `report --summary` JSON files.
+"""Render the LEAN three-way synthetic-benchmark PR comment from `report --summary` v2 JSONs.
 
-The full ~46-shape Markdown report is too big for a PR comment (>65 KB), so CI hosts it on GitHub
-Pages and posts THIS compact comment instead: overall verdict + per-tier 🟢/🔴/N-A counts + worst
-offenders + a link to the hosted full report. Consumes the `SyntheticSummary` schema (schema_version
-1) emitted by `benchmark synthetic report --diff … --regression --summary <file>`.
+The full Markdown reports are too big for a PR comment (>65 KB), so CI hosts them (plus the
+interactive page) on GitHub Pages and posts THIS compact comment instead: one verdict line per
+comparison (main-pr / c-pr / c-main), the total wall-clock from run-meta.json, worst offenders
+for the gating main-pr comparison only, and a single link to the interactive page. Consumes the
+`SyntheticSummary` schema_version 2 emitted by `benchmark synthetic report --regression …
+--summary <file>`; any other schema_version warns-and-skips that line (never mis-renders).
 
-Pure stdlib, offline, deterministic. One `--summary` per baseline (e.g. main, release); each renders
-its own section and the sticky marker + header are emitted once. Writes the comment body to stdout
-(or --out). Never raises on a missing/unreadable summary — it degrades to an honest "unavailable"
-line so the caller can still post a sticky comment (the check is informational / non-blocking).
+Pure stdlib, offline, deterministic. Never raises on a missing/unreadable summary — it degrades
+to an honest "no summary produced" line so the caller can still post a sticky comment (the check
+is informational / non-blocking).
 """
 from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from typing import Any
 
-SCHEMA_VERSION = 1
-VERDICT_EMOJI = {"pass": "🟢", "regressed": "🔴", "not_comparable": "⚠"}
+SCHEMA_VERSION = 2
+VERDICT_EMOJI = {"pass": "🟢", "regressed": "🔴", "advisory": "⚠", "not_comparable": "⚠"}
+
+# Comparison IDs are the design §1 stable identifiers (baseline→candidate). Rendering order and
+# human labels are fixed here; the workflow passes whichever summaries the run produced.
+COMPARISONS = [
+    ("main-pr", "PR vs main"),
+    ("c-pr", "PR vs C engine"),
+    ("c-main", "main vs C engine"),
+]
+COMPARISON_IDS = [cid for cid, _ in COMPARISONS]
+CROSS_ENGINE_IDS = {"c-pr", "c-main"}
 
 
 def _safe_int(value: Any, default: int = 0) -> int:
@@ -41,13 +53,20 @@ def _load(path: str) -> dict[str, Any] | None:
         return None
 
 
-def _counts_row(label: str, counts: Any) -> str:
-    if not isinstance(counts, dict):
-        counts = {}
-    p = _safe_int(counts.get("pass", 0))
-    r = _safe_int(counts.get("regressed", 0))
-    na = _safe_int(counts.get("not_applicable", 0))
-    return f"| {label} | {p} | {r} | {na} |"
+def _fmt_duration(secs: Any) -> str | None:
+    try:
+        total = int(float(secs))
+    except (TypeError, ValueError):
+        return None
+    if total < 0:
+        return None
+    h, rem = divmod(total, 3600)
+    m, s = divmod(rem, 60)
+    if h:
+        return f"{h}h {m}m {s}s"
+    if m:
+        return f"{m}m {s}s"
+    return f"{s}s"
 
 
 def _offenders_line(offenders: list[Any]) -> str:
@@ -65,96 +84,108 @@ def _offenders_line(offenders: list[Any]) -> str:
     return ", ".join(parts)
 
 
-def render_section(summary: dict[str, Any], url: str | None) -> str:
-    """Render one baseline's section from a parsed SyntheticSummary dict."""
+def verdict_line(cid: str, label: str, summary: dict[str, Any] | None) -> str:
+    """One comparison's verdict line (or its honest degraded form)."""
+    if summary is None:
+        return f"⚠ **{label}** — no summary produced for this run (see the `synthetic` job logs)"
+
     ver = str(summary.get("schema_version", ""))
     if str(SCHEMA_VERSION) != ver:
         # Forward/backward-incompatible producer — surface it rather than mis-render.
         return (
-            f"> ⚠ summary schema v{ver or '?'} is not the expected v{SCHEMA_VERSION}; "
-            "skipping the compact render (see the full report).\n"
+            f"⚠ **{label}** — summary schema v{ver or '?'} is not the expected "
+            f"v{SCHEMA_VERSION}; skipping (see the full report)"
         )
 
-    verdict = str(summary.get("verdict", "")).lower()
+    verdict = str(summary.get("overall_verdict", "")).lower()
     emoji = VERDICT_EMOJI.get(verdict, "•")
-    headline = str(summary.get("headline", "")).strip()
-    base = str(summary.get("baseline_label", "baseline"))
-    cand = str(summary.get("candidate_label", "candidate"))
+    headline = str(summary.get("headline", "")).strip() or verdict or "no verdict"
 
-    lines: list[str] = []
-    lines.append(f"### {cand} vs {base}")
-    lines.append("")
-    lines.append(f"{emoji} **{headline}**" if headline else f"{emoji} **{verdict or 'no verdict'}**")
-    lines.append("")
-
+    line = f"{emoji} **{label}** — {headline}"
     if verdict == "not_comparable":
         reason = str(summary.get("not_comparable_reason", "") or "workloads/configs differ")
-        lines.append(f"> Not comparable: {reason}")
-        lines.append("")
-
-    per_tier = summary.get("per_tier") or []
-    if isinstance(per_tier, list) and per_tier:
-        lines.append("| tier | 🟢 | 🔴 | N/A |")
-        lines.append("| --- | --- | --- | --- |")
-        for t in per_tier:
-            if isinstance(t, dict):
-                lines.append(_counts_row(str(t.get("tier", "?")), t.get("counts") or {}))
-        totals = summary.get("totals") or {}
-        lines.append(_counts_row("**all**", totals))
-        lines.append("")
-
-    offenders = summary.get("worst_offenders") or []
-    if isinstance(offenders, list) and offenders:
-        lines.append(f"**Worst offenders:** {_offenders_line(offenders)}")
-        lines.append("")
-
-    comparable = _safe_int(summary.get("comparable_cells", 0))
-    tail = f"{comparable} comparable p50 cell(s)"
-    if url:
-        lines.append(f"📄 **[Full report →]({url})** · {tail}")
-    else:
-        lines.append(f"📄 _full report hosting unavailable — see the job log_ · {tail}")
-    lines.append("")
-    return "\n".join(lines)
+        if reason not in headline:
+            line += f" ({reason})"
+    elif cid in CROSS_ENGINE_IDS:
+        diverged = _safe_int((summary.get("totals") or {}).get("diverged", 0))
+        # The tool's Advisory headline already carries the count ("pass, 3 diverged — …");
+        # only suppress the explicit suffix when a count is really there, so the guarantee
+        # holds even if a future headline mentions divergence without quantifying it.
+        if diverged and not re.search(r"\b\d+\s+diverged\b", headline):
+            ops = "op" if diverged == 1 else "ops"
+            line += f" · ⚠ {diverged} {ops} returned different results (advisory)"
+    return line
 
 
-def build_comment(marker: str, arch: str, summaries: list[str], url: str | None) -> str:
+def build_comment(
+    marker: str,
+    arch: str,
+    summaries: dict[str, str],
+    url: str | None,
+    run_meta_path: str | None,
+) -> str:
     header_arch = f" (`{arch}`)" if arch else ""
     out: list[str] = [marker]
-    out.append(f"## 🧪 Synthetic per-op regression{header_arch}")
+    out.append(f"## 🧪 Synthetic per-op benchmark{header_arch}")
     out.append("")
     out.append(
         "Identical recorded workload replayed into each engine image, measured **back-to-back on "
-        "one runner**. 🟢 within budget · 🔴 slower than budget **or** results differ · N/A no perf "
-        "verdict. **Non-blocking.**"
+        "one runner**. `PR vs main` gates on strict p50 budgets (result divergence fails it); the "
+        "C-engine comparisons use looser cross-engine budgets and are **advisory** — divergence "
+        "never gates them. **Non-blocking.**"
     )
     out.append("")
 
-    rendered_any = False
-    for path in summaries:
-        data = _load(path)
-        if data is None:
-            continue
-        out.append(render_section(data, url))
-        rendered_any = True
+    loaded: dict[str, dict[str, Any] | None] = {
+        cid: _load(summaries[cid]) if cid in summaries else None for cid in COMPARISON_IDS
+    }
+    for cid, label in COMPARISONS:
+        out.append(verdict_line(cid, label, loaded[cid]))
+    out.append("")
 
-    if not rendered_any:
-        out.append(
-            "⚠ No summary was produced for this run (build/measurement error, stock-out, or no PR "
-            "image). See the `synthetic` job logs. Informational; never blocks the PR."
-        )
-        out.append("")
+    main_pr = loaded.get("main-pr")
+    if main_pr is not None and str(main_pr.get("schema_version", "")) == str(SCHEMA_VERSION):
+        offenders = main_pr.get("worst_offenders") or []
+        if isinstance(offenders, list) and offenders:
+            out.append(f"**Worst offenders (PR vs main):** {_offenders_line(offenders)}")
+            out.append("")
+
+    tail_parts: list[str] = []
+    elapsed = None
+    if run_meta_path:
+        meta = _load(run_meta_path)
+        if meta is not None:
+            elapsed = _fmt_duration(meta.get("elapsed_secs"))
+    if elapsed:
+        tail_parts.append(f"⏱ total wall-clock {elapsed}")
+    if url:
+        tail_parts.append(f"📄 **[Interactive report →]({url})**")
+    else:
+        tail_parts.append("📄 _report hosting unavailable — see the job log_")
+    out.append(" · ".join(tail_parts))
 
     return "\n".join(out).rstrip() + "\n"
+
+
+def _parse_summary_arg(value: str) -> tuple[str, str]:
+    cid, sep, path = value.partition("=")
+    if not sep or not path or cid not in COMPARISON_IDS:
+        raise argparse.ArgumentTypeError(
+            f"--summary must be <id>=<path> with id one of {', '.join(COMPARISON_IDS)} (got {value!r})"
+        )
+    return cid, path
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument(
-        "--summary", action="append", default=[], metavar="FILE",
-        help="a report --summary JSON file (repeat per baseline: main, release)",
+        "--summary", action="append", default=[], metavar="ID=FILE", type=_parse_summary_arg,
+        help="a report --summary v2 JSON, tagged with its comparison id "
+             "(main-pr|c-pr|c-main); repeatable",
     )
-    ap.add_argument("--url", default="", help="URL of the hosted full report (empty = unavailable)")
+    ap.add_argument("--run-meta", default="", metavar="FILE",
+                    help="run-meta.json with the run's elapsed_secs (optional)")
+    ap.add_argument("--url", default="", help="URL of the interactive report page (empty = unavailable)")
     ap.add_argument("--arch", default="", help="arch tag for the header (x86|arm)")
     ap.add_argument(
         "--marker", default="<!-- synthetic-benchmark -->",
@@ -163,7 +194,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", default="", help="write to this file instead of stdout")
     args = ap.parse_args(argv)
 
-    body = build_comment(args.marker, args.arch, args.summary, args.url or None)
+    summaries: dict[str, str] = {}
+    for cid, path in args.summary:
+        if cid in summaries:
+            ap.error(f"duplicate --summary id {cid!r}")
+        summaries[cid] = path
+
+    body = build_comment(args.marker, args.arch, summaries, args.url or None, args.run_meta or None)
     if args.out:
         with open(args.out, "w", encoding="utf-8") as fh:
             fh.write(body)
