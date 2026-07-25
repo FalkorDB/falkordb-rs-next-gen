@@ -75,6 +75,7 @@ use crate::graph::graphblas::{
 /// Size of the `GxB_Container_struct` in bytes.
 const CONTAINER_STRUCT_SIZE: usize = std::mem::size_of::<super::GxB_Container_struct>();
 
+use super::tensor::GrB_INDEX_MAX;
 use super::vector::Vector;
 use super::{
     GrB_BOOL, GrB_DESC_C, GrB_DESC_CT0, GrB_DESC_CT0T1, GrB_DESC_CT1, GrB_DESC_R, GrB_DESC_RC,
@@ -341,9 +342,6 @@ impl<T> Drop for Matrix<T> {
     }
 }
 
-/// Largest dimension GraphBLAS accepts for a matrix (`GrB_INDEX_MAX`).
-const GRB_INDEX_MAX: u64 = 1u64 << 60;
-
 impl<T> Decode<19> for Matrix<T> {
     fn decode(r: &mut dyn Reader) -> Result<Self, String> {
         let container_bytes = r.read_buffer()?;
@@ -442,7 +440,7 @@ impl<T> Matrix<T> {
             let format = (*container).format;
             let orientation = (*container).orientation;
 
-            if nrows > GRB_INDEX_MAX || ncols > GRB_INDEX_MAX {
+            if nrows > GrB_INDEX_MAX || ncols > GrB_INDEX_MAX {
                 return Err(format!(
                     "Matrix decode: dimensions {nrows}x{ncols} exceed GrB_INDEX_MAX"
                 ));
@@ -1430,8 +1428,20 @@ impl<E: IterExtract> Iterator for Iter<E> {
 #[cfg(test)]
 mod decode_hardening_tests {
     use super::Matrix;
+    use crate::graph::graphblas::GxB_Container_struct;
     use crate::graph::graphblas::serialization::{Decode, Encode, Reader, Writer};
     use crate::graph::graphblas::test_init::ensure_init;
+
+    /// Overwrite a header field of the encoded container in place. Offsets are
+    /// derived from the struct itself so a SuiteSparse/bindgen layout change
+    /// cannot make these tests silently tamper with the wrong field.
+    fn poke_header(
+        items: &mut ItemStream,
+        offset: usize,
+        bytes: &[u8],
+    ) {
+        items.buffers[0][offset..offset + bytes.len()].copy_from_slice(bytes);
+    }
 
     /// Records the exact item stream `encode` produces so a test can tamper
     /// with a single item before feeding it back to `decode`.
@@ -1556,14 +1566,23 @@ mod decode_hardening_tests {
     fn shrunken_dimensions_are_rejected() {
         ensure_init();
         let mut items = encode_sample_matrix();
-        // nrows @ offset 0, ncols @ offset 8 of GxB_Container_struct.
-        items.buffers[0][0..8].copy_from_slice(&1u64.to_ne_bytes());
-        items.buffers[0][8..16].copy_from_slice(&1u64.to_ne_bytes());
+        poke_header(
+            &mut items,
+            std::mem::offset_of!(GxB_Container_struct, nrows),
+            &1u64.to_ne_bytes(),
+        );
+        poke_header(
+            &mut items,
+            std::mem::offset_of!(GxB_Container_struct, ncols),
+            &1u64.to_ne_bytes(),
+        );
         let mut r = VecReader::new(items);
         let Err(err) = <Matrix<u64> as Decode<19>>::decode(&mut r) else {
             panic!("entries outside the declared dimensions must be rejected");
         };
-        assert!(!err.is_empty());
+        // 16 entries cannot fit a 1x1 matrix, so the capacity guard is what
+        // catches this shape before the payload ever reaches GraphBLAS.
+        assert!(err.contains("exceeds capacity"), "{err}");
     }
 
     /// `GxB_load_Matrix_from_Container` is documented as O(1) and does not
@@ -1591,9 +1610,12 @@ mod decode_hardening_tests {
     fn invalid_format_is_rejected() {
         ensure_init();
         let mut items = encode_sample_matrix();
-        // format @ offset 128 of GxB_Container_struct; 3 is not a valid
-        // GxB_SPARSITY value.
-        items.buffers[0][128..132].copy_from_slice(&3i32.to_ne_bytes());
+        // 3 is not a valid GxB_SPARSITY value.
+        poke_header(
+            &mut items,
+            std::mem::offset_of!(GxB_Container_struct, format),
+            &3i32.to_ne_bytes(),
+        );
         let mut r = VecReader::new(items);
         let Err(err) = <Matrix<u64> as Decode<19>>::decode(&mut r) else {
             panic!("invalid container format must be rejected");
@@ -1605,8 +1627,12 @@ mod decode_hardening_tests {
     fn nvals_exceeding_capacity_is_rejected() {
         ensure_init();
         let mut items = encode_sample_matrix();
-        // nvals @ offset 32; 1 << 40 entries cannot fit in a 64x64 matrix.
-        items.buffers[0][32..40].copy_from_slice(&(1u64 << 40).to_ne_bytes());
+        // 1 << 40 entries cannot fit in a 64x64 matrix.
+        poke_header(
+            &mut items,
+            std::mem::offset_of!(GxB_Container_struct, nvals),
+            &(1u64 << 40).to_ne_bytes(),
+        );
         let mut r = VecReader::new(items);
         let Err(err) = <Matrix<u64> as Decode<19>>::decode(&mut r) else {
             panic!("impossible nvals must be rejected");

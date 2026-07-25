@@ -729,20 +729,6 @@ impl Graph {
     ) -> Self {
         let mut labels_matices = labels_matices;
         let mut relationship_matrices = relationship_matrices;
-        // Rebuild the graph-wide reverse index after RDB load to ensure
-        // complete sync with the decoded edges.
-        let mut edge_endpoints: Vec<u64> = Vec::new();
-        for tensor in &relationship_matrices {
-            for (src, dst, edge_id) in tensor.iter_edges() {
-                let idx = edge_id as usize;
-                if idx >= edge_endpoints.len() {
-                    edge_endpoints.resize(idx + 1, EDGE_NO_ENDPOINT);
-                }
-                edge_endpoints[idx] = compound_key(src, dst);
-            }
-        }
-        // Drop the doubling slack left by the incremental resizes above.
-        edge_endpoints.shrink_to_fit();
 
         let chunk = NODE_CREATION_BUFFER.load(Ordering::Relaxed);
         let node_cap = node_count + deleted_nodes.len();
@@ -760,6 +746,10 @@ impl Graph {
         // installs a process-exiting panic hook. A missing matrix is restored
         // as an empty one ("no entity carries this label/type"); surplus
         // matrices are unreachable and dropped.
+        //
+        // This runs *before* the `edge_endpoints` rebuild below so the reverse
+        // index is derived only from the tensors that survive: rebuilding
+        // first would leave endpoints recorded for edges no tensor holds.
         labels_matices.truncate(node_labels.len());
         while labels_matices.len() < node_labels.len() {
             labels_matices.push(VersionedMatrix::<bool>::new(node_cap, node_cap));
@@ -768,6 +758,21 @@ impl Graph {
         while relationship_matrices.len() < relationship_types.len() {
             relationship_matrices.push(Tensor::new(node_cap, node_cap));
         }
+
+        // Rebuild the graph-wide reverse index after RDB load to ensure
+        // complete sync with the decoded edges.
+        let mut edge_endpoints: Vec<u64> = Vec::new();
+        for tensor in &relationship_matrices {
+            for (src, dst, edge_id) in tensor.iter_edges() {
+                let idx = edge_id as usize;
+                if idx >= edge_endpoints.len() {
+                    edge_endpoints.resize(idx + 1, EDGE_NO_ENDPOINT);
+                }
+                edge_endpoints[idx] = compound_key(src, dst);
+            }
+        }
+        // Drop the doubling slack left by the incremental resizes above.
+        edge_endpoints.shrink_to_fit();
 
         let schema_version = (node_labels.len() + relationship_types.len()) as u64;
         Self {
