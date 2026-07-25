@@ -728,10 +728,18 @@ impl Graph {
         relationship_attrs: AttributeStore,
     ) -> Self {
         let chunk = NODE_CREATION_BUFFER.load(Ordering::Relaxed);
-        let node_cap = node_count + deleted_nodes.len();
-        let relationship_cap = relationship_count + deleted_relationships.len();
-        let node_cap = node_cap.next_multiple_of(chunk).max(64);
-        let relationship_cap = relationship_cap.next_multiple_of(chunk).max(64);
+        let node_cap = node_count.saturating_add(deleted_nodes.len());
+        let relationship_cap = relationship_count.saturating_add(deleted_relationships.len());
+        // The counts come straight from an untrusted header, so round up
+        // without risking an overflow panic.
+        let node_cap = node_cap
+            .checked_next_multiple_of(chunk)
+            .unwrap_or(node_cap)
+            .max(64);
+        let relationship_cap = relationship_cap
+            .checked_next_multiple_of(chunk)
+            .unwrap_or(relationship_cap)
+            .max(64);
 
         // The schema's label / relationship-type name lists and the matrix
         // payloads are decoded from independent, caller-supplied counts (a
@@ -747,13 +755,24 @@ impl Graph {
         // This runs *before* the `edge_endpoints` rebuild below so the reverse
         // index is derived only from the tensors that survive: rebuilding
         // first would leave endpoints recorded for edges no tensor holds.
+        // Placeholders are sized from the already-decoded adjacency matrix
+        // rather than from `node_cap`: the latter is derived from untrusted
+        // header counts and may exceed the GraphBLAS dimension limit, in which
+        // case `GrB_Matrix_new` fails and the constructor asserts — the very
+        // process-killing panic this reconciliation exists to prevent. The
+        // adjacency matrix dimensions have already passed `Matrix::decode`
+        // validation, and an empty matrix's dimensions are irrelevant beyond
+        // being wide enough for the node ids that are actually addressed.
+        let pad_rows = adjacancy_matrix.nrows();
+        let pad_cols = adjacancy_matrix.ncols();
+
         labels_matices.truncate(node_labels.len());
         while labels_matices.len() < node_labels.len() {
-            labels_matices.push(VersionedMatrix::<bool>::new(node_cap, node_cap));
+            labels_matices.push(VersionedMatrix::<bool>::new(pad_rows, pad_cols));
         }
         relationship_matrices.truncate(relationship_types.len());
         while relationship_matrices.len() < relationship_types.len() {
-            relationship_matrices.push(Tensor::new(node_cap, node_cap));
+            relationship_matrices.push(Tensor::new(pad_rows, pad_cols));
         }
 
         // Rebuild the graph-wide reverse index after RDB load to ensure
