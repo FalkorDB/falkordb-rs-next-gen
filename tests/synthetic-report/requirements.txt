@@ -1,0 +1,6 @@
+# Dev/CI dependencies for the synthetic-report page + tooling tests
+# (tests/synthetic-report). Kept separate from tests/requirements.txt on
+# purpose: these are lightweight tooling tests that must not drag in the
+# full server test stack, and vice versa.
+pytest==8.3.5
+pytest-playwright==0.7.0

@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "elapsed_secs": 1234,
+  "arch": "x86",
+  "pr_number": "745",
+  "head_sha": "cb52b367deadbeef0000",
+  "images": {
+    "pr": {
+      "ref": "ghcr.io/falkordb/falkordb-server:rc-pr-745",
+      "digest": "ghcr.io/falkordb/falkordb-server@sha256:aaaa"
+    },
+    "main": {
+      "ref": "ghcr.io/falkordb/falkordb-server:edge-rs",
+      "digest": "ghcr.io/falkordb/falkordb-server@sha256:bbbb"
+    },
+    "c-engine": {
+      "ref": "docker.io/falkordb/falkordb:edge",
+      "digest": "falkordb/falkordb@sha256:cccc"
+    }
+  },
+  "comparisons": {
+    "main-pr": {
+      "budget_profile": "strict",
+      "divergence_policy": "gate"
+    },
+    "c-pr": {
+      "budget_profile": "cross-engine",
+      "divergence_policy": "advisory"
+    },
+    "c-main": {
+      "budget_profile": "cross-engine",
+      "divergence_policy": "advisory"
+    }
+  }
+}

@@ -1,0 +1,58 @@
+{
+  "schema_version": 2,
+  "baseline_label": "c-engine",
+  "candidate_label": "pr",
+  "slug": "synthetic-pr-vs-c-engine-4595c4e6f0d4",
+  "budget_profile": "cross-engine",
+  "divergence_policy": "advisory",
+  "gated_metric": "total_ms.p50",
+  "elapsed_secs": null,
+  "overall_verdict": "advisory",
+  "headline": "pass, 2 diverged \u2014 no p50 regression beyond budget across 22 comparable cell(s); divergence is advisory under this policy",
+  "comparable_cells": 22,
+  "regressed_cells": 0,
+  "diverged_ops": [
+    "aggregate_age",
+    "count_persons"
+  ],
+  "totals": {
+    "pass": 9,
+    "regressed": 0,
+    "diverged": 2,
+    "not_applicable": 2
+  },
+  "per_tier": [
+    {
+      "tier": "core",
+      "counts": {
+        "pass": 13,
+        "regressed": 0,
+        "diverged": 0,
+        "not_applicable": 0
+      }
+    },
+    {
+      "tier": "full",
+      "counts": {
+        "pass": 0,
+        "regressed": 0,
+        "diverged": 0,
+        "not_applicable": 0
+      }
+    }
+  ],
+  "worst_offenders": [
+    {
+      "op": "aggregate_age",
+      "tier": "read",
+      "diverged": true,
+      "regressed_cells": 0
+    },
+    {
+      "op": "count_persons",
+      "tier": "read",
+      "diverged": true,
+      "regressed_cells": 0
+    }
+  ]
+}
