@@ -72,8 +72,11 @@ def test_unavailable_comparison_greyed_with_reason(serve_page, page):
     btn = page.locator('#cmpSeg button[data-cmp="c-main"]')
     assert "unavail" in btn.get_attribute("class")
     assert "C leg failed" in btn.get_attribute("title")
-    # Visibly greyed and announced as disabled (still clickable — it shows the reason card).
-    assert btn.get_attribute("aria-disabled") == "true"
+    # Visibly greyed, announced via title/aria-label — NOT aria-disabled (the button
+    # is genuinely clickable: it reveals the reason card).
+    assert btn.get_attribute("aria-disabled") is None
+    aria = btn.get_attribute("aria-label")
+    assert "unavailable" in aria and "click for reason" in aria
     opacity = btn.evaluate("el => getComputedStyle(el).opacity")
     assert float(opacity) < 1
     assert btn.evaluate("el => getComputedStyle(el).cursor") == "not-allowed"
@@ -81,9 +84,8 @@ def test_unavailable_comparison_greyed_with_reason(serve_page, page):
     col = page.locator("#view th.cmp-col.unavail")
     assert col.count() == 1
     assert "C leg failed" in col.inner_text()
-    # Selecting it shows the reason card instead of tables (force: Playwright's
-    # actionability treats aria-disabled as not-enabled, but the button stays live).
-    btn.click(force=True)
+    # Selecting it shows the reason card instead of tables.
+    btn.click()
     assert "C leg failed" in page.locator("#view").inner_text()
     assert page.locator("#view table").count() == 0
 

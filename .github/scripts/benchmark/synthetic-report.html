@@ -290,12 +290,15 @@
     clear(cmpSeg);
     COMPARISONS.forEach(function (c) {
       var ok = isOk(c.id);
-      var title = ok ? '' : 'unavailable — ' + unavailReason(c.id);
+      var title = ok ? '' : 'unavailable — click for reason: ' + unavailReason(c.id);
       var b = segButton(c.label, state.view === c.id, false, title, function () { state.view = c.id; render(); });
       b.setAttribute('data-cmp', c.id);
       if (!ok) {
+        // Stays a real, clickable button (it reveals the reason card) — unavailability is
+        // conveyed by the greyed styling and the title/aria-label, NOT by aria-disabled,
+        // which would contradict the live click handler.
         b.classList.add('unavail');
-        b.setAttribute('aria-disabled', 'true');
+        b.setAttribute('aria-label', c.label + ' — ' + title);
       }
       cmpSeg.appendChild(b);
     });
