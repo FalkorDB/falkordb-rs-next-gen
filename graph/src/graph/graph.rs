@@ -727,6 +727,8 @@ impl Graph {
         node_attrs: AttributeStore,
         relationship_attrs: AttributeStore,
     ) -> Self {
+        let mut labels_matices = labels_matices;
+        let mut relationship_matrices = relationship_matrices;
         // Rebuild the graph-wide reverse index after RDB load to ensure
         // complete sync with the decoded edges.
         let mut edge_endpoints: Vec<u64> = Vec::new();
@@ -745,11 +747,33 @@ impl Graph {
         let chunk = NODE_CREATION_BUFFER.load(Ordering::Relaxed);
         let node_cap = node_count + deleted_nodes.len();
         let relationship_cap = relationship_count + deleted_relationships.len();
+        let node_cap = node_cap.next_multiple_of(chunk).max(64);
+        let relationship_cap = relationship_cap.next_multiple_of(chunk).max(64);
+
+        // The schema's label / relationship-type name lists and the matrix
+        // payloads are decoded from independent, caller-supplied counts (a
+        // `GRAPH.RESTORE` payload is fully attacker-controlled), while every
+        // lookup resolves a name to a position and then indexes the matching
+        // matrix vector by that position. Reconcile the two here so a
+        // malformed payload cannot make a later `MATCH (n:Label)` index out of
+        // bounds — a panic would take down the whole server, since the module
+        // installs a process-exiting panic hook. A missing matrix is restored
+        // as an empty one ("no entity carries this label/type"); surplus
+        // matrices are unreachable and dropped.
+        labels_matices.truncate(node_labels.len());
+        while labels_matices.len() < node_labels.len() {
+            labels_matices.push(VersionedMatrix::<bool>::new(node_cap, node_cap));
+        }
+        relationship_matrices.truncate(relationship_types.len());
+        while relationship_matrices.len() < relationship_types.len() {
+            relationship_matrices.push(Tensor::new(node_cap, node_cap));
+        }
+
         let schema_version = (node_labels.len() + relationship_types.len()) as u64;
         Self {
             name: name.to_string(),
-            node_cap: node_cap.next_multiple_of(chunk).max(64),
-            relationship_cap: relationship_cap.next_multiple_of(chunk).max(64),
+            node_cap,
+            relationship_cap,
             reserved_node_count: 0,
             reserved_relationship_count: 0,
             node_count,
@@ -1162,7 +1186,7 @@ impl Graph {
         self.node_labels
             .iter()
             .position(|l| l.as_str() == label)
-            .map(|i| &self.labels_matices[i])
+            .and_then(|i| self.labels_matices.get(i))
     }
 
     fn get_label_matrix_mut(
@@ -1215,7 +1239,7 @@ impl Graph {
         self.relationship_types
             .iter()
             .position(|l| l.as_str() == relationship_type.as_str())
-            .map(|i| &self.relationship_matrices[i])
+            .and_then(|i| self.relationship_matrices.get(i))
     }
 
     #[must_use]
