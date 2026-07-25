@@ -81,6 +81,7 @@
   .matrix-wrap{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px;box-shadow:var(--shadow);overflow-x:auto}
   .matrix-wrap table{width:auto;min-width:60%}
   td.mcell{text-align:center;font-size:15px}
+  td.mcell .mdelta{display:block;font-size:11px;line-height:1.4;color:var(--faint)}
   th.cmp-col .sub{display:block;font-weight:400;color:var(--faint);font-size:10.5px}
   th.cmp-col.unavail{opacity:.5}
   .cmp-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 18px;box-shadow:var(--shadow);margin-top:10px}
@@ -290,12 +291,15 @@
     clear(cmpSeg);
     COMPARISONS.forEach(function (c) {
       var ok = isOk(c.id);
-      var title = ok ? '' : 'unavailable — ' + unavailReason(c.id);
+      var title = ok ? '' : 'unavailable — click for reason: ' + unavailReason(c.id);
       var b = segButton(c.label, state.view === c.id, false, title, function () { state.view = c.id; render(); });
       b.setAttribute('data-cmp', c.id);
       if (!ok) {
+        // Stays a real, clickable button (it reveals the reason card) — unavailability is
+        // conveyed by the greyed styling and the title/aria-label, NOT by aria-disabled,
+        // which would contradict the live click handler.
         b.classList.add('unavail');
-        b.setAttribute('aria-disabled', 'true');
+        b.setAttribute('aria-label', c.label + ' — ' + title);
       }
       cmpSeg.appendChild(b);
     });
@@ -359,6 +363,18 @@
     var entry = analysisOps(id)[op];
     return entry ? String(entry.op_outcome || 'not_applicable') : null;
   }
+  function worstGatedCell(id, op) {
+    // The cell that decided the roll-up: max delta_pct among cells carrying a p50 verdict.
+    var entry = analysisOps(id)[op];
+    var cells = (entry && Array.isArray(entry.cells)) ? entry.cells : [];
+    var worst = null;
+    cells.forEach(function (cell) {
+      if (cell.perf_verdict !== 'pass' && cell.perf_verdict !== 'regressed') { return; }
+      if (typeof cell.delta_pct !== 'number' || !isFinite(cell.delta_pct)) { return; }
+      if (worst === null || cell.delta_pct > worst.delta_pct) { worst = cell; }
+    });
+    return worst;
+  }
   function chipPredicate(op) {
     var avail = availableIds();
     function red(id) { return avail.indexOf(id) >= 0 && opOutcome(id, op) === 'regressed'; }
@@ -377,7 +393,7 @@
   }
   function renderMatrix(root) {
     var wrap = el('div', 'matrix-wrap');
-    wrap.appendChild(el('p', 'note', 'Per-op outcome as emitted by the tool, rolled up across ALL cache modes and concurrencies (worst cell wins). The metric/cache selectors do not affect this view.'));
+    wrap.appendChild(el('p', 'note', 'Per-op outcome as emitted by the tool, rolled up across ALL cache modes and concurrencies (worst cell wins); the value under an emoji is that worst cell\u2019s gated \u0394% (p50). The metric/cache selectors do not affect this view.'));
     var ops = {};
     availableIds().forEach(function (id) {
       Object.keys(analysisOps(id)).forEach(function (op) { ops[op] = true; });
@@ -415,7 +431,17 @@
         }
         var out = opOutcome(c.id, op);
         var td = el('td', 'mcell', out === null ? '—' : (OUTCOME_EMOJI[out] || out));
-        if (out) { td.title = op + ': ' + out; }
+        if (out) {
+          var title = op + ': ' + out;
+          var worst = worstGatedCell(c.id, op);
+          if (worst) {
+            td.appendChild(el('span', 'mdelta mono', fmtPct(worst.delta_pct)));
+            title += ' — worst gated Δ ' + fmtPct(worst.delta_pct) +
+              ' (' + fmtMs(worst.baseline_p50_ms) + ' → ' + fmtMs(worst.candidate_p50_ms) +
+              ', C=' + worst.concurrency + ', ' + worst.cache_mode + ')';
+          }
+          td.title = title;
+        }
         tr.appendChild(td);
       });
       tbody.appendChild(tr);
