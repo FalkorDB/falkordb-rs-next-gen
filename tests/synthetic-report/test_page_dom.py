@@ -370,3 +370,49 @@ def test_cellless_and_contextless_ops_render_without_errors(serve_page, page):
     assert c8[0] == "8" and "ms" in c8[1] and c8[2] == "—"
 
     assert errors == []
+
+
+def test_cells_v2_skipped_ops_render_neutral(serve_page, page):
+    """Phase 6 cells v2: op_outcome "skipped" is its own neutral state — ⏭ in the
+    matrix, excluded from both red and green chip rollups, side-attributed note +
+    ⏭ totals bucket in the comparison view, tier "full" chip rendered as-is."""
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(serve_page("data-v2-skipped.json"))
+    wait_ready(page)
+
+    # Matrix: both skipped ops render ⏭ (emoji-only, no value line) in the c-pr column.
+    for op in ("algo_bfs", "algo_pagerank"):
+        cell = page.locator(f'#view tr[data-op="{op}"] td').nth(2)
+        assert cell.inner_text().strip() == "⏭", op
+        assert cell.locator("span.mdelta").count() == 0, op
+
+    # Chip rollups: skipped is neither red nor green.
+    page.click('#chips [data-chip="any-red"]')
+    assert page.locator("#view tr[data-op]").count() == 0
+    page.click('#chips [data-chip="all-green"]')
+    green_ops = page.locator("#view tr[data-op]")
+    ops = [green_ops.nth(i).get_attribute("data-op") for i in range(green_ops.count())]
+    assert "algo_bfs" not in ops and "algo_pagerank" not in ops
+    page.click('#chips [data-chip="all"]')
+
+    # Comparison view: ⏭ bucket in the totals line, per-op note names the skipped sides.
+    page.click('#cmpSeg button[data-cmp="c-pr"]')
+    page.wait_for_selector("#view details")
+    assert "⏭ 2" in page.locator("#view .cmp-sub").first.inner_text()
+    bfs = page.locator("#view details", has_text="algo_bfs")
+    assert bfs.locator("summary .tier").inner_text().lower() == "full"
+    bfs.locator("summary").click()
+    body = bfs.locator(".body").inner_text()
+    assert "op skipped on baseline + candidate" in body
+    assert "excluded from pass/regressed rollups" in body
+    pr = page.locator("#view details", has_text="algo_pagerank")
+    pr.locator("summary").click()
+    assert "op skipped on candidate —" in pr.locator(".body").inner_text()
+
+    # main-pr carries skipped: 0 — must not surface a ⏭ bucket.
+    page.click('#cmpSeg button[data-cmp="main-pr"]')
+    page.wait_for_selector("#view details")
+    assert "⏭" not in page.locator("#view .cmp-sub").first.inner_text()
+
+    assert errors == []

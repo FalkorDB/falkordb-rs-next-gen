@@ -21,7 +21,7 @@ from support import FIXTURES, SCRIPTS_DIR, TEMPLATE, load_fixture
 ASSEMBLER = SCRIPTS_DIR / "assemble-synthetic-data.py"
 
 COMPARISON_IDS = {"main-pr", "c-pr", "c-main"}
-OP_OUTCOMES = {"pass", "regressed", "diverged_advisory", "not_applicable"}
+OP_OUTCOMES = {"pass", "regressed", "diverged_advisory", "not_applicable", "skipped"}
 CORRECTNESS = {"match", "diverged", "not_gated"}
 PERF_VERDICTS = {"pass", "regressed", "not_applicable"}
 STATUS_KINDS = {"comparable", "workload_mismatch", "no_common_ops"}
@@ -90,19 +90,26 @@ def test_template_has_inline_data_uri_favicon():
 
 
 def _assert_analysis_shape(analysis):
-    assert analysis["schema_version"] == 1
+    # cells v1 (benchmark v2.3) or v2 (Phase 6: adds op_outcome "skipped",
+    # totals.skipped, optional per-op skipped_baseline/skipped_candidate).
+    assert analysis["schema_version"] in (1, 2)
     for key in ("comparison", "meta", "budget_profile", "divergence_policy",
                 "gated_metric", "status", "verdict", "totals", "ops"):
         assert key in analysis, f"cells JSON missing {key}"
     assert analysis["budget_profile"] in {"strict", "cross-engine"}
     assert analysis["divergence_policy"] in {"gate", "advisory"}
     assert analysis["verdict"] in {"pass", "regressed", "advisory", "not_comparable"}
-    assert set(analysis["totals"]) == {"pass", "regressed", "diverged", "not_applicable"}
+    base_totals = {"pass", "regressed", "diverged", "not_applicable"}
+    assert base_totals <= set(analysis["totals"]) <= base_totals | {"skipped"}
     assert isinstance(analysis["status"], dict)
     assert analysis["status"].get("kind") in STATUS_KINDS
     for op, entry in analysis["ops"].items():
         assert entry["correctness"] in CORRECTNESS, op
         assert entry["op_outcome"] in OP_OUTCOMES, op
+        # v2 optional per-side skip markers — validate type only when present.
+        for key in ("skipped_baseline", "skipped_candidate"):
+            if key in entry:
+                assert isinstance(entry[key], bool), f"{op} {key}"
         # cells may be EMPTY: a cell-less diverged op is legal (it still counts in totals).
         assert isinstance(entry["cells"], list), op
         for cell in entry["cells"]:
@@ -145,7 +152,8 @@ def _assert_data_shape(data):
 
 @pytest.mark.parametrize(
     "fixture",
-    ["data.json", "data-xss.json", "data-not-comparable.json", "data-cache-modes.json"],
+    ["data.json", "data-xss.json", "data-not-comparable.json", "data-cache-modes.json",
+     "data-v2-skipped.json"],
 )
 def test_fixture_matches_page_schema(fixture):
     _assert_data_shape(load_fixture(fixture))

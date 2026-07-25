@@ -5,8 +5,9 @@ The full Markdown reports are too big for a PR comment (>65 KB), so CI hosts the
 interactive page) on GitHub Pages and posts THIS compact comment instead: one verdict line per
 comparison (main-pr / c-pr / c-main), the total wall-clock from run-meta.json, worst offenders
 for the gating main-pr comparison only, and a single link to the interactive page. Consumes the
-`SyntheticSummary` schema_version 2 emitted by `benchmark synthetic report --regression …
---summary <file>`; any other schema_version warns-and-skips that line (never mis-renders).
+`SyntheticSummary` schema_version 2 or 3 emitted by `benchmark synthetic report --regression …
+--summary <file>` (v3 adds the optional ⏭ skipped bucket); any other schema_version
+warns-and-skips that line (never mis-renders).
 
 Pure stdlib, offline, deterministic. Never raises on a missing/unreadable summary — it degrades
 to an honest "no summary produced" line so the caller can still post a sticky comment (the check
@@ -20,7 +21,9 @@ import re
 import sys
 from typing import Any
 
-SCHEMA_VERSION = 2
+# v2 is the original three-way summary; v3 (benchmark Phase 6) adds the ⏭ skipped bucket
+# (totals.skipped + headline suffix). Tolerant-forward: both accepted, anything else skipped.
+SUPPORTED_SCHEMAS = ("2", "3")
 VERDICT_EMOJI = {"pass": "🟢", "regressed": "🔴", "advisory": "⚠", "not_comparable": "⚠"}
 
 # Comparison IDs are the design §1 stable identifiers (baseline→candidate). Rendering order and
@@ -90,16 +93,17 @@ def verdict_line(cid: str, label: str, summary: dict[str, Any] | None) -> str:
         return f"⚠ **{label}** — no summary produced for this run (see the `synthetic` job logs)"
 
     ver = str(summary.get("schema_version", ""))
-    if str(SCHEMA_VERSION) != ver:
+    if ver not in SUPPORTED_SCHEMAS:
         # Forward/backward-incompatible producer — surface it rather than mis-render.
         return (
             f"⚠ **{label}** — summary schema v{ver or '?'} is not the expected "
-            f"v{SCHEMA_VERSION}; skipping (see the full report)"
+            f"v{'/v'.join(SUPPORTED_SCHEMAS)}; skipping (see the full report)"
         )
 
     verdict = str(summary.get("overall_verdict", "")).lower()
     emoji = VERDICT_EMOJI.get(verdict, "•")
     headline = str(summary.get("headline", "")).strip() or verdict or "no verdict"
+    totals = summary.get("totals")
 
     line = f"{emoji} **{label}** — {headline}"
     if verdict == "not_comparable":
@@ -107,7 +111,6 @@ def verdict_line(cid: str, label: str, summary: dict[str, Any] | None) -> str:
         if reason not in headline:
             line += f" ({reason})"
     elif cid in CROSS_ENGINE_IDS:
-        totals = summary.get("totals")
         diverged = _safe_int(totals.get("diverged", 0)) if isinstance(totals, dict) else 0
         # The tool's Advisory headline already carries the count ("pass, 3 diverged — …");
         # only suppress the explicit suffix when a count is really there, so the guarantee
@@ -115,6 +118,12 @@ def verdict_line(cid: str, label: str, summary: dict[str, Any] | None) -> str:
         if diverged and not re.search(r"\b\d+\s+diverged\b", headline):
             ops = "op" if diverged == 1 else "ops"
             line += f" · ⚠ {diverged} {ops} returned different results (advisory)"
+    # v3 skipped bucket (absent in v2): surface the count unless the headline already
+    # quantifies it — same suppression pattern as the diverged suffix above.
+    skipped = _safe_int(totals.get("skipped", 0)) if isinstance(totals, dict) else 0
+    if skipped and not re.search(r"\b\d+\s+skipped\b", headline):
+        ops = "op" if skipped == 1 else "ops"
+        line += f" · ⏭ {skipped} {ops} skipped (capability)"
     return line
 
 
@@ -145,7 +154,7 @@ def build_comment(
     out.append("")
 
     main_pr = loaded.get("main-pr")
-    if main_pr is not None and str(main_pr.get("schema_version", "")) == str(SCHEMA_VERSION):
+    if main_pr is not None and str(main_pr.get("schema_version", "")) in SUPPORTED_SCHEMAS:
         offenders = main_pr.get("worst_offenders") or []
         if isinstance(offenders, list) and offenders:
             out.append(f"**Worst offenders (PR vs main):** {_offenders_line(offenders)}")

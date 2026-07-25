@@ -131,8 +131,78 @@ def test_schema_mismatch_warns_and_skips(tmp_path):
     bad.write_text('{"schema_version": 1, "verdict": "pass", "headline": "old shape"}')
     out = render("--summary", f"main-pr={bad}", "--url", URL)
     line = next(l for l in out.splitlines() if "**PR vs main**" in l)
-    assert "schema v1 is not the expected v2" in line
+    assert "schema v1 is not the expected v2/v3" in line
     assert "old shape" not in out  # v1 content must not be rendered
+
+
+def _v3_summary(tmp_path, name, **overrides):
+    """A minimal summary v3 (Phase 6): v2 shape + the ⏭ skipped bucket."""
+    import json
+
+    summary = {
+        "schema_version": 3,
+        "baseline_label": "main",
+        "candidate_label": "pr",
+        "slug": "synthetic-pr-vs-main-v3",
+        "budget_profile": "strict",
+        "divergence_policy": "gate",
+        "gated_metric": "total_ms.p50",
+        "elapsed_secs": None,
+        "overall_verdict": "pass",
+        "headline": "no p50 regression beyond budget across 4 comparable cell(s)",
+        "comparable_cells": 4,
+        "regressed_cells": 0,
+        "diverged_ops": [],
+        "totals": {"pass": 2, "regressed": 0, "diverged": 0, "not_applicable": 0, "skipped": 2},
+        "per_tier": [],
+        "worst_offenders": [],
+    }
+    summary.update(overrides)
+    path = tmp_path / name
+    path.write_text(json.dumps(summary))
+    return path
+
+
+def test_summary_v3_accepted_with_skipped_suffix(tmp_path):
+    """v3 is rendered (not skipped) and the ⏭ bucket is surfaced when the headline lacks it."""
+    path = _v3_summary(tmp_path, "summary-v3.json")
+    out = render("--summary", f"main-pr={path}", "--url", URL)
+    line = next(l for l in out.splitlines() if "**PR vs main**" in l)
+    assert "is not the expected" not in line
+    assert "no p50 regression beyond budget" in line
+    assert "⏭ 2 ops skipped (capability)" in line
+
+
+def test_summary_v3_skipped_suffix_suppressed_when_headline_counts(tmp_path):
+    """A headline that already quantifies the skips ("…, 2 skipped") gets no duplicate suffix."""
+    path = _v3_summary(
+        tmp_path, "summary-v3-counted.json",
+        headline="no p50 regression beyond budget across 4 comparable cell(s), 2 skipped",
+    )
+    out = render("--summary", f"main-pr={path}", "--url", URL)
+    line = next(l for l in out.splitlines() if "**PR vs main**" in l)
+    assert "2 skipped" in line
+    assert "⏭" not in line
+
+
+def test_summary_v3_zero_skipped_renders_plain(tmp_path):
+    """skipped: 0 must not add noise."""
+    path = _v3_summary(
+        tmp_path, "summary-v3-zero.json",
+        totals={"pass": 2, "regressed": 0, "diverged": 0, "not_applicable": 0, "skipped": 0},
+    )
+    out = render("--summary", f"main-pr={path}", "--url", URL)
+    line = next(l for l in out.splitlines() if "**PR vs main**" in l)
+    assert "⏭" not in line and "skipped" not in line
+
+
+def test_summary_v4_still_warns_and_skips(tmp_path):
+    """Tolerance stops at v3 — an unknown future version must never be mis-rendered."""
+    path = _v3_summary(tmp_path, "summary-v4.json", schema_version=4, headline="future shape")
+    out = render("--summary", f"main-pr={path}", "--url", URL)
+    line = next(l for l in out.splitlines() if "**PR vs main**" in l)
+    assert "schema v4 is not the expected v2/v3" in line
+    assert "future shape" not in out
 
 
 def test_missing_summary_degrades_to_honest_line():
