@@ -143,7 +143,10 @@ def _assert_data_shape(data):
             raise AssertionError(f"{cid}: unknown status {entry['status']!r}")
 
 
-@pytest.mark.parametrize("fixture", ["data.json", "data-xss.json", "data-not-comparable.json"])
+@pytest.mark.parametrize(
+    "fixture",
+    ["data.json", "data-xss.json", "data-not-comparable.json", "data-cache-modes.json"],
+)
 def test_fixture_matches_page_schema(fixture):
     _assert_data_shape(load_fixture(fixture))
 

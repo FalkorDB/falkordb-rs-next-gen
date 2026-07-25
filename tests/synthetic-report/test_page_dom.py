@@ -61,30 +61,68 @@ def test_default_view_is_matrix_all_comparisons(serve_page, page):
     # Matrix table has one column per comparison plus the op column.
     assert page.locator("#view th.cmp-col").count() == 3
     assert page.locator("#view tr[data-op]").count() > 0
-    # Matrix ignores cache mode; its controls are visible, cache seg hidden.
+    # Cache seg hides only because this fixture is single-mode (nothing to switch);
+    # with two modes it shows in matrix view too (see the cache-selector test).
     assert page.locator("#matrixControls").is_visible()
     assert not page.locator("#cacheSeg").is_visible()
 
 
 def test_matrix_cells_show_worst_gated_delta(serve_page, page):
-    """Matrix cells carry the worst gated Δ% next to the emoji (emoji-only without one)."""
+    """Matrix cells carry the worst Δ% for the selected metric (emoji-only without one)."""
     page.goto(serve_page("data.json"))
     wait_ready(page)
-    # main-pr aggregate_age: worst gated cell is C=8 uncached, delta_pct ≈ -4.14.
+    # main-pr aggregate_age: worst gated p50 cell is C=8 uncached, delta_pct ≈ -4.14.
     cell = page.locator('#view tr[data-op="aggregate_age"] td').nth(1)
     text = cell.inner_text()
     assert "🟢" in text and "-4.1%" in text
     title = cell.get_attribute("title")
-    assert "worst gated Δ -4.1%" in title
+    assert "worst p50 Δ -4.1%" in title
     assert "0.654 ms → 0.627 ms" in title and "C=8" in title and "uncached" in title
+    # The gated p50 value carries no neutral marker.
+    assert cell.locator("span.mdelta.delta-neu").count() == 0
     # c-pr distinct_labels is a cell-less diverged op: emoji only, no value, plain title.
     cell = page.locator('#view tr[data-op="distinct_labels"] td').nth(2)
     assert cell.inner_text().strip() == "⚠"
     assert "%" not in cell.get_attribute("title")
-    # c-pr aggregate_age: cells exist but none carries a p50 verdict (advisory divergence
-    # makes them not_applicable) — emoji only.
+    # c-pr aggregate_age: advisory divergence makes its cells N/A-gated, but the p50
+    # deltas exist and render — same as the comparison table (worst = max(-1.4, -4.3)).
     cell = page.locator('#view tr[data-op="aggregate_age"] td').nth(2)
-    assert "%" not in cell.inner_text()
+    assert "-1.4%" in cell.inner_text()
+
+
+def test_matrix_values_follow_metric_selector(serve_page, page):
+    """The matrix value column follows the metric selector; emoji stays the p50 rollup."""
+    page.goto(serve_page("data.json"))
+    wait_ready(page)
+    cell = page.locator('#view tr[data-op="aggregate_count_users"] td').nth(1)
+    assert "+23.4%" in cell.inner_text()  # gated p50, worst at C=1
+    page.click('#metricSeg [data-metric="p90"]')
+    cell = page.locator('#view tr[data-op="aggregate_count_users"] td').nth(1)
+    assert "+27.4%" in cell.inner_text()  # context p90, worst at C=1
+    assert "🟢" in cell.inner_text()      # emoji unchanged
+    # Non-p50 values are informational: neutral marker + metric named in the tooltip.
+    assert cell.locator("span.mdelta.delta-neu").count() == 1
+    assert "worst p90 Δ +27.4%" in cell.get_attribute("title")
+    # aggregate_age has no cell with a complete p90 context pair -> emoji-only.
+    assert "%" not in page.locator('#view tr[data-op="aggregate_age"] td').nth(1).inner_text()
+    # Throughput: higher is better, so the WORST delta is the minimum (C=1: -19.4%).
+    page.click('#metricSeg [data-metric="throughput"]')
+    cell = page.locator('#view tr[data-op="aggregate_count_users"] td').nth(1)
+    assert "-19.4%" in cell.inner_text()
+    assert "ops/s" in cell.get_attribute("title")
+
+
+def test_matrix_values_follow_cache_selector(serve_page, page):
+    """With two cache modes the selector shows in matrix view and switches the values."""
+    page.goto(serve_page("data-cache-modes.json"))
+    wait_ready(page)
+    assert page.locator("#cacheSeg").is_visible()
+    cell = page.locator('#view tr[data-op="aggregate_count_users"] td').nth(1)
+    assert "+23.4%" in cell.inner_text()  # default: uncached
+    page.click('#cacheSeg [data-cache="cached"]')
+    cell = page.locator('#view tr[data-op="aggregate_count_users"] td').nth(1)
+    assert "-5.0%" in cell.inner_text()   # cached worst = max(-10.0, -5.0)
+    assert "cached" in cell.get_attribute("title")
 
 
 def test_unavailable_comparison_greyed_with_reason(serve_page, page):
