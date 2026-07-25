@@ -191,3 +191,31 @@ def test_cross_engine_suffix_added_when_diverged_mentioned_without_count(tmp_pat
     out = render("--summary", f"c-pr={p}", "--url", URL)
     line = next(l for l in out.splitlines() if "**PR vs C engine**" in l)
     assert "· ⚠ 2 ops returned different results (advisory)" in line
+
+
+def test_malformed_totals_still_renders_line(tmp_path):
+    # A summary whose totals is not a dict must degrade (no diverged suffix),
+    # never crash — a crash here would silently drop the sticky comment.
+    import json
+    d = json.loads((FIXTURES / "summary-c-pr-diverged.json").read_text())
+    d["totals"] = "garbage"
+    p = tmp_path / "s.json"
+    p.write_text(json.dumps(d))
+    out = render("--summary", f"c-pr={p}", "--url", URL)
+    line = next(l for l in out.splitlines() if "**PR vs C engine**" in l)
+    assert "returned different results" not in line
+
+
+def test_non_finite_elapsed_omits_wall_clock(tmp_path):
+    # json.loads accepts bare Infinity; int(float("inf")) raises OverflowError,
+    # which must be swallowed like any other unusable elapsed value.
+    import json
+    meta = json.loads((FIXTURES / "run-meta.json").read_text())
+    p = tmp_path / "run-meta.json"
+    p.write_text(json.dumps(meta).replace(json.dumps(meta["elapsed_secs"]), "Infinity"))
+    assert "Infinity" in p.read_text()
+    out = render(
+        "--summary", fixture_arg("main-pr", "summary-main-pr.json"),
+        "--run-meta", str(p), "--url", URL,
+    )
+    assert "total wall-clock" not in out

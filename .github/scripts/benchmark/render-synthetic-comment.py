@@ -56,7 +56,7 @@ def _load(path: str) -> dict[str, Any] | None:
 def _fmt_duration(secs: Any) -> str | None:
     try:
         total = int(float(secs))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
     if total < 0:
         return None
@@ -107,7 +107,8 @@ def verdict_line(cid: str, label: str, summary: dict[str, Any] | None) -> str:
         if reason not in headline:
             line += f" ({reason})"
     elif cid in CROSS_ENGINE_IDS:
-        diverged = _safe_int((summary.get("totals") or {}).get("diverged", 0))
+        totals = summary.get("totals")
+        diverged = _safe_int(totals.get("diverged", 0)) if isinstance(totals, dict) else 0
         # The tool's Advisory headline already carries the count ("pass, 3 diverged — …");
         # only suppress the explicit suffix when a count is really there, so the guarantee
         # holds even if a future headline mentions divergence without quantifying it.
