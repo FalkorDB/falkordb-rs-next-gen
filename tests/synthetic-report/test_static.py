@@ -50,10 +50,25 @@ def test_template_has_no_html_injection_sink(sink):
 
 
 def test_template_is_single_file_no_external_resources():
-    """One dependency-free file: no external scripts, styles, or imports."""
+    """One dependency-free file: no external scripts, styles, or imports.
+
+    Regex-based so quoting/whitespace/attribute-order variants can't slip
+    through; data: URIs (the inline favicon) stay allowed.
+    """
     text = TEMPLATE.read_text(encoding="utf-8")
-    for marker in ("<script src", "<link rel=\"stylesheet\" href", "@import", "import("):
-        assert marker not in text, f"template must stay dependency-free (found {marker!r})"
+    patterns = (
+        r"<script[^>]*\bsrc\s*=",                        # any external script
+        r"<link[^>]*\bhref\s*=\s*[\"']?\s*(?:https?:)?//",  # http(s)/protocol-relative link
+        r"@import\b",                                    # CSS imports
+        r"\bimport\s*\(",                                # dynamic JS import
+        r"url\(\s*[\"']?\s*(?:https?:)?//",              # CSS url() to the network
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        assert match is None, (
+            f"template must stay dependency-free (pattern {pattern!r} "
+            f"matched {match.group(0)!r})"
+        )
 
 
 def test_template_fetches_sibling_data_json():
