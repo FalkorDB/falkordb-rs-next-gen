@@ -407,11 +407,15 @@ impl<T> Matrix<T> {
         r: &mut dyn Reader,
     ) -> Result<Self, String> {
         unsafe {
-            // `iso` and `jumbled` are Rust `bool`s, whose only valid bit
-            // patterns are 0 and 1. The raw copy below would otherwise write an
-            // attacker-chosen byte straight into them, and merely *reading*
-            // such a field is undefined behaviour — so screen them in the
-            // source bytes, before the copy makes them part of the struct.
+            // `GxB_Container_struct` holds Rust `bool`s (`iso`, `jumbled` and
+            // the reserved `bool_future` array), whose only valid bit patterns
+            // are 0 and 1. Copying attacker-chosen bytes straight into them
+            // would put an invalid value in typed memory, which is undefined
+            // behaviour. Sanitize a scratch copy first, so no invalid bit
+            // pattern ever reaches the container.
+            let mut scratch = [0u8; CONTAINER_STRUCT_SIZE];
+            scratch.copy_from_slice(&container_bytes[..CONTAINER_STRUCT_SIZE]);
+
             for (name, offset) in [
                 (
                     "iso",
@@ -422,7 +426,7 @@ impl<T> Matrix<T> {
                     std::mem::offset_of!(super::GxB_Container_struct, jumbled),
                 ),
             ] {
-                let byte = container_bytes[offset];
+                let byte = scratch[offset];
                 if byte > 1 {
                     return Err(format!(
                         "Matrix decode: container field `{name}` is not a valid boolean: {byte}"
@@ -430,9 +434,15 @@ impl<T> Matrix<T> {
                 }
             }
 
-            // Copy struct data into the allocated container
+            // `bool_future` is reserved and never carries meaning, so rather
+            // than rejecting the payload just zero it out before the copy.
+            let bool_future_offset = std::mem::offset_of!(super::GxB_Container_struct, bool_future);
+            let bool_future_len = std::mem::size_of::<[bool; 30]>();
+            scratch[bool_future_offset..bool_future_offset + bool_future_len].fill(0);
+
+            // Copy the sanitized struct data into the allocated container
             std::ptr::copy_nonoverlapping(
-                container_bytes.as_ptr(),
+                scratch.as_ptr(),
                 container.cast::<u8>(),
                 CONTAINER_STRUCT_SIZE,
             );
@@ -454,7 +464,6 @@ impl<T> Matrix<T> {
             (*container).u32_future = [0; 14];
             (*container).vector_future = [null_mut(); 11];
             (*container).matrix_future = [null_mut(); 15];
-            (*container).bool_future = [false; 30];
             (*container).void_future = [null_mut(); 16];
 
             let nrows = (*container).nrows;
