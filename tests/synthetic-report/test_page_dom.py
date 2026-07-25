@@ -117,7 +117,8 @@ def test_comparison_selector_switches_to_card_view(serve_page, page):
     page.click('#cmpSeg button[data-cmp="main-pr"]')
     page.wait_for_selector("#view .verdict-badge")
     assert page.locator("#view details").count() > 0
-    assert not page.locator("#matrixControls").is_visible()
+    # Filter controls stay available in comparison view (scoped chips + text search).
+    assert page.locator("#matrixControls").is_visible()
     # Back to matrix.
     page.click('#cmpSeg button[data-cmp="matrix"]')
     page.wait_for_selector("#view th.cmp-col")
@@ -189,6 +190,41 @@ def test_matrix_text_filter_composes_and(serve_page, page):
     assert page.locator("#view tr[data-op]").count() < filtered
     page.fill("#opFilter", "zz-no-such-op")
     assert page.locator("#view tr[data-op]").count() == 0
+
+
+def test_comparison_view_has_op_filters(serve_page, page):
+    """Chips + text search work in comparison view too, scoped to its own outcomes."""
+    page.goto(serve_page("data.json"))
+    wait_ready(page)
+    page.click('#cmpSeg button[data-cmp="c-pr"]')
+    # The filter controls stay visible outside the matrix.
+    assert page.locator("#matrixControls").is_visible()
+    total = page.locator("#view details[data-op]").count()
+    assert total > 2
+    # Text search narrows the op list (same substring match as the matrix).
+    page.fill("#opFilter", "aggregate_age")
+    assert page.locator('#view details[data-op="aggregate_age"]').count() == 1
+    assert page.locator("#view details[data-op]").count() == 1
+    page.fill("#opFilter", "zz-no-such-op")
+    assert page.locator("#view details[data-op]").count() == 0
+    assert f"0 of {total}" in page.locator("#view p.count-note").inner_text()
+    page.fill("#opFilter", "")
+    # all-green is scoped to THIS comparison: c-pr's two diverged_advisory ops drop out.
+    page.click('#chips [data-chip="all-green"]')
+    assert page.locator("#view details[data-op]").count() == total - 2
+    assert page.locator('#view details[data-op="aggregate_age"]').count() == 0
+    assert "(this comparison)" in page.locator("#view p.count-note").inner_text()
+    # any-red scoped: c-pr has no regressed ops.
+    page.click('#chips [data-chip="any-red"]')
+    assert page.locator("#view details[data-op]").count() == 0
+    # red-vs-main keeps its global meaning in every view, and says so.
+    page.click('#chips [data-chip="red-vs-main"]')
+    assert "(global)" in page.locator("#view p.count-note").inner_text()
+    page.click('#chips [data-chip="all"]')
+    assert page.locator("#view details[data-op]").count() == total
+    # An unavailable comparison renders only its reason card — no filter controls.
+    page.click('#cmpSeg button[data-cmp="c-main"]')
+    assert not page.locator("#matrixControls").is_visible()
 
 
 def test_meta_header_renders_run_facts(serve_page, page):
