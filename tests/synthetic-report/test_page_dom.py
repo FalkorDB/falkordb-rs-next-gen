@@ -66,6 +66,27 @@ def test_default_view_is_matrix_all_comparisons(serve_page, page):
     assert not page.locator("#cacheSeg").is_visible()
 
 
+def test_matrix_cells_show_worst_gated_delta(serve_page, page):
+    """Matrix cells carry the worst gated Δ% next to the emoji (emoji-only without one)."""
+    page.goto(serve_page("data.json"))
+    wait_ready(page)
+    # main-pr aggregate_age: worst gated cell is C=8 uncached, delta_pct ≈ -4.14.
+    cell = page.locator('#view tr[data-op="aggregate_age"] td').nth(1)
+    text = cell.inner_text()
+    assert "🟢" in text and "-4.1%" in text
+    title = cell.get_attribute("title")
+    assert "worst gated Δ -4.1%" in title
+    assert "0.654 ms → 0.627 ms" in title and "C=8" in title and "uncached" in title
+    # c-pr distinct_labels is a cell-less diverged op: emoji only, no value, plain title.
+    cell = page.locator('#view tr[data-op="distinct_labels"] td').nth(2)
+    assert cell.inner_text().strip() == "⚠"
+    assert "%" not in cell.get_attribute("title")
+    # c-pr aggregate_age: cells exist but none carries a p50 verdict (advisory divergence
+    # makes them not_applicable) — emoji only.
+    cell = page.locator('#view tr[data-op="aggregate_age"] td').nth(2)
+    assert "%" not in cell.inner_text()
+
+
 def test_unavailable_comparison_greyed_with_reason(serve_page, page):
     page.goto(serve_page("data.json"))
     wait_ready(page)
