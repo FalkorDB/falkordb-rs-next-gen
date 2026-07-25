@@ -263,7 +263,7 @@ elif env \
   DB_PORT="$DB_PORT" DB_CPUS="$DB_CPUS" DB_MEMORY="$DB_MEMORY" \
   MAX_QUEUED_QUERIES="$MAX_QUEUED_QUERIES" \
   SWEEP="$SWEEP" CACHE="$CACHE" SAMPLES="$SAMPLES" WARMUP="$WARMUP" \
-  timeout "$C_LEG_TIMEOUT" bash "$SCRIPT_DIR/synthetic-c-leg.sh"; then
+  timeout --kill-after=30s "$C_LEG_TIMEOUT" bash "$SCRIPT_DIR/synthetic-c-leg.sh"; then
   echo "synthetic: C-engine leg completed"
 else
   c_rc=$?
@@ -271,6 +271,8 @@ else
   stage="$(cat "$WORKDIR/c-stage" 2>/dev/null || echo "starting the C leg")"
   if [ "$c_rc" -eq 124 ]; then
     C_REASON="C leg timed out after ${C_LEG_TIMEOUT}s during: ${stage}"
+  elif [ "$c_rc" -eq 137 ]; then
+    C_REASON="C leg timed out after ${C_LEG_TIMEOUT}s (ignored SIGTERM, killed after 30s grace) during: ${stage}"
   else
     C_REASON="C leg failed (exit ${c_rc}) during: ${stage}"
   fi
