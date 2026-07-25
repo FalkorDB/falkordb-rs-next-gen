@@ -111,9 +111,8 @@ env:
   BENCHMARK_REF: deca7752cbd8cdeb333493569472ede385d5b5db # v2.2
   # Separate, independently-pinned ref for the SYNTHETIC per-op regression check (the `synthetic-*`
   # jobs below). Kept apart from BENCHMARK_REF so the legacy ab-compare vendor mode above is never
-  # perturbed. This is the merge commit of FalkorDB/benchmark#234 (adds `synthetic report
-  # --regression`). Bump to a newer immutable commit SHA (with a `# <what>` note) to move it.
-  SYNTHETIC_BENCHMARK_REF: b18e83980f1362f6966c698a048a7c5a7ae95181 # Phase 3-5: 50 A/B baseline read shapes (46 baseline + temporal_spatial + fulltext/vector) via --repo-reads + tiers/budgets/--summary (#240-#250)
+  # perturbed. Bump deliberately (with a `# <what>` note) to move it.
+  SYNTHETIC_BENCHMARK_REF: v2.3 # release tag — three-way analysis model (benchmark#256, merged as #257)
 
 jobs:
   # Expand (size × variant) into a flat combo list the matrices below fan out
@@ -518,9 +517,11 @@ jobs:
   # A lighter, per-operation comparison that runs on its OWN single GCE VM, in parallel with the
   # A/B/C legs — each benchmark gets its own dedicated machine, so no two benchmarks ever share a
   # machine (which would contaminate results); running on separate machines concurrently is fine. It
-  # replays one recorded synthetic workload into the PR image and main (`edge-rs`) back-to-back and
-  # posts a colored 🟢/🔴/N-A regression report. PR-only and non-blocking (the measurement job is
-  # continue-on-error; a failure surfaces as an "unavailable" note, never a required red check).
+  # replays one recorded synthetic workload into the PR image, Rust main (`edge-rs`) and the
+  # production C engine (`falkordb:edge`) back-to-back and reports three comparisons (PR vs main
+  # gating-style strict budgets; PR/main vs C advisory) as a colored report + interactive page.
+  # PR-only and non-blocking (the measurement job is continue-on-error; a failure surfaces as an
+  # "unavailable" note, never a required red check).
   synthetic-runner:
     needs: [setup]
     if: ${{ needs.setup.result == 'success' && inputs.pr_number != '' && inputs.image_c != '' }}
@@ -557,13 +558,14 @@ jobs:
           network: gh-runner
           runner_label: synthetic-${{ github.run_id }}-${{ github.run_number }}-${{ inputs.arch }}
 
-  # Runs ONE VM: replay the recorded workload into PR then main sequentially, diff, write the report.
+  # Runs ONE VM: record once, then replay the recorded workload into PR, main and the C engine
+  # sequentially; produce the three per-comparison reports + data.json for the interactive page.
   synthetic:
     needs: [synthetic-runner]
     if: ${{ needs.synthetic-runner.outputs.provisioned == 'success' }}
     continue-on-error: true
     runs-on: synthetic-${{ github.run_id }}-${{ github.run_number }}-${{ inputs.arch }}
-    timeout-minutes: 60
+    timeout-minutes: 90
     permissions:
       contents: read
     env:
@@ -574,7 +576,7 @@ jobs:
           set -euo pipefail
           apt-get update
           apt-get install -y --no-install-recommends \
-            git curl ca-certificates build-essential pkg-config libssl-dev protobuf-compiler
+            git curl ca-certificates build-essential pkg-config libssl-dev protobuf-compiler python3
       - name: Install Rust
         run: |
           set -euo pipefail
@@ -595,30 +597,28 @@ jobs:
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           workspaces: benchmark-tool
-      - name: Synthetic PR-vs-main regression (${{ inputs.arch }})
+      - name: Synthetic three-way benchmark (${{ inputs.arch }})
         env:
           BENCHMARK_DIR: ${{ github.workspace }}/benchmark-tool
           CONFIG_DIR: ${{ github.workspace }}
           IMAGE_PR: ${{ inputs.image_c }}
           IMAGE_MAIN: ${{ inputs.image_b }}
-          # PR-vs-release is intentionally dormant: falkordb-rs-next-gen publishes no Rust *release*
-          # image tag (only `edge-rs` = main and `rc-pr-<N>` = the PR; docker `edge` is the C engine,
-          # not a Rust baseline), so per design we compare only PR-vs-main. When a Rust release image
-          # exists, set IMAGE_RELEASE (and optionally RELEASE_LABEL) here to add the extra column —
-          # synthetic-run.sh already resolves + measures it whenever IMAGE_RELEASE is non-empty:
-          #   IMAGE_RELEASE: ghcr.io/falkordb/falkordb-server:<release-tag>
-          #   RELEASE_LABEL: "release <version>"
+          # The production C engine — the third leg. synthetic-run.sh defaults to exactly this ref;
+          # set here explicitly so the workflow documents/controls what gets measured. The C leg is
+          # failure-isolated (synthetic-c-leg.sh): if it breaks, main-pr still publishes and the
+          # c-pr/c-main comparisons degrade to honest "unavailable" stubs.
+          IMAGE_CENGINE: docker.io/falkordb/falkordb:edge
           ARCH: ${{ inputs.arch }}
-          OUT_MD: ${{ github.workspace }}/synthetic-report.md
+          PR_NUMBER: ${{ inputs.pr_number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          SYNTHETIC_OUT: ${{ github.workspace }}/synthetic-out
         run: bash .github/scripts/benchmark/synthetic-run.sh
-      - name: Upload synthetic report
+      - name: Upload synthetic artifacts
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: synthetic-report-${{ inputs.view }}-${{ inputs.arch }}
-          path: |
-            ${{ github.workspace }}/synthetic-report.md
-            ${{ github.workspace }}/synthetic-summaries
+          path: ${{ github.workspace }}/synthetic-out
           if-no-files-found: ignore
 
   synthetic-cleanup:
@@ -641,11 +641,11 @@ jobs:
           project_id: ${{ secrets.GCP_PROJECT_ID }}
           instance_label: synthetic-${{ github.run_id }}-${{ github.run_number }}-${{ inputs.arch }}
 
-  # Host the full report on gh-pages (isolated synthetic-benchmark/ subtree) and upsert an
-  # arch-specific LEAN sticky PR comment (verdict + per-tier 🟢/🔴/N-A counts + worst offenders +
-  # a link to the hosted report) — the full ~46-shape report is too big to inline. Runs on a trusted
-  # ubuntu runner; every step is best-effort so a gh-pages hiccup, read-only fork token, or missing
-  # report can never fail the run (informational / non-blocking).
+  # Host the interactive page + data.json + the three raw reports on gh-pages (isolated
+  # synthetic-benchmark/ subtree) and upsert an arch-specific LEAN sticky PR comment (three verdict
+  # lines + wall-clock + main-pr worst offenders + one page link) — the full reports are too big to
+  # inline. Runs on a trusted ubuntu runner; every step is best-effort so a gh-pages hiccup,
+  # read-only fork token, or missing report can never fail the run (informational / non-blocking).
   synthetic-publish:
     needs: [synthetic]
     if: ${{ always() && inputs.pr_number != '' && inputs.image_c != '' }}
@@ -653,6 +653,15 @@ jobs:
     # the PR. This is a LEAF job (nothing `needs` it), so continue-on-error can't mask a gate. (Copilot)
     continue-on-error: true
     runs-on: ubuntu-latest
+    # Serialize every writer of this PR's synthetic-benchmark/branch/pr-<N>* leaves (x86 + arm
+    # publishers AND benchmark.yml's cleanup-branch-view share this group). cancel-in-progress
+    # stays false (an arm publisher must not cancel a queued x86 one — different leaves) and
+    # `queue: max` keeps ALL queued writers in FIFO order instead of the classic latest-wins
+    # collapse, so a cleanup queued behind a publisher always runs last.
+    concurrency:
+      group: synthetic-pages-pr-${{ inputs.pr_number }}
+      cancel-in-progress: false
+      queue: max
     permissions:
       contents: write # push the hosted report to the gh-pages branch
       pull-requests: write # upsert the sticky comment
@@ -661,13 +670,36 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+      # Inside the concurrency group, re-check the PR is still open: this publisher may have queued
+      # BEFORE the PR closed but be running AFTER cleanup-branch-view wiped the leaf — publishing
+      # then would resurrect a dead view. Fail CLOSED: any error/unknown state skips the publish
+      # (the sticky comment is worthless on a closed PR anyway; cleanup owns closed PRs).
+      - name: Re-check PR state (fail-closed)
+        id: prstate
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          state="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json state --jq .state)" || state=UNKNOWN
+          echo "PR #$PR_NUMBER state: $state"
+          if [ "$state" = "OPEN" ]; then
+            echo "open=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "open=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::PR #$PR_NUMBER is '$state' — skipping synthetic publish (fail-closed)"
+          fi
       - name: Download synthetic artifacts
+        if: ${{ steps.prstate.outputs.open == 'true' }}
         continue-on-error: true
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: synthetic-report-${{ inputs.view }}-${{ inputs.arch }}
           path: synthetic-out
       - name: Checkout gh-pages
+        if: ${{ steps.prstate.outputs.open == 'true' }}
         continue-on-error: true
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -675,26 +707,23 @@ jobs:
           path: gh-pages
           fetch-depth: 0
           persist-credentials: false
-      - name: Install Markdown renderer
-        continue-on-error: true
-        run: python3 -m pip install --quiet markdown
-      - name: Host full report on gh-pages
+      - name: Host page + data + reports on gh-pages
         id: publish
+        if: ${{ steps.prstate.outputs.open == 'true' }}
         continue-on-error: true
         env:
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VIEW: ${{ inputs.view }}
           IS_CANONICAL: "false"
-          REPORT_MD: ${{ github.workspace }}/synthetic-out/synthetic-report.md
-          SUMMARY_DIR: ${{ github.workspace }}/synthetic-out/synthetic-summaries
+          SYNTHETIC_OUT: ${{ github.workspace }}/synthetic-out
           GH_PAGES_DIR: ${{ github.workspace }}/gh-pages
         run: |
           set -euo pipefail
           url="$(bash .github/scripts/benchmark/synthetic-publish.sh | sed -n 's/^published_url=//p' | tail -1)"
           printf 'url=%s\n' "$url" >> "$GITHUB_OUTPUT"
       - name: Render + upsert lean sticky comment
-        if: ${{ always() }}
+        if: ${{ steps.prstate.outputs.open == 'true' }}
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -706,10 +735,12 @@ jobs:
           set -euo pipefail
           MARKER='<!-- synthetic-benchmark -->'
           [ "$ARCH" = "arm" ] && MARKER='<!-- synthetic-benchmark-arm -->'
-          SUM_DIR=synthetic-out/synthetic-summaries
+          OUT_DIR=synthetic-out
           args=()
-          [ -f "$SUM_DIR/summary-main.json" ] && args+=(--summary "$SUM_DIR/summary-main.json")
-          [ -f "$SUM_DIR/summary-release.json" ] && args+=(--summary "$SUM_DIR/summary-release.json")
+          for id in main-pr c-pr c-main; do
+            [ -f "$OUT_DIR/summary-$id.json" ] && args+=(--summary "$id=$OUT_DIR/summary-$id.json")
+          done
+          [ -f "$OUT_DIR/run-meta.json" ] && args+=(--run-meta "$OUT_DIR/run-meta.json")
           BODY=comment.md
           python3 .github/scripts/benchmark/render-synthetic-comment.py \
             ${args[@]+"${args[@]}"} --url "${URL:-}" --arch "$ARCH" --marker "$MARKER" --out "$BODY"

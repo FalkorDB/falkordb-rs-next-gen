@@ -1,0 +1,42 @@
+{
+  "schema_version": 2,
+  "baseline_label": "c-engine",
+  "candidate_label": "main",
+  "slug": "synthetic-main-vs-c-engine-4595c4e6f0d4",
+  "budget_profile": "cross-engine",
+  "divergence_policy": "advisory",
+  "gated_metric": "total_ms.p50",
+  "elapsed_secs": null,
+  "overall_verdict": "pass",
+  "headline": "no p50 regression beyond budget across 26 comparable cell(s)",
+  "comparable_cells": 26,
+  "regressed_cells": 0,
+  "diverged_ops": [],
+  "totals": {
+    "pass": 13,
+    "regressed": 0,
+    "diverged": 0,
+    "not_applicable": 0
+  },
+  "per_tier": [
+    {
+      "tier": "core",
+      "counts": {
+        "pass": 13,
+        "regressed": 0,
+        "diverged": 0,
+        "not_applicable": 0
+      }
+    },
+    {
+      "tier": "full",
+      "counts": {
+        "pass": 0,
+        "regressed": 0,
+        "diverged": 0,
+        "not_applicable": 0
+      }
+    }
+  ],
+  "worst_offenders": []
+}

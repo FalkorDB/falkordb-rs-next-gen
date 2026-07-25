@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<meta name="robots" content="noindex"/>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%236a4dff'/%3E%3Crect x='7' y='14' width='4.5' height='11' rx='1.5' fill='%23fff'/%3E%3Crect x='13.75' y='9' width='4.5' height='16' rx='1.5' fill='%23fff'/%3E%3Crect x='20.5' y='17' width='4.5' height='8' rx='1.5' fill='%23fff'/%3E%3C/svg%3E"/>
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%236a4dff'/%3E%3Crect x='7' y='14' width='4.5' height='11' rx='1.5' fill='%23fff'/%3E%3Crect x='13.75' y='9' width='4.5' height='16' rx='1.5' fill='%23fff'/%3E%3Crect x='20.5' y='17' width='4.5' height='8' rx='1.5' fill='%23fff'/%3E%3C/svg%3E"/>
+<title>FalkorDB — synthetic three-way benchmark report</title>
+<!--
+  Interactive per-PR synthetic benchmark report (three-way: PR vs main, PR vs C, main vs C).
+
+  A single dependency-free static file: no build step, no external libs, no CDN. It fetches its
+  SIBLING data.json (assembled by the measure job — see assemble-synthetic-data.py) and only
+  RENDERS it: every verdict (per-cell perf_verdict, per-op op_outcome, per-comparison verdict) is
+  computed by the Rust tool and serialized in the cells JSON; the page never derives one.
+
+  Security: all dynamic content is rendered via document.createElement + textContent — no
+  HTML-string injection sink of any kind (enforced by tests/synthetic-report/).
+  Visually it follows the trend page (segmented buttons, cards, light/dark), not its string-built
+  DOM.
+-->
+<style>
+  :root{
+    --bg:#f4f6fb; --surface:#ffffff; --surface-2:#f0f2f8; --border:#e2e5ef;
+    --ink:#1a2030; --muted:#5c657c; --faint:#8a93a8; --accent:#6a4dff;
+    --good:#0e8f66; --bad:#c0384a; --warn:#b9761c; --grid:#eceef4;
+    --shadow:0 1px 2px rgba(20,26,48,.05),0 8px 24px rgba(20,26,48,.05);
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#0e1320; --surface:#161c2a; --surface-2:#1c2334; --border:#28314a;
+      --ink:#e8edf5; --muted:#9aa6bd; --faint:#68748c; --accent:#9d90ff;
+      --good:#28c090; --bad:#e0687a; --warn:#c9862b; --grid:#212a40;
+      --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 30px rgba(0,0,0,.28);
+    }
+  }
+  :root[data-theme="light"]{--bg:#f4f6fb;--surface:#fff;--surface-2:#f0f2f8;--border:#e2e5ef;--ink:#1a2030;--muted:#5c657c;--faint:#8a93a8;--accent:#6a4dff;--good:#0e8f66;--bad:#c0384a;--warn:#b9761c;--grid:#eceef4;}
+  :root[data-theme="dark"]{--bg:#0e1320;--surface:#161c2a;--surface-2:#1c2334;--border:#28314a;--ink:#e8edf5;--muted:#9aa6bd;--faint:#68748c;--accent:#9d90ff;--good:#28c090;--bad:#e0687a;--warn:#c9862b;--grid:#212a40;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
+  main{max-width:1150px;margin:0 auto;padding:32px 24px 80px}
+  [hidden]{display:none !important}
+  .mono{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+  h1{font-size:24px;margin:0 0 4px;letter-spacing:-.02em}
+  .lede{color:var(--muted);max-width:78ch;margin:.2em 0 0;font-size:14.5px}
+  header.hero{padding-bottom:16px;border-bottom:1px solid var(--border)}
+  .topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap}
+  button.ghost{appearance:none;background:var(--surface);border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:6px 10px;font:inherit;font-size:12.5px;cursor:pointer}
+  .meta-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px;margin-top:14px}
+  .meta-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:9px 12px;box-shadow:var(--shadow)}
+  .meta-card .k{font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--faint)}
+  .meta-card .v{font-size:13px;margin-top:2px;word-break:break-all}
+  .meta-card .v .sub{color:var(--faint);font-size:11.5px;display:block}
+  .controls{position:sticky;top:0;z-index:5;display:flex;gap:14px;align-items:center;flex-wrap:wrap;
+    background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(8px);
+    border:1px solid var(--border);border-radius:12px;padding:10px 14px;margin:18px 0 10px}
+  .controls.secondary{position:static;margin-top:0}
+  .cl{font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--faint)}
+  .seg{display:inline-flex;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;padding:3px;flex-wrap:wrap}
+  .seg button{appearance:none;border:0;background:transparent;color:var(--muted);font:inherit;font-size:13px;font-weight:600;padding:5px 12px;border-radius:6px;cursor:pointer}
+  .seg button:hover{color:var(--ink)}
+  .seg button.on{background:var(--surface);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.12)}
+  .seg button.unavail{opacity:.45;cursor:not-allowed;color:var(--faint)}
+  .seg button.unavail:hover{color:var(--faint)}
+  :root[data-theme="dark"] .seg button.on{background:var(--accent);color:#fff;box-shadow:none}
+  @media (prefers-color-scheme:dark){ :root:not([data-theme="light"]) .seg button.on{background:var(--accent);color:#fff;box-shadow:none} }
+  .seg button:disabled{opacity:.42;cursor:not-allowed;text-decoration:line-through}
+  .chip{appearance:none;border:1px solid var(--border);background:var(--surface);color:var(--muted);font:inherit;font-size:12.5px;font-weight:600;border-radius:999px;padding:4px 12px;cursor:pointer}
+  .chip.on{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 10%,transparent)}
+  input.opq{font:inherit;font-size:13px;color:var(--ink);background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:5px 10px;min-width:180px}
+  .note{color:var(--muted);font-size:12.5px;border-left:3px solid var(--border);padding-left:11px;margin:10px 0}
+  .banner{border:1px solid var(--border);border-left-width:4px;border-radius:10px;padding:10px 14px;margin:10px 0;font-size:13.5px;background:var(--surface)}
+  .banner.warn{border-left-color:var(--warn)}
+  .banner.bad{border-left-color:var(--bad)}
+  .banner.info{border-left-color:var(--accent)}
+  table{border-collapse:collapse;font-variant-numeric:tabular-nums;font-size:13px;width:100%}
+  th,td{border:1px solid var(--grid);padding:5px 10px;text-align:left}
+  th{background:var(--surface-2);font-size:12px}
+  td.num,th.num{text-align:right}
+  .matrix-wrap{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px;box-shadow:var(--shadow);overflow-x:auto}
+  .matrix-wrap table{width:auto;min-width:60%}
+  td.mcell{text-align:center;font-size:15px}
+  th.cmp-col .sub{display:block;font-weight:400;color:var(--faint);font-size:10.5px}
+  th.cmp-col.unavail{opacity:.5}
+  .cmp-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 18px;box-shadow:var(--shadow);margin-top:10px}
+  .cmp-head{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:baseline}
+  .cmp-title{font-size:16px;font-weight:700}
+  .cmp-sub{color:var(--muted);font-size:12.5px}
+  .verdict-badge{display:inline-block;font-size:12.5px;font-weight:700;border-radius:999px;padding:3px 12px}
+  .verdict-badge.pass{color:var(--good);background:color-mix(in srgb,var(--good) 14%,transparent)}
+  .verdict-badge.regressed{color:var(--bad);background:color-mix(in srgb,var(--bad) 14%,transparent)}
+  .verdict-badge.advisory,.verdict-badge.not_comparable{color:var(--warn);background:color-mix(in srgb,var(--warn) 16%,transparent)}
+  details.op{border:1px solid var(--border);border-radius:9px;margin:8px 0;background:var(--surface)}
+  details.op>summary{cursor:pointer;padding:7px 12px;font-size:13.5px;font-weight:600;display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+  details.op>summary .tier{font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--faint);border:1px solid var(--border);border-radius:5px;padding:0 6px}
+  details.op>summary .corr{font-size:11.5px;color:var(--muted)}
+  details.op .body{padding:4px 12px 12px;overflow-x:auto}
+  .delta-neu{color:var(--muted)}
+  .v-ok{color:var(--good);font-weight:700}
+  .v-bad{color:var(--bad);font-weight:700}
+  .v-na{color:var(--faint)}
+  .msg{color:var(--muted);padding:40px 0;text-align:center}
+  .count-note{color:var(--faint);font-size:12px;margin:6px 2px}
+  .warn-strip{display:flex;flex-direction:column;gap:4px;margin-top:10px}
+  .warn-strip .warn-row{font-size:12.5px;color:var(--warn-fg,#8a6d00);background:var(--warn-bg,rgba(255,193,7,.12));border:1px solid var(--warn-bd,rgba(255,193,7,.35));border-radius:8px;padding:5px 10px}
+</style>
+</head>
+<body>
+<main>
+  <header class="hero">
+    <div class="topbar">
+      <div>
+        <h1>Synthetic per-op benchmark — three-way</h1>
+        <p class="lede">One recorded workload replayed into each engine image, measured back-to-back on one runner.
+          <b>p50 is the only gated metric</b>; every verdict below is computed by the benchmark tool, this page only renders.
+          Informational / non-blocking.</p>
+      </div>
+      <button class="ghost" id="themeBtn" type="button">◐ theme</button>
+    </div>
+    <div class="meta-grid" id="metaGrid"></div>
+    <div class="warn-strip" id="warnStrip" hidden></div>
+  </header>
+
+  <div class="controls">
+    <span class="cl">Comparison</span><div class="seg" id="cmpSeg"></div>
+    <span class="cl">Metric</span><div class="seg" id="metricSeg"></div>
+    <span class="cl" id="cacheLbl" hidden>Cache</span><div class="seg" id="cacheSeg" hidden></div>
+  </div>
+  <div class="controls secondary" id="matrixControls" hidden>
+    <span class="cl">Filter</span><div id="chips"></div>
+    <input class="opq" id="opFilter" type="search" placeholder="filter ops by name…" autocomplete="off"/>
+  </div>
+
+  <div id="metricNote"></div>
+  <section id="view"><p class="msg">Loading data.json…</p></section>
+</main>
+<script>
+'use strict';
+(function () {
+  // ---- constants ------------------------------------------------------------------------------
+  var COMPARISONS = [
+    { id: 'main-pr', label: 'PR vs main' },
+    { id: 'c-pr', label: 'PR vs C' },
+    { id: 'c-main', label: 'main vs C' }
+  ];
+  var MATRIX = 'matrix';
+  var METRICS = [
+    { id: 'p50', label: 'p50 (gated)' },
+    { id: 'p90', label: 'p90' },
+    { id: 'p95', label: 'p95' },
+    { id: 'p99', label: 'p99' },
+    { id: 'throughput', label: 'throughput' }
+  ];
+  var OUTCOME_EMOJI = { pass: '🟢', regressed: '🔴', diverged_advisory: '⚠', not_applicable: 'N/A' };
+  var CHIPS = [
+    { id: 'all', label: 'all' },
+    { id: 'any-red', label: 'any red' },
+    { id: 'all-green', label: 'all green' },
+    { id: 'red-vs-c', label: 'red vs C' },
+    { id: 'red-vs-main', label: 'red vs main' }
+  ];
+
+  var state = { view: MATRIX, metric: 'p50', cache: 'uncached', chip: 'all', q: '' };
+  var data = null;
+
+  // ---- tiny DOM helpers (createElement/textContent ONLY — no HTML-string sinks) ---------------
+  function el(tag, className, text) {
+    var node = document.createElement(tag);
+    if (className) { node.className = className; }
+    if (text !== undefined && text !== null) { node.textContent = String(text); }
+    return node;
+  }
+  function clear(node) { while (node.firstChild) { node.removeChild(node.firstChild); } }
+
+  // ---- data access ----------------------------------------------------------------------------
+  function comparison(id) {
+    var c = data && data.comparisons ? data.comparisons[id] : undefined;
+    return (c && typeof c === 'object') ? c : null;
+  }
+  function isOk(id) {
+    var c = comparison(id);
+    return !!(c && c.status === 'ok' && c.analysis && typeof c.analysis === 'object');
+  }
+  function unavailReason(id) {
+    var c = comparison(id);
+    if (!c) { return 'not part of this run'; }
+    return String(c.reason || 'unavailable');
+  }
+  function analysisOps(id) {
+    var c = comparison(id);
+    var ops = (c && c.analysis && c.analysis.ops && typeof c.analysis.ops === 'object') ? c.analysis.ops : {};
+    return ops;
+  }
+  function availableIds() {
+    return COMPARISONS.map(function (c) { return c.id; }).filter(isOk);
+  }
+  function cacheModesInData() {
+    var modes = {};
+    availableIds().forEach(function (id) {
+      var ops = analysisOps(id);
+      Object.keys(ops).forEach(function (op) {
+        (ops[op].cells || []).forEach(function (cell) { modes[String(cell.cache_mode)] = true; });
+      });
+    });
+    return Object.keys(modes).sort();
+  }
+
+  // ---- formatting -----------------------------------------------------------------------------
+  function fmtMs(v) { return (typeof v === 'number' && isFinite(v)) ? v.toFixed(3) + ' ms' : '—'; }
+  function fmtThroughput(v) { return (typeof v === 'number' && isFinite(v)) ? v.toFixed(1) + ' ops/s' : '—'; }
+  function fmtPct(v) {
+    if (typeof v !== 'number' || !isFinite(v)) { return '—'; }
+    return (v >= 0 ? '+' : '') + v.toFixed(1) + '%';
+  }
+  function fmtDuration(secs) {
+    if (typeof secs !== 'number' || !isFinite(secs) || secs < 0) { return '—'; }
+    var s = Math.round(secs);
+    var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
+    return (h ? h + 'h ' : '') + (h || m ? m + 'm ' : '') + r + 's';
+  }
+  function shortDigest(ref) {
+    var s = String(ref || '');
+    var at = s.indexOf('@sha256:');
+    if (at < 0) { return s || '—'; }
+    return s.slice(0, at) + '@sha256:' + s.slice(at + 8, at + 20) + '…';
+  }
+
+  // ---- header meta ----------------------------------------------------------------------------
+  function metaCard(key, value, sub) {
+    var card = el('div', 'meta-card');
+    card.appendChild(el('div', 'k', key));
+    var v = el('div', 'v mono', value);
+    if (sub) { v.appendChild(el('span', 'sub', sub)); }
+    card.appendChild(v);
+    return card;
+  }
+  function renderMeta() {
+    var grid = document.getElementById('metaGrid');
+    clear(grid);
+    var meta = (data && data.meta && typeof data.meta === 'object') ? data.meta : {};
+    var pr = meta.pr_number ? '#' + meta.pr_number : '—';
+    var sha = meta.head_sha ? String(meta.head_sha).slice(0, 12) : '—';
+    grid.appendChild(metaCard('PR / head SHA', pr + ' @ ' + sha));
+    grid.appendChild(metaCard('Arch', meta.arch || '—'));
+    grid.appendChild(metaCard('Total benchmark wall-clock', fmtDuration(meta.elapsed_secs), 'record + all measurements + reports'));
+    var images = (meta.images && typeof meta.images === 'object') ? meta.images : {};
+    [['pr', 'PR image'], ['main', 'main image'], ['c-engine', 'C-engine image']].forEach(function (pair) {
+      var img = images[pair[0]];
+      if (img && typeof img === 'object') {
+        grid.appendChild(metaCard(pair[1], String(img.ref || '—'), img.digest ? shortDigest(img.digest) : 'digest unresolved'));
+      }
+    });
+    var cmps = (meta.comparisons && typeof meta.comparisons === 'object') ? meta.comparisons : {};
+    COMPARISONS.forEach(function (c) {
+      var m = cmps[c.id];
+      if (m && typeof m === 'object') {
+        grid.appendChild(metaCard(c.label + ' (' + c.id + ')',
+          'budgets: ' + String(m.budget_profile || '—'),
+          'divergence policy: ' + String(m.divergence_policy || '—')));
+      }
+    });
+    var strip = document.getElementById('warnStrip');
+    clear(strip);
+    var seen = {};
+    COMPARISONS.forEach(function (c) {
+      if (!isOk(c.id)) { return; }
+      var warns = comparison(c.id).analysis.warnings;
+      (Array.isArray(warns) ? warns : []).forEach(function (w) {
+        var line = c.label + ': ' + String(w);
+        if (seen[line]) { return; }
+        seen[line] = true;
+        strip.appendChild(el('div', 'warn-row', '⚠ ' + line));
+      });
+    });
+    strip.hidden = strip.childNodes.length === 0;
+  }
+
+  // ---- controls -------------------------------------------------------------------------------
+  function segButton(label, on, disabled, title, onClick) {
+    var b = el('button', on ? 'on' : '', label);
+    b.type = 'button';
+    if (disabled) { b.disabled = true; }
+    if (title) { b.title = title; }
+    b.addEventListener('click', onClick);
+    return b;
+  }
+  function renderControls() {
+    var cmpSeg = document.getElementById('cmpSeg');
+    clear(cmpSeg);
+    COMPARISONS.forEach(function (c) {
+      var ok = isOk(c.id);
+      var title = ok ? '' : 'unavailable — ' + unavailReason(c.id);
+      var b = segButton(c.label, state.view === c.id, false, title, function () { state.view = c.id; render(); });
+      b.setAttribute('data-cmp', c.id);
+      if (!ok) {
+        b.classList.add('unavail');
+        b.setAttribute('aria-disabled', 'true');
+      }
+      cmpSeg.appendChild(b);
+    });
+    var mb = segButton('matrix', state.view === MATRIX, false, '', function () { state.view = MATRIX; render(); });
+    mb.setAttribute('data-cmp', MATRIX);
+    cmpSeg.appendChild(mb);
+
+    var metricSeg = document.getElementById('metricSeg');
+    clear(metricSeg);
+    METRICS.forEach(function (m) {
+      var b = segButton(m.label, state.metric === m.id, false, '', function () { state.metric = m.id; render(); });
+      b.setAttribute('data-metric', m.id);
+      metricSeg.appendChild(b);
+    });
+
+    var modes = cacheModesInData();
+    var cacheSeg = document.getElementById('cacheSeg');
+    var cacheLbl = document.getElementById('cacheLbl');
+    clear(cacheSeg);
+    var showCache = modes.length > 1 && state.view !== MATRIX;
+    cacheSeg.hidden = !showCache;
+    cacheLbl.hidden = !showCache;
+    if (modes.length > 1 && modes.indexOf(state.cache) < 0) { state.cache = modes.indexOf('uncached') >= 0 ? 'uncached' : modes[0]; }
+    if (modes.length === 1) { state.cache = modes[0]; }
+    if (showCache) {
+      modes.forEach(function (m) {
+        var b = segButton(m, state.cache === m, false, '', function () { state.cache = m; render(); });
+        b.setAttribute('data-cache', m);
+        cacheSeg.appendChild(b);
+      });
+    }
+
+    var mc = document.getElementById('matrixControls');
+    mc.hidden = state.view !== MATRIX;
+    var chips = document.getElementById('chips');
+    clear(chips);
+    CHIPS.forEach(function (c) {
+      var b = el('button', 'chip' + (state.chip === c.id ? ' on' : ''), c.label);
+      b.type = 'button';
+      b.setAttribute('data-chip', c.id);
+      b.addEventListener('click', function () { state.chip = c.id; render(); });
+      chips.appendChild(b);
+    });
+
+    var note = document.getElementById('metricNote');
+    clear(note);
+    if (state.metric !== 'p50') {
+      var n = el('p', 'note');
+      n.appendChild(el('b', null, state.metric + ' is informational — not gated. '));
+      n.appendChild(document.createTextNode('Values render neutrally (no verdict). '));
+      if (state.metric === 'throughput') {
+        n.appendChild(el('b', null, 'Higher is better'));
+        n.appendChild(document.createTextNode(' for throughput (a positive delta means the candidate did more ops/s).'));
+      }
+      note.appendChild(n);
+    }
+  }
+
+  // ---- matrix view ----------------------------------------------------------------------------
+  function opOutcome(id, op) {
+    var entry = analysisOps(id)[op];
+    return entry ? String(entry.op_outcome || 'not_applicable') : null;
+  }
+  function chipPredicate(op) {
+    var avail = availableIds();
+    function red(id) { return avail.indexOf(id) >= 0 && opOutcome(id, op) === 'regressed'; }
+    switch (state.chip) {
+      case 'any-red':
+        return avail.some(function (id) { return opOutcome(id, op) === 'regressed'; });
+      case 'all-green':
+        return avail.length > 0 && avail.every(function (id) { return opOutcome(id, op) === 'pass'; });
+      case 'red-vs-c':
+        return red('c-pr') || red('c-main');
+      case 'red-vs-main':
+        return red('main-pr');
+      default:
+        return true;
+    }
+  }
+  function renderMatrix(root) {
+    var wrap = el('div', 'matrix-wrap');
+    wrap.appendChild(el('p', 'note', 'Per-op outcome as emitted by the tool, rolled up across ALL cache modes and concurrencies (worst cell wins). The metric/cache selectors do not affect this view.'));
+    var ops = {};
+    availableIds().forEach(function (id) {
+      Object.keys(analysisOps(id)).forEach(function (op) { ops[op] = true; });
+    });
+    var q = state.q.trim().toLowerCase();
+    var names = Object.keys(ops).sort().filter(function (op) {
+      if (q && op.toLowerCase().indexOf(q) < 0) { return false; }
+      return chipPredicate(op);
+    });
+
+    var table = el('table', 'matrix');
+    var thead = el('thead');
+    var hr = el('tr');
+    hr.appendChild(el('th', null, 'op'));
+    COMPARISONS.forEach(function (c) {
+      var th = el('th', 'cmp-col', c.label);
+      if (!isOk(c.id)) {
+        th.classList.add('unavail');
+        th.appendChild(el('span', 'sub', unavailReason(c.id)));
+        th.title = 'unavailable — ' + unavailReason(c.id);
+      }
+      hr.appendChild(th);
+    });
+    thead.appendChild(hr);
+    table.appendChild(thead);
+    var tbody = el('tbody');
+    names.forEach(function (op) {
+      var tr = el('tr');
+      tr.setAttribute('data-op', op);
+      tr.appendChild(el('td', 'mono', op));
+      COMPARISONS.forEach(function (c) {
+        if (!isOk(c.id)) {
+          tr.appendChild(el('td', 'mcell v-na', '—'));
+          return;
+        }
+        var out = opOutcome(c.id, op);
+        var td = el('td', 'mcell', out === null ? '—' : (OUTCOME_EMOJI[out] || out));
+        if (out) { td.title = op + ': ' + out; }
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+    var totalOps = Object.keys(ops).length;
+    root.appendChild(wrap);
+    root.appendChild(el('p', 'count-note', names.length + ' of ' + totalOps + ' op(s) shown · filter: ' + state.chip + (q ? ' · text: "' + q + '"' : '')));
+    if (availableIds().length === 0) {
+      root.appendChild(el('p', 'msg', 'No comparison in this run produced an analysis.'));
+    }
+  }
+
+  // ---- comparison (card/table) view -----------------------------------------------------------
+  function cellMetricValues(cell) {
+    // Returns {base, cand, delta_pct, delta_ms, gated} for the selected metric. For p50 the
+    // Rust-emitted deltas are used verbatim; other metrics come from the OPTIONAL context and the
+    // display-only delta is computed here (neutral — never a verdict).
+    if (state.metric === 'p50') {
+      return { base: cell.baseline_p50_ms, cand: cell.candidate_p50_ms, deltaPct: cell.delta_pct, deltaMs: cell.delta_ms, gated: true };
+    }
+    var ctx = (cell.context && typeof cell.context === 'object') ? cell.context : null;
+    var b = ctx && ctx.baseline ? ctx.baseline : null;
+    var c = ctx && ctx.candidate ? ctx.candidate : null;
+    var key = state.metric === 'throughput' ? 'throughput_ops_per_sec' : state.metric + '_ms';
+    var bv = b ? b[key] : null;
+    var cv = c ? c[key] : null;
+    var deltaPct = null;
+    if (typeof bv === 'number' && typeof cv === 'number' && isFinite(bv) && isFinite(cv) && bv !== 0) {
+      deltaPct = (cv - bv) / bv * 100;
+    }
+    return { base: bv, cand: cv, deltaPct: deltaPct, deltaMs: null, gated: false };
+  }
+  function verdictCell(cell) {
+    var v = String(cell.perf_verdict || 'not_applicable');
+    if (v === 'pass') { return el('td', 'v-ok', '🟢 within budget'); }
+    if (v === 'regressed') { return el('td', 'v-bad', '🔴 over budget'); }
+    return el('td', 'v-na', 'N/A');
+  }
+  function budgetText(cell) {
+    var b = cell.budget;
+    if (!b || typeof b !== 'object') { return '—'; }
+    var pct = (typeof b.budget_pct === 'number') ? b.budget_pct + '%' : '—';
+    var floor = (typeof b.floor_ms === 'number') ? b.floor_ms + ' ms' : '—';
+    return pct + ' / ' + floor;
+  }
+  function opDetails(op, entry, labels) {
+    var d = el('details', 'op');
+    var summary = el('summary');
+    var outcome = String(entry.op_outcome || 'not_applicable');
+    summary.appendChild(el('span', null, OUTCOME_EMOJI[outcome] || outcome));
+    summary.appendChild(el('span', 'mono', op));
+    if (entry.tier) { summary.appendChild(el('span', 'tier', entry.tier)); }
+    var corr = String(entry.correctness || '');
+    if (corr === 'diverged') { summary.appendChild(el('span', 'corr', '⚠ results diverged')); }
+    else if (corr === 'not_gated') { summary.appendChild(el('span', 'corr', 'correctness not gated')); }
+    d.appendChild(summary);
+
+    var body = el('div', 'body');
+    var all = entry.cells || [];
+    var cells = all.filter(function (cell) { return String(cell.cache_mode) === state.cache; });
+    if (all.length === 0) {
+      body.appendChild(el('p', 'note', 'no latency cells — correctness-only result for this op'));
+    } else if (cells.length === 0) {
+      body.appendChild(el('p', 'note', 'no cells in cache mode "' + state.cache + '"'));
+    } else {
+      var table = el('table');
+      var hr = el('tr');
+      hr.appendChild(el('th', null, 'C'));
+      hr.appendChild(el('th', 'num', labels.baseline + ' (baseline)'));
+      hr.appendChild(el('th', 'num', labels.candidate + ' (candidate)'));
+      hr.appendChild(el('th', 'num', 'Δ%'));
+      if (state.metric === 'p50') {
+        hr.appendChild(el('th', 'num', 'Δms'));
+        hr.appendChild(el('th', null, 'budget (pct / floor)'));
+        hr.appendChild(el('th', null, 'verdict (p50, gated)'));
+      } else {
+        hr.appendChild(el('th', null, 'informational — not gated'));
+      }
+      var thead = el('thead'); thead.appendChild(hr); table.appendChild(thead);
+      var tbody = el('tbody');
+      cells.forEach(function (cell) {
+        var tr = el('tr');
+        tr.appendChild(el('td', 'num', String(cell.concurrency)));
+        var mv = cellMetricValues(cell);
+        var fmt = state.metric === 'throughput' ? fmtThroughput : fmtMs;
+        tr.appendChild(el('td', 'num', fmt(mv.base)));
+        tr.appendChild(el('td', 'num', fmt(mv.cand)));
+        tr.appendChild(el('td', 'num ' + (mv.gated ? '' : 'delta-neu'), fmtPct(mv.deltaPct)));
+        if (state.metric === 'p50') {
+          tr.appendChild(el('td', 'num', (typeof mv.deltaMs === 'number' && isFinite(mv.deltaMs)) ? (mv.deltaMs >= 0 ? '+' : '') + mv.deltaMs.toFixed(3) + ' ms' : '—'));
+          tr.appendChild(el('td', null, budgetText(cell)));
+          tr.appendChild(verdictCell(cell));
+        } else {
+          tr.appendChild(el('td', 'delta-neu', state.metric === 'throughput' ? 'higher is better' : 'lower is better'));
+        }
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      body.appendChild(table);
+    }
+    d.appendChild(body);
+    return d;
+  }
+  function renderComparison(root, id) {
+    var meta = COMPARISONS.filter(function (c) { return c.id === id; })[0];
+    var card = el('div', 'cmp-card');
+    var head = el('div', 'cmp-head');
+    head.appendChild(el('div', 'cmp-title', meta.label + ' (' + id + ')'));
+    if (!isOk(id)) {
+      card.appendChild(head);
+      var b = el('div', 'banner warn');
+      b.appendChild(el('b', null, 'unavailable — '));
+      b.appendChild(document.createTextNode(unavailReason(id)));
+      card.appendChild(b);
+      root.appendChild(card);
+      return;
+    }
+    var a = comparison(id).analysis;
+    var labels = {
+      baseline: (a.comparison && a.comparison.baseline_label) || 'baseline',
+      candidate: (a.comparison && a.comparison.candidate_label) || 'candidate'
+    };
+    var verdict = String(a.verdict || '—');
+    var badge = el('span', 'verdict-badge ' + verdict, verdict.replace(/_/g, ' '));
+    head.appendChild(badge);
+    card.appendChild(head);
+    var totals = (a.totals && typeof a.totals === 'object') ? a.totals : {};
+    card.appendChild(el('div', 'cmp-sub',
+      labels.baseline + ' → ' + labels.candidate +
+      ' · budgets: ' + String(a.budget_profile || '—') +
+      ' · divergence policy: ' + String(a.divergence_policy || '—') +
+      ' · ops 🟢 ' + (totals.pass || 0) + ' / 🔴 ' + (totals.regressed || 0) +
+      ' / ⚠ ' + (totals.diverged || 0) + ' / N-A ' + (totals.not_applicable || 0) +
+      ' · ' + (a.comparable_cells || 0) + ' comparable p50 cell(s), ' + (a.regressed_cells || 0) + ' over budget'));
+
+    if (a.status && a.status.kind && a.status.kind !== 'comparable') {
+      var nb = el('div', 'banner bad');
+      nb.appendChild(el('b', null, 'not comparable (' + String(a.status.kind).replace(/_/g, ' ') + ')'));
+      if (a.status.reason) {
+        nb.appendChild(document.createTextNode(' — ' + String(a.status.reason)));
+      }
+      card.appendChild(nb);
+    }
+    (Array.isArray(a.warnings) ? a.warnings : []).forEach(function (w) {
+      card.appendChild(el('div', 'banner info', '⚠ ' + String(w)));
+    });
+    var divergedOps = Object.keys(analysisOps(id)).filter(function (op) {
+      return String(analysisOps(id)[op].correctness) === 'diverged';
+    });
+    if (divergedOps.length > 0) {
+      var policy = String(a.divergence_policy || 'gate');
+      var db = el('div', 'banner ' + (policy === 'advisory' ? 'warn' : 'bad'));
+      db.appendChild(el('b', null, divergedOps.length + ' op(s) returned different results: '));
+      db.appendChild(document.createTextNode(divergedOps.join(', ') + '. '));
+      db.appendChild(document.createTextNode(policy === 'advisory'
+        ? 'Advisory policy (cross-engine): marked ⚠, latency cells are N/A — the engines did different work, so a latency verdict would be meaningless.'
+        : 'Gate policy (same-engine): a correctness failure — the op counts as regressed and its latency cells are N/A.'));
+      card.appendChild(db);
+    }
+    root.appendChild(card);
+
+    var ops = analysisOps(id);
+    Object.keys(ops).sort().forEach(function (op) {
+      root.appendChild(opDetails(op, ops[op], labels));
+    });
+  }
+
+  // ---- top-level render -----------------------------------------------------------------------
+  function render() {
+    renderControls();
+    var root = document.getElementById('view');
+    clear(root);
+    if (state.view === MATRIX) { renderMatrix(root); }
+    else { renderComparison(root, state.view); }
+  }
+  function renderFatal(text) {
+    var root = document.getElementById('view');
+    clear(root);
+    root.appendChild(el('p', 'msg', text));
+  }
+
+  // ---- theme ----------------------------------------------------------------------------------
+  document.getElementById('themeBtn').addEventListener('click', function () {
+    var cur = document.documentElement.getAttribute('data-theme');
+    var next = cur === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    try { localStorage.setItem('synth-theme', next); } catch (e) { /* private mode */ }
+  });
+  try {
+    var saved = localStorage.getItem('synth-theme');
+    if (saved === 'light' || saved === 'dark') { document.documentElement.setAttribute('data-theme', saved); }
+  } catch (e) { /* private mode */ }
+
+  // ---- boot -----------------------------------------------------------------------------------
+  document.getElementById('opFilter').addEventListener('input', function (ev) {
+    state.q = String(ev.target.value || '');
+    render();
+  });
+  fetch('data.json', { cache: 'no-store' })
+    .then(function (resp) {
+      if (!resp.ok) { throw new Error('HTTP ' + resp.status); }
+      return resp.json();
+    })
+    .then(function (parsed) {
+      if (!parsed || typeof parsed !== 'object' || typeof parsed.comparisons !== 'object') {
+        throw new Error('data.json has no comparisons object');
+      }
+      data = parsed;
+      if (Number(parsed.schema_version) !== 1) {
+        renderFatal('data.json schema_version ' + parsed.schema_version + ' is not the supported v1.');
+        renderMeta();
+        return;
+      }
+      renderMeta();
+      render();
+    })
+    .catch(function (err) {
+      renderFatal('Could not load data.json: ' + String(err && err.message ? err.message : err));
+    });
+})();
+</script>
+</body>
+</html>

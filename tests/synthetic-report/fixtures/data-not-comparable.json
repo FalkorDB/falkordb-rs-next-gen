@@ -1,0 +1,1106 @@
+{
+ "schema_version": 1,
+ "meta": {
+  "schema_version": 1,
+  "elapsed_secs": 1234,
+  "arch": "x86",
+  "pr_number": "745",
+  "head_sha": "cb52b367deadbeef0000",
+  "images": {
+   "pr": {
+    "ref": "ghcr.io/falkordb/falkordb-server:rc-pr-745",
+    "digest": "ghcr.io/falkordb/falkordb-server@sha256:aaaa"
+   },
+   "main": {
+    "ref": "ghcr.io/falkordb/falkordb-server:edge-rs",
+    "digest": "ghcr.io/falkordb/falkordb-server@sha256:bbbb"
+   },
+   "c-engine": {
+    "ref": "docker.io/falkordb/falkordb:edge",
+    "digest": "falkordb/falkordb@sha256:cccc"
+   }
+  },
+  "comparisons": {
+   "main-pr": {
+    "budget_profile": "strict",
+    "divergence_policy": "gate"
+   },
+   "c-pr": {
+    "budget_profile": "cross-engine",
+    "divergence_policy": "advisory"
+   },
+   "c-main": {
+    "budget_profile": "cross-engine",
+    "divergence_policy": "advisory"
+   }
+  }
+ },
+ "comparisons": {
+  "main-pr": {
+   "status": "ok",
+   "analysis": {
+    "schema_version": 1,
+    "comparison": {
+     "baseline_label": "main",
+     "candidate_label": "pr",
+     "slug": "synthetic-pr-vs-main-4595c4e6f0d4"
+    },
+    "meta": {
+     "baseline": {
+      "module_version": "99.99.99",
+      "server_image": "test/main@sha256:eeee",
+      "workload_hash": "sha256:4595c4e6f0d46a3a12b3af37965ac9291e8973d59fb812b597116eda11f787c6",
+      "samples": 20,
+      "warmup": 3,
+      "concurrency": [
+       1,
+       8
+      ]
+     },
+     "candidate": {
+      "module_version": "99.99.99",
+      "server_image": "test/pr@sha256:eeee",
+      "workload_hash": "sha256:4595c4e6f0d46a3a12b3af37965ac9291e8973d59fb812b597116eda11f787c6",
+      "samples": 20,
+      "warmup": 3,
+      "concurrency": [
+       1,
+       8
+      ]
+     },
+     "thresholds": {
+      "metric": "p50",
+      "default_budget_pct": 10.0,
+      "default_floor_ms": 0.5,
+      "ops": [
+       {
+        "op": "expand_hops_5",
+        "budget_pct": 12.0,
+        "concurrency_budget_pct": {
+         "16": 18.0,
+         "32": 25.0
+        }
+       },
+       {
+        "op": "match_by_index",
+        "budget_pct": 15.0
+       },
+       {
+        "op": "property_projection",
+        "budget_pct": 15.0
+       },
+       {
+        "op": "return_const",
+        "budget_pct": 15.0
+       },
+       {
+        "op": "shortest_path",
+        "budget_pct": 12.0,
+        "concurrency_budget_pct": {
+         "16": 18.0,
+         "32": 25.0
+        }
+       }
+      ]
+     }
+    },
+    "budget_profile": "strict",
+    "divergence_policy": "gate",
+    "gated_metric": "total_ms.p50",
+    "status": {
+     "kind": "comparable"
+    },
+    "warnings": [
+     "a FalkorDB module version is the dev placeholder \u2014 use tagged release images for a meaningful version comparison",
+     "server image changed: test/main@sha256:eeee \u2192 test/pr@sha256:eeee"
+    ],
+    "elapsed_secs": null,
+    "verdict": "pass",
+    "totals": {
+     "pass": 13,
+     "regressed": 0,
+     "diverged": 0,
+     "not_applicable": 0
+    },
+    "comparable_cells": 26,
+    "regressed_cells": 0,
+    "ops": {
+     "aggregate_age": {
+      "tier": "core",
+      "correctness": "match",
+      "op_outcome": "pass",
+      "cells": [
+       {
+        "concurrency": 1,
+        "cache_mode": "uncached",
+        "baseline_p50_ms": 0.418729,
+        "candidate_p50_ms": 0.349229,
+        "delta_pct": -16.59784729502853,
+        "delta_ms": -0.0695,
+        "budget": {
+         "metric": "p50",
+         "budget_pct": 10.0,
+         "floor_ms": 0.5
+        },
+        "perf_verdict": "pass",
+        "context": {
+         "baseline": {
+          "p90_ms": 0.4579455,
+          "p95_ms": 0.46764565,
+          "p99_ms": 0.47869633,
+          "throughput_ops_per_sec": 2352.9065749033102
+         },
+         "candidate": {
+          "p90_ms": 0.3675003,
+          "p95_ms": 0.3741875,
+          "p99_ms": 0.3789375,
+          "throughput_ops_per_sec": 2855.57922354802
+         }
+        }
+       },
+       {
+        "concurrency": 8,
+        "cache_mode": "uncached",
+        "baseline_p50_ms": 0.65375,
+        "candidate_p50_ms": 0.6266875000000001,
+        "delta_pct": -4.139579349904396,
+        "delta_ms": -0.02706249999999999,
+        "budget": {
+         "metric": "p50",
+         "budget_pct": 10.0,
+         "floor_ms": 0.5
+        },
+        "perf_verdict": "pass",
+        "context": {
+         "baseline": {
+          "p90_ms": 0.8073416,
+          "p95_ms": 0.8559662,
+          "p99_ms": 0.966145,
+          "throughput_ops_per_sec": 11757.069838390991
+         },
+         "candidate": {
+          "p90_ms": 0.8181035,
+          "p95_ms": 0.88112505,
+          "p99_ms": 0.94871594,
+          "throughput_ops_per_sec": 11792.525838161146
+         }
+        }
+       }
+      ]
+     },
+     "aggregate_count_users": {
+      "tier": "core",
+      "correctness": "match",
+      "op_outcome": "pass",
+      "cells": [
+       {
+        "concurrency": 1,
+        "cache_mode": "uncached",
+        "baseline_p50_ms": 0.3102085,
+        "candidate_p50_ms": 0.3829169999999999,
+        "delta_pct": 23.43859049639191,
+        "delta_ms": 0.0727084999999999,
+        "budget": {
+         "metric": "p50",
+         "budget_pct": 10.0,
+         "floor_ms": 0.5
+        },
+        "perf_verdict": "pass",
+        "context": {
+         "baseline": {
+          "p90_ms": 0.33787530000000005,
+          "p95_ms": 0.34673335000000005,
+          "p99_ms": 0.35028027,
+          "throughput_ops_per_sec": 3194.250349371132
+         },
+         "candidate": {
+          "p90_ms": 0.4303836,
+          "p95_ms": 0.4326205500000001,
+          "p99_ms": 0.43699131,
+          "throughput_ops_per_sec": 2574.319974071449
+         }
+        }
+       },
+       {
+        "concurrency": 8,
+        "cache_mode": "uncached",
+        "baseline_p50_ms": 0.5864585,
+        "candidate_p50_ms": 0.6032500000000001,
+        "delta_pct": 2.8632034491784277,
+        "delta_ms": 0.01679150000000007,
+        "budget": {
+         "metric": "p50",
+         "budget_pct": 10.0,
+         "floor_ms": 0.5
+        },
+        "perf_verdict": "pass",
+        "context": {
+         "baseline": {
+          "p90_ms": 0.7893041000000001,
+          "p95_ms": 0.8619461499999997,
+          "p99_ms": 0.97430553,
+          "throughput_ops_per_sec": 12374.562539878962
+         },
+         "candidate": {
+          "p90_ms": 0.829875,
+          "p95_ms": 0.890083,
+          "p99_ms": 0.9601255,
+          "throughput_ops_per_sec": 12613.985093738464
+         }
+        }
+       }
+      ]
+     },
+     "aggregate_expansion_1": {
+      "tier": "core",
+      "correctness": "match",
+      "op_outcome": "pass",
+      "cells": [
+       {
+        "concurrency": 1,
+        "cache_mode": "uncached",
+        "baseline_p50_ms": 0.4016035,
+        "candidate_p50_ms": 0.399208,
+        "delta_pct": -0.5964838453848124,
+        "delta_ms": -0.002395499999999995,
+        "budget": {
+         "metric": "p50",
+         "budget_pct": 10.0,
+         "floor_ms": 0.5
+        },
+        "perf_verdict": "pass",
+        "context": {
+         "baseline": {
+          "p90_ms": 0.4716289,
+          "p95_ms": 0.494717,
+          "p99_ms": 0.514477,
+          "throughput_ops_per_sec": 2403.448949242162
+         },
+         "candidate": {
+          "p90_ms": 0.4235667,
+          "p95_ms": 0.4256274,
+          "p99_ms": 0.44782548,
+          "throughput_ops_per_sec": 2503.1680720912404
+         }
+        }
+       },
+       {
+        "concurrency": 8,
+        "cache_mode": "uncached",
+        "baseline_p50_ms": 0.675438,
+        "candidate_p50_ms": 0.680833,
+        "delta_pct": 0.7987409651218971,
+        "delta_ms": 0.005395000000000039,
+        "budget": {
+         "metric": "p50",
+         "budget_pct": 10.0,
+         "floor_ms": 0.5
+        },
+        "perf_verdict": "pass",
+        "context": {
+         "baseline": {
+          "p90_ms": 0.8486298000000001,
+          "p95_ms": 0.89714155,
+          "p99_ms": 1.1093477600000006,
+          "throughput_ops_per_sec": 10912.345764222946
+         },
+         "candidate": {
+          "p90_ms": 0.8809834000000001,
+          "p95_ms": 0.919992,
+          "p99_ms": 0.9903759999999998,
+          "throughput_ops_per_sec": 11235.987406986214
+         }
+        }
+       }
+      ]
+     },
+     "aggregate_expansion_1_with_filter": {
+      "tier": "core",
+      "correctness": "match",
+      "op_outcome": "pass",
+      "cells": [
+       {
+        "concurrency": 1,
+        "cache_mode": "uncached",
+        "baseline_p50_ms": 0.3903755,
+        "candidate_p50_ms": 0.3946455,
+        "delta_pct": 1.0938186438441952,
+        "delta_ms": 0.004269999999999996,
+        "budget": {
+         "metric": "p50",
+         "budget_pct": 10.0,
+         "floor_ms": 0.5
+        },
+        "perf_verdict": "pass",
+        "context": {
+         "baseline": {
+          "p90_ms": 0.4184923,
+          "p95_ms": 0.4366899,
+          "p99_ms": 0.45223798,
+          "throughput_ops_per_sec": 2532.8744946757074
+         },
+         "candidate": {
+          "p90_ms": 0.4254786,
+          "p95_ms": 0.42736285,
+          "p99_ms": 0.4303397699999999,
+          "throughput_ops_per_sec": 2545.042156078274
+         }
+        }
+       },
+       {
+        "concurrency": 8,
+        "cache_mode": "uncached",
+        "baseline_p50_ms": 0.6829164999999999,
+        "candidate_p50_ms": 0.6703749999999999,
+        "delta_pct": -1.8364617050547154,
+        "delta_ms": -0.012541499999999983,
+        "budget": {
+         "metric": "p50",
+         "budget_pct": 10.0,
+         "floor_ms": 0.5
+        },
+        "perf_verdict": "pass",
+        "context": {
+         "baseline": {
+          "p90_ms": 0.8801625,
+          "p95_ms": 0.9126145999999996,
+          "p99_ms": 1.03237028,
+          "throughput_ops_per_sec": 10899.2137443445
+         },
+         "candidate": {
+          "p90_ms": 0.8966332,
+          "p95_ms": 0.9729585999999996,
+          "p99_ms": 1.13446996,
+          "throughput_ops_per_sec": 10919.576432360083
+         }
+        }
+       }
+      ]
+     },
+     "count_friend_edges_plain": {
+      "tier": "core",
+      "correctness": "match",
+      "op_outcome": "pass",
+      "cells": [
+       {
+        "concurrency": 1,
+        "cache_mode": "uncached",
+        "baseline_p50_ms": 0.35816650000000005,
+        "candidate_p50_ms": 0.3983335,
+        "delta_pct": 11.21461666571272,
+        "delta_ms": 0.04016699999999995,
+        "budget": {
+         "metric": "p50",
+         "budget_pct": 10.0,
+         "floor_ms": 0.5
+        },
+        "perf_verdict": "pass",
+        "context": {
+         "baseline": {
+          "p90_ms": 0.3860792,
+          "p95_ms": 0.40578365,
+          "p99_ms": 0.42085673,
+          "throughput_ops_per_sec": 2784.3034890803096
+         },
+         "candidate": {
+          "p90_ms": 0.476258,
+          "p95_ms": 0.49077885,
+          "p99_ms": 0.51655577,
+          "throughput_ops_per_sec": 2447.9927010649626
+         }
+        }
+       },
+       {
+        "concurrency": 8,
+        "cache_mode": "uncached",
+        "baseline_p50_ms": 0.590917,
+        "candidate_p50_ms": 0.6265000000000001,
+        "delta_pct": 6.02165786396398,
+        "delta_ms": 0.03558300000000003,
+        "budget": {
+         "metric": "p50",
+         "budget_pct": 10.0,
+         "floor_ms": 0.5
+        },
+        "perf_verdict": "pass",
+        "context": {
+         "baseline": {
+          "p90_ms": 0.7589333999999999,
+          "p95_ms": 0.8418464999999996,
+          "p99_ms": 0.9182461400000004,
+          "throughput_ops_per_sec": 12503.94851249121
+         },
+         "candidate": {
+          "p90_ms": 0.8290337,
+          "p95_ms": 0.92605355,
+          "p99_ms": 0.96802956,
+          "throughput_ops_per_sec": 11920.356818000811
+         }
+        }
+       }
+      ]
+     },
+     "count_users_plain": {
+      "tier": "core",
+      "correctness": "match",
+      "op_outcome": "pass",
+      "cells": [
+       {
+        "concurrency": 1,
+        "cache_mode": "uncached",
+        "baseline_p50_ms": 0.3655415,
+        "candidate_p50_ms": 0.328833,
+        "delta_pct": -10.04222502780123,
+        "delta_ms": -0.03670850000000003,
+        "budget": {
+         "metric": "p50",
+         "budget_pct": 10.0,
+         "floor_ms": 0.5
+        },
+        "perf_verdict": "pass",
+        "context": {
+         "baseline": {
+          "p90_ms": 0.4530667,
+          "p95_ms": 0.4571857,
+          "p99_ms": 0.45936994,
+          "throughput_ops_per_sec": 2667.9711266828726
+         },
+         "candidate": {
+          "p90_ms": 0.366575,
+          "p95_ms": 0.3772249999999999,
+          "p99_ms": 0.383345,
+          "throughput_ops_per_sec": 3001.2567762750655
+         }
+        }
+       },
+       {
+        "concurrency": 8,
+        "cache_mode": "uncached",
+        "baseline_p50_ms": 0.6178539999999999,
+        "candidate_p50_ms": 0.570917,
+        "delta_pct": -7.596778526965902,
+        "delta_ms": -0.046936999999999895,
+        "budget": {
+         "metric": "p50",
+         "budget_pct": 10.0,
+         "floor_ms": 0.5
+        },
+        "perf_verdict": "pass",
+        "context": {
+         "baseline": {
+          "p90_ms": 0.7310460999999999,
+          "p95_ms": 0.8287604499999999,
+          "p99_ms": 0.9675944999999998,
+          "throughput_ops_per_sec": 12556.282555595884
+         },
+         "candidate": {
+          "p90_ms": 0.7743834000000002,
+          "p95_ms": 0.8362416000000001,
+          "p99_ms": 0.955817,
+          "throughput_ops_per_sec": 12658.895845215882
+         }
+        }
+       }
+      ]
+     },
+     "id_seek": {
+      "tier": "core",
+      "correctness": "match",
+      "op_outcome": "pass",
+      "cells": [
+       {
+        "concurrency": 1,
+        "cache_mode": "uncached",
+        "baseline_p50_ms": 0.337229,
+        "candidate_p50_ms": 0.32118749999999996,
+        "delta_pct": -4.756856616720402,
+        "delta_ms": -0.016041500000000042,
+        "budget": {
+         "metric": "p50",
+         "budget_pct": 10.0,
+         "floor_ms": 0.5
+        },
+        "perf_verdict": "pass",
+        "context": {
+         "baseline": {
+          "p90_ms": 0.3528538,
+          "p95_ms": 0.35642645,
+          "p99_ms": 0.35658529,
+          "throughput_ops_per_sec": 2988.7360515688474
+         },
+         "candidate": {
+          "p90_ms": 0.3462792,
+          "p95_ms": 0.3469003,
+          "p99_ms": 0.35234646000000003,
+          "throughput_ops_per_sec": 3076.9031953947374
+         }
+        }
+       },
+       {
+        "concurrency": 8,
+        "cache_mode": "uncached",
+        "baseline_p50_ms": 0.584042,
+        "candidate_p50_ms": 0.6054375000000001,
+        "delta_pct": 3.663349553628014,
+        "delta_ms": 0.021395500000000123,
+        "budget": {
+         "metric": "p50",
+         "budget_pct": 10.0,
+         "floor_ms": 0.5
+        },
+        "perf_verdict": "pass",
+        "context": {
+         "baseline": {
+          "p90_ms": 0.7600250000000001,
+          "p95_ms": 0.8103835999999999,
+          "p99_ms": 0.85503648,
+          "throughput_ops_per_sec": 12354.337534554505
+         },
+         "candidate": {
+          "p90_ms": 0.8085375000000001,
+          "p95_ms": 0.87040985,
+          "p99_ms": 0.9938231900000002,
+          "throughput_ops_per_sec": 12263.355560665288
+         }
+        }
+       }
+      ]
+     },
+     "neighbours_2": {
+      "tier": "core",
+      "correctness": "match",
+      "op_outcome": "pass",
+      "cells": [
+       {
+        "concurrency": 1,
+        "cache_mode": "uncached",
+        "baseline_p50_ms": 0.394041,
+        "candidate_p50_ms": 0.405312,
+        "delta_pct": 2.8603622465682585,
+        "delta_ms": 0.011271000000000031,
+        "budget": {
+         "metric": "p50",
+         "budget_pct": 10.0,
+         "floor_ms": 0.5
+        },
+        "perf_verdict": "pass",
+        "context": {
+         "baseline": {
+          "p90_ms": 0.4338334,
+          "p95_ms": 0.4387918999999999,
+          "p99_ms": 0.46489118,
+          "throughput_ops_per_sec": 2476.320188200334
+         },
+         "candidate": {
+          "p90_ms": 0.4319708,
+          "p95_ms": 0.44436425,
+          "p99_ms": 0.44863925,
+          "throughput_ops_per_sec": 2457.656725076565
+         }
+        }
+       },
+       {
+        "concurrency": 8,
+        "cache_mode": "uncached",
+        "baseline_p50_ms": 0.67325,
+        "candidate_p50_ms": 0.6898960000000001,
+        "delta_pct": 2.472484218343862,
+        "delta_ms": 0.01664600000000005,
+        "budget": {
+         "metric": "p50",
+         "budget_pct": 10.0,
+         "floor_ms": 0.5
+        },
+        "perf_verdict": "pass",
+        "context": {
+         "baseline": {
+          "p90_ms": 0.9667002,
+          "p95_ms": 1.0568588,
+          "p99_ms": 1.34740348,
+          "throughput_ops_per_sec": 10471.632511146565
+         },
+         "candidate": {
+          "p90_ms": 0.8713631000000001,
+          "p95_ms": 0.9539041499999998,
+          "p99_ms": 1.0431197799999998,
+          "throughput_ops_per_sec": 11002.896856437985
+         }
+        }
+       }
+      ]
+     },
+     "single_vertex_read": {
+      "tier": "core",
+      "correctness": "match",
+      "op_outcome": "pass",
+      "cells": [
+       {
+        "concurrency": 1,
+        "cache_mode": "uncached",
+        "baseline_p50_ms": 0.33570900000000004,
+        "candidate_p50_ms": 0.307479,
+        "delta_pct": -8.409068568313637,
+        "delta_ms": -0.028230000000000033,
+        "budget": {
+         "metric": "p50",
+         "budget_pct": 10.0,
+         "floor_ms": 0.5
+        },
+        "perf_verdict": "pass",
+        "context": {
+         "baseline": {
+          "p90_ms": 0.3962416,
+          "p95_ms": 0.4087704999999998,
+          "p99_ms": 0.4632205,
+          "throughput_ops_per_sec": 2777.0383913060923
+         },
+         "candidate": {
+          "p90_ms": 0.3480169,
+          "p95_ms": 0.3609626,
+          "p99_ms": 0.37495971999999994,
+          "throughput_ops_per_sec": 3035.5923199514305
+         }
+        }
+       },
+       {
+        "concurrency": 8,
+        "cache_mode": "uncached",
+        "baseline_p50_ms": 0.594375,
+        "candidate_p50_ms": 0.611959,
+        "delta_pct": 2.9584016824395447,
+        "delta_ms": 0.017584000000000044,
+        "budget": {
+         "metric": "p50",
+         "budget_pct": 10.0,
+         "floor_ms": 0.5
+        },
+        "perf_verdict": "pass",
+        "context": {
+         "baseline": {
+          "p90_ms": 0.8091088000000002,
+          "p95_ms": 0.8721005999999999,
+          "p99_ms": 0.95373314,
+          "throughput_ops_per_sec": 12226.067320394486
+         },
+         "candidate": {
+          "p90_ms": 0.8400002,
+          "p95_ms": 0.8967836,
+          "p99_ms": 0.93651552,
+          "throughput_ops_per_sec": 11913.108171617852
+         }
+        }
+       }
+      ]
+     },
+     "temporal_spatial_roundtrip": {
+      "tier": "core",
+      "correctness": "match",
+      "op_outcome": "pass",
+      "cells": [
+       {
+        "concurrency": 1,
+        "cache_mode": "uncached",
+        "baseline_p50_ms": 0.396458,
+        "candidate_p50_ms": 0.4060625,
+        "delta_pct": 2.422576918614334,
+        "delta_ms": 0.009604500000000016,
+        "budget": {
+         "metric": "p50",
+         "budget_pct": 10.0,
+         "floor_ms": 0.5
+        },
+        "perf_verdict": "pass",
+        "context": {
+         "baseline": {
+          "p90_ms": 0.4280832,
+          "p95_ms": 0.4456756,
+          "p99_ms": 0.46073512000000005,
+          "throughput_ops_per_sec": 2512.6417286975093
+         },
+         "candidate": {
+          "p90_ms": 0.4479798,
+          "p95_ms": 0.45671075,
+          "p99_ms": 0.46687575,
+          "throughput_ops_per_sec": 2416.723922884273
+         }
+        }
+       },
+       {
+        "concurrency": 8,
+        "cache_mode": "uncached",
+        "baseline_p50_ms": 0.603125,
+        "candidate_p50_ms": 0.660208,
+        "delta_pct": 9.464538860103627,
+        "delta_ms": 0.057082999999999995,
+        "budget": {
+         "metric": "p50",
+         "budget_pct": 10.0,
+         "floor_ms": 0.5
+        },
+        "perf_verdict": "pass",
+        "context": {
+         "baseline": {
+          "p90_ms": 0.7968207,
+          "p95_ms": 0.8209981000000001,
+          "p99_ms": 0.9291725,
+          "throughput_ops_per_sec": 12084.174127511298
+         },
+         "candidate": {
+          "p90_ms": 0.8188086,
+          "p95_ms": 0.8617125,
+          "p99_ms": 0.9333006399999992,
+          "throughput_ops_per_sec": 11481.26222126545
+         }
+        }
+       }
+      ]
+     },
+     "value_join_cnt": {
+      "tier": "core",
+      "correctness": "match",
+      "op_outcome": "pass",
+      "cells": [
+       {
+        "concurrency": 1,
+        "cache_mode": "uncached",
+        "baseline_p50_ms": 0.31295850000000003,
+        "candidate_p50_ms": 0.379104,
+        "delta_pct": 21.13554992115567,
+        "delta_ms": 0.06614549999999997,
+        "budget": {
+         "metric": "p50",
+         "budget_pct": 10.0,
+         "floor_ms": 0.5
+        },
+        "perf_verdict": "pass",
+        "context": {
+         "baseline": {
+          "p90_ms": 0.3469836,
+          "p95_ms": 0.36293715,
+          "p99_ms": 0.37402023,
+          "throughput_ops_per_sec": 3123.515841925735
+         },
+         "candidate": {
+          "p90_ms": 0.4282372,
+          "p95_ms": 0.43198125,
+          "p99_ms": 0.43359625,
+          "throughput_ops_per_sec": 2611.6622734154457
+         }
+        }
+       },
+       {
+        "concurrency": 8,
+        "cache_mode": "uncached",
+        "baseline_p50_ms": 0.673334,
+        "candidate_p50_ms": 0.6313125,
+        "delta_pct": -6.24081065266271,
+        "delta_ms": -0.042021499999999934,
+        "budget": {
+         "metric": "p50",
+         "budget_pct": 10.0,
+         "floor_ms": 0.5
+        },
+        "perf_verdict": "pass",
+        "context": {
+         "baseline": {
+          "p90_ms": 0.863729,
+          "p95_ms": 0.92531275,
+          "p99_ms": 1.0021811,
+          "throughput_ops_per_sec": 10956.808807521193
+         },
+         "candidate": {
+          "p90_ms": 0.8064125000000001,
+          "p95_ms": 0.8677107000000002,
+          "p99_ms": 0.96171644,
+          "throughput_ops_per_sec": 11783.08055679769
+         }
+        }
+       }
+      ]
+     },
+     "vertex_on_label_property_index": {
+      "tier": "core",
+      "correctness": "match",
+      "op_outcome": "pass",
+      "cells": [
+       {
+        "concurrency": 1,
+        "cache_mode": "uncached",
+        "baseline_p50_ms": 0.3292295,
+        "candidate_p50_ms": 0.337479,
+        "delta_pct": 2.5056989121570106,
+        "delta_ms": 0.008249499999999965,
+        "budget": {
+         "metric": "p50",
+         "budget_pct": 10.0,
+         "floor_ms": 0.5
+        },
+        "perf_verdict": "pass",
+        "context": {
+         "baseline": {
+          "p90_ms": 0.3845414,
+          "p95_ms": 0.39614195,
+          "p99_ms": 0.40716119,
+          "throughput_ops_per_sec": 2978.9238161086496
+         },
+         "candidate": {
+          "p90_ms": 0.3643372,
+          "p95_ms": 0.36467085,
+          "p99_ms": 0.36916777,
+          "throughput_ops_per_sec": 2937.1991573763057
+         }
+        }
+       },
+       {
+        "concurrency": 8,
+        "cache_mode": "uncached",
+        "baseline_p50_ms": 0.613,
+        "candidate_p50_ms": 0.730396,
+        "delta_pct": 19.15106035889071,
+        "delta_ms": 0.11739600000000006,
+        "budget": {
+         "metric": "p50",
+         "budget_pct": 10.0,
+         "floor_ms": 0.5
+        },
+        "perf_verdict": "pass",
+        "context": {
+         "baseline": {
+          "p90_ms": 0.766416,
+          "p95_ms": 0.8223745,
+          "p99_ms": 0.8976540999999998,
+          "throughput_ops_per_sec": 12211.836902980467
+         },
+         "candidate": {
+          "p90_ms": 1.0802411,
+          "p95_ms": 1.15199105,
+          "p99_ms": 1.24758093,
+          "throughput_ops_per_sec": 10103.69421371536
+         }
+        }
+       }
+      ]
+     },
+     "vertex_on_property": {
+      "tier": "core",
+      "correctness": "match",
+      "op_outcome": "pass",
+      "cells": [
+       {
+        "concurrency": 1,
+        "cache_mode": "uncached",
+        "baseline_p50_ms": 0.322104,
+        "candidate_p50_ms": 0.34591649999999996,
+        "delta_pct": 7.39279859921018,
+        "delta_ms": 0.02381249999999996,
+        "budget": {
+         "metric": "p50",
+         "budget_pct": 10.0,
+         "floor_ms": 0.5
+        },
+        "perf_verdict": "pass",
+        "context": {
+         "baseline": {
+          "p90_ms": 0.3581006,
+          "p95_ms": 0.36419170000000006,
+          "p99_ms": 0.38610554,
+          "throughput_ops_per_sec": 3075.326272896765
+         },
+         "candidate": {
+          "p90_ms": 0.3707127999999999,
+          "p95_ms": 0.3721875,
+          "p99_ms": 0.38833749999999995,
+          "throughput_ops_per_sec": 2880.547303987758
+         }
+        }
+       },
+       {
+        "concurrency": 8,
+        "cache_mode": "uncached",
+        "baseline_p50_ms": 0.584937,
+        "candidate_p50_ms": 0.5566875,
+        "delta_pct": -4.8294944583775745,
+        "delta_ms": -0.02824950000000004,
+        "budget": {
+         "metric": "p50",
+         "budget_pct": 10.0,
+         "floor_ms": 0.5
+        },
+        "perf_verdict": "pass",
+        "context": {
+         "baseline": {
+          "p90_ms": 0.8707833999999999,
+          "p95_ms": 0.93892885,
+          "p99_ms": 0.96702544,
+          "throughput_ops_per_sec": 12386.2573854995
+         },
+         "candidate": {
+          "p90_ms": 0.7414002000000001,
+          "p95_ms": 0.7977223499999999,
+          "p99_ms": 0.90446444,
+          "throughput_ops_per_sec": 13279.616179253571
+         }
+        }
+       }
+      ]
+     }
+    }
+   }
+  },
+  "c-pr": {
+   "status": "ok",
+   "analysis": {
+    "schema_version": 1,
+    "comparison": {
+     "baseline_label": "c-engine",
+     "candidate_label": "pr",
+     "slug": "synthetic-pr-vs-c-engine-4595c4e6f0d4"
+    },
+    "meta": {
+     "baseline": {
+      "module_version": "99.99.99",
+      "server_image": "test/c-engine@sha256:eeee",
+      "workload_hash": "sha256:4595c4e6f0d46a3a12b3af37965ac9291e8973d59fb812b597116eda11f787c6",
+      "samples": 20,
+      "warmup": 3,
+      "concurrency": [
+       1,
+       8
+      ]
+     },
+     "candidate": {
+      "module_version": "99.99.99",
+      "server_image": "test/pr@sha256:eeee",
+      "workload_hash": "sha256:4595c4e6f0d46a3a12b3af37965ac9291e8973d59fb812b597116eda11f787c6",
+      "samples": 20,
+      "warmup": 3,
+      "concurrency": [
+       1,
+       8
+      ]
+     },
+     "thresholds": {
+      "metric": "p50",
+      "default_budget_pct": 150.0,
+      "default_floor_ms": 2.0,
+      "ops": []
+     }
+    },
+    "budget_profile": "cross-engine",
+    "divergence_policy": "advisory",
+    "gated_metric": "total_ms.p50",
+    "status": {
+     "kind": "workload_mismatch",
+     "reason": "baseline workload_hash sha256:aaaa != candidate workload_hash sha256:bbbb"
+    },
+    "warnings": [
+     "a FalkorDB module version is the dev placeholder \u2014 use tagged release images for a meaningful version comparison",
+     "server image changed: test/c-engine@sha256:eeee \u2192 test/pr@sha256:eeee"
+    ],
+    "elapsed_secs": null,
+    "verdict": "not_comparable",
+    "totals": {
+     "pass": 0,
+     "regressed": 0,
+     "diverged": 0,
+     "not_applicable": 0
+    },
+    "comparable_cells": 0,
+    "regressed_cells": 0,
+    "ops": {}
+   }
+  },
+  "c-main": {
+   "status": "ok",
+   "analysis": {
+    "schema_version": 1,
+    "comparison": {
+     "baseline_label": "c-engine",
+     "candidate_label": "main",
+     "slug": "synthetic-main-vs-c-engine"
+    },
+    "meta": {
+     "baseline": {
+      "module_version": "99.99.99",
+      "server_image": "test/main@sha256:eeee",
+      "workload_hash": "sha256:4595c4e6f0d46a3a12b3af37965ac9291e8973d59fb812b597116eda11f787c6",
+      "samples": 20,
+      "warmup": 3,
+      "concurrency": [
+       1,
+       8
+      ]
+     },
+     "candidate": {
+      "module_version": "99.99.99",
+      "server_image": "test/pr@sha256:eeee",
+      "workload_hash": "sha256:4595c4e6f0d46a3a12b3af37965ac9291e8973d59fb812b597116eda11f787c6",
+      "samples": 20,
+      "warmup": 3,
+      "concurrency": [
+       1,
+       8
+      ]
+     },
+     "thresholds": {
+      "metric": "p50",
+      "default_budget_pct": 10.0,
+      "default_floor_ms": 0.5,
+      "ops": [
+       {
+        "op": "expand_hops_5",
+        "budget_pct": 12.0,
+        "concurrency_budget_pct": {
+         "16": 18.0,
+         "32": 25.0
+        }
+       },
+       {
+        "op": "match_by_index",
+        "budget_pct": 15.0
+       },
+       {
+        "op": "property_projection",
+        "budget_pct": 15.0
+       },
+       {
+        "op": "return_const",
+        "budget_pct": 15.0
+       },
+       {
+        "op": "shortest_path",
+        "budget_pct": 12.0,
+        "concurrency_budget_pct": {
+         "16": 18.0,
+         "32": 25.0
+        }
+       }
+      ]
+     }
+    },
+    "budget_profile": "cross-engine",
+    "divergence_policy": "advisory",
+    "gated_metric": "total_ms.p50",
+    "status": {
+     "kind": "no_common_ops",
+     "reason": "baseline and candidate recordings share no operation names"
+    },
+    "warnings": [
+     "a FalkorDB module version is the dev placeholder \u2014 use tagged release images for a meaningful version comparison",
+     "server image changed: test/main@sha256:eeee \u2192 test/pr@sha256:eeee"
+    ],
+    "elapsed_secs": null,
+    "verdict": "not_comparable",
+    "totals": {
+     "pass": 0,
+     "regressed": 0,
+     "diverged": 0,
+     "not_applicable": 0
+    },
+    "comparable_cells": 0,
+    "regressed_cells": 0,
+    "ops": {}
+   }
+  }
+ }
+}

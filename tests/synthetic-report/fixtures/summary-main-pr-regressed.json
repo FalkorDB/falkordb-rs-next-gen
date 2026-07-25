@@ -1,0 +1,55 @@
+{
+  "schema_version": 2,
+  "baseline_label": "main",
+  "candidate_label": "pr",
+  "slug": "synthetic-pr-vs-main-4595c4e6f0d4",
+  "budget_profile": "strict",
+  "divergence_policy": "gate",
+  "gated_metric": "total_ms.p50",
+  "elapsed_secs": null,
+  "overall_verdict": "regressed",
+  "headline": "3 of 26 comparable cell(s) over budget",
+  "comparable_cells": 26,
+  "regressed_cells": 3,
+  "diverged_ops": [],
+  "totals": {
+    "pass": 10,
+    "regressed": 2,
+    "diverged": 0,
+    "not_applicable": 1
+  },
+  "per_tier": [
+    {
+      "tier": "core",
+      "counts": {
+        "pass": 13,
+        "regressed": 0,
+        "diverged": 0,
+        "not_applicable": 0
+      }
+    },
+    {
+      "tier": "full",
+      "counts": {
+        "pass": 0,
+        "regressed": 0,
+        "diverged": 0,
+        "not_applicable": 0
+      }
+    }
+  ],
+  "worst_offenders": [
+    {
+      "op": "expand_friends",
+      "tier": "read",
+      "diverged": false,
+      "regressed_cells": 2
+    },
+    {
+      "op": "shortest_path",
+      "tier": "read",
+      "diverged": false,
+      "regressed_cells": 1
+    }
+  ]
+}

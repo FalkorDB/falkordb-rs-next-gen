@@ -1,0 +1,24 @@
+{
+  "schema_version": 2,
+  "baseline_label": "c-engine",
+  "candidate_label": "pr",
+  "slug": "synthetic-pr-vs-c-engine-unavailable",
+  "budget_profile": "cross-engine",
+  "divergence_policy": "advisory",
+  "gated_metric": "total_ms.p50",
+  "elapsed_secs": null,
+  "overall_verdict": "not_comparable",
+  "headline": "C-engine leg unavailable \u2014 C leg timed out after 2700s during: measuring the C engine",
+  "not_comparable_reason": "C leg timed out after 2700s during: measuring the C engine",
+  "comparable_cells": 0,
+  "regressed_cells": 0,
+  "diverged_ops": [],
+  "totals": {
+    "pass": 0,
+    "regressed": 0,
+    "diverged": 0,
+    "not_applicable": 0
+  },
+  "per_tier": [],
+  "worst_offenders": []
+}
