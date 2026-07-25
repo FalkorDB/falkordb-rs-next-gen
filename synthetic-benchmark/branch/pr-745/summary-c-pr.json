@@ -7,16 +7,16 @@
   "divergence_policy": "advisory",
   "gated_metric": "total_ms.p50",
   "elapsed_secs": null,
-  "overall_verdict": "regressed",
-  "headline": "1 of 98 comparable cell(s) over budget",
+  "overall_verdict": "advisory",
+  "headline": "pass, 1 diverged — no p50 regression beyond budget across 98 comparable cell(s); divergence is advisory under this policy",
   "comparable_cells": 98,
-  "regressed_cells": 1,
+  "regressed_cells": 0,
   "diverged_ops": [
     "temporal_spatial_roundtrip"
   ],
   "totals": {
-    "pass": 48,
-    "regressed": 1,
+    "pass": 49,
+    "regressed": 0,
     "diverged": 1,
     "not_applicable": 0
   },
@@ -33,19 +33,12 @@
     {
       "tier": "full",
       "counts": {
-        "pass": 36,
-        "regressed": 1,
+        "pass": 37,
+        "regressed": 0,
         "diverged": 0,
         "not_applicable": 0
       }
     }
   ],
-  "worst_offenders": [
-    {
-      "op": "exact_6_hop_traverse_count",
-      "tier": "full",
-      "diverged": false,
-      "regressed_cells": 1
-    }
-  ]
+  "worst_offenders": []
 }
