@@ -78,6 +78,8 @@ def test_matrix_cells_show_worst_gated_delta(serve_page, page):
     title = cell.get_attribute("title")
     assert "worst p50 Δ -4.1%" in title
     assert "0.654 ms → 0.627 ms" in title and "C=8" in title and "uncached" in title
+    # Compact raw line under the Δ%: baseline → candidate, unit once.
+    assert cell.locator("span.mraw").inner_text() == "0.654 → 0.627 ms"
     # The gated p50 value carries no neutral marker.
     assert cell.locator("span.mdelta.delta-neu").count() == 0
     # c-pr distinct_labels is a cell-less diverged op: emoji only, no value, plain title.
@@ -103,13 +105,15 @@ def test_matrix_values_follow_metric_selector(serve_page, page):
     # Non-p50 values are informational: neutral marker + metric named in the tooltip.
     assert cell.locator("span.mdelta.delta-neu").count() == 1
     assert "worst p90 Δ +27.4%" in cell.get_attribute("title")
-    # aggregate_age has no cell with a complete p90 context pair -> emoji-only.
-    assert "%" not in page.locator('#view tr[data-op="aggregate_age"] td').nth(1).inner_text()
+    # aggregate_age has no cell with a complete p90 context pair -> emoji-only, no raw line.
+    cell = page.locator('#view tr[data-op="aggregate_age"] td').nth(1)
+    assert "%" not in cell.inner_text() and "→" not in cell.inner_text()
     # Throughput: higher is better, so the WORST delta is the minimum (C=1: -19.4%).
     page.click('#metricSeg [data-metric="throughput"]')
     cell = page.locator('#view tr[data-op="aggregate_count_users"] td').nth(1)
     assert "-19.4%" in cell.inner_text()
     assert "ops/s" in cell.get_attribute("title")
+    assert cell.locator("span.mraw").inner_text() == "3194.3 → 2574.3 ops/s"
 
 
 def test_matrix_values_follow_cache_selector(serve_page, page):
