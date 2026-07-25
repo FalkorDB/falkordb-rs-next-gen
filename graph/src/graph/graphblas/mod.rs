@@ -9,6 +9,7 @@
 //! ```text
 //! graphblas/
 //!   mod.rs                  <-- Auto-generated FFI bindings (GrB_* / GxB_* symbols)
+//!   constants.rs            <-- Shared limits (e.g. GrB_INDEX_MAX)
 //!   matrix.rs               <-- Safe wrapper around GrB_Matrix (boolean sparse matrix)
 //!   vector.rs               <-- Safe wrapper around GrB_Vector (boolean sparse vector)
 //!   tensor.rs               <-- 3D sparse structure for multi-edge storage
@@ -51,6 +52,7 @@
 #![allow(clippy::pub_underscore_fields)]
 #![allow(clippy::derive_partial_eq_without_eq)]
 
+pub mod constants;
 pub mod lagraph_bindings;
 pub mod lagraphx_bindings;
 pub mod matrix;

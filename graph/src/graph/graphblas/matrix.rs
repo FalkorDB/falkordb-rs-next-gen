@@ -75,7 +75,7 @@ use crate::graph::graphblas::{
 /// Size of the `GxB_Container_struct` in bytes.
 const CONTAINER_STRUCT_SIZE: usize = std::mem::size_of::<super::GxB_Container_struct>();
 
-use super::tensor::GrB_INDEX_MAX;
+use super::constants::GrB_INDEX_MAX;
 use super::vector::Vector;
 use super::{
     GrB_BOOL, GrB_DESC_C, GrB_DESC_CT0, GrB_DESC_CT0T1, GrB_DESC_CT1, GrB_DESC_R, GrB_DESC_RC,
@@ -407,6 +407,29 @@ impl<T> Matrix<T> {
         r: &mut dyn Reader,
     ) -> Result<Self, String> {
         unsafe {
+            // `iso` and `jumbled` are Rust `bool`s, whose only valid bit
+            // patterns are 0 and 1. The raw copy below would otherwise write an
+            // attacker-chosen byte straight into them, and merely *reading*
+            // such a field is undefined behaviour — so screen them in the
+            // source bytes, before the copy makes them part of the struct.
+            for (name, offset) in [
+                (
+                    "iso",
+                    std::mem::offset_of!(super::GxB_Container_struct, iso),
+                ),
+                (
+                    "jumbled",
+                    std::mem::offset_of!(super::GxB_Container_struct, jumbled),
+                ),
+            ] {
+                let byte = container_bytes[offset];
+                if byte > 1 {
+                    return Err(format!(
+                        "Matrix decode: container field `{name}` is not a valid boolean: {byte}"
+                    ));
+                }
+            }
+
             // Copy struct data into the allocated container
             std::ptr::copy_nonoverlapping(
                 container_bytes.as_ptr(),
@@ -1621,6 +1644,28 @@ mod decode_hardening_tests {
             panic!("invalid container format must be rejected");
         };
         assert!(err.contains("invalid container format"), "{err}");
+    }
+
+    /// `iso` and `jumbled` are Rust `bool`s inside the container struct, so a
+    /// payload byte other than 0/1 would put an invalid bit pattern in a
+    /// `bool` — undefined behaviour the moment GraphBLAS or we read it back.
+    #[test]
+    fn non_boolean_flags_are_rejected() {
+        ensure_init();
+        for field in ["iso", "jumbled"] {
+            let mut items = encode_sample_matrix();
+            let offset = if field == "iso" {
+                std::mem::offset_of!(GxB_Container_struct, iso)
+            } else {
+                std::mem::offset_of!(GxB_Container_struct, jumbled)
+            };
+            poke_header(&mut items, offset, &[2u8]);
+            let mut r = VecReader::new(items);
+            let Err(err) = <Matrix<u64> as Decode<19>>::decode(&mut r) else {
+                panic!("a non-boolean `{field}` byte must be rejected");
+            };
+            assert!(err.contains("is not a valid boolean"), "{err}");
+        }
     }
 
     #[test]

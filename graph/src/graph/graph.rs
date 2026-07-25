@@ -720,16 +720,13 @@ impl Graph {
         node_labels_matrix: VersionedMatrix<bool>,
         relationship_type_matrix: VersionedMatrix<bool>,
         all_nodes_matrix: VersionedMatrix<bool>,
-        labels_matices: Vec<VersionedMatrix<bool>>,
-        relationship_matrices: Vec<Tensor>,
+        mut labels_matices: Vec<VersionedMatrix<bool>>,
+        mut relationship_matrices: Vec<Tensor>,
         node_labels: Vec<Arc<String>>,
         relationship_types: Vec<Arc<String>>,
         node_attrs: AttributeStore,
         relationship_attrs: AttributeStore,
     ) -> Self {
-        let mut labels_matices = labels_matices;
-        let mut relationship_matrices = relationship_matrices;
-
         let chunk = NODE_CREATION_BUFFER.load(Ordering::Relaxed);
         let node_cap = node_count + deleted_nodes.len();
         let relationship_cap = relationship_count + deleted_relationships.len();
