@@ -58,10 +58,10 @@ def test_template_is_single_file_no_external_resources():
     text = TEMPLATE.read_text(encoding="utf-8")
     patterns = (
         r"<script[^>]*\bsrc\s*=",                        # any external script
-        r"<link[^>]*\bhref\s*=\s*[\"']?\s*(?:https?:)?//",  # http(s)/protocol-relative link
+        r"<link[^>]*\bhref\s*=(?!\s*[\"']?data:)",       # any link href that is not a data: URI
         r"@import\b",                                    # CSS imports
         r"\bimport\s*\(",                                # dynamic JS import
-        r"url\(\s*[\"']?\s*(?:https?:)?//",              # CSS url() to the network
+        r"url\((?!\s*[\"']?(?:data:|#))",                # any CSS url() that is not data:/fragment
     )
     for pattern in patterns:
         match = re.search(pattern, text, re.IGNORECASE)

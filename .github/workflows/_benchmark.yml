@@ -112,7 +112,7 @@ env:
   # Separate, independently-pinned ref for the SYNTHETIC per-op regression check (the `synthetic-*`
   # jobs below). Kept apart from BENCHMARK_REF so the legacy ab-compare vendor mode above is never
   # perturbed. Bump deliberately (with a `# <what>` note) to move it.
-  SYNTHETIC_BENCHMARK_REF: v2.3 # release tag — three-way analysis model (benchmark#256, merged as #257)
+  SYNTHETIC_BENCHMARK_REF: e2706fa282ee32ea5e50a872b48d9d39b95617e7 # v2.3 — three-way analysis model (benchmark#256, merged as #257)
 
 jobs:
   # Expand (size × variant) into a flat combo list the matrices below fan out
