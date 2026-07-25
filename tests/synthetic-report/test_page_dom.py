@@ -7,7 +7,6 @@ Covers the two properties the design demands of the page:
    free-text op filter actually switch what is rendered.
 """
 
-import pytest
 
 XSS_OP_SCRIPT = "<script>window.__pwned=1</script>"
 XSS_OP_IMG = '<img src=x onerror="window.__pwned=2">'
