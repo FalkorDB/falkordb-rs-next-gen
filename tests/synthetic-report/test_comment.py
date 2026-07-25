@@ -9,7 +9,7 @@ only, and a single link to the interactive page.
 import subprocess
 import sys
 
-from conftest import FIXTURES, SCRIPTS_DIR
+from support import FIXTURES, SCRIPTS_DIR
 
 RENDERER = SCRIPTS_DIR / "render-synthetic-comment.py"
 URL = "https://falkordb.github.io/falkordb-rs-next-gen/synthetic-benchmark/branch/pr-745/"

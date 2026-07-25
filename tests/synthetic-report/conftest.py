@@ -3,26 +3,18 @@
 Serves the committed single-file template plus a chosen data.json fixture
 over a real (loopback) HTTP server, because the page fetches its sibling
 data.json — file:// URLs would be blocked by CORS in Chromium.
+
+Paths and helpers live in support.py (importable unambiguously from any
+pytest invocation width); this file keeps only the fixtures.
 """
 
 import http.server
-import json
 import shutil
 import threading
-from pathlib import Path
 
 import pytest
 
-HERE = Path(__file__).resolve().parent
-REPO_ROOT = HERE.parent.parent
-SCRIPTS_DIR = REPO_ROOT / ".github" / "scripts" / "benchmark"
-TEMPLATE = SCRIPTS_DIR / "synthetic-report.html"
-FIXTURES = HERE / "fixtures"
-
-
-def load_fixture(name):
-    with open(FIXTURES / name, encoding="utf-8") as fh:
-        return json.load(fh)
+from support import FIXTURES, TEMPLATE
 
 
 class _QuietHandler(http.server.SimpleHTTPRequestHandler):

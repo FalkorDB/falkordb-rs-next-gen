@@ -16,7 +16,7 @@ import sys
 
 import pytest
 
-from conftest import FIXTURES, SCRIPTS_DIR, TEMPLATE, load_fixture
+from support import FIXTURES, SCRIPTS_DIR, TEMPLATE, load_fixture
 
 ASSEMBLER = SCRIPTS_DIR / "assemble-synthetic-data.py"
 
