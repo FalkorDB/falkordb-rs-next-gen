@@ -325,7 +325,9 @@
     var cacheSeg = document.getElementById('cacheSeg');
     var cacheLbl = document.getElementById('cacheLbl');
     clear(cacheSeg);
-    var showCache = modes.length > 1 && state.view !== MATRIX;
+    // Cache selector works in EVERY view (matrix values follow it too); it only hides when
+    // the data carries a single mode, where there is nothing to switch.
+    var showCache = modes.length > 1;
     cacheSeg.hidden = !showCache;
     cacheLbl.hidden = !showCache;
     if (modes.length > 1 && modes.indexOf(state.cache) < 0) { state.cache = modes.indexOf('uncached') >= 0 ? 'uncached' : modes[0]; }
@@ -374,15 +376,22 @@
     var entry = analysisOps(id)[op];
     return entry ? String(entry.op_outcome || 'not_applicable') : null;
   }
-  function worstGatedCell(id, op) {
-    // The cell that decided the roll-up: max delta_pct among cells carrying a p50 verdict.
+  function worstMetricCell(id, op) {
+    // Worst Δ% for the SELECTED metric across concurrencies within the SELECTED cache mode
+    // (max Δ% for latency metrics, min for throughput — higher is better there). p50 deltas
+    // are the tool-emitted gated ones; other metrics come from context, display-only.
     var entry = analysisOps(id)[op];
     var cells = (entry && Array.isArray(entry.cells)) ? entry.cells : [];
     var worst = null;
     cells.forEach(function (cell) {
-      if (cell.perf_verdict !== 'pass' && cell.perf_verdict !== 'regressed') { return; }
-      if (typeof cell.delta_pct !== 'number' || !isFinite(cell.delta_pct)) { return; }
-      if (worst === null || cell.delta_pct > worst.delta_pct) { worst = cell; }
+      if (String(cell.cache_mode) !== state.cache) { return; }
+      var mv = cellMetricValues(cell);
+      if (typeof mv.deltaPct !== 'number' || !isFinite(mv.deltaPct)) { return; }
+      if (worst === null ||
+          (state.metric === 'throughput' ? mv.deltaPct < worst.mv.deltaPct
+                                         : mv.deltaPct > worst.mv.deltaPct)) {
+        worst = { cell: cell, mv: mv };
+      }
     });
     return worst;
   }
@@ -420,7 +429,7 @@
   }
   function renderMatrix(root) {
     var wrap = el('div', 'matrix-wrap');
-    wrap.appendChild(el('p', 'note', 'Per-op outcome as emitted by the tool, rolled up across ALL cache modes and concurrencies (worst cell wins); the value under an emoji is that worst cell\u2019s gated \u0394% (p50). The metric/cache selectors do not affect this view.'));
+    wrap.appendChild(el('p', 'note', 'Emoji = the tool-emitted per-op outcome, a gated p50 rollup across ALL cache modes and concurrencies (worst cell wins) — the selectors never change it. The value under it follows the metric + cache selectors: worst \u0394% across concurrencies within the selected cache mode (latency: max \u0394%; throughput: min \u0394%, higher is better). Non-p50 values are informational, not gated.'));
     var ops = {};
     availableIds().forEach(function (id) {
       Object.keys(analysisOps(id)).forEach(function (op) { ops[op] = true; });
@@ -460,12 +469,14 @@
         var td = el('td', 'mcell', out === null ? '—' : (OUTCOME_EMOJI[out] || out));
         if (out) {
           var title = op + ': ' + out;
-          var worst = worstGatedCell(c.id, op);
+          var worst = worstMetricCell(c.id, op);
           if (worst) {
-            td.appendChild(el('span', 'mdelta mono', fmtPct(worst.delta_pct)));
-            title += ' — worst gated Δ ' + fmtPct(worst.delta_pct) +
-              ' (' + fmtMs(worst.baseline_p50_ms) + ' → ' + fmtMs(worst.candidate_p50_ms) +
-              ', C=' + worst.concurrency + ', ' + worst.cache_mode + ')';
+            td.appendChild(el('span', 'mdelta mono' + (worst.mv.gated ? '' : ' delta-neu'),
+              fmtPct(worst.mv.deltaPct)));
+            var fmt = state.metric === 'throughput' ? fmtThroughput : fmtMs;
+            title += ' — worst ' + state.metric + ' Δ ' + fmtPct(worst.mv.deltaPct) +
+              ' (' + fmt(worst.mv.base) + ' → ' + fmt(worst.mv.cand) +
+              ', C=' + worst.cell.concurrency + ', ' + worst.cell.cache_mode + ')';
           }
           td.title = title;
         }
