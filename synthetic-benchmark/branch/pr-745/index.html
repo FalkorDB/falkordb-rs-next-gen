@@ -156,10 +156,16 @@
   var OUTCOME_EMOJI = { pass: '🟢', regressed: '🔴', diverged_advisory: '⚠', not_applicable: 'N/A' };
   var CHIPS = [
     { id: 'all', label: 'all' },
-    { id: 'any-red', label: 'any red' },
-    { id: 'all-green', label: 'all green' },
-    { id: 'red-vs-c', label: 'red vs C' },
-    { id: 'red-vs-main', label: 'red vs main' }
+    { id: 'any-red', label: 'any red', scoped: {
+      matrix: 'ops regressed in any available comparison',
+      cmp: 'ops regressed in the displayed comparison' } },
+    { id: 'all-green', label: 'all green', scoped: {
+      matrix: 'ops that pass in every available comparison',
+      cmp: 'ops that pass in the displayed comparison' } },
+    { id: 'red-vs-c', label: 'red vs C',
+      global: 'ops regressed vs the C engine (c-pr or c-main) — global, same in every view' },
+    { id: 'red-vs-main', label: 'red vs main',
+      global: 'ops regressed vs main (main-pr) — global, same in every view' }
   ];
 
   var state = { view: MATRIX, metric: 'p50', cache: 'uncached', chip: 'all', q: '' };
@@ -333,13 +339,18 @@
     }
 
     var mc = document.getElementById('matrixControls');
-    mc.hidden = state.view !== MATRIX;
+    // Filters apply to the matrix AND to any available comparison view (an unavailable
+    // comparison renders only its reason card — nothing to filter).
+    mc.hidden = !(state.view === MATRIX || isOk(state.view));
+    var inCmp = state.view !== MATRIX;
     var chips = document.getElementById('chips');
     clear(chips);
     CHIPS.forEach(function (c) {
       var b = el('button', 'chip' + (state.chip === c.id ? ' on' : ''), c.label);
       b.type = 'button';
       b.setAttribute('data-chip', c.id);
+      if (c.scoped) { b.title = inCmp ? c.scoped.cmp : c.scoped.matrix; }
+      else if (c.global) { b.title = c.global; }
       b.addEventListener('click', function () { state.chip = c.id; render(); });
       chips.appendChild(b);
     });
@@ -378,10 +389,17 @@
   function chipPredicate(op) {
     var avail = availableIds();
     function red(id) { return avail.indexOf(id) >= 0 && opOutcome(id, op) === 'regressed'; }
+    // any-red / all-green are scoped: in a comparison view they look at THAT comparison's own
+    // outcomes; in the matrix they roll up over every available comparison. red-vs-c and
+    // red-vs-main keep their global meaning in every view (useful for cross-referencing, and
+    // switching views never invalidates the active chip).
+    var scoped = state.view !== MATRIX && isOk(state.view) ? state.view : null;
     switch (state.chip) {
       case 'any-red':
+        if (scoped) { return opOutcome(scoped, op) === 'regressed'; }
         return avail.some(function (id) { return opOutcome(id, op) === 'regressed'; });
       case 'all-green':
+        if (scoped) { return opOutcome(scoped, op) === 'pass'; }
         return avail.length > 0 && avail.every(function (id) { return opOutcome(id, op) === 'pass'; });
       case 'red-vs-c':
         return red('c-pr') || red('c-main');
@@ -390,6 +408,15 @@
       default:
         return true;
     }
+  }
+  function chipDescription() {
+    if (state.chip === 'all') { return 'all'; }
+    if (state.chip === 'red-vs-c' || state.chip === 'red-vs-main') { return state.chip + ' (global)'; }
+    return state.chip + (state.view === MATRIX ? '' : ' (this comparison)');
+  }
+  function countNote(shown, total) {
+    return el('p', 'count-note', shown + ' of ' + total + ' op(s) shown · filter: ' +
+      chipDescription() + (state.q.trim() ? ' · text: "' + state.q.trim() + '"' : ''));
   }
   function renderMatrix(root) {
     var wrap = el('div', 'matrix-wrap');
@@ -450,7 +477,7 @@
     wrap.appendChild(table);
     var totalOps = Object.keys(ops).length;
     root.appendChild(wrap);
-    root.appendChild(el('p', 'count-note', names.length + ' of ' + totalOps + ' op(s) shown · filter: ' + state.chip + (q ? ' · text: "' + q + '"' : '')));
+    root.appendChild(countNote(names.length, totalOps));
     if (availableIds().length === 0) {
       root.appendChild(el('p', 'msg', 'No comparison in this run produced an analysis.'));
     }
@@ -491,6 +518,7 @@
   }
   function opDetails(op, entry, labels) {
     var d = el('details', 'op');
+    d.setAttribute('data-op', op);
     var summary = el('summary');
     var outcome = String(entry.op_outcome || 'not_applicable');
     summary.appendChild(el('span', null, OUTCOME_EMOJI[outcome] || outcome));
@@ -606,9 +634,16 @@
     root.appendChild(card);
 
     var ops = analysisOps(id);
-    Object.keys(ops).sort().forEach(function (op) {
+    var all = Object.keys(ops);
+    var q = state.q.trim().toLowerCase();
+    var names = all.sort().filter(function (op) {
+      if (q && op.toLowerCase().indexOf(q) < 0) { return false; }
+      return chipPredicate(op);
+    });
+    names.forEach(function (op) {
       root.appendChild(opDetails(op, ops[op], labels));
     });
+    root.appendChild(countNote(names.length, all.length));
   }
 
   // ---- top-level render -----------------------------------------------------------------------
