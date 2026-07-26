@@ -30,7 +30,7 @@
 //!   masks to/from the selection vector used by [`Batch`](super::batch::Batch)
 //!
 //! The comparison kernels are written as tight indexed loops to enable
-//! LLVM auto-vectorization on all target platforms (x86_64 SSE/AVX, ARM NEON).
+//! LLVM auto-vectorization on all target platforms (`x86_64` SSE/AVX, ARM NEON).
 
 use std::collections::HashMap;
 use std::sync::Arc;

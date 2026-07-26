@@ -58,7 +58,7 @@ fn get_int_field(
     })
 }
 
-/// Build a NaiveDate from optional components. Supports ymd, week, and quarter modes.
+/// Build a `NaiveDate` from optional components. Supports ymd, week, and quarter modes.
 fn date_from_components(
     year: Option<i64>,
     month: Option<i64>,

@@ -1,7 +1,7 @@
 //! `GRAPH.MEMORY USAGE` command handler.
 //!
 //! Reports detailed per-component memory usage for a graph key, returned in
-//! megabytes (integer division, matching the FalkorDB C implementation).
+//! megabytes (integer division, matching the `FalkorDB` C implementation).
 //!
 //! ## Syntax
 //! ```text

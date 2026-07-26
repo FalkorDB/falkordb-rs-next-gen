@@ -26,7 +26,7 @@
 //! Edge uniqueness within each path is tracked with a small inline vec of
 //! used edge IDs checked by linear scan (paths are short, so this beats a
 //! set — same approach as the C engine's `Path_ContainsEdge`). Adjacency
-//! lists are lazily cached per node to avoid creating GraphBLAS iterators
+//! lists are lazily cached per node to avoid creating `GraphBLAS` iterators
 //! at every DFS step.
 
 use std::cell::RefCell;
@@ -108,7 +108,7 @@ struct VarLenIter<'a> {
     current_start: Option<NodeId>,
     /// Lazily-built adjacency cache, shared across the row's whole DFS.
     adj_cache: HashMap<u64, Vec<(NodeId, NodeId, RelationshipId)>, RandomState>,
-    /// DFS frames: (node, path_elems, used_edges, depth). Depth counts edges
+    /// DFS frames: (node, `path_elems`, `used_edges`, depth). Depth counts edges
     /// traversed so far; uniqueness is edge-based (Cypher trail semantics —
     /// nodes may repeat, relationships may not), matching the C engine's
     /// `Path_ContainsEdge` check.

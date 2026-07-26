@@ -27,11 +27,11 @@
 // Pedantic style lints with low signal in this codebase.
 #![allow(clippy::similar_names)]
 
-//! # FalkorDB Graph Engine
+//! # `FalkorDB` Graph Engine
 //!
-//! This crate contains the core graph database engine for FalkorDB.
+//! This crate contains the core graph database engine for `FalkorDB`.
 //! It provides Cypher query parsing, planning, optimization, and execution
-//! over a sparse matrix-based graph representation using GraphBLAS.
+//! over a sparse matrix-based graph representation using `GraphBLAS`.
 //!
 //! ## Query Processing Pipeline
 //!
@@ -59,8 +59,8 @@
 //! - [`parser`]: Cypher parser, AST definitions, and string escape utilities
 //! - [`planner`]: Semantic binding, logical plan generation, and optimization
 //! - [`graph`]: Graph data structures (sparse matrices, vectors, MVCC)
-//! - [`graph::graphblas`]: GraphBLAS FFI bindings (auto-generated)
-//! - [`index`]: Index types, management, and RediSearch FFI bindings
+//! - [`graph::graphblas`]: `GraphBLAS` FFI bindings (auto-generated)
+//! - [`index`]: Index types, management, and `RediSearch` FFI bindings
 //! - [`runtime`]: Query execution engine and built-in functions
 //! - [`storage`]: Shared storage seam (per-store backend registry; an in-memory
 //!   backend by default, an alternate backend swapped in by a statically-linked add-on)

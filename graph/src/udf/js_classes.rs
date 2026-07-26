@@ -1,6 +1,6 @@
 //! # JS Class Bindings for Graph Types
 //!
-//! This module creates JavaScript object representations of FalkorDB graph
+//! This module creates JavaScript object representations of `FalkorDB` graph
 //! entities (Node, Edge, Path) so that UDF functions can inspect and traverse
 //! the graph from within JavaScript code.
 //!
@@ -92,7 +92,7 @@ where
 }
 
 /// Collect edges from a node in a given direction.
-/// Returns vec of (rel_id, src_id, dst_id) as u64.
+/// Returns vec of (`rel_id`, `src_id`, `dst_id`) as u64.
 fn collect_edges(
     g: &Graph,
     node_id: u64,
@@ -124,7 +124,7 @@ fn collect_edges(
     edges
 }
 
-/// Create a JS Node object with id, labels, attributes properties and getNeighbors() method.
+/// Create a JS Node object with id, labels, attributes properties and `getNeighbors()` method.
 pub fn create_js_node<'js>(
     ctx: &Ctx<'js>,
     node_id: u64,
@@ -340,7 +340,7 @@ pub fn create_js_path<'js>(
     Ok(obj.into_value())
 }
 
-/// Entry point for getNeighbors from JS. Takes (node_id, config?) as arguments.
+/// Entry point for getNeighbors from JS. Takes (`node_id`, config?) as arguments.
 /// This is a standalone function (no closure captures) so rquickjs lifetime inference works.
 #[allow(clippy::needless_pass_by_value)]
 fn js_get_neighbors_entry<'js>(

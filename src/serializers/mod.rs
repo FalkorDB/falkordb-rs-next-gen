@@ -19,7 +19,7 @@ use roaring::RoaringTreemap;
 
 use crate::graph_core::ThreadedGraph;
 
-/// RDB encoding version. Matches C FalkorDB v19 format (buffered IO with type tags).
+/// RDB encoding version. Matches C `FalkorDB` v19 format (buffered IO with type tags).
 #[allow(dead_code)]
 pub const ENCODING_VERSION: u64 = 19;
 
@@ -28,9 +28,9 @@ pub static VKEY_STATE: std::sync::LazyLock<Mutex<VirtualKeyState>> =
     std::sync::LazyLock::new(|| Mutex::new(VirtualKeyState::new()));
 
 pub struct VirtualKeyState {
-    /// vkey_name → (graph_name, key_index, payloads for that key)
+    /// `vkey_name` → (`graph_name`, `key_index`, payloads for that key)
     pub vkey_map: HashMap<String, (String, usize, Vec<PayloadEntry>)>,
-    /// graph_name → list of virtual key names
+    /// `graph_name` → list of virtual key names
     pub graph_vkeys: HashMap<String, Vec<String>>,
 }
 
@@ -59,8 +59,8 @@ pub struct DecodeState {
     /// for multi-key graphs. Used to replace the placeholder's inner graph
     /// with the finalized graph once all keys are loaded.
     pub placeholders: HashMap<String, Arc<RwLock<ThreadedGraph>>>,
-    /// Finalized graphs ready to be picked up by graph_rdb_load or
-    /// the finalize_pending_graphs callback.
+    /// Finalized graphs ready to be picked up by `graph_rdb_load` or
+    /// the `finalize_pending_graphs` callback.
     pub finalized: HashMap<String, Graph>,
 }
 
@@ -386,7 +386,7 @@ fn encode_schema_index_block(
 }
 
 /// Write the constraint block for a schema entry.
-/// Format per constraint: constraint_type (u64), status (u64), field_count (u64), then attr_id (u64) per field.
+/// Format per constraint: `constraint_type` (u64), status (u64), `field_count` (u64), then `attr_id` (u64) per field.
 fn encode_constraint_block(
     w: &mut dyn Writer,
     constraints: &[&Constraint],

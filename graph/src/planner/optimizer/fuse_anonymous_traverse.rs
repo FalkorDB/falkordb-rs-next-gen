@@ -1,7 +1,7 @@
 //! Fuses chains of anonymous-edge `CondTraverse` operators sharing
 //! anonymous, unreferenced intermediate nodes into a single `CondTraverse`
 //! whose runtime executes the chained traversal as a single F·A1·A2·…·An
-//! matrix product, mirroring C FalkorDB's `_should_divide_expression`
+//! matrix product, mirroring C `FalkorDB`'s `_should_divide_expression`
 //! decision (`src/arithmetic/algebraic_expression/algebraic_expression_construction.c`).
 //!
 //! ## Plan shape (before)
@@ -38,7 +38,7 @@ fn is_anon(name_opt: Option<&std::sync::Arc<String>>) -> bool {
     name_opt.is_some_and(|n| n.starts_with("_anon"))
 }
 
-/// True when the QueryRelationship's inline-attrs tree is the empty `{}` map.
+/// True when the `QueryRelationship`'s inline-attrs tree is the empty `{}` map.
 fn rel_attrs_empty(
     rel: &crate::parser::ast::QueryRelationship<
         std::sync::Arc<String>,
@@ -59,7 +59,7 @@ fn node_attrs_empty(
     matches!(root.data(), ExprIR::Map) && root.children().next().is_none()
 }
 
-/// True when no ancestor of `idx` (excluding the parent CondTraverse if any)
+/// True when no ancestor of `idx` (excluding the parent `CondTraverse` if any)
 /// references the variable `(var_id, scope_id)`. We reuse the per-IR-node
 /// reference check from `reduce_expand_into`'s helper.
 fn intermediate_unreferenced(
@@ -79,7 +79,7 @@ fn intermediate_unreferenced(
 }
 
 /// Returns true when `parent_ct` (outer) and `child_ct` (its only CT child)
-/// can be fused into a single CondTraverse.
+/// can be fused into a single `CondTraverse`.
 fn can_fuse(
     parent_ct: &IR,
     child_ct: &IR,

@@ -18,9 +18,9 @@ use super::{DECODE_STATE, PendingGraph};
 
 /// Decode a graph key from the RDB stream (v19 format).
 ///
-/// Returns `Ok(Some(graph))` for single-key graphs (key_count == 1),
+/// Returns `Ok(Some(graph))` for single-key graphs (`key_count` == 1),
 /// or `Ok(None)` when the key data has been accumulated into
-/// `DECODE_STATE` for multi-key graphs (key_count > 1).
+/// `DECODE_STATE` for multi-key graphs (`key_count` > 1).
 #[allow(clippy::too_many_lines)]
 pub fn rdb_load_graph(
     rdb: *mut RedisModuleIO,

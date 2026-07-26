@@ -134,7 +134,7 @@ use super::{
     versioned_matrix::{self, VersionedMatrix},
 };
 
-/// Maximum GraphBLAS index value (2^60 - 1).
+/// Maximum `GraphBLAS` index value (2^60 - 1).
 #[allow(non_upper_case_globals)]
 pub const GrB_INDEX_MAX: u64 = (1u64 << 60) - 1;
 
@@ -188,7 +188,7 @@ pub struct Tensor {
     /// stored here — they are recovered from `m` (and `me`) when iterating
     /// incoming edges, avoiding a redundant copy of every id.
     mt: VersionedMatrix<bool>,
-    /// Multi-edge id storage, keyed by `compound_key(src, dst)` → edge_id
+    /// Multi-edge id storage, keyed by `compound_key(src, dst)` → `edge_id`
     /// (BOOL). Holds *all* ids of pairs with more than one edge; empty
     /// otherwise.
     me: VersionedMatrix<bool>,
@@ -285,7 +285,7 @@ impl Tensor {
     /// former inline one included) go to `me`.
     ///
     /// Split into a read phase and a write phase so per-edge `dp` lookups
-    /// never observe pending GraphBLAS work (which would force a wait per
+    /// never observe pending `GraphBLAS` work (which would force a wait per
     /// element and make bulk insertion quadratic). `me` is written during the
     /// read phase — it is never read here, so its pending work is harmless.
     /// Pairs appearing more than once *within this batch* are caught by the
@@ -707,7 +707,7 @@ impl Tensor {
         self.me.wait_all();
     }
 
-    /// Returns true if every internal matrix has no pending GraphBLAS
+    /// Returns true if every internal matrix has no pending `GraphBLAS`
     /// operations queued.
     #[must_use]
     pub fn is_synced(&self) -> bool {
@@ -728,7 +728,7 @@ impl Tensor {
     }
 }
 
-/// MSB flag used by C FalkorDB to indicate multi-edge entries in the
+/// MSB flag used by C `FalkorDB` to indicate multi-edge entries in the
 /// UINT64 forward matrix.
 const MSB_MASK: u64 = 1u64 << 63;
 

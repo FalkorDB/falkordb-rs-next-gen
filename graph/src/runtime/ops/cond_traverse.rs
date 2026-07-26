@@ -148,7 +148,7 @@ pub struct CondTraverseOp<'a> {
     /// Number of records produced so far (tracked when `record_cap` is set).
     produced: usize,
     /// Persistent forward-matrix iterator. Reused across `expand_row` calls
-    /// via `seek` so we pay the GxB_Iterator allocation only once per
+    /// via `seek` so we pay the `GxB_Iterator` allocation only once per
     /// operator (not per input row).
     ///
     /// Lazily initialized on first `expand_row`: matrices/labels referenced
@@ -157,7 +157,7 @@ pub struct CondTraverseOp<'a> {
     state: std::cell::RefCell<Option<CtState>>,
     /// For bidirectional anonymous-edge CTs, tracks (source, dest) pairs
     /// already emitted to deduplicate rows that reach the same pair via
-    /// different intermediate nodes — matching C FalkorDB's matrix-multiply
+    /// different intermediate nodes — matching C `FalkorDB`'s matrix-multiply
     /// semantics.
     bidir_dedup: Option<std::cell::RefCell<std::collections::HashSet<(u64, u64)>>>,
     /// When the child is also an anonymous bidir CT, stores the child's
@@ -165,7 +165,7 @@ pub struct CondTraverseOp<'a> {
     /// intermediate node).  When None, dedup uses this CT's own from-alias.
     dedup_source_alias: Option<Variable>,
     /// Structural eligibility for the batched F·A path. Computed once at
-    /// construction. Variants like emit_relationship, bidir, sibling-edge
+    /// construction. Variants like `emit_relationship`, bidir, sibling-edge
     /// uniqueness, and non-empty inline attribute predicates fall back to
     /// the per-row `expand_row` path.
     batched_eligible: bool,
@@ -196,7 +196,7 @@ fn empty_edge_iter() -> Iter {
 /// Build an `EdgeIter` over the TRANSPOSED (dst → src) pair matrix for
 /// `types`, for expansions where only the destination is bound. Tensors
 /// maintain their transpose (`mt`) incrementally, so the single-type case is
-/// free; the untyped/multi-type cases pay one O(E) GraphBLAS transpose —
+/// free; the untyped/multi-type cases pay one O(E) `GraphBLAS` transpose —
 /// amortized over the whole operator, unlike the per-row full scan this
 /// replaces.
 fn build_transposed_iter(
@@ -415,11 +415,11 @@ impl<'a> CondTraverseOp<'a> {
         }
     }
 
-    /// Batched F·A traversal — mirrors C FalkorDB's `_traverse` in
+    /// Batched F·A traversal — mirrors C `FalkorDB`'s `_traverse` in
     /// `op_conditional_traverse.c`. For an input slice of envs:
-    /// 1. build sparse F[i, src_id] = true (one bulk FFI call),
+    /// 1. build sparse F[i, `src_id`] = true (one bulk FFI call),
     /// 2. compute M = F * A in one mxm,
-    /// 3. extract tuples (row_i, dest_id) and emit one row per pair.
+    /// 3. extract tuples (`row_i`, `dest_id`) and emit one row per pair.
     ///
     /// Eligibility was checked structurally at op construction
     /// (`self.batched_eligible`); callers must not invoke this for ineligible
@@ -459,13 +459,11 @@ impl<'a> CondTraverseOp<'a> {
                     state.no_match = true;
                     return true;
                 }
+            } else if let Some(m) = g.build_relationship_matrix_unrestricted(&rp.types) {
+                TraversalMatrix::Bool(VersionedMatrix::from_matrix(m))
             } else {
-                if let Some(m) = g.build_relationship_matrix_unrestricted(&rp.types) {
-                    TraversalMatrix::Bool(VersionedMatrix::from_matrix(m))
-                } else {
-                    state.no_match = true;
-                    return true;
-                }
+                state.no_match = true;
+                return true;
             };
             state.batched_matrix = Some(m);
 
@@ -483,13 +481,11 @@ impl<'a> CondTraverseOp<'a> {
                         state.no_match = true;
                         return true;
                     }
+                } else if let Some(m) = g.build_relationship_matrix_unrestricted(&hop.types) {
+                    TraversalMatrix::Bool(VersionedMatrix::from_matrix(m))
                 } else {
-                    if let Some(m) = g.build_relationship_matrix_unrestricted(&hop.types) {
-                        TraversalMatrix::Bool(VersionedMatrix::from_matrix(m))
-                    } else {
-                        state.no_match = true;
-                        return true;
-                    }
+                    state.no_match = true;
+                    return true;
                 };
                 state.chain_matrices.push(hm);
                 let Some(dst_labels) = g.resolve_label_ids(&hop.to.labels) else {

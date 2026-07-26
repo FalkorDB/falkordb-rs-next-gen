@@ -12,19 +12,19 @@
 //! ## Configuration categories
 //!
 //! Runtime-settable (via SET):
-//!   TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX, RESULTSET_SIZE,
-//!   MAX_QUEUED_QUERIES, QUERY_MEM_CAPACITY, DELTA_MAX_PENDING_CHANGES,
-//!   VKEY_MAX_ENTITY_COUNT, JS_HEAP_SIZE, JS_STACK_SIZE, EFFECTS_THRESHOLD
+//!   TIMEOUT, `TIMEOUT_DEFAULT`, `TIMEOUT_MAX`, `RESULTSET_SIZE`,
+//!   `MAX_QUEUED_QUERIES`, `QUERY_MEM_CAPACITY`, `DELTA_MAX_PENDING_CHANGES`,
+//!   `VKEY_MAX_ENTITY_COUNT`, `JS_HEAP_SIZE`, `JS_STACK_SIZE`, `EFFECTS_THRESHOLD`
 //!
 //! Read-only (SET returns an error):
-//!   THREAD_COUNT, OMP_THREAD_COUNT, CACHE_SIZE, ASYNC_DELETE,
-//!   NODE_CREATION_BUFFER, CMD_INFO, MAX_INFO_QUERIES,
-//!   BOLT_PORT, DELAY_INDEXING, IMPORT_FOLDER, TEMP_FOLDER
+//!   `THREAD_COUNT`, `OMP_THREAD_COUNT`, `CACHE_SIZE`, `ASYNC_DELETE`,
+//!   `NODE_CREATION_BUFFER`, `CMD_INFO`, `MAX_INFO_QUERIES`,
+//!   `BOLT_PORT`, `DELAY_INDEXING`, `IMPORT_FOLDER`, `TEMP_FOLDER`
 //!
 //! ## Multi-SET semantics
 //! When multiple name-value pairs are provided in a single SET, all pairs are
 //! validated first. If any validation fails, no values are applied (atomic
-//! all-or-nothing). If JS_HEAP_SIZE or JS_STACK_SIZE are changed, the UDF
+//! all-or-nothing). If `JS_HEAP_SIZE` or `JS_STACK_SIZE` are changed, the UDF
 //! repository version is bumped once after all values are applied so
 //! concurrent queries do not see a partial configuration update.
 
@@ -174,9 +174,9 @@ fn validate_config_set(
 /// Cross-validate timeout configuration constraints.
 ///
 /// Rules:
-/// - Cannot set deprecated TIMEOUT when TIMEOUT_DEFAULT or TIMEOUT_MAX are active
-/// - TIMEOUT_DEFAULT cannot exceed TIMEOUT_MAX (when TIMEOUT_MAX > 0)
-/// - TIMEOUT_MAX cannot be lower than TIMEOUT_DEFAULT (when TIMEOUT_DEFAULT > 0)
+/// - Cannot set deprecated TIMEOUT when `TIMEOUT_DEFAULT` or `TIMEOUT_MAX` are active
+/// - `TIMEOUT_DEFAULT` cannot exceed `TIMEOUT_MAX` (when `TIMEOUT_MAX` > 0)
+/// - `TIMEOUT_MAX` cannot be lower than `TIMEOUT_DEFAULT` (when `TIMEOUT_DEFAULT` > 0)
 fn validate_timeout_cross_constraints(validated: &[(&str, ConfigValue)]) -> Result<(), String> {
     // Compute what the new values will be after applying.
     let mut new_timeout_default = TIMEOUT_DEFAULT.load(Ordering::Relaxed);

@@ -1,7 +1,7 @@
 //! Attribute storage for graph entities (nodes and relationships).
 //!
 //! This module provides [`AttributeStore`], an in-memory key-value store for
-//! entity properties modeled on the C engine's DataBlock: entity ids index
+//! entity properties modeled on the C engine's `DataBlock`: entity ids index
 //! into fixed-capacity blocks, and each block stores all of its entities'
 //! attributes in one contiguous arena of packed 12-byte
 //! `(attr_id, tag, payload)` entries sorted by attribute id. A slot is an
@@ -183,8 +183,8 @@ impl PackedAttr {
 // Block / DataBlock: arena-based slot storage (C engine's DataBlock, COW)
 // ============================================================================
 
-/// Slots per block, matching the C engine's DataBlock granularity. Driven
-/// by the NODE_CREATION_BUFFER configuration, which is normalized to a
+/// Slots per block, matching the C engine's `DataBlock` granularity. Driven
+/// by the `NODE_CREATION_BUFFER` configuration, which is normalized to a
 /// power of two at module init and immutable afterwards.
 #[inline]
 fn block_cap() -> usize {
@@ -192,7 +192,7 @@ fn block_cap() -> usize {
 }
 
 /// Arena span descriptor for one entity. `cap == 0` means the entity has no
-/// attribute span (the equivalent of C's NULL AttributeSet); live spans have
+/// attribute span (the equivalent of C's NULL `AttributeSet`); live spans have
 /// `1 <= len <= cap`.
 #[derive(Clone, Copy, Default)]
 struct Slot {
@@ -1030,7 +1030,7 @@ impl AttributeStore {
     }
 
     /// Import pre-resolved attribute data directly.
-    /// Skips name resolution and OrderMap construction; used by bulk insert.
+    /// Skips name resolution and `OrderMap` construction; used by bulk insert.
     pub fn import_attrs_resolved(
         &mut self,
         data: &mut Vec<(u64, Vec<(u16, Value)>)>,

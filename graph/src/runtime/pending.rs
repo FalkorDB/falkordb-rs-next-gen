@@ -40,7 +40,7 @@ use crate::{
     runtime::{ordermap::OrderMap, orderset::OrderSet, runtime::QueryStatistics, value::Value},
 };
 
-/// Flatten a node_id → [label_ids] map into parallel (rows, cols) arrays.
+/// Flatten a `node_id` → [`label_ids`] map into parallel (rows, cols) arrays.
 fn flatten_label_map(map: &FxHashMap<u64, Vec<u64>>) -> (Vec<u64>, Vec<u64>) {
     let total: usize = map.values().map(std::vec::Vec::len).sum();
     let mut rows = Vec::with_capacity(total);
@@ -112,15 +112,15 @@ fn lookup_sorted(
 pub struct Pending {
     /// Nodes created in this transaction
     created_nodes: RoaringTreemap,
-    /// Relationships created, grouped by type: type_name → [(rel_id, from, to)]
+    /// Relationships created, grouped by type: `type_name` → [(`rel_id`, from, to)]
     created_rels_by_type: FxHashMap<Arc<String>, Vec<(RelationshipId, NodeId, NodeId)>>,
-    /// Reverse index: rel_id → type_name for O(1) existence/type lookups
+    /// Reverse index: `rel_id` → `type_name` for O(1) existence/type lookups
     created_rel_types: FxHashMap<RelationshipId, Arc<String>>,
     /// Nodes to be deleted
     deleted_nodes: RoaringTreemap,
     /// Relationships to be deleted
     deleted_relationships: RoaringTreemap,
-    /// Endpoints for deleted relationships — populated by commit(), used by build_effects_buffer().
+    /// Endpoints for deleted relationships — populated by `commit()`, used by `build_effects_buffer()`.
     deleted_endpoints: Vec<(RelationshipId, NodeId, NodeId)>,
     /// Property updates for newly created nodes (fast path: skip fjall).
     /// Values are attribute-id-resolved, sorted by id, unique.
@@ -131,9 +131,9 @@ pub struct Pending {
     new_relationships_attrs: FxHashMap<u64, Vec<(u16, Value)>>,
     /// Property updates for existing relationships (full merge path)
     existing_relationships_attrs: FxHashMap<u64, Vec<(u16, Value)>>,
-    /// Labels to add: node_id → [label_ids]
+    /// Labels to add: `node_id` → [`label_ids`]
     set_labels: FxHashMap<u64, Vec<u64>>,
-    /// Labels to remove: node_id → [label_ids]
+    /// Labels to remove: `node_id` → [`label_ids`]
     remove_labels: FxHashMap<u64, Vec<u64>>,
     /// Documents to add to indexes (keyed by label id)
     index_add_docs: FxHashMap<u64, RoaringTreemap>,
@@ -144,11 +144,11 @@ pub struct Pending {
     /// Edge documents to remove from indexes: `type_id → { edge_id → (src, dst) }`.
     /// `(src, dst)` is captured at deletion time — the edge is gone
     /// from the tensor by the time `commit_edge_index` runs so the
-    /// 24-byte RediSearch key must be reconstructable from here.
+    /// 24-byte `RediSearch` key must be reconstructable from here.
     index_remove_edge_docs: FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
     /// Deferred index operations — accumulated across commit cycles,
     /// applied only after the full query succeeds so that a failed
-    /// query never leaves stale entries in RediSearch.
+    /// query never leaves stale entries in `RediSearch`.
     deferred_index_adds: FxHashMap<u64, RoaringTreemap>,
     deferred_index_removes: FxHashMap<u64, RoaringTreemap>,
     deferred_edge_index_adds: FxHashMap<u64, RoaringTreemap>,
@@ -201,7 +201,7 @@ impl Pending {
     }
 
     /// Record the current schema sizes so `build_effects_buffer` can emit
-    /// EFFECT_ADD_SCHEMA / EFFECT_ADD_ATTRIBUTE for newly added entries.
+    /// `EFFECT_ADD_SCHEMA` / `EFFECT_ADD_ATTRIBUTE` for newly added entries.
     pub fn set_schema_baseline(
         &mut self,
         g: &AtomicRefCell<Graph>,
@@ -397,7 +397,7 @@ impl Pending {
 
     /// Delete a pending-created node: mark it deleted, collect its labels and attrs,
     /// and also mark any pending-created relationships connected to it for deletion.
-    /// Returns (label_ids, attrs, connected_pending_rels).
+    /// Returns (`label_ids`, attrs, `connected_pending_rels`).
     pub fn delete_pending_node(
         &mut self,
         id: NodeId,
@@ -647,7 +647,7 @@ impl Pending {
     }
 
     /// Returns existing (non-created) node IDs that have pending label REMOVEs
-    /// for ANY of the given label_ids.
+    /// for ANY of the given `label_ids`.
     #[must_use]
     pub fn nodes_with_pending_label_removes(
         &self,
@@ -1153,7 +1153,7 @@ impl Pending {
         Ok(())
     }
 
-    /// Apply deferred index operations to RediSearch. Called only after the
+    /// Apply deferred index operations to `RediSearch`. Called only after the
     /// full query succeeds, so a failed query never leaves stale index entries.
     pub fn commit_deferred_indexes(
         &mut self,

@@ -35,7 +35,7 @@ use orx_tree::{Dyn, NodeIdx};
 pub struct CartesianProductOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Box<BatchOp<'a>>,
-    /// Pre-built right branch operators, seeded via set_argument_batch.
+    /// Pre-built right branch operators, seeded via `set_argument_batch`.
     pub(crate) right_children: Vec<BatchOp<'a>>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
     /// Lazily materialized right-side rows. `None` means not yet computed.

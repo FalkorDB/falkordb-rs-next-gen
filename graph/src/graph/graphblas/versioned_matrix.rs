@@ -159,15 +159,15 @@ impl<T> VersionedMatrix<T> {
     }
 
     /// Wait on all three internal matrices (m, dp, dm).
-    /// Used for fork safety — ensures no GrB internal locks are held.
+    /// Used for fork safety — ensures no `GrB` internal locks are held.
     pub fn wait_all(&self) {
         self.m.wait();
         self.dp.wait();
         self.dm.wait();
     }
 
-    /// Returns true if every internal matrix has no pending GraphBLAS
-    /// operations — i.e. wait_all was effective.
+    /// Returns true if every internal matrix has no pending `GraphBLAS`
+    /// operations — i.e. `wait_all` was effective.
     #[must_use]
     pub fn is_synced(&self) -> bool {
         self.m.is_synced() && self.dp.is_synced() && self.dm.is_synced()
@@ -220,7 +220,7 @@ impl<T> VersionedMatrix<T> {
     /// Bulk-remove all entries matching a mask matrix.
     ///
     /// Equivalent to calling `remove(i, j)` for every entry `(i, j)` in `mask`,
-    /// but executes in two GraphBLAS bulk operations instead of N individual calls:
+    /// but executes in two `GraphBLAS` bulk operations instead of N individual calls:
     /// - Entries in base `m` matching `mask` are marked deleted in `dm`
     /// - Entries in delta-plus `dp` matching `mask` are removed from `dp`
     pub fn remove_mask(
@@ -474,7 +474,7 @@ impl<E: IterExtract> Iter<E> {
         }
     }
 
-    /// Re-seek the inner GraphBLAS iterators to a new row range without
+    /// Re-seek both inner `GraphBLAS` iterators to a new row range without
     /// re-allocating them. Hot-loop callers (e.g. `CondTraverseOp` and
     /// `ExpandInto` looking up edges by `(src, dst)`) use this to amortize
     /// the per-pair iterator allocation.

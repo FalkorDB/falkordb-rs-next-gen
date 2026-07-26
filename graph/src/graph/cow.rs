@@ -8,7 +8,7 @@
 //! ## How It Works
 //!
 //! When `MvccGraph::write()` creates a new graph version, every matrix is
-//! wrapped in a `Cow` with `dup = true`. The underlying GraphBLAS handle
+//! wrapped in a `Cow` with `dup = true`. The underlying `GraphBLAS` handle
 //! is shared (cheap clone of the handle pointer). Only when a write
 //! operation calls `deref_mut()` does the matrix get physically duplicated
 //! via the `Dup` trait.

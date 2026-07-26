@@ -74,7 +74,7 @@ use crate::allocator::{
 };
 
 /// Global registry of all live graph instances.
-/// Used by the pthread_atfork prepare handler to sync all GraphBLAS matrices
+/// Used by the `pthread_atfork` prepare handler to sync all `GraphBLAS` matrices
 /// before fork, preventing deadlocks in the BGSAVE child process.
 pub static GRAPH_REGISTRY: std::sync::LazyLock<
     parking_lot::Mutex<HashMap<String, Arc<RwLock<ThreadedGraph>>>>,
@@ -321,7 +321,7 @@ pub mod ffi {
     }
 }
 
-/// Sticky flag: set once any replica has ever attached (ReplicaChange
+/// Sticky flag: set once any replica has ever attached (`ReplicaChange`
 /// server event) and never cleared — a disconnected replica may resume
 /// from the replication backlog, so effects buffers must keep being
 /// built after the first attach. While false (and AOF is off) write
@@ -730,9 +730,9 @@ impl Drop for BlockedClient {
 /// Compute the effective timeout in milliseconds for a query.
 ///
 /// Rules:
-/// - Per-query timeout cannot exceed TIMEOUT_MAX (if set).
+/// - Per-query timeout cannot exceed `TIMEOUT_MAX` (if set).
 /// - Per-query timeout is only applied to read queries (write queries ignore it).
-/// - Falls back to TIMEOUT_DEFAULT, then deprecated TIMEOUT.
+/// - Falls back to `TIMEOUT_DEFAULT`, then `TIMEOUT_MAX`, then deprecated `TIMEOUT`.
 /// - Returns None for unlimited.
 fn compute_effective_timeout(
     per_query_timeout: Option<i64>,
@@ -1360,7 +1360,7 @@ fn replicate_effects(
     }
 }
 
-/// Encode IndexType as u8 tag for effects buffer.
+/// Encode `IndexType` as u8 tag for effects buffer.
 const fn index_type_tag(it: &graph::index::IndexType) -> u8 {
     use graph::index::IndexType;
     match it {
@@ -1370,7 +1370,7 @@ const fn index_type_tag(it: &graph::index::IndexType) -> u8 {
     }
 }
 
-/// Encode EntityType as u8 tag for effects buffer.
+/// Encode `EntityType` as u8 tag for effects buffer.
 const fn entity_type_tag(et: &graph::entity_type::EntityType) -> u8 {
     use graph::entity_type::EntityType;
     match et {
@@ -1379,9 +1379,9 @@ const fn entity_type_tag(et: &graph::entity_type::EntityType) -> u8 {
     }
 }
 
-/// Scan the plan for CreateIndex / DropIndex IR nodes and append their
+/// Scan the plan for `CreateIndex` / `DropIndex` IR nodes and append their
 /// effects to the buffer. Returns the (possibly new) effects buffer.
-/// Caller must ensure no CreateIndex carries OPTIONS — those can't currently
+/// Caller must ensure no `CreateIndex` carries OPTIONS — those can't currently
 /// round-trip in the binary effect format and require verbatim replication.
 fn build_index_effects(
     runtime: &Runtime,

@@ -160,7 +160,7 @@ fn dispatch_xadd(
     );
 }
 
-/// CallOptions used by the flusher: replicate the XADD to attached replicas
+/// `CallOptions` used by the flusher: replicate the XADD to attached replicas
 /// so the telemetry stream stays mirrored across master/replica.
 fn replicated_call_options() -> CallOptions {
     CallOptionsBuilder::new().replicate().build()

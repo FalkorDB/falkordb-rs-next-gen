@@ -1,7 +1,7 @@
 //! # Rust <-> JavaScript Type Conversion
 //!
-//! This module provides bidirectional conversion between FalkorDB's Rust
-//! [`Value`](crate::runtime::value::Value) type and QuickJS JavaScript values.
+//! This module provides bidirectional conversion between `FalkorDB`'s Rust
+//! [`Value`](crate::runtime::value::Value) type and `QuickJS` JavaScript values.
 //! It is used whenever arguments are passed into a UDF and when the UDF result
 //! is returned back to the Cypher runtime.
 //!
@@ -49,7 +49,7 @@ use crate::graph::graph::Graph;
 use crate::runtime::runtime::Runtime;
 use crate::runtime::value::{Point, Value};
 
-/// Convert a FalkorDB Value to a JavaScript value.
+/// Convert a `FalkorDB` Value to a JavaScript value.
 ///
 /// `runtime`, when present, resolves relationship endpoints/type/attributes
 /// through the deleted→pending→graph fallback so relationships created or
@@ -181,7 +181,7 @@ pub fn value_to_js<'js>(
     }
 }
 
-/// Convert a JavaScript value back to a FalkorDB Value.
+/// Convert a JavaScript value back to a `FalkorDB` Value.
 pub fn js_to_value(val: JsValue<'_>) -> Result<Value, String> {
     if val.is_null() || val.is_undefined() {
         return Ok(Value::Null);

@@ -135,7 +135,7 @@ pub struct Runtime<'a> {
     /// expression's node index plus its aggregation group hash. Uses a
     /// cheap `FxHashMap` over a `(NodeIdx, u64)` tuple so the hot per-row
     /// lookup avoids the previous `format!`-built `String` key (heap alloc +
-    /// `NodeIdx` Debug formatting) and SipHash. `NodeIdx` is `Copy`, and the
+    /// `NodeIdx` Debug formatting) and `SipHash`. `NodeIdx` is `Copy`, and the
     /// expression trees it points into are immutable for the query lifetime.
     pub value_dedupers:
         RefCell<rustc_hash::FxHashMap<(NodeIdx<Dyn<ExprIR<Variable>>>, u64), ValuesDeduper>>,
@@ -180,7 +180,7 @@ pub struct Runtime<'a> {
     pub transaction_timestamp: DateTime<Utc>,
     /// Whether profiling is enabled for this query.
     pub profile: bool,
-    /// Per-operator profile data: (records_produced, exclusive_time).
+    /// Per-operator profile data: (`records_produced`, `exclusive_time`).
     pub profile_data: RefCell<HashMap<NodeIdx<Dyn<IR>>, (usize, Duration)>>,
     /// Accumulator for child time subtraction during profiling.
     pub profile_child_time: Cell<Duration>,
@@ -449,7 +449,7 @@ impl<'a> Runtime<'a> {
         Ok(())
     }
 
-    /// Apply deferred index operations to RediSearch. Must be called only
+    /// Apply deferred index operations to `RediSearch`. Must be called only
     /// after the full query succeeds.
     pub fn commit_deferred_indexes(&self) {
         self.pending.borrow_mut().commit_deferred_indexes(&self.g);
@@ -1409,7 +1409,7 @@ impl<'a> Runtime<'a> {
         self.get_node_attribute_no_delete_check(id, attr)
     }
 
-    /// Like `get_node_attribute` but skips the deleted_nodes check.
+    /// Like `get_node_attribute` but skips the `deleted_nodes` check.
     /// Use when the caller has already verified no deletions exist.
     pub fn get_node_attribute_no_delete_check(
         &self,
@@ -1472,8 +1472,8 @@ impl<'a> Runtime<'a> {
     /// Materializes a property column for a batch of node IDs.
     ///
     /// Resolves the attribute index once, then fetches the value for each node.
-    /// Checks deleted_nodes and pending mutations (same as `get_node_attribute`).
-    /// Returns a typed Column plus a NullBitmap.
+    /// Checks `deleted_nodes` and pending mutations (same as `get_node_attribute`).
+    /// Returns a typed Column plus a `NullBitmap`.
     pub fn materialize_node_property(
         &self,
         node_ids: &[NodeId],

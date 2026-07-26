@@ -1,6 +1,6 @@
 //! Composable operator that augments a child scan with pending mutations.
 //!
-//! Wraps any scan operator (NodeByLabelScan, NodeByIndexScan, etc.) and:
+//! Wraps any scan operator (`NodeByLabelScan`, `NodeByIndexScan`, etc.) and:
 //! 1. Filters out pending-deleted nodes and nodes with pending label removals
 //! 2. After child exhaustion, emits pending-created nodes and nodes with
 //!    pending label additions
@@ -106,7 +106,7 @@ impl<'a> IncludePendingOp<'a> {
         self.pending_extra = Some(Box::new(pending_nodes.into_iter().map(NodeId::from)));
     }
 
-    /// Emit a batch from pending_extra nodes.
+    /// Emit a batch from `pending_extra` nodes.
     fn emit_pending_batch(&mut self) -> Option<Result<Batch<'a>, String>> {
         let alias = &self.node_pattern.alias;
 
