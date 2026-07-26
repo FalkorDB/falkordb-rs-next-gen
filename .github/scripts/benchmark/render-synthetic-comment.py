@@ -90,7 +90,7 @@ def _offenders_line(offenders: list[Any]) -> str:
 def verdict_line(cid: str, label: str, summary: dict[str, Any] | None) -> str:
     """One comparison's verdict line (or its honest degraded form)."""
     if summary is None:
-        return f"⚠ **{label}** — no summary produced for this run (see the `synthetic` job logs)"
+        return f"⚠ **{label}** — no summary produced for this run (see the workflow run logs)"
 
     ver = str(summary.get("schema_version", ""))
     if ver not in SUPPORTED_SCHEMAS:

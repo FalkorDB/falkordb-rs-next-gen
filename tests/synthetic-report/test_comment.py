@@ -214,6 +214,9 @@ def test_missing_summary_degrades_to_honest_line():
     for label in ("PR vs C engine", "main vs C engine"):
         line = next(l for l in out.splitlines() if f"**{label}**" in l)
         assert "no summary produced for this run" in line
+        # Job-agnostic pointer: the failure may live in any job (provisioning,
+        # runner, synthetic), so the line must not name a specific one.
+        assert "see the workflow run logs" in line
 
 
 def test_no_run_meta_omits_wall_clock():
