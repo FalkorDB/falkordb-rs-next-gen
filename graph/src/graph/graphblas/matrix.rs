@@ -75,6 +75,7 @@ use crate::graph::graphblas::{
 /// Size of the `GxB_Container_struct` in bytes.
 const CONTAINER_STRUCT_SIZE: usize = std::mem::size_of::<super::GxB_Container_struct>();
 
+use super::constants::GrB_INDEX_MAX;
 use super::vector::Vector;
 use super::{
     GrB_BOOL, GrB_DESC_C, GrB_DESC_CT0, GrB_DESC_CT0T1, GrB_DESC_CT1, GrB_DESC_R, GrB_DESC_RC,
@@ -90,11 +91,12 @@ use super::{
     GrB_Matrix_removeElement, GrB_Matrix_resize, GrB_Matrix_setElement_BOOL,
     GrB_Matrix_setElement_UINT64, GrB_Matrix_wait, GrB_Mode, GrB_SECOND_UINT64, GrB_Type,
     GrB_UINT64, GrB_WaitMode, GrB_finalize, GrB_mxm, GrB_transpose, GxB_ANY_BOOL,
-    GxB_ANY_PAIR_BOOL, GxB_ANY_UINT64, GxB_Container_free, GxB_Container_new,
-    GxB_Global_Option_set_INT32, GxB_Iterator, GxB_Iterator_free, GxB_Iterator_get_UINT64,
-    GxB_Iterator_new, GxB_JIT_Control, GxB_Matrix_fprint, GxB_Matrix_isStoredElement,
-    GxB_Matrix_memoryUsage, GxB_Matrix_type, GxB_NTHREADS, GxB_Option_Field, GxB_Print_Level,
-    GxB_init, GxB_load_Matrix_from_Container, GxB_rowIterator_attach, GxB_rowIterator_getColIndex,
+    GxB_ANY_PAIR_BOOL, GxB_ANY_UINT64, GxB_BITMAP, GxB_Container_free, GxB_Container_new, GxB_FULL,
+    GxB_Format_Value, GxB_Global_Option_set_INT32, GxB_HYPERSPARSE, GxB_Iterator,
+    GxB_Iterator_free, GxB_Iterator_get_UINT64, GxB_Iterator_new, GxB_JIT_Control,
+    GxB_Matrix_fprint, GxB_Matrix_isStoredElement, GxB_Matrix_memoryUsage, GxB_Matrix_type,
+    GxB_NTHREADS, GxB_Option_Field, GxB_Print_Level, GxB_SPARSE, GxB_init,
+    GxB_load_Matrix_from_Container, GxB_rowIterator_attach, GxB_rowIterator_getColIndex,
     GxB_rowIterator_getRowIndex, GxB_rowIterator_nextCol, GxB_rowIterator_nextRow,
     GxB_rowIterator_seekRow, GxB_unload_Matrix_into_Container,
 };
@@ -356,16 +358,91 @@ impl<T> Decode<19> for Matrix<T> {
         unsafe {
             let mut container: MaybeUninit<super::GxB_Container> = MaybeUninit::uninit();
             let info = GxB_Container_new(container.as_mut_ptr());
-            assert_eq!(
-                info,
-                GrB_Info::GrB_SUCCESS,
-                "GxB_Container_new failed: {info:?}"
-            );
+            if info != GrB_Info::GrB_SUCCESS {
+                return Err(format!("Matrix decode: GxB_Container_new failed: {info:?}"));
+            }
             let container = container.assume_init();
 
-            // Copy struct data into the allocated container
+            // Every failure path below must still release the container (and
+            // any vectors already attached to it), so the fallible work is
+            // factored out and its result handled after the free.
+            let result = Self::decode_into_container(container, &container_bytes, r);
+
+            let mut c = container;
+            let info = GxB_Container_free(&raw mut c);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+
+            result
+        }
+    }
+}
+
+impl<T> Matrix<T> {
+    /// Populates `container` from an untrusted payload and loads it into a
+    /// freshly created `GrB_Matrix`.
+    ///
+    /// `GRAPH.RESTORE` (and the RDB load path) hand a fully attacker-controlled
+    /// byte string to this decoder, and `GxB_load_Matrix_from_Container` is
+    /// documented as an O(1) operation that does *not* inspect the matrix
+    /// content: it only checks a handful of length invariants. A payload whose
+    /// row indices point outside the declared dimensions therefore yields a
+    /// "valid-looking" matrix that makes later GraphBLAS kernels index out of
+    /// bounds. Two layers of validation close that hole:
+    ///
+    /// 1. the scalar header fields are range-checked and the reserved/derived
+    ///    fields are reset rather than trusted, and
+    /// 2. the loaded matrix is fully validated with `GxB_Matrix_fprint` at
+    ///    `GxB_SILENT` (no output), which walks the structure and rejects
+    ///    non-monotonic `p`, out-of-range `i`/`h`, unsorted or duplicate
+    ///    indices and a mismatched entry count.
+    ///
+    /// # Safety
+    ///
+    /// `container` must be a live container returned by `GxB_Container_new`.
+    /// On every return path the caller retains ownership of `container` and
+    /// must free it with `GxB_Container_free`.
+    unsafe fn decode_into_container(
+        container: super::GxB_Container,
+        container_bytes: &[u8],
+        r: &mut dyn Reader,
+    ) -> Result<Self, String> {
+        unsafe {
+            // `GxB_Container_struct` holds Rust `bool`s (`iso`, `jumbled` and
+            // the reserved `bool_future` array), whose only valid bit patterns
+            // are 0 and 1. Copying attacker-chosen bytes straight into them
+            // would put an invalid value in typed memory, which is undefined
+            // behaviour. Sanitize a scratch copy first, so no invalid bit
+            // pattern ever reaches the container.
+            let mut scratch = [0u8; CONTAINER_STRUCT_SIZE];
+            scratch.copy_from_slice(&container_bytes[..CONTAINER_STRUCT_SIZE]);
+
+            for (name, offset) in [
+                (
+                    "iso",
+                    std::mem::offset_of!(super::GxB_Container_struct, iso),
+                ),
+                (
+                    "jumbled",
+                    std::mem::offset_of!(super::GxB_Container_struct, jumbled),
+                ),
+            ] {
+                let byte = scratch[offset];
+                if byte > 1 {
+                    return Err(format!(
+                        "Matrix decode: container field `{name}` is not a valid boolean: {byte}"
+                    ));
+                }
+            }
+
+            // `bool_future` is reserved and never carries meaning, so rather
+            // than rejecting the payload just zero it out before the copy.
+            let bool_future_offset = std::mem::offset_of!(super::GxB_Container_struct, bool_future);
+            let bool_future_len = std::mem::size_of::<[bool; 30]>();
+            scratch[bool_future_offset..bool_future_offset + bool_future_len].fill(0);
+
+            // Copy the sanitized struct data into the allocated container
             std::ptr::copy_nonoverlapping(
-                container_bytes.as_ptr(),
+                scratch.as_ptr(),
                 container.cast::<u8>(),
                 CONTAINER_STRUCT_SIZE,
             );
@@ -378,6 +455,49 @@ impl<T> Decode<19> for Matrix<T> {
             (*container).p = null_mut();
             (*container).Y = null_mut();
 
+            // Reserved fields and the cached non-empty counts are never
+            // serialized meaningfully; -1 is the GraphBLAS "not computed"
+            // sentinel, so recompute lazily instead of trusting the payload.
+            (*container).nrows_nonempty = -1;
+            (*container).ncols_nonempty = -1;
+            (*container).u64_future = [0; 11];
+            (*container).u32_future = [0; 14];
+            (*container).vector_future = [null_mut(); 11];
+            (*container).matrix_future = [null_mut(); 15];
+            (*container).void_future = [null_mut(); 16];
+
+            let nrows = (*container).nrows;
+            let ncols = (*container).ncols;
+            let nvals = (*container).nvals;
+            let format = (*container).format;
+            let orientation = (*container).orientation;
+
+            if nrows > GrB_INDEX_MAX || ncols > GrB_INDEX_MAX {
+                return Err(format!(
+                    "Matrix decode: dimensions {nrows}x{ncols} exceed GrB_INDEX_MAX"
+                ));
+            }
+            #[allow(clippy::cast_possible_wrap)]
+            if format != GxB_HYPERSPARSE as i32
+                && format != GxB_SPARSE as i32
+                && format != GxB_BITMAP as i32
+                && format != GxB_FULL as i32
+            {
+                return Err(format!("Matrix decode: invalid container format {format}"));
+            }
+            if orientation != GxB_Format_Value::GxB_BY_ROW as i32
+                && orientation != GxB_Format_Value::GxB_BY_COL as i32
+            {
+                return Err(format!(
+                    "Matrix decode: invalid container orientation {orientation}"
+                ));
+            }
+            if u128::from(nvals) > u128::from(nrows) * u128::from(ncols) {
+                return Err(format!(
+                    "Matrix decode: nvals {nvals} exceeds capacity of a {nrows}x{ncols} matrix"
+                ));
+            }
+
             // Read and load 5 vectors: x, h, p, i, b
             (*container).x = ManuallyDrop::new(Vector::<bool>::decode(r)?).ptr();
             (*container).h = ManuallyDrop::new(Vector::<bool>::decode(r)?).ptr();
@@ -388,26 +508,41 @@ impl<T> Decode<19> for Matrix<T> {
             // Create matrix and load from container
             let mut m: MaybeUninit<GrB_Matrix> = MaybeUninit::uninit();
             let info = GrB_Matrix_new(m.as_mut_ptr(), GrB_BOOL, 0, 0);
-            assert_eq!(
-                info,
-                GrB_Info::GrB_SUCCESS,
-                "GrB_Matrix_new failed: {info:?}"
-            );
-            let m = m.assume_init();
+            if info != GrB_Info::GrB_SUCCESS {
+                return Err(format!("Matrix decode: GrB_Matrix_new failed: {info:?}"));
+            }
+            let mut m = m.assume_init();
 
             let info = GxB_load_Matrix_from_Container(m, container, null_mut());
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            if info != GrB_Info::GrB_SUCCESS {
+                GrB_Matrix_free(&raw mut m);
+                return Err(format!(
+                    "Matrix decode: GxB_load_Matrix_from_Container failed: {info:?}"
+                ));
+            }
+
+            // Full structural validation of the freshly loaded matrix; at
+            // GxB_SILENT nothing is printed, but every index is bounds- and
+            // order-checked. This is what makes a malformed payload an error
+            // instead of an out-of-bounds access in a later kernel.
+            let info =
+                GxB_Matrix_fprint(m, null_mut(), GxB_Print_Level::GxB_SILENT as _, null_mut());
+            if info != GrB_Info::GrB_SUCCESS {
+                GrB_Matrix_free(&raw mut m);
+                return Err(format!(
+                    "Matrix decode: decoded matrix failed validation: {info:?}"
+                ));
+            }
 
             // The hyper-hash (Y) was nullified above and is not serialized, so
             // a hypersparse matrix comes back with GxB_WILL_WAIT set. Rebuild
             // it now so `pending()` reflects real pending work (no-op for
             // non-hypersparse matrices).
             let info = GrB_Matrix_wait(m, GrB_WaitMode::GrB_MATERIALIZE as _);
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
-
-            let mut c = container;
-            let info = GxB_Container_free(&raw mut c);
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            if info != GrB_Info::GrB_SUCCESS {
+                GrB_Matrix_free(&raw mut m);
+                return Err(format!("Matrix decode: GrB_Matrix_wait failed: {info:?}"));
+            }
 
             Ok(Self {
                 m: Arc::new(m),
@@ -1319,5 +1454,243 @@ impl<E: IterExtract> Iterator for Iter<E> {
             }
             Some(item)
         }
+    }
+}
+
+#[cfg(test)]
+mod decode_hardening_tests {
+    use super::Matrix;
+    use crate::graph::graphblas::GxB_Container_struct;
+    use crate::graph::graphblas::serialization::{Decode, Encode, Reader, Writer};
+    use crate::graph::graphblas::test_init::ensure_init;
+
+    /// Overwrite a header field of the encoded container in place. Offsets are
+    /// derived from the struct itself so a SuiteSparse/bindgen layout change
+    /// cannot make these tests silently tamper with the wrong field.
+    fn poke_header(
+        items: &mut ItemStream,
+        offset: usize,
+        bytes: &[u8],
+    ) {
+        items.buffers[0][offset..offset + bytes.len()].copy_from_slice(bytes);
+    }
+
+    /// Records the exact item stream `encode` produces so a test can tamper
+    /// with a single item before feeding it back to `decode`.
+    #[derive(Default)]
+    struct ItemStream {
+        buffers: Vec<Vec<u8>>,
+        unsigned: Vec<u64>,
+        signed: Vec<i64>,
+    }
+
+    #[derive(Default)]
+    struct VecWriter {
+        items: ItemStream,
+    }
+
+    impl Writer for VecWriter {
+        fn write_unsigned(
+            &mut self,
+            val: u64,
+        ) {
+            self.items.unsigned.push(val);
+        }
+        fn write_signed(
+            &mut self,
+            val: i64,
+        ) {
+            self.items.signed.push(val);
+        }
+        fn write_double(
+            &mut self,
+            _val: f64,
+        ) {
+            unimplemented!()
+        }
+        fn write_buffer(
+            &mut self,
+            data: &[u8],
+        ) {
+            self.items.buffers.push(data.to_vec());
+        }
+    }
+
+    struct VecReader {
+        items: ItemStream,
+        buf_idx: usize,
+        unsigned_idx: usize,
+        signed_idx: usize,
+    }
+
+    impl VecReader {
+        fn new(items: ItemStream) -> Self {
+            Self {
+                items,
+                buf_idx: 0,
+                unsigned_idx: 0,
+                signed_idx: 0,
+            }
+        }
+    }
+
+    impl Reader for VecReader {
+        fn read_unsigned(&mut self) -> Result<u64, String> {
+            let v = *self
+                .items
+                .unsigned
+                .get(self.unsigned_idx)
+                .ok_or_else(|| String::from("eof"))?;
+            self.unsigned_idx += 1;
+            Ok(v)
+        }
+        fn read_signed(&mut self) -> Result<i64, String> {
+            let v = *self
+                .items
+                .signed
+                .get(self.signed_idx)
+                .ok_or_else(|| String::from("eof"))?;
+            self.signed_idx += 1;
+            Ok(v)
+        }
+        fn read_double(&mut self) -> Result<f64, String> {
+            unimplemented!()
+        }
+        fn read_buffer(&mut self) -> Result<Vec<u8>, String> {
+            let v = self
+                .items
+                .buffers
+                .get(self.buf_idx)
+                .ok_or_else(|| String::from("eof"))?
+                .clone();
+            self.buf_idx += 1;
+            Ok(v)
+        }
+    }
+
+    fn encode_sample_matrix() -> ItemStream {
+        let mut m = Matrix::<u64>::new(64, 64);
+        for i in 0..16u64 {
+            m.set(i, (i * 3) % 64, i + 1);
+        }
+        m.wait();
+        let mut w = VecWriter::default();
+        m.encode(&mut w);
+        w.items
+    }
+
+    #[test]
+    fn valid_payload_round_trips() {
+        ensure_init();
+        let items = encode_sample_matrix();
+        let mut r = VecReader::new(items);
+        let Ok(decoded) = <Matrix<u64> as Decode<19>>::decode(&mut r) else {
+            panic!("a payload produced by encode must decode");
+        };
+        assert_eq!(decoded.nvals(), 16);
+    }
+
+    /// The container header is copied verbatim out of an attacker-controlled
+    /// payload, so shrinking the declared dimensions while leaving the entry
+    /// indices untouched used to install a matrix whose entries lie outside
+    /// its own bounds — an out-of-bounds access in every later kernel.
+    #[test]
+    fn shrunken_dimensions_are_rejected() {
+        ensure_init();
+        let mut items = encode_sample_matrix();
+        poke_header(
+            &mut items,
+            std::mem::offset_of!(GxB_Container_struct, nrows),
+            &1u64.to_ne_bytes(),
+        );
+        poke_header(
+            &mut items,
+            std::mem::offset_of!(GxB_Container_struct, ncols),
+            &1u64.to_ne_bytes(),
+        );
+        let mut r = VecReader::new(items);
+        let Err(err) = <Matrix<u64> as Decode<19>>::decode(&mut r) else {
+            panic!("entries outside the declared dimensions must be rejected");
+        };
+        // 16 entries cannot fit a 1x1 matrix, so the capacity guard is what
+        // catches this shape before the payload ever reaches GraphBLAS.
+        assert!(err.contains("exceeds capacity"), "{err}");
+    }
+
+    /// `GxB_load_Matrix_from_Container` is documented as O(1) and does not
+    /// look at the index arrays, so a payload whose header is perfectly
+    /// self-consistent but whose row/column indices point outside the matrix
+    /// used to load cleanly and only blow up later, inside a GraphBLAS kernel
+    /// indexing a workspace sized by the (smaller) real dimension.
+    #[test]
+    fn out_of_range_indices_are_rejected() {
+        ensure_init();
+        let mut items = encode_sample_matrix();
+        // buffers: [0] container, then (data, type-name) per vector in
+        // x, h, p, i, b order — so [7] is the index array's raw bytes.
+        // 0xFFFF_FFFF is out of range for either a 32- or 64-bit index
+        // (the original value is small, so the high half stays zero).
+        items.buffers[7][0..4].copy_from_slice(&u32::MAX.to_ne_bytes());
+        let mut r = VecReader::new(items);
+        let Err(err) = <Matrix<u64> as Decode<19>>::decode(&mut r) else {
+            panic!("indices outside the matrix dimensions must be rejected");
+        };
+        assert!(err.contains("failed validation"), "{err}");
+    }
+
+    #[test]
+    fn invalid_format_is_rejected() {
+        ensure_init();
+        let mut items = encode_sample_matrix();
+        // 3 is not a valid GxB_SPARSITY value.
+        poke_header(
+            &mut items,
+            std::mem::offset_of!(GxB_Container_struct, format),
+            &3i32.to_ne_bytes(),
+        );
+        let mut r = VecReader::new(items);
+        let Err(err) = <Matrix<u64> as Decode<19>>::decode(&mut r) else {
+            panic!("invalid container format must be rejected");
+        };
+        assert!(err.contains("invalid container format"), "{err}");
+    }
+
+    /// `iso` and `jumbled` are Rust `bool`s inside the container struct, so a
+    /// payload byte other than 0/1 would put an invalid bit pattern in a
+    /// `bool` — undefined behaviour the moment GraphBLAS or we read it back.
+    #[test]
+    fn non_boolean_flags_are_rejected() {
+        ensure_init();
+        for field in ["iso", "jumbled"] {
+            let mut items = encode_sample_matrix();
+            let offset = if field == "iso" {
+                std::mem::offset_of!(GxB_Container_struct, iso)
+            } else {
+                std::mem::offset_of!(GxB_Container_struct, jumbled)
+            };
+            poke_header(&mut items, offset, &[2u8]);
+            let mut r = VecReader::new(items);
+            let Err(err) = <Matrix<u64> as Decode<19>>::decode(&mut r) else {
+                panic!("a non-boolean `{field}` byte must be rejected");
+            };
+            assert!(err.contains("is not a valid boolean"), "{err}");
+        }
+    }
+
+    #[test]
+    fn nvals_exceeding_capacity_is_rejected() {
+        ensure_init();
+        let mut items = encode_sample_matrix();
+        // 1 << 40 entries cannot fit in a 64x64 matrix.
+        poke_header(
+            &mut items,
+            std::mem::offset_of!(GxB_Container_struct, nvals),
+            &(1u64 << 40).to_ne_bytes(),
+        );
+        let mut r = VecReader::new(items);
+        let Err(err) = <Matrix<u64> as Decode<19>>::decode(&mut r) else {
+            panic!("impossible nvals must be rejected");
+        };
+        assert!(err.contains("exceeds capacity"), "{err}");
     }
 }

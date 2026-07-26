@@ -135,8 +135,7 @@ use super::{
 };
 
 /// Maximum GraphBLAS index value (2^60 - 1).
-#[allow(non_upper_case_globals)]
-pub const GrB_INDEX_MAX: u64 = (1u64 << 60) - 1;
+pub use super::constants::GrB_INDEX_MAX;
 
 /// Pack a `(src, dst)` node-id pair into the compound row key used by the
 /// edge-id matrix `me`.
