@@ -141,6 +141,13 @@ SYNTHETIC_OUT="${SYNTHETIC_OUT:-${CONFIG_DIR}/synthetic-out}"
 DB_PORT="${DB_PORT:-16379}"
 DB_CPUS="${DB_CPUS:-$(nproc)}"
 DB_MEMORY="${DB_MEMORY:-12g}"
+# CPU partitioning between the measured server container (docker --cpuset-cpus) and the
+# closed-loop client (taskset -c) is DEFAULT-ON with >= 4 cpus — the sets are derived inside
+# synthetic-measure-lib.sh (identically in this process and every leg child, which inherit the
+# SYNTH_* env). SYNTH_CPU_PARTITION=0 disables it; SYNTH_SERVER_CPUS/SYNTH_CLIENT_CPUS pin
+# explicit sets. Policy + fallbacks (few cores, no taskset): synthetic-cpu-lib.sh. Every image
+# in a run is measured under the SAME partitioning, so the comparisons stay apples-to-apples;
+# absolute latencies are not comparable with pre-partitioning reports.
 # The uncached sweep at C=32 trips FalkorDB's default queued-query limit; raise it (as the tool's
 # own synthetic-verify recipe does) so every image is measured under identical, headroom-y settings.
 MAX_QUEUED_QUERIES="${MAX_QUEUED_QUERIES:-1000}"

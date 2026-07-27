@@ -7,7 +7,9 @@
 #   - DOM checks: Playwright/Chromium drives the real page against the fixtures —
 #     XSS-shaped labels must render inert, selectors/chips/filters must work
 #     (tests/synthetic-report/test_page_dom.py);
-#   - the digest-normalization self-test built into synthetic-run.sh.
+#   - the digest-normalization self-test built into synthetic-run.sh;
+#   - the CPU-partition policy tests for the measurement legs
+#     (.github/scripts/benchmark/tests/test-cpu-partition.sh).
 name: Synthetic report tests
 
 on:
@@ -16,6 +18,7 @@ on:
       - ".github/scripts/benchmark/synthetic-*"
       - ".github/scripts/benchmark/assemble-synthetic-data.py"
       - ".github/scripts/benchmark/render-synthetic-comment.py"
+      - ".github/scripts/benchmark/tests/**"
       - "tests/synthetic-report/**"
       - ".github/workflows/synthetic-report-tests.yml"
 
@@ -48,5 +51,7 @@ jobs:
         run: playwright install --with-deps chromium
       - name: Digest-normalization self-test (synthetic-run.sh)
         run: bash .github/scripts/benchmark/synthetic-run.sh --self-test
+      - name: CPU-partition policy tests (synthetic-cpu-lib.sh)
+        run: bash .github/scripts/benchmark/tests/test-cpu-partition.sh
       - name: Run synthetic-report tests
         run: pytest tests/synthetic-report -v --browser chromium

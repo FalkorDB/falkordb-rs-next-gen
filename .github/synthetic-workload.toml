@@ -22,7 +22,9 @@
 # them changes `workload_hash`, so reports become incomparable with older ones. The measurement
 # knobs above (samples / warm-up / concurrency / cache) do NOT change the recorded workload, but
 # they change the measurement protocol, so altering them also breaks comparability with older
-# reports. Bump either deliberately.
+# reports. Bump either deliberately. (The same goes for the runner's server/client CPU
+# partitioning — synthetic-cpu-lib.sh — which shapes absolute latencies without touching the
+# recorded workload.)
 
 seed  = 7
 graph = "synthetic_regression"
