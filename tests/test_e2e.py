@@ -1872,3 +1872,84 @@ def test_optional_match_null_merge():
         [None, [2]],
     ]
 
+
+
+def _raw_redis():
+    """Binary-safe connection: DUMP payloads are not valid UTF-8."""
+    from redis import Redis
+
+    return Redis(
+        host=os.environ.get("FALKORDB_HOST", "localhost"),
+        port=int(os.environ.get("FALKORDB_PORT", os.environ.get("PORT", "6379"))),
+        decode_responses=False,
+    )
+
+
+def test_graph_restore_from_dump():
+    # GRAPH.RESTORE loads a payload produced by the Redis DUMP command and
+    # the resulting graph is fully operational
+    raw = _raw_redis()
+    dest = "test_restore_dest"
+    raw.delete(dest)
+
+    common.g.query(
+        """CREATE (a:P {name: 'alice', age: 30}),
+                  (b:P {name: 'bob', age: 25}),
+                  (a)-[:KNOWS {since: 2020}]->(b)"""
+    )
+    common.g.query("CREATE INDEX FOR (n:P) ON (n.name)")
+    common.wait_for_indices_to_sync(common.g)
+
+    payload = raw.execute_command("DUMP", common.g.name)
+    assert raw.execute_command("GRAPH.RESTORE", dest, payload) == b"OK"
+    assert raw.type(dest) == b"graphdata"
+
+    dest_graph = common.client.select_graph(dest)
+    assert dest_graph.ro_query(
+        "MATCH (a)-[e:KNOWS]->(b) RETURN a.name, a.age, e.since, b.name"
+    ).result_set == [["alice", 30, 2020, "bob"]]
+
+    # index survived the restore
+    assert len(dest_graph.ro_query("CALL db.indexes()").result_set) == 1
+
+    # the restored graph is writable and independent of the source graph
+    dest_graph.query("CREATE (:P {name: 'carol', age: 40})")
+    assert dest_graph.ro_query("MATCH (n:P) RETURN count(n)").result_set == [[3]]
+    assert common.g.ro_query("MATCH (n:P) RETURN count(n)").result_set == [[2]]
+    assert dest_graph.ro_query(
+        "MATCH (n:P {name: 'carol'}) RETURN n.age"
+    ).result_set == [[40]]
+
+    dest_graph.delete()
+
+
+def test_graph_restore_invalid_payload():
+    raw = _raw_redis()
+    common.g.query("CREATE (:A {v: 1})")
+    payload = raw.execute_command("DUMP", common.g.name)
+
+    # wrong number of arguments
+    with pytest.raises(ResponseError):
+        raw.execute_command("GRAPH.RESTORE", "test_restore_bad")
+    with pytest.raises(ResponseError):
+        raw.execute_command("GRAPH.RESTORE", "test_restore_bad", payload, "extra")
+
+    # destination key already exists
+    with pytest.raises(ResponseError):
+        raw.execute_command("GRAPH.RESTORE", common.g.name, payload)
+
+    # corrupted DUMP payload -- the key must not be created
+    with pytest.raises(ResponseError):
+        raw.execute_command("GRAPH.RESTORE", "test_restore_bad", b"\x07\x00\x00garbage")
+    assert raw.exists("test_restore_bad") == 0
+
+    # DUMP payload of a non-graph key -- the key must not be created
+    raw.set("test_restore_string", "just a plain string value")
+    with pytest.raises(ResponseError):
+        raw.execute_command(
+            "GRAPH.RESTORE",
+            "test_restore_bad",
+            raw.execute_command("DUMP", "test_restore_string"),
+        )
+    assert raw.exists("test_restore_bad") == 0
+    raw.delete("test_restore_string")
