@@ -118,7 +118,7 @@ use std::sync::Arc;
 use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
 
-use super::graphblas::serialization::{Decode, Encode, Reader, Writer};
+use super::graphblas::serialization::{Decode, Encode, Reader, Writer, capacity_hint};
 use crate::runtime::value::Value;
 
 /// Insertion-ordered map of attribute names to attribute indices.
@@ -1299,7 +1299,7 @@ impl Decode<19> for AttributeStore {
             let entity_id = r.read_unsigned()?;
             let attr_count = r.read_unsigned()?;
 
-            let mut entries: Vec<(u16, Value)> = Vec::with_capacity(attr_count as usize);
+            let mut entries: Vec<(u16, Value)> = Vec::with_capacity(capacity_hint(attr_count));
             for _ in 0..attr_count {
                 let attr_id = r.read_unsigned()? as u16;
                 let value = Value::decode(r)?;

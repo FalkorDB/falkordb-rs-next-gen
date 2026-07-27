@@ -1,4 +1,5 @@
 import time
+import struct
 import redis
 from graph_utils import graph_eq
 from redis import ResponseError
@@ -65,6 +66,69 @@ class testGraphRestore():
             # verifies GRAPH.RESTORE did not leave a key behind
             pass
         self.env.assertEqual(self.conn.exists("not_a_graph"), 0)
+
+        self.conn.flushall()
+
+    def test_015_malformed_payload_does_not_crash(self):
+        # GRAPH.RESTORE decodes client supplied bytes: every malformed payload
+        # must come back as an error with the server still serving requests
+        raw = self.raw_conn()
+
+        def unsigned(v):
+            return b"\x04" + struct.pack("<Q", v)
+
+        def buffer(b):
+            return b"\x00" + struct.pack("<Q", len(b)) + b
+
+        def header(node_count=0, edge_count=0, deleted_nodes=0,
+                   deleted_edges=0, labels=0, relationships=0):
+            return (buffer(b"g\x00") + unsigned(node_count)
+                    + unsigned(edge_count) + unsigned(deleted_nodes)
+                    + unsigned(deleted_edges) + unsigned(labels)
+                    + unsigned(relationships)
+                    + b"".join(unsigned(0) for _ in range(relationships))
+                    + unsigned(1)                          # key count
+                    + unsigned(0) + unsigned(0) + unsigned(0))  # empty schema
+
+        payloads = {
+            # truncated payloads must not read past the end of the buffer
+            "empty": b"",
+            "garbage": b"garbage",
+            "zeros": b"\x00" * 32,
+            "truncated_dump": b"\x07\x00\x00",
+            "truncated_header": buffer(b"g\x00") + unsigned(0),
+            # a length that would exhaust memory if it were trusted
+            "huge_buffer_len": b"\x00" + struct.pack("<Q", 2 ** 62) + b"abc",
+            # header counts that disagree with the payload directory drive the
+            # post-load matrix rebuild, they must be rejected before that runs
+            "huge_node_count": header(node_count=2 ** 60) + unsigned(0),
+            "huge_edge_count": header(edge_count=2 ** 60) + unsigned(0),
+            "huge_deleted_counts": header(deleted_nodes=2 ** 60,
+                                          deleted_edges=2 ** 60) + unsigned(0),
+            # payload directory counts that disagree with the header
+            "huge_nodes_section": (header() + unsigned(1)
+                                   + unsigned(1) + unsigned(2 ** 60)),
+            "huge_relation_tensors": (header(relationships=3) + unsigned(1)
+                                      + unsigned(7) + unsigned(1)),
+        }
+
+        for name, payload in payloads.items():
+            try:
+                raw.execute_command("GRAPH.RESTORE", "malformed_" + name, payload)
+                self.env.assertTrue(False)
+            except ResponseError:
+                # rejecting the payload is the expected outcome, the point of
+                # the test is that the server is still alive afterwards
+                pass
+            self.env.assertEqual(self.conn.ping(), True)
+            self.env.assertEqual(self.conn.exists("malformed_" + name), 0)
+
+        # an otherwise empty but well formed payload still restores
+        raw.execute_command("GRAPH.RESTORE", "empty_restored",
+                            header() + unsigned(0))
+        empty_graph = self.db.select_graph("empty_restored")
+        self.env.assertEqual(
+            empty_graph.query("MATCH (n) RETURN count(n)").result_set[0][0], 0)
 
         self.conn.flushall()
 

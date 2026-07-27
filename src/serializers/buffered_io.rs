@@ -210,6 +210,13 @@ impl BufferedReader {
 
     /// Load the next chunk from Redis.
     fn load_chunk(&mut self) -> Result<(), String> {
+        // Vec-backed readers (GRAPH.RESTORE) have no Redis IO handle: running
+        // out of buffered data means the payload is truncated, not that another
+        // chunk is available. Calling into Redis with a null handle would
+        // segfault the server.
+        if self.rdb.is_null() {
+            return Err("BufferedReader: unexpected end of payload".to_string());
+        }
         let chunk = raw::load_string_buffer(self.rdb)
             .map_err(|e| format!("BufferedReader: load chunk: {e}"))?;
         self.buf = chunk.as_ref().to_vec();
