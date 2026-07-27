@@ -80,8 +80,17 @@
   th,td{border:1px solid var(--grid);padding:5px 10px;text-align:left}
   th{background:var(--surface-2);font-size:12px}
   td.num,th.num{text-align:right}
-  .matrix-wrap{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px;box-shadow:var(--shadow);overflow-x:auto}
-  .matrix-wrap table{width:auto;min-width:60%}
+  .matrix-wrap{background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow);overflow:auto;max-height:max(340px,calc(100vh - 210px))}
+  /* Sticky thead needs border-collapse:separate (collapsed borders scroll away with the rows),
+     so the matrix grid is emulated with per-cell bottom/right borders. */
+  table.matrix{width:100%;border-collapse:separate;border-spacing:0}
+  table.matrix th,table.matrix td{border:0;border-bottom:1px solid var(--grid);border-right:1px solid var(--grid)}
+  table.matrix th:last-child,table.matrix td:last-child{border-right:0}
+  table.matrix tbody tr:last-child td{border-bottom:0}
+  table.matrix thead th{position:sticky;top:0;z-index:3;background:var(--surface-2)}
+  table.matrix td:first-child{position:sticky;left:0;z-index:2;background:var(--surface)}
+  table.matrix thead th:first-child{left:0;z-index:4}
+  table.matrix tbody tr:hover td{background:color-mix(in srgb,var(--accent) 5%,var(--surface))}
   td.mcell{text-align:center;font-size:15px}
   td.mcell .mdelta{display:block;font-size:11px;line-height:1.4;color:var(--faint)}
   td.mcell .mraw{display:block;font-size:10px;line-height:1.3;color:var(--faint)}
@@ -108,6 +117,40 @@
   .count-note{color:var(--faint);font-size:12px;margin:6px 2px}
   .warn-strip{display:flex;flex-direction:column;gap:4px;margin-top:10px}
   .warn-strip .warn-row{font-size:12.5px;color:var(--warn-fg,#8a6d00);background:var(--warn-bg,rgba(255,193,7,.12));border:1px solid var(--warn-bd,rgba(255,193,7,.35));border-radius:8px;padding:5px 10px}
+  :root[data-theme="dark"] .warn-strip .warn-row,:root[data-theme="dark"] details.warnbox>summary{--warn-fg:#e3c56b}
+  @media (prefers-color-scheme:dark){ :root:not([data-theme="light"]) .warn-strip .warn-row,:root:not([data-theme="light"]) details.warnbox>summary{--warn-fg:#e3c56b} }
+  details.warnbox{margin-top:12px;border:1px solid var(--warn-bd,rgba(255,193,7,.35));border-radius:10px;background:var(--warn-bg,rgba(255,193,7,.12))}
+  details.warnbox>summary{cursor:pointer;padding:8px 12px;font-size:12.5px;font-weight:700;color:var(--warn-fg,#8a6d00)}
+  details.warnbox .warn-strip{margin:0;padding:0 10px 10px}
+  .verdict-strip{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}
+  .vpill{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--border);background:var(--surface);border-radius:999px;padding:4px 12px;font:inherit;font-size:12.5px;font-weight:600;color:var(--muted);cursor:pointer;box-shadow:var(--shadow)}
+  .vpill:hover{color:var(--ink)}
+  .vpill.on{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 8%,transparent)}
+  .vpill .vword{font-weight:700}
+  .vpill .vword.pass{color:var(--good)}
+  .vpill .vword.regressed{color:var(--bad)}
+  .vpill .vword.advisory,.vpill .vword.not_comparable{color:var(--warn)}
+  .vpill .vword.unavailable{color:var(--faint)}
+  .dot{display:inline-block;width:11px;height:11px;border-radius:50%;vertical-align:-1px}
+  .dot.pass{background:var(--good)}
+  .dot.bad{background:var(--bad)}
+  .dot.warn{background:var(--warn)}
+  .dot.skip{background:transparent;box-shadow:inset 0 0 0 2px var(--faint)}
+  td.mcell .dot{width:13px;height:13px}
+  .d-good{color:var(--good) !important}
+  .d-warn{color:var(--warn) !important}
+  .d-bad{color:var(--bad) !important;font-weight:700}
+  .chip .cnt{opacity:.6;font-weight:500;margin-left:4px}
+  .ktag{font-size:9.5px;font-weight:700;letter-spacing:.05em;color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 40%,transparent);border-radius:5px;padding:0 5px;margin-left:7px;vertical-align:1px}
+  details.note-details{margin:8px 0}
+  details.note-details>summary{cursor:pointer;color:var(--muted);font-size:12.5px;font-weight:600}
+  details.note-details .note{margin-top:6px}
+  .list-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:12px}
+  .list-tools .count-note{margin:0;flex:1}
+  button.mini{appearance:none;background:var(--surface);border:1px solid var(--border);color:var(--muted);border-radius:7px;padding:3px 9px;font:inherit;font-size:11.5px;font-weight:600;cursor:pointer}
+  button.mini:hover{color:var(--ink)}
+  details.op>summary .wd{margin-left:auto;font-size:12px}
+  details.op>summary .wd .at{color:var(--faint);font-weight:400}
 </style>
 </head>
 <body>
@@ -123,8 +166,13 @@
       <button class="ghost" id="themeBtn" type="button">◐ theme</button>
     </div>
     <div class="meta-grid" id="metaGrid"></div>
-    <div class="warn-strip" id="warnStrip" hidden></div>
+    <details class="warnbox" id="warnBox" hidden>
+      <summary id="warnSummary">⚠ advisories</summary>
+      <div class="warn-strip" id="warnStrip"></div>
+    </details>
   </header>
+
+  <div class="verdict-strip" id="verdictStrip" hidden></div>
 
   <div class="controls">
     <span class="cl">Comparison</span><div class="seg" id="cmpSeg"></div>
@@ -132,6 +180,7 @@
     <span class="cl" id="cacheLbl" hidden>Cache</span><div class="seg" id="cacheSeg" hidden></div>
   </div>
   <div class="controls secondary" id="matrixControls" hidden>
+    <span class="cl">Sort</span><div class="seg" id="sortSeg"></div>
     <span class="cl">Filter</span><div id="chips"></div>
     <input class="opq" id="opFilter" type="search" placeholder="filter ops by name…" autocomplete="off"/>
   </div>
@@ -159,7 +208,13 @@
     { id: 'p99', label: 'p99' },
     { id: 'throughput', label: 'throughput' }
   ];
-  var OUTCOME_EMOJI = { pass: '🟢', regressed: '🔴', diverged_advisory: '⚠', not_applicable: 'N/A', skipped: '⏭' };
+  var OUTCOME_MARKS = {
+    pass: { cls: 'pass', label: 'pass' },
+    regressed: { cls: 'bad', label: 'regressed' },
+    diverged_advisory: { cls: 'warn', label: 'diverged (advisory)' },
+    skipped: { cls: 'skip', label: 'skipped' }
+  };
+  var OUTCOME_RANK = { regressed: 3, diverged_advisory: 2, pass: 1 };
   var CHIPS = [
     { id: 'all', label: 'all' },
     { id: 'any-red', label: 'any red', scoped: {
@@ -174,7 +229,7 @@
       global: 'ops regressed vs main (main-pr) — global, same in every view' }
   ];
 
-  var state = { view: MATRIX, metric: 'p50', cache: 'uncached', chip: 'all', kind: 'all', q: '' };
+  var state = { view: MATRIX, metric: 'p50', cache: 'uncached', chip: 'all', kind: 'all', q: '', sort: 'name' };
   var data = null;
 
   // ---- tiny DOM helpers (createElement/textContent ONLY — no HTML-string sinks) ---------------
@@ -185,6 +240,18 @@
     return node;
   }
   function clear(node) { while (node.firstChild) { node.removeChild(node.firstChild); } }
+  function outcomeMark(outcome) {
+    // Verdict indicator: a theme-aware CSS dot (native emoji glare in dark mode); unknown
+    // outcomes and not_applicable stay visible as plain text.
+    if (outcome === 'not_applicable') { return el('span', 'v-na', 'N/A'); }
+    var m = OUTCOME_MARKS[outcome];
+    if (!m) { return el('span', null, outcome); }
+    var s = el('span', 'dot ' + m.cls);
+    s.setAttribute('role', 'img');
+    s.setAttribute('aria-label', m.label);
+    s.title = m.label;
+    return s;
+  }
 
   // ---- data access ----------------------------------------------------------------------------
   // v2 slot model: data.comparisons[id][kind] = {status:'ok',analysis}|{status:'unavailable',
@@ -317,12 +384,23 @@
     grid.appendChild(metaCard('Arch', meta.arch || '—'));
     grid.appendChild(metaCard('Total benchmark wall-clock', fmtDuration(meta.elapsed_secs), 'record + all measurements + reports'));
     var images = (meta.images && typeof meta.images === 'object') ? meta.images : {};
-    [['pr', 'PR image'], ['main', 'main image'], ['c-engine', 'C-engine image']].forEach(function (pair) {
-      var img = images[pair[0]];
-      if (img && typeof img === 'object') {
-        grid.appendChild(metaCard(pair[1], String(img.ref || '—'), img.digest ? shortDigest(img.digest) : 'digest unresolved'));
-      }
+    var imgPairs = [['pr', 'PR'], ['main', 'main'], ['c-engine', 'C engine']].filter(function (pair) {
+      return images[pair[0]] && typeof images[pair[0]] === 'object';
     });
+    // One card for all engine images (three separate cards wasted a grid row).
+    if (imgPairs.length > 0) {
+      var ic = el('div', 'meta-card');
+      ic.appendChild(el('div', 'k', 'Images'));
+      imgPairs.forEach(function (pair) {
+        var img = images[pair[0]];
+        var v = el('div', 'v mono', pair[1] + ' · ' + String(img.ref || '—'));
+        var sub = el('span', 'sub', img.digest ? shortDigest(img.digest) : 'digest unresolved');
+        if (img.digest) { sub.title = String(img.digest); }
+        v.appendChild(sub);
+        ic.appendChild(v);
+      });
+      grid.appendChild(ic);
+    }
     var cmps = (meta.comparisons && typeof meta.comparisons === 'object') ? meta.comparisons : {};
     COMPARISONS.forEach(function (c) {
       var m = cmps[c.id];
@@ -332,26 +410,91 @@
           'divergence policy: ' + String(m.divergence_policy || '—')));
       }
     });
+    var box = document.getElementById('warnBox');
     var strip = document.getElementById('warnStrip');
     clear(strip);
-    var seen = {};
+    // Dedupe identical warning texts across (comparison, kind) slots: one row per unique
+    // text prefixed with every slot that emitted it, collapsed behind a count summary —
+    // otherwise a three-way multi-kind run opens on a wall of near-identical banners.
+    var order = [];
+    var groups = {};
+    var raw = 0;
     COMPARISONS.forEach(function (c) {
       KINDS.forEach(function (k) {
         if (!slotOk(c.id, k)) { return; }
         var warns = slot(c.id, k).analysis.warnings;
         (Array.isArray(warns) ? warns : []).forEach(function (w) {
-          // Writes warnings carry a kind prefix; reads lines keep their historical form.
-          var line = c.label + ': ' + (k === 'writes' ? '(writes) ' : '') + String(w);
-          if (seen[line]) { return; }
-          seen[line] = true;
-          strip.appendChild(el('div', 'warn-row', '⚠ ' + line));
+          var text = String(w);
+          raw += 1;
+          var label = c.label + (k === 'writes' ? ' (writes)' : '');
+          if (!groups[text]) { groups[text] = []; order.push(text); }
+          if (groups[text].indexOf(label) < 0) { groups[text].push(label); }
         });
       });
     });
-    strip.hidden = strip.childNodes.length === 0;
+    order.forEach(function (text) {
+      strip.appendChild(el('div', 'warn-row', '⚠ ' + groups[text].join(', ') + ': ' + text));
+    });
+    document.getElementById('warnSummary').textContent =
+      '⚠ ' + order.length + (order.length === 1 ? ' advisory' : ' advisories') +
+      (raw > order.length ? ' (deduplicated from ' + raw + ')' : '');
+    box.hidden = order.length === 0;
   }
 
   // ---- controls -------------------------------------------------------------------------------
+  function renderVerdictStrip() {
+    // At-a-glance health: one clickable pill per (comparison, kind) slot, mirroring the
+    // PR-comment verdict lines; clicking jumps straight to that comparison + kind.
+    var stripEl = document.getElementById('verdictStrip');
+    clear(stripEl);
+    var multiKind = kindsInData().length > 1;
+    var pills = 0;
+    COMPARISONS.forEach(function (c) {
+      KINDS.forEach(function (k) {
+        if (!slot(c.id, k)) { return; }
+        var ok = slotOk(c.id, k);
+        var verdict = ok ? String(slot(c.id, k).analysis.verdict || 'unavailable') : 'unavailable';
+        var b = el('button', 'vpill');
+        b.type = 'button';
+        b.setAttribute('data-vp', c.id + '/' + k);
+        if (state.view === c.id && (state.kind === k || state.kind === 'all')) { b.classList.add('on'); }
+        b.appendChild(el('span', null, multiKind ? c.label + ' · ' + k : c.label));
+        b.appendChild(el('span', 'vword ' + verdict, verdict.replace(/_/g, ' ')));
+        b.title = c.label + ' (' + k + '): ' + (ok ? verdict : slotReason(c.id, k));
+        b.addEventListener('click', function () {
+          state.view = c.id;
+          if (multiKind) { state.kind = k; }
+          render();
+        });
+        stripEl.appendChild(b);
+        pills += 1;
+      });
+    });
+    stripEl.hidden = pills === 0;
+  }
+  function opUniverse() {
+    // The (op → kind) universe the filters range over in the CURRENT view.
+    if (state.view === MATRIX || !isOk(state.view)) { return opKindMap(); }
+    var map = {};
+    KINDS.forEach(function (k) {
+      Object.keys(analysisOps(state.view, k)).forEach(function (op) {
+        if (!(op in map)) { map[op] = k; }
+      });
+    });
+    return map;
+  }
+  function countWith(mutate) {
+    // Visible-op count under a temporary state override — live counts on filter chips.
+    var savedChip = state.chip, savedKind = state.kind;
+    mutate();
+    var uni = opUniverse();
+    var n = Object.keys(uni).filter(function (op) { return opVisible(op, uni[op]); }).length;
+    state.chip = savedChip; state.kind = savedKind;
+    return n;
+  }
+  function chipCount(button, count) {
+    button.appendChild(el('span', 'cnt', '(' + count + ')'));
+  }
   function segButton(label, on, disabled, title, onClick) {
     var b = el('button', on ? 'on' : '', label);
     b.type = 'button';
@@ -413,6 +556,15 @@
     // comparison renders only its reason card — nothing to filter).
     mc.hidden = !(state.view === MATRIX || isOk(state.view));
     var inCmp = state.view !== MATRIX;
+    var sortSeg = document.getElementById('sortSeg');
+    clear(sortSeg);
+    [{ id: 'name', label: 'name', title: 'alphabetical' },
+     { id: 'worst', label: 'worst first', title: 'most regressed first — outcome severity, then the worst Δ% for the selected metric' }
+    ].forEach(function (s) {
+      var b = segButton(s.label, state.sort === s.id, false, s.title, function () { state.sort = s.id; render(); });
+      b.setAttribute('data-sort', s.id);
+      sortSeg.appendChild(b);
+    });
     var chips = document.getElementById('chips');
     clear(chips);
     // Kind chips (all/reads/writes) — only when the run carries more than one kind. They compose
@@ -426,6 +578,7 @@
         b.setAttribute('data-kind', k);
         b.title = k === 'all' ? 'ops of every kind'
           : 'only ' + k + ' ops — composes with the verdict filter and the text filter';
+        chipCount(b, countWith(function () { state.kind = k; }));
         b.addEventListener('click', function () { state.kind = k; render(); });
         chips.appendChild(b);
       });
@@ -438,6 +591,7 @@
       b.setAttribute('data-chip', c.id);
       if (c.scoped) { b.title = inCmp ? c.scoped.cmp : c.scoped.matrix; }
       else if (c.global) { b.title = c.global; }
+      chipCount(b, countWith(function () { state.chip = c.id; }));
       b.addEventListener('click', function () { state.chip = c.id; render(); });
       chips.appendChild(b);
     });
@@ -461,11 +615,10 @@
     var entry = analysisOps(id, kind)[op];
     return entry ? String(entry.op_outcome || 'not_applicable') : null;
   }
-  function worstMetricCell(id, kind, op) {
+  function worstCellOfEntry(entry) {
     // Worst Δ% for the SELECTED metric across concurrencies within the SELECTED cache mode
     // (max Δ% for latency metrics, min for throughput — higher is better there). p50 deltas
     // are the tool-emitted gated ones; other metrics come from context, display-only.
-    var entry = analysisOps(id, kind)[op];
     var cells = (entry && Array.isArray(entry.cells)) ? entry.cells : [];
     var worst = null;
     cells.forEach(function (cell) {
@@ -479,6 +632,51 @@
       }
     });
     return worst;
+  }
+  function worstMetricCell(id, kind, op) {
+    return worstCellOfEntry(analysisOps(id, kind)[op]);
+  }
+  function deltaClass(deltaPct, regressed) {
+    // Severity color for a displayed Δ% — display-only, never a verdict: red only echoes
+    // the tool-emitted regressed outcome; ±5% separates noise from notable movement.
+    if (regressed) { return ' d-bad'; }
+    if (typeof deltaPct !== 'number' || !isFinite(deltaPct)) { return ''; }
+    var worse = state.metric === 'throughput' ? -deltaPct : deltaPct;
+    if (worse <= -5) { return ' d-good'; }
+    if (worse >= 5) { return ' d-warn'; }
+    return '';
+  }
+  function worstBadness(op, kind, ids) {
+    // Sort key for worst-first: outcome severity (gated), then the worst displayed Δ%
+    // (throughput inverted — lower is worse there).
+    var rank = 0, delta = null;
+    ids.forEach(function (id) {
+      if (!slotOk(id, kind)) { return; }
+      var out = opOutcome(id, kind, op);
+      if (out === null) { return; }
+      var r = OUTCOME_RANK[String(out)] || 0;
+      if (r > rank) { rank = r; }
+      var w = worstMetricCell(id, kind, op);
+      if (w) {
+        var d = state.metric === 'throughput' ? -w.mv.deltaPct : w.mv.deltaPct;
+        if (delta === null || d > delta) { delta = d; }
+      }
+    });
+    return { rank: rank, delta: delta };
+  }
+  function sortOps(names, kindOf, idsFor) {
+    if (state.sort !== 'worst') { return names.sort(); }
+    var keys = {};
+    names.forEach(function (op) { keys[op] = worstBadness(op, kindOf[op], idsFor(op)); });
+    return names.sort(function (a, b) {
+      var ka = keys[a], kb = keys[b];
+      if (ka.rank !== kb.rank) { return kb.rank - ka.rank; }
+      if (ka.delta === null && kb.delta === null) { return a < b ? -1 : a > b ? 1 : 0; }
+      if (ka.delta === null) { return 1; }
+      if (kb.delta === null) { return -1; }
+      if (ka.delta !== kb.delta) { return kb.delta - ka.delta; }
+      return a < b ? -1 : a > b ? 1 : 0;
+    });
   }
   function chipPredicate(op, kind) {
     // Verdict-chip predicate for one op OF ONE KIND: quantifiers range over the comparisons
@@ -526,13 +724,18 @@
       chipDescription() + (state.q.trim() ? ' · text: "' + state.q.trim() + '"' : ''));
   }
   function renderMatrix(root) {
-    var wrap = el('div', 'matrix-wrap');
-    wrap.appendChild(el('p', 'note', 'Emoji = the tool-emitted per-op outcome, a gated p50 rollup across ALL cache modes and concurrencies (worst cell wins) — the selectors never change it. The value under it follows the metric + cache selectors: worst \u0394% across concurrencies within the selected cache mode (latency: max \u0394%; throughput: min \u0394%, higher is better), with that cell\u2019s raw baseline \u2192 candidate underneath. Non-p50 values are informational, not gated. Each row is one op of one kind (reads or writes); a comparison that lacks that op\u2019s kind shows \u2014 with the reason in the tooltip.'));
+    var expl = el('details', 'note-details');
+    expl.appendChild(el('summary', null, 'how to read this matrix'));
+    expl.appendChild(el('p', 'note', 'The dot is the tool-emitted per-op outcome, a gated p50 rollup across ALL cache modes and concurrencies (worst cell wins; green = pass, red = regressed, amber = diverged-advisory, hollow = skipped) — the selectors never change it. The value under it follows the metric + cache selectors: worst \u0394% across concurrencies within the selected cache mode (latency: max \u0394%; throughput: min \u0394%, higher is better), with that cell\u2019s raw baseline \u2192 candidate underneath. Non-p50 values are informational, not gated. Each row is one op of one kind (reads or writes); a comparison that lacks that op\u2019s kind shows \u2014 with the reason in the tooltip.'));
+    root.appendChild(expl);
     var kindOf = opKindMap();
-    var names = Object.keys(kindOf).sort().filter(function (op) {
+    var totalOps = Object.keys(kindOf).length;
+    var names = sortOps(Object.keys(kindOf).filter(function (op) {
       return opVisible(op, kindOf[op]);
-    });
+    }), kindOf, function (op) { return availableIdsFor(kindOf[op]); });
+    root.appendChild(countNote(names.length, totalOps));
 
+    var wrap = el('div', 'matrix-wrap');
     var table = el('table', 'matrix');
     var thead = el('thead');
     var hr = el('tr');
@@ -556,7 +759,10 @@
       tr.setAttribute('data-op', op);
       tr.setAttribute('data-kind', kind);
       var opTd = el('td', 'mono', op);
-      if (showKindTag) { opTd.title = kind === 'writes' ? 'write op' : 'read op'; }
+      if (showKindTag) {
+        opTd.title = kind === 'writes' ? 'write op' : 'read op';
+        if (kind === 'writes') { opTd.appendChild(el('span', 'ktag', 'write')); }
+      }
       tr.appendChild(opTd);
       COMPARISONS.forEach(function (c) {
         if (!slotOk(c.id, kind)) {
@@ -568,12 +774,15 @@
           return;
         }
         var out = opOutcome(c.id, kind, op);
-        var td = el('td', 'mcell', out === null ? '—' : (OUTCOME_EMOJI[out] || out));
+        var td = el('td', 'mcell');
+        if (out === null) { td.textContent = '—'; }
+        else { td.appendChild(outcomeMark(out)); }
         if (out) {
           var title = op + ': ' + out;
           var worst = worstMetricCell(c.id, kind, op);
           if (worst) {
-            td.appendChild(el('span', 'mdelta mono' + (worst.mv.gated ? '' : ' delta-neu'),
+            td.appendChild(el('span', 'mdelta mono' + (worst.mv.gated ? '' : ' delta-neu') +
+              deltaClass(worst.mv.deltaPct, out === 'regressed' && state.metric === 'p50'),
               fmtPct(worst.mv.deltaPct)));
             td.appendChild(el('span', 'mraw mono', fmtPair(worst.mv.base, worst.mv.cand)));
             var fmt = state.metric === 'throughput' ? fmtThroughput : fmtMs;
@@ -589,9 +798,7 @@
     });
     table.appendChild(tbody);
     wrap.appendChild(table);
-    var totalOps = Object.keys(kindOf).length;
     root.appendChild(wrap);
-    root.appendChild(countNote(names.length, totalOps));
     if (availableIds().length === 0) {
       root.appendChild(el('p', 'msg', 'No comparison in this run produced an analysis.'));
     }
@@ -619,8 +826,12 @@
   }
   function verdictCell(cell) {
     var v = String(cell.perf_verdict || 'not_applicable');
-    if (v === 'pass') { return el('td', 'v-ok', '🟢 within budget'); }
-    if (v === 'regressed') { return el('td', 'v-bad', '🔴 over budget'); }
+    if (v === 'pass' || v === 'regressed') {
+      var td = el('td', v === 'pass' ? 'v-ok' : 'v-bad');
+      td.appendChild(outcomeMark(v));
+      td.appendChild(document.createTextNode(v === 'pass' ? ' within budget' : ' over budget'));
+      return td;
+    }
     return el('td', 'v-na', 'N/A');
   }
   function budgetText(cell) {
@@ -635,12 +846,23 @@
     d.setAttribute('data-op', op);
     var summary = el('summary');
     var outcome = String(entry.op_outcome || 'not_applicable');
-    summary.appendChild(el('span', null, OUTCOME_EMOJI[outcome] || outcome));
+    summary.appendChild(outcomeMark(outcome));
     summary.appendChild(el('span', 'mono', op));
     if (entry.tier) { summary.appendChild(el('span', 'tier', entry.tier)); }
     var corr = String(entry.correctness || '');
     if (corr === 'diverged') { summary.appendChild(el('span', 'corr', '⚠ results diverged')); }
     else if (corr === 'not_gated') { summary.appendChild(el('span', 'corr', 'correctness not gated')); }
+    var worst = worstCellOfEntry(entry);
+    if (worst) {
+      // Scannability without opening the row: the worst Δ% for the current metric+cache.
+      var wd = el('span', 'wd mono' + (worst.mv.gated ? '' : ' delta-neu') +
+        deltaClass(worst.mv.deltaPct, outcome === 'regressed' && state.metric === 'p50'),
+        'worst Δ ' + fmtPct(worst.mv.deltaPct));
+      wd.appendChild(el('span', 'at', ' @C=' + worst.cell.concurrency));
+      wd.title = 'worst ' + state.metric + ' Δ in cache mode "' + state.cache + '": ' +
+        fmtPair(worst.mv.base, worst.mv.cand);
+      summary.appendChild(wd);
+    }
     d.appendChild(summary);
 
     var body = el('div', 'body');
@@ -724,14 +946,27 @@
     head.appendChild(badge);
     card.appendChild(head);
     var totals = (a.totals && typeof a.totals === 'object') ? a.totals : {};
-    card.appendChild(el('div', 'cmp-sub',
-      labels.baseline + ' → ' + labels.candidate +
+    var sub = el('div', 'cmp-sub');
+    sub.appendChild(document.createTextNode(labels.baseline + ' → ' + labels.candidate +
       ' · budgets: ' + String(a.budget_profile || '—') +
-      ' · divergence policy: ' + String(a.divergence_policy || '—') +
-      ' · ops 🟢 ' + (totals.pass || 0) + ' / 🔴 ' + (totals.regressed || 0) +
-      ' / ⚠ ' + (totals.diverged || 0) + ' / N-A ' + (totals.not_applicable || 0) +
-      (Number(totals.skipped) > 0 ? ' / ⏭ ' + totals.skipped : '') +
-      ' · ' + (a.comparable_cells || 0) + ' comparable p50 cell(s), ' + (a.regressed_cells || 0) + ' over budget'));
+      ' · divergence policy: ' + String(a.divergence_policy || '—') + ' · ops: '));
+    function bucket(cls, n, word) {
+      if (cls) { sub.appendChild(el('span', 'dot ' + cls)); sub.appendChild(document.createTextNode(' ')); }
+      sub.appendChild(document.createTextNode(n + ' ' + word));
+    }
+    bucket('pass', totals.pass || 0, 'pass');
+    sub.appendChild(document.createTextNode(' · '));
+    bucket('bad', totals.regressed || 0, 'regressed');
+    sub.appendChild(document.createTextNode(' · '));
+    bucket('warn', totals.diverged || 0, 'diverged');
+    sub.appendChild(document.createTextNode(' · ' + (totals.not_applicable || 0) + ' n/a'));
+    if (Number(totals.skipped) > 0) {
+      sub.appendChild(document.createTextNode(' · '));
+      bucket('skip', totals.skipped, 'skipped');
+    }
+    sub.appendChild(document.createTextNode(' · ' + (a.comparable_cells || 0) +
+      ' comparable p50 cell(s), ' + (a.regressed_cells || 0) + ' over budget'));
+    card.appendChild(sub);
 
     if (a.status && a.status.kind && a.status.kind !== 'comparable') {
       var nb = el('div', 'banner bad');
@@ -761,11 +996,31 @@
     root.appendChild(card);
 
     var all = Object.keys(ops);
-    var names = all.sort().filter(function (op) { return opVisible(op, kind); });
+    var kindOfC = {};
+    all.forEach(function (op) { kindOfC[op] = kind; });
+    var names = sortOps(all.filter(function (op) { return opVisible(op, kind); }),
+      kindOfC, function () { return [id]; });
+    // Count-note first (was buried under the list), plus bulk open/close for the details.
+    var tools = el('div', 'list-tools');
+    tools.appendChild(countNote(names.length, all.length));
+    var detailNodes = [];
+    if (names.length > 0) {
+      [['expand', 'expand all', true], ['collapse', 'collapse all', false]].forEach(function (spec) {
+        var b = el('button', 'mini', spec[1]);
+        b.type = 'button';
+        b.setAttribute('data-act', spec[0]);
+        b.addEventListener('click', function () {
+          detailNodes.forEach(function (d) { d.open = spec[2]; });
+        });
+        tools.appendChild(b);
+      });
+    }
+    root.appendChild(tools);
     names.forEach(function (op) {
-      root.appendChild(opDetails(op, ops[op], labels));
+      var d = opDetails(op, ops[op], labels);
+      detailNodes.push(d);
+      root.appendChild(d);
     });
-    root.appendChild(countNote(names.length, all.length));
   }
   function renderComparison(root, id) {
     var meta = COMPARISONS.filter(function (c) { return c.id === id; })[0];
@@ -791,9 +1046,52 @@
     });
   }
 
+  // ---- shareable URL-hash state ---------------------------------------------------------------
+  function updateHash() {
+    // Only non-defaults, so pristine URLs stay clean; replaceState avoids history spam
+    // and never scrolls. Invalid values were already normalized by renderControls.
+    var p = [];
+    if (state.view !== MATRIX) { p.push('view=' + encodeURIComponent(state.view)); }
+    if (state.kind !== 'all') { p.push('kind=' + encodeURIComponent(state.kind)); }
+    if (state.metric !== 'p50') { p.push('metric=' + encodeURIComponent(state.metric)); }
+    if (cacheModesInData().length > 1 && state.cache !== 'uncached') { p.push('cache=' + encodeURIComponent(state.cache)); }
+    if (state.chip !== 'all') { p.push('chip=' + encodeURIComponent(state.chip)); }
+    if (state.sort !== 'name') { p.push('sort=' + encodeURIComponent(state.sort)); }
+    if (state.q.trim()) { p.push('q=' + encodeURIComponent(state.q.trim())); }
+    var next = p.length ? '#' + p.join('&') : '';
+    if (next === location.hash || (!next && !location.hash)) { return; }
+    try {
+      history.replaceState(null, '', next || location.pathname + location.search);
+    } catch (e) { /* sandboxed / file:// — state stays in-page only */ }
+  }
+  function applyHash() {
+    var raw = String(location.hash || '').replace(/^#/, '');
+    if (!raw) { return; }
+    var vals = {};
+    raw.split('&').forEach(function (part) {
+      var eq = part.indexOf('=');
+      if (eq <= 0) { return; }
+      try { vals[part.slice(0, eq)] = decodeURIComponent(part.slice(eq + 1)); }
+      catch (e) { /* malformed escape — ignore this key */ }
+    });
+    var views = COMPARISONS.map(function (c) { return c.id; }).concat([MATRIX]);
+    if (views.indexOf(vals.view) >= 0) { state.view = vals.view; }
+    if (vals.kind === 'all' || KINDS.indexOf(vals.kind) >= 0) { state.kind = vals.kind; }
+    if (METRICS.some(function (m) { return m.id === vals.metric; })) { state.metric = vals.metric; }
+    if (typeof vals.cache === 'string' && vals.cache) { state.cache = vals.cache; }
+    if (CHIPS.some(function (c) { return c.id === vals.chip; })) { state.chip = vals.chip; }
+    if (vals.sort === 'name' || vals.sort === 'worst') { state.sort = vals.sort; }
+    if (typeof vals.q === 'string') {
+      state.q = vals.q;
+      document.getElementById('opFilter').value = vals.q;
+    }
+  }
+
   // ---- top-level render -----------------------------------------------------------------------
   function render() {
+    renderVerdictStrip();
     renderControls();
+    updateHash();
     var root = document.getElementById('view');
     clear(root);
     if (state.view === MATRIX) { renderMatrix(root); }
@@ -822,6 +1120,11 @@
     state.q = String(ev.target.value || '');
     render();
   });
+  window.addEventListener('hashchange', function () {
+    if (!data) { return; }
+    applyHash();
+    render();
+  });
   fetch('data.json', { cache: 'no-store' })
     .then(function (resp) {
       if (!resp.ok) { throw new Error('HTTP ' + resp.status); }
@@ -837,6 +1140,7 @@
         renderMeta();
         return;
       }
+      applyHash();
       renderMeta();
       render();
     })
