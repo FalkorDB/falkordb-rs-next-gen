@@ -1,0 +1,24 @@
+{
+  "schema_version": 2,
+  "baseline_label": "main",
+  "candidate_label": "pr",
+  "slug": "synthetic-pr-vs-main-writes-unavailable",
+  "budget_profile": "strict",
+  "divergence_policy": "gate",
+  "gated_metric": "total_ms.p50",
+  "elapsed_secs": null,
+  "overall_verdict": "not_comparable",
+  "headline": "writes leg unavailable — writes leg timed out after 900s during: measuring main writes",
+  "not_comparable_reason": "writes leg timed out after 900s during: measuring main writes",
+  "comparable_cells": 0,
+  "regressed_cells": 0,
+  "diverged_ops": [],
+  "totals": {
+    "pass": 0,
+    "regressed": 0,
+    "diverged": 0,
+    "not_applicable": 0
+  },
+  "per_tier": [],
+  "worst_offenders": []
+}

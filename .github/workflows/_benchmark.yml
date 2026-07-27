@@ -112,7 +112,7 @@ env:
   # Separate, independently-pinned ref for the SYNTHETIC per-op regression check (the `synthetic-*`
   # jobs below). Kept apart from BENCHMARK_REF so the legacy ab-compare vendor mode above is never
   # perturbed. Bump deliberately (with a `# <what>` note) to move it.
-  SYNTHETIC_BENCHMARK_REF: e2706fa282ee32ea5e50a872b48d9d39b95617e7 # v2.3 — three-way analysis model (benchmark#256, merged as #257)
+  SYNTHETIC_BENCHMARK_REF: b09353e66d9a384258ff82276c0dac437f2e1f9a # v2.4 — recorded write bundles / --repo-writes (benchmark#269, design #270)
 
 jobs:
   # Expand (size × variant) into a flat combo list the matrices below fan out
@@ -565,7 +565,11 @@ jobs:
     if: ${{ needs.synthetic-runner.outputs.provisioned == 'success' }}
     continue-on-error: true
     runs-on: synthetic-${{ github.run_id }}-${{ github.run_number }}-${{ inputs.arch }}
-    timeout-minutes: 90
+    # Worst-case leg-budget arithmetic (C reads 45 min + writes 15 + C writes 15) plus the
+    # unbounded prelude (toolchain + release build + reads legs) needs headroom beyond 90;
+    # synthetic-run.sh assembles data.json incrementally so even a hard timeout publishes
+    # whatever completed (upload runs `if: always()`).
+    timeout-minutes: 110
     permissions:
       contents: read
     env:
@@ -739,6 +743,8 @@ jobs:
           args=()
           for id in main-pr c-pr c-main; do
             [ -f "$OUT_DIR/summary-$id.json" ] && args+=(--summary "$id=$OUT_DIR/summary-$id.json")
+            # Writes summaries exist only on runs with write legs; absent file → no writes line.
+            [ -f "$OUT_DIR/summary-$id-writes.json" ] && args+=(--summary-writes "$id=$OUT_DIR/summary-$id-writes.json")
           done
           [ -f "$OUT_DIR/run-meta.json" ] && args+=(--run-meta "$OUT_DIR/run-meta.json")
           BODY=comment.md

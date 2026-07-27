@@ -1,0 +1,45 @@
+{
+  "schema_version": 3,
+  "baseline_label": "main",
+  "candidate_label": "pr",
+  "slug": "synthetic-pr-vs-main-writes-9f2ab1c0d4e5",
+  "budget_profile": "strict",
+  "divergence_policy": "gate",
+  "gated_metric": "total_ms.p50",
+  "elapsed_secs": null,
+  "overall_verdict": "pass",
+  "headline": "no p50 regression beyond budget across 10 comparable cell(s)",
+  "comparable_cells": 10,
+  "regressed_cells": 0,
+  "diverged_ops": [],
+  "totals": {
+    "pass": 10,
+    "regressed": 0,
+    "diverged": 0,
+    "skipped": 0,
+    "not_applicable": 0
+  },
+  "per_tier": [
+    {
+      "tier": "core",
+      "counts": {
+        "pass": 0,
+        "regressed": 0,
+        "diverged": 0,
+        "skipped": 0,
+        "not_applicable": 0
+      }
+    },
+    {
+      "tier": "full",
+      "counts": {
+        "pass": 10,
+        "regressed": 0,
+        "diverged": 0,
+        "skipped": 0,
+        "not_applicable": 0
+      }
+    }
+  ],
+  "worst_offenders": []
+}

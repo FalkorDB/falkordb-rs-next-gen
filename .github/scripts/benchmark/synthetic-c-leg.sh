@@ -21,6 +21,7 @@ set -euo pipefail
 : "${SYNTHETIC_OUT:?SYNTHETIC_OUT (persistent artifact dir) is required}"
 : "${IMAGE_CENGINE:?IMAGE_CENGINE is required}"
 : "${THRESHOLDS:?THRESHOLDS (synthetic-thresholds.toml path) is required}"
+: "${CONTAINER:?CONTAINER (parent-assigned container name) is required}"
 : "${DB_PORT:?DB_PORT is required}"
 : "${DB_CPUS:?DB_CPUS is required}"
 : "${DB_MEMORY:?DB_MEMORY is required}"
@@ -34,67 +35,35 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # digest_candidates / match_digest / resolve_digest — shared with synthetic-run.sh.
 # shellcheck source=.github/scripts/benchmark/synthetic-digest-lib.sh
 . "$SCRIPT_DIR/synthetic-digest-lib.sh"
+# bench / wait_for_redis / measure_recording / report_comparison — shared with the other legs.
+# CONTAINER is parent-assigned so a SIGKILLed child (timeout --kill-after: the EXIT trap never
+# runs) can never leak a container holding DB_PORT — the parent sweeps every name it handed out.
+# shellcheck source=.github/scripts/benchmark/synthetic-measure-lib.sh
+. "$SCRIPT_DIR/synthetic-measure-lib.sh"
 
-CONTAINER="synthetic-cengine-$$"
 cleanup() { docker rm -f "$CONTAINER" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
 stage() { printf '%s' "$1" > "$WORKDIR/c-stage"; echo "synthetic-c-leg: $1"; }
-
-bench() { ( cd "$BENCHMARK_DIR" && cargo run --release --quiet --bin benchmark -- "$@" ); }
-
-wait_for_redis() {
-  local tries=60
-  until docker exec "$CONTAINER" redis-cli PING 2>/dev/null | grep -q PONG; do
-    tries=$((tries - 1))
-    [ "$tries" -le 0 ] && { echo "::error::synthetic-c-leg: C container never became ready" >&2; docker logs "$CONTAINER" 2>&1 | tail -100 || true; return 1; }
-    sleep 2
-  done
-}
 
 stage "resolving the C-engine image digest (${IMAGE_CENGINE})"
 C_DIGEST="$(resolve_digest "$IMAGE_CENGINE")"
 printf '%s' "$C_DIGEST" > "$WORKDIR/c-digest"
 
 stage "measuring the C engine (${C_DIGEST})"
-echo "::group::synthetic: measuring c-engine (${C_DIGEST})"
-docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
 # BROWSER=0 is deliberately hardcoded (no pass-through env), per the three-way design: the bundle
 # image otherwise starts a Node browser server inside the measured container.
-docker run -d --name "$CONTAINER" --env BROWSER=0 \
-  --cpus="$DB_CPUS" --memory="$DB_MEMORY" -p "${DB_PORT}:6379" "$C_DIGEST" >/dev/null
-wait_for_redis
-docker exec "$CONTAINER" redis-cli CONFIG SET save "" >/dev/null 2>&1 || true
-docker exec "$CONTAINER" redis-cli CONFIG SET stop-writes-on-bgsave-error no >/dev/null 2>&1 || true
-docker exec "$CONTAINER" redis-cli GRAPH.CONFIG SET MAX_QUEUED_QUERIES "$MAX_QUEUED_QUERIES" >/dev/null
-bench synthetic run --recording "$WORKDIR/rec" \
-  --endpoint "falkor://127.0.0.1:${DB_PORT}" \
-  --label "c-engine" --server-image "$C_DIGEST" \
-  --concurrency "$SWEEP" --cache "$CACHE" --samples "$SAMPLES" --warmup "$WARMUP" \
-  --out "$WORKDIR/c.json"
-docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
-echo "::endgroup::"
+measure_recording "$WORKDIR/rec" "c-engine" "$C_DIGEST" "$WORKDIR/c.json" \
+  --env BROWSER=0
 
 # Cross-engine comparisons: looser budgets ([cross-engine] TOML profile) and the `advisory`
 # divergence policy — engines legitimately differ, so a diverged op is ⚠ (needs a look), not 🔴.
 stage "reporting c-pr (C engine → PR)"
-echo "::group::synthetic: report c-pr (cross-engine, advisory)"
-bench synthetic report --diff "$WORKDIR/c.json" "$WORKDIR/pr.json" \
-  --regression --thresholds "$THRESHOLDS" \
-  --budget-profile cross-engine --divergence-policy advisory \
-  --out "$SYNTHETIC_OUT/report-c-pr.md" \
-  --summary "$SYNTHETIC_OUT/summary-c-pr.json" \
-  --cells "$SYNTHETIC_OUT/cells-c-pr.json" >/dev/null
-echo "::endgroup::"
+report_comparison "$WORKDIR/c.json" "$WORKDIR/pr.json" \
+  cross-engine advisory c-pr
 
 stage "reporting c-main (C engine → main)"
-echo "::group::synthetic: report c-main (cross-engine, advisory)"
-bench synthetic report --diff "$WORKDIR/c.json" "$WORKDIR/main.json" \
-  --regression --thresholds "$THRESHOLDS" \
-  --budget-profile cross-engine --divergence-policy advisory \
-  --out "$SYNTHETIC_OUT/report-c-main.md" \
-  --summary "$SYNTHETIC_OUT/summary-c-main.json" \
-  --cells "$SYNTHETIC_OUT/cells-c-main.json" >/dev/null
-echo "::endgroup::"
+report_comparison "$WORKDIR/c.json" "$WORKDIR/main.json" \
+  cross-engine advisory c-main
 
 stage "done"

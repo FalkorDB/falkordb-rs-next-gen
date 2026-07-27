@@ -39,6 +39,15 @@ concurrency = { 16 = 18.0, 32 = 25.0 }
 budget_pct  = 12.0
 concurrency = { 16 = 18.0, 32 = 25.0 }
 
+# --- write ops (--repo-writes bundle) -----------------------------------------------------------
+# The write legs replay at C=1 only (the recorded per-op budget pins the sweep), latency-tier
+# only — correctness is `not_gated` by design, so `budget_pct` is the whole gate. Most write ops
+# are sub-millisecond and protected by the 0.5 ms [default] floor; `single_edge_update` is a
+# ~20 ms rand()-targeted update with NO floor protection and no CI A/A history yet, so it starts
+# with extra headroom. Tighten from real A/A data once a few runs accumulate.
+[op.single_edge_update]
+budget_pct = 25.0
+
 # --- cross-engine profile ---------------------------------------------------------------------
 # Selected with `report --budget-profile cross-engine` for the C-engine comparisons (`c-pr`,
 # `c-main`). The two engines legitimately differ — same-engine budgets would drown those reports

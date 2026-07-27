@@ -6,7 +6,8 @@ Guards two contracts:
    refs and reasons stay inert text;
 2. the committed data.json fixtures match the schema the page consumes
    (the shape assemble-synthetic-data.py emits), covering every status the
-   page must handle: ok, ok-with-diverged-advisory-op, and unavailable.
+   page must handle: ok, ok-with-diverged-advisory-op, unavailable, and the
+   v2 (comparison, kind) slot model with reads and writes.
 """
 
 import json
@@ -21,6 +22,7 @@ from support import FIXTURES, SCRIPTS_DIR, TEMPLATE, load_fixture
 ASSEMBLER = SCRIPTS_DIR / "assemble-synthetic-data.py"
 
 COMPARISON_IDS = {"main-pr", "c-pr", "c-main"}
+SLOT_KINDS = {"reads", "writes"}
 OP_OUTCOMES = {"pass", "regressed", "diverged_advisory", "not_applicable", "skipped"}
 CORRECTNESS = {"match", "diverged", "not_gated"}
 PERF_VERDICTS = {"pass", "regressed", "not_applicable"}
@@ -131,7 +133,7 @@ def _assert_analysis_shape(analysis):
 
 
 def _assert_data_shape(data):
-    assert data["schema_version"] == 1
+    assert data["schema_version"] == 2
     meta = data["meta"]
     for key in ("elapsed_secs", "arch", "images", "comparisons"):
         assert key in meta, f"run-meta missing {key}"
@@ -142,12 +144,24 @@ def _assert_data_shape(data):
     assert set(comparisons) <= COMPARISON_IDS
     assert comparisons, "at least one comparison required"
     for cid, entry in comparisons.items():
-        if entry["status"] == "ok":
-            _assert_analysis_shape(entry["analysis"])
-        elif entry["status"] == "unavailable":
-            assert entry["reason"], f"{cid} unavailable without reason"
-        else:
-            raise AssertionError(f"{cid}: unknown status {entry['status']!r}")
+        assert set(entry) <= SLOT_KINDS, f"{cid}: unknown slot kind"
+        assert entry, f"{cid}: comparison without any kind slot"
+        for kind, slot in entry.items():
+            if slot["status"] == "ok":
+                _assert_analysis_shape(slot["analysis"])
+            elif slot["status"] == "unavailable":
+                assert slot["reason"], f"{cid}/{kind} unavailable without reason"
+            else:
+                raise AssertionError(f"{cid}/{kind}: unknown status {slot['status']!r}")
+        # The page's matrix keys rows by bare op name and resolves each to ONE kind — the
+        # assembler rejects reads/writes op-name clashes, so fixtures must stay disjoint too.
+        op_sets = [
+            set(slot["analysis"]["ops"])
+            for slot in entry.values()
+            if slot["status"] == "ok"
+        ]
+        if len(op_sets) == 2:
+            assert not (op_sets[0] & op_sets[1]), f"{cid}: reads/writes op names overlap"
 
 
 @pytest.mark.parametrize(
@@ -160,29 +174,47 @@ def test_fixture_matches_page_schema(fixture):
 
 
 def test_main_fixture_covers_all_statuses():
-    """data.json must keep exercising every status the page renders."""
+    """data.json must keep exercising every status/kind combination the page renders."""
     data = load_fixture("data.json")
-    statuses = {c["status"] for c in data["comparisons"].values()}
-    assert statuses == {"ok", "unavailable"}
-    outcomes = {
-        entry["op_outcome"]
+    slots = [
+        slot
         for c in data["comparisons"].values()
-        if c["status"] == "ok"
-        for entry in c["analysis"]["ops"].values()
+        for slot in c.values()
+    ]
+    statuses = {slot["status"] for slot in slots}
+    assert statuses == {"ok", "unavailable"}
+    # Kind-model coverage: an ok writes slot, an unavailable writes slot, and a comparison
+    # with NO writes slot at all (kind absent — the page renders '—' / omits the card).
+    kinds_by_cid = {cid: set(entry) for cid, entry in data["comparisons"].items()}
+    assert kinds_by_cid["main-pr"] == {"reads", "writes"}
+    assert data["comparisons"]["main-pr"]["writes"]["status"] == "ok"
+    assert data["comparisons"]["c-pr"]["writes"]["status"] == "unavailable"
+    assert kinds_by_cid["c-main"] == {"reads"}
+    ok_ops_by_kind = {
+        kind: [
+            entry
+            for c in data["comparisons"].values()
+            for k, slot in c.items()
+            if k == kind and slot["status"] == "ok"
+            for entry in slot["analysis"]["ops"].values()
+        ]
+        for kind in ("reads", "writes")
     }
+    outcomes = {entry["op_outcome"] for entry in ok_ops_by_kind["reads"]}
     assert "diverged_advisory" in outcomes, (
         "fixture must include a diverged_advisory op so the page's advisory "
         "path stays covered"
     )
+    # Writes ops are latency-only (correctness not_gated by design) and the fixture must
+    # exercise BOTH the green and the red write path.
+    assert ok_ops_by_kind["writes"], "fixture must include an ok writes slot with ops"
+    assert all(e["correctness"] == "not_gated" for e in ok_ops_by_kind["writes"])
+    write_outcomes = {e["op_outcome"] for e in ok_ops_by_kind["writes"]}
+    assert {"pass", "regressed"} <= write_outcomes
     # Contract edge cases the page must keep rendering: a cell-less diverged op
     # (legal — counts in totals), an empty context object, a one-sided context
     # and a one-sided cell whose candidate p50/deltas are omitted entirely.
-    ok_ops = [
-        entry
-        for c in data["comparisons"].values()
-        if c["status"] == "ok"
-        for entry in c["analysis"]["ops"].values()
-    ]
+    ok_ops = ok_ops_by_kind["reads"]
     assert any(
         entry["correctness"] == "diverged" and entry["cells"] == []
         for entry in ok_ops
@@ -217,25 +249,29 @@ def run_assembler(*args):
 
 
 def test_assembler_mixed_ok_and_unavailable(tmp_path):
-    # Use a real cells fixture so the assembled document passes the full
+    # Use real cells fixtures so the assembled document passes the full
     # page-schema check.
     data = load_fixture("data.json")
     cells = tmp_path / "cells.json"
-    cells.write_text(json.dumps(data["comparisons"]["main-pr"]["analysis"]))
+    cells.write_text(json.dumps(data["comparisons"]["main-pr"]["reads"]["analysis"]))
+    wcells = tmp_path / "cells-writes.json"
+    wcells.write_text(json.dumps(data["comparisons"]["main-pr"]["writes"]["analysis"]))
     meta = tmp_path / "run-meta.json"
     meta.write_text((FIXTURES / "run-meta.json").read_text())
     out = tmp_path / "data.json"
     proc = run_assembler(
         "--meta", str(meta), "--out", str(out),
-        "--ok", f"main-pr={cells}",
-        "--unavailable", "c-pr=C leg failed (exit 1)",
-        "--unavailable", "c-main=C leg failed (exit 1)",
+        "--ok", f"main-pr/reads={cells}",
+        "--ok", f"main-pr/writes={wcells}",
+        "--unavailable", "c-pr/reads=C leg failed (exit 1)",
+        "--unavailable", "c-main/reads=C leg failed (exit 1)",
     )
     assert proc.returncode == 0, proc.stderr
     data = json.loads(out.read_text())
-    assert data["comparisons"]["main-pr"]["status"] == "ok"
+    assert data["comparisons"]["main-pr"]["reads"]["status"] == "ok"
+    assert data["comparisons"]["main-pr"]["writes"]["status"] == "ok"
     assert data["comparisons"]["c-pr"] == {
-        "status": "unavailable", "reason": "C leg failed (exit 1)"}
+        "reads": {"status": "unavailable", "reason": "C leg failed (exit 1)"}}
     _assert_data_shape(data)
 
 
@@ -244,21 +280,78 @@ def test_assembler_rejects_unknown_comparison_id(tmp_path):
     meta.write_text((FIXTURES / "run-meta.json").read_text())
     proc = run_assembler(
         "--meta", str(meta), "--out", str(tmp_path / "d.json"),
-        "--unavailable", "nope=broken",
+        "--unavailable", "nope/reads=broken",
     )
     assert proc.returncode != 0
     assert "nope" in proc.stderr
 
 
-def test_assembler_rejects_duplicate_comparison_id(tmp_path):
+def test_assembler_rejects_unknown_kind(tmp_path):
     meta = tmp_path / "run-meta.json"
     meta.write_text((FIXTURES / "run-meta.json").read_text())
     proc = run_assembler(
         "--meta", str(meta), "--out", str(tmp_path / "d.json"),
-        "--unavailable", "c-pr=a", "--unavailable", "c-pr=b",
+        "--unavailable", "c-pr/updates=broken",
+    )
+    assert proc.returncode != 0
+    assert "updates" in proc.stderr
+
+
+def test_assembler_rejects_bare_comparison_id(tmp_path):
+    # The old v1 grammar (no /kind) must be rejected, not silently accepted.
+    meta = tmp_path / "run-meta.json"
+    meta.write_text((FIXTURES / "run-meta.json").read_text())
+    proc = run_assembler(
+        "--meta", str(meta), "--out", str(tmp_path / "d.json"),
+        "--unavailable", "c-pr=broken",
+    )
+    assert proc.returncode != 0
+
+
+def test_assembler_rejects_duplicate_slot(tmp_path):
+    meta = tmp_path / "run-meta.json"
+    meta.write_text((FIXTURES / "run-meta.json").read_text())
+    proc = run_assembler(
+        "--meta", str(meta), "--out", str(tmp_path / "d.json"),
+        "--unavailable", "c-pr/reads=a", "--unavailable", "c-pr/reads=b",
     )
     assert proc.returncode != 0
     assert "duplicate" in proc.stderr.lower()
+
+
+def test_assembler_allows_reads_and_writes_for_same_comparison(tmp_path):
+    data = load_fixture("data.json")
+    cells = tmp_path / "cells.json"
+    cells.write_text(json.dumps(data["comparisons"]["main-pr"]["reads"]["analysis"]))
+    meta = tmp_path / "run-meta.json"
+    meta.write_text((FIXTURES / "run-meta.json").read_text())
+    out = tmp_path / "d.json"
+    proc = run_assembler(
+        "--meta", str(meta), "--out", str(out),
+        "--ok", f"main-pr/reads={cells}",
+        "--unavailable", "main-pr/writes=writes leg failed (exit 1)",
+    )
+    assert proc.returncode == 0, proc.stderr
+    slots = json.loads(out.read_text())["comparisons"]["main-pr"]
+    assert slots["reads"]["status"] == "ok"
+    assert slots["writes"]["status"] == "unavailable"
+
+
+def test_assembler_rejects_op_name_clash_across_kinds(tmp_path):
+    # The page keys matrix rows by bare op name, so a name appearing in both
+    # the reads and writes slots of one comparison must be rejected.
+    data = load_fixture("data.json")
+    cells = tmp_path / "cells.json"
+    cells.write_text(json.dumps(data["comparisons"]["main-pr"]["reads"]["analysis"]))
+    meta = tmp_path / "run-meta.json"
+    meta.write_text((FIXTURES / "run-meta.json").read_text())
+    proc = run_assembler(
+        "--meta", str(meta), "--out", str(tmp_path / "d.json"),
+        "--ok", f"main-pr/reads={cells}",
+        "--ok", f"main-pr/writes={cells}",
+    )
+    assert proc.returncode != 0
+    assert "BOTH reads and writes" in proc.stderr
 
 
 def test_assembler_rejects_cells_without_ops(tmp_path):
@@ -268,7 +361,7 @@ def test_assembler_rejects_cells_without_ops(tmp_path):
     meta.write_text((FIXTURES / "run-meta.json").read_text())
     proc = run_assembler(
         "--meta", str(meta), "--out", str(tmp_path / "d.json"),
-        "--ok", f"main-pr={bad}",
+        "--ok", f"main-pr/reads={bad}",
     )
     assert proc.returncode != 0
 

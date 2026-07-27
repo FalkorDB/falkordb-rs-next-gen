@@ -3,7 +3,9 @@
 The comment is the design's B4 deliverable: three verdict lines (one per comparison ID),
 diverged counts on the cross-engine lines, not_comparable reasons on unavailable ones,
 the run wall-clock from run-meta.json, worst offenders for the gating main-pr comparison
-only, and a single link to the interactive page.
+only, and a single link to the interactive page. Writes summaries (--summary-writes) are
+opt-in per comparison and render an extra "(writes)" line directly under the reads line,
+plus a separate writes offenders line for main-pr.
 """
 
 import subprocess
@@ -18,7 +20,7 @@ INTRO = (
     "Identical recorded workload replayed into each engine image, measured **back-to-back on "
     "one runner**. `PR vs main` gates on strict p50 budgets (result divergence fails it); the "
     "C-engine comparisons use looser cross-engine budgets and are **advisory** — divergence "
-    "never gates them. **Non-blocking.**"
+    "never gates them. Write ops are latency-only (correctness not gated). **Non-blocking.**"
 )
 
 
@@ -292,3 +294,96 @@ def test_non_finite_elapsed_omits_wall_clock(tmp_path):
         "--run-meta", str(p), "--url", URL,
     )
     assert "total wall-clock" not in out
+
+
+# --- writes lines (--summary-writes) -----------------------------------------
+
+
+def test_writes_snapshot():
+    """Golden output with a writes summary: the (writes) line sits directly under
+    the main-pr reads line, everything else unchanged."""
+    out = render(
+        "--summary", fixture_arg("main-pr", "summary-main-pr.json"),
+        "--summary", fixture_arg("c-pr", "summary-c-pr.json"),
+        "--summary", fixture_arg("c-main", "summary-c-main.json"),
+        "--summary-writes", fixture_arg("main-pr", "summary-main-pr-writes.json"),
+        "--run-meta", str(FIXTURES / "run-meta.json"),
+        "--url", URL,
+        "--arch", "x86",
+    )
+    expected = f"""<!-- synthetic-benchmark -->
+## 🧪 Synthetic per-op benchmark (`x86`)
+
+{INTRO}
+
+🟢 **PR vs main** — no p50 regression beyond budget across 26 comparable cell(s)
+🟢 **PR vs main (writes)** — no p50 regression beyond budget across 10 comparable cell(s)
+🟢 **PR vs C engine** — no p50 regression beyond budget across 26 comparable cell(s)
+🟢 **main vs C engine** — no p50 regression beyond budget across 26 comparable cell(s)
+
+⏱ total wall-clock 20m 34s · 📄 **[Interactive report →]({URL})**
+"""
+    assert out == expected
+
+
+def test_writes_offenders_on_separate_line():
+    """Reads and writes offenders must stay on separate lines — merging could hide
+    the true worst op of one kind behind the other's truncated tail."""
+    out = render(
+        "--summary", fixture_arg("main-pr", "summary-main-pr-regressed.json"),
+        "--summary-writes", fixture_arg("main-pr", "summary-main-pr-writes-regressed.json"),
+        "--url", URL,
+    )
+    lines = out.splitlines()
+    reads_idx = next(i for i, l in enumerate(lines) if l.startswith("**Worst offenders (PR vs main):**"))
+    writes_idx = next(i for i, l in enumerate(lines) if l.startswith("**Worst offenders (PR vs main, writes):**"))
+    assert reads_idx < writes_idx
+    assert "`expand_friends` (2 cells over budget)" in lines[reads_idx]
+    assert "`single_edge_update` (1 cell over budget)" in lines[writes_idx]
+    # Both verdict lines carry the red emoji.
+    line = next(l for l in lines if "**PR vs main (writes)**" in l)
+    assert line.startswith("🔴")
+
+
+def test_writes_stub_renders_honest_line():
+    """A writes stub summary (leg failed) renders the ⚠ unavailable line."""
+    out = render(
+        "--summary", fixture_arg("main-pr", "summary-main-pr.json"),
+        "--summary-writes", fixture_arg("main-pr", "summary-main-pr-writes-stub.json"),
+        "--url", URL,
+    )
+    line = next(l for l in out.splitlines() if "**PR vs main (writes)**" in l)
+    assert line.startswith("⚠")
+    assert "writes leg unavailable — writes leg timed out after 900s" in line
+
+
+def test_writes_line_supported_for_cross_engine_comparisons():
+    out = render(
+        "--summary", fixture_arg("main-pr", "summary-main-pr.json"),
+        "--summary-writes", fixture_arg("c-pr", "summary-main-pr-writes.json"),
+        "--url", URL,
+    )
+    line = next(l for l in out.splitlines() if "**PR vs C engine (writes)**" in l)
+    assert line.startswith("🟢")
+    # No writes summary for c-main → no line at all (opt-in per comparison).
+    assert "**main vs C engine (writes)**" not in out
+
+
+def test_rejects_duplicate_writes_id():
+    proc = subprocess.run(
+        [sys.executable, str(RENDERER),
+         "--summary-writes", fixture_arg("main-pr", "summary-main-pr-writes.json"),
+         "--summary-writes", fixture_arg("main-pr", "summary-main-pr-writes.json")],
+        capture_output=True, text=True,
+    )
+    assert proc.returncode != 0
+    assert "duplicate" in proc.stderr.lower()
+
+
+def test_rejects_unknown_writes_comparison_id():
+    proc = subprocess.run(
+        [sys.executable, str(RENDERER), "--summary-writes", "bogus=x.json"],
+        capture_output=True, text=True,
+    )
+    assert proc.returncode != 0
+    assert "bogus" in proc.stderr

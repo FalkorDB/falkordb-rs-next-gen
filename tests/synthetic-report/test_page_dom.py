@@ -3,13 +3,18 @@
 Covers the two properties the design demands of the page:
 1. hostile op/engine labels (script-shaped strings in data.json) render as
    inert TEXT — nothing executes, nothing is parsed as markup;
-2. the comparison/metric/cache selectors and the matrix filter chips and
-   free-text op filter actually switch what is rendered.
+2. the comparison/metric/cache selectors and the matrix filter chips (kind +
+   verdict) and free-text op filter actually switch what is rendered.
+
+data.json carries both kinds: reads on every comparison plus a writes slot on
+main-pr (ok: one pass + one regressed op) and c-pr (unavailable); c-main has
+no writes slot at all.
 """
 
 
 XSS_OP_SCRIPT = "<script>window.__pwned=1</script>"
 XSS_OP_IMG = '<img src=x onerror="window.__pwned=2">'
+XSS_OP_SVG_WRITE = '<svg onload="window.__pwned=3">write'
 
 
 def wait_ready(page):
@@ -26,15 +31,17 @@ def test_script_shaped_labels_render_inert(serve_page, page):
     # Nothing executed: none of the payload sentinels may exist.
     assert page.evaluate("window.__pwned") is None
 
-    # The op labels appear verbatim as text in the matrix rows.
+    # The op labels appear verbatim as text in the matrix rows (reads AND writes).
     rows = page.locator("#view tr[data-op]")
     ops = [rows.nth(i).get_attribute("data-op") for i in range(rows.count())]
     assert XSS_OP_SCRIPT in ops and XSS_OP_IMG in ops
+    assert XSS_OP_SVG_WRITE in ops
     assert page.locator("#view td", has_text="window.__pwned=1").count() > 0
 
-    # No <script> or <img> node was created inside the rendered view.
+    # No <script>, <img> or <svg> node was created inside the rendered view.
     assert page.locator("#view script").count() == 0
     assert page.locator("#view img").count() == 0
+    assert page.locator("#view svg").count() == 0
     assert page.locator("#metaGrid script, #metaGrid img").count() == 0
 
 
@@ -200,18 +207,27 @@ def test_matrix_chips_filter_rows(serve_page, page):
     total = page.locator("#view tr[data-op]").count()
     assert total > 1
 
-    # The sample fixture has one diverged_advisory op with cells and one
-    # cell-less diverged op (both ⚠ in c-pr) and no regressed ops, so:
-    # any-red -> 0 rows;  all-green -> total - 2 rows (both diverged ops are
-    # non-green in an available comparison).
+    # Reads: one diverged_advisory op with cells and one cell-less diverged op
+    # (both ⚠ in c-pr), no regressed reads. Writes (main-pr only): one pass op
+    # and one regressed op. So:
+    # any-red -> 1 row (the regressed write op);
+    # all-green -> total - 3 (two diverged reads + the regressed write drop out).
     page.click('#chips [data-chip="any-red"]')
-    assert page.locator("#view tr[data-op]").count() == 0
+    rows = page.locator("#view tr[data-op]")
+    assert rows.count() == 1
+    assert rows.first.get_attribute("data-op") == "single_edge_update"
 
     page.click('#chips [data-chip="all-green"]')
-    assert page.locator("#view tr[data-op]").count() == total - 2
+    assert page.locator("#view tr[data-op]").count() == total - 3
 
+    # No red vs the C engine anywhere (c-pr writes are unavailable, reads have no reds).
     page.click('#chips [data-chip="red-vs-c"]')
     assert page.locator("#view tr[data-op]").count() == 0
+
+    page.click('#chips [data-chip="red-vs-main"]')
+    rows = page.locator("#view tr[data-op]")
+    assert rows.count() == 1
+    assert rows.first.get_attribute("data-op") == "single_edge_update"
 
     page.click('#chips [data-chip="all"]')
     assert page.locator("#view tr[data-op]").count() == total
@@ -416,3 +432,133 @@ def test_cells_v2_skipped_ops_render_neutral(serve_page, page):
     assert "⏭" not in page.locator("#view .cmp-sub").first.inner_text()
 
     assert errors == []
+
+
+# --- writes kind: chips, matrix slots, per-kind cards ------------------------
+
+
+def test_kind_chips_filter_matrix_rows(serve_page, page):
+    """Kind chips appear only for multi-kind runs and compose with the other filters."""
+    page.goto(serve_page("data.json"))
+    wait_ready(page)
+    chips = page.locator('#chips button[data-kind]')
+    assert [chips.nth(i).inner_text() for i in range(chips.count())] == [
+        "all kinds", "reads", "writes"]
+    total = page.locator("#view tr[data-op]").count()
+    reads = page.locator('#view tr[data-op][data-kind="reads"]').count()
+    writes = page.locator('#view tr[data-op][data-kind="writes"]').count()
+    assert writes == 2 and reads + writes == total
+
+    page.click('#chips button[data-kind="writes"]')
+    rows = page.locator("#view tr[data-op]")
+    ops = sorted(rows.nth(i).get_attribute("data-op") for i in range(rows.count()))
+    assert ops == ["single_edge_update", "single_vertex_write"]
+
+    # Composes AND with the verdict chip and the text filter.
+    page.click('#chips [data-chip="all-green"]')
+    rows = page.locator("#view tr[data-op]")
+    assert rows.count() == 1 and rows.first.get_attribute("data-op") == "single_vertex_write"
+    page.fill("#opFilter", "zz-no-such-op")
+    assert page.locator("#view tr[data-op]").count() == 0
+    page.fill("#opFilter", "")
+    page.click('#chips [data-chip="all"]')
+
+    page.click('#chips button[data-kind="reads"]')
+    assert page.locator("#view tr[data-op]").count() == reads
+    page.click('#chips button[data-kind="all"]')
+    assert page.locator("#view tr[data-op]").count() == total
+
+
+def test_kind_chips_absent_for_reads_only_run(serve_page, page):
+    """A run without writes slots must render exactly as before — no kind chips."""
+    page.goto(serve_page("data-v2-skipped.json"))
+    wait_ready(page)
+    assert page.locator('#chips button[data-kind]').count() == 0
+
+
+def test_matrix_write_rows_mark_unavailable_and_absent_slots(serve_page, page):
+    """A write-op row shows '—' with an honest per-kind tooltip where the writes slot
+    is unavailable (c-pr) or absent entirely (c-main), while reads stay rendered."""
+    page.goto(serve_page("data.json"))
+    wait_ready(page)
+    row = page.locator('#view tr[data-op="single_edge_update"]')
+    # main-pr column: real regressed cell with the write op's Δ%.
+    main_pr = row.locator("td").nth(1)
+    assert "🔴" in main_pr.inner_text() and "+35.7%" in main_pr.inner_text()
+    assert "19.842 ms → 26.917 ms" in main_pr.get_attribute("title")
+    # c-pr column: writes slot unavailable — em-dash + kind-scoped reason.
+    c_pr = row.locator("td").nth(2)
+    assert c_pr.inner_text().strip() == "—"
+    assert c_pr.get_attribute("title") == (
+        "unavailable (writes) — C writes leg failed (exit 1) during: "
+        "measuring C-engine writes")
+    # c-main column: no writes slot at all.
+    c_main = row.locator("td").nth(3)
+    assert c_main.inner_text().strip() == "—"
+    assert c_main.get_attribute("title") == "unavailable (writes) — not part of this run"
+    # A reads row keeps its real cells in c-pr (kind slots are independent).
+    assert "%" in page.locator('#view tr[data-op="aggregate_age"] td').nth(2).inner_text()
+
+
+def test_comparison_view_renders_per_kind_cards(serve_page, page):
+    """main-pr renders one card per kind (reads first), writes card carries its own
+    verdict and the not_gated correctness note; the kind chip hides other kinds."""
+    page.goto(serve_page("data.json"))
+    wait_ready(page)
+    page.click('#cmpSeg button[data-cmp="main-pr"]')
+    page.wait_for_selector("#view .cmp-card")
+    cards = page.locator("#view .cmp-card")
+    assert cards.count() == 2
+    assert [cards.nth(i).get_attribute("data-kind") for i in range(2)] == ["reads", "writes"]
+    titles = page.locator("#view .cmp-title")
+    assert titles.nth(0).inner_text().endswith("— reads")
+    assert titles.nth(1).inner_text().endswith("— writes")
+    writes_card = cards.nth(1)
+    assert writes_card.locator(".verdict-badge").inner_text() == "regressed"
+    # Op details render per kind (as siblings following each card): the regressed
+    # write op is present, carries the not-gated chip, and has its C=1 cell row.
+    d = page.locator('#view details[data-op="single_edge_update"]')
+    assert d.count() == 1
+    assert d.locator("summary .corr").inner_text() == "correctness not gated"
+    d.locator("summary").click()
+    assert d.locator("tbody tr").count() == 1
+    total_details = page.locator("#view details[data-op]").count()
+    # Kind chip scopes the card list AND the op details.
+    page.click('#chips button[data-kind="reads"]')
+    cards = page.locator("#view .cmp-card")
+    assert cards.count() == 1 and cards.first.get_attribute("data-kind") == "reads"
+    assert page.locator("#view details[data-op]").count() == total_details - 2
+    page.click('#chips button[data-kind="writes"]')
+    cards = page.locator("#view .cmp-card")
+    assert cards.count() == 1 and cards.first.get_attribute("data-kind") == "writes"
+    assert page.locator("#view details[data-op]").count() == 2
+    page.click('#chips button[data-kind="all"]')
+    assert page.locator("#view .cmp-card").count() == 2
+
+
+def test_unavailable_writes_kind_renders_banner_card(serve_page, page):
+    """c-pr: reads render normally, the writes card degrades to an honest banner."""
+    page.goto(serve_page("data.json"))
+    wait_ready(page)
+    page.click('#cmpSeg button[data-cmp="c-pr"]')
+    page.wait_for_selector("#view .cmp-card")
+    cards = page.locator("#view .cmp-card")
+    assert cards.count() == 2
+    writes_card = cards.nth(1)
+    assert writes_card.get_attribute("data-kind") == "writes"
+    banner = writes_card.locator(".banner.warn").inner_text()
+    assert "unavailable — C writes leg failed (exit 1)" in banner
+    # Reads details still render; no write-op details exist (details are card siblings).
+    details = page.locator("#view details[data-op]")
+    assert details.count() > 0
+    ops = {details.nth(i).get_attribute("data-op") for i in range(details.count())}
+    assert "single_edge_update" not in ops and "single_vertex_write" not in ops
+
+
+def test_writes_warning_prefixed_in_header_strip(serve_page, page):
+    """Warnings from a writes analysis carry the '(writes)' prefix in the strip."""
+    page.goto(serve_page("data.json"))
+    wait_ready(page)
+    text = page.locator("#warnStrip").inner_text()
+    assert "PR vs main: (writes)" in text
+    assert "latency-only" in text

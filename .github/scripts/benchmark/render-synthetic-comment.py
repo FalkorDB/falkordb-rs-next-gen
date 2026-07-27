@@ -3,10 +3,13 @@
 
 The full Markdown reports are too big for a PR comment (>65 KB), so CI hosts them (plus the
 interactive page) on GitHub Pages and posts THIS compact comment instead: one verdict line per
-comparison (main-pr / c-pr / c-main), the total wall-clock from run-meta.json, worst offenders
-for the gating main-pr comparison only, and a single link to the interactive page. Consumes the
-`SyntheticSummary` schema_version 2 or 3 emitted by `benchmark synthetic report --regression …
---summary <file>` (v3 adds the optional ⏭ skipped bucket); any other schema_version
+comparison and kind (reads via --summary, writes via --summary-writes — a writes line renders
+directly under its comparison's reads line and is omitted entirely when that summary is absent,
+e.g. on a REPO_WRITES-disabled run), the total wall-clock from run-meta.json, worst offenders
+for the gating main-pr comparison (reads and writes on separate lines — the tool pre-truncates
+each list, so merging them would mis-rank), and a single link to the interactive page. Consumes
+the `SyntheticSummary` schema_version 2 or 3 emitted by `benchmark synthetic report --regression
+… --summary <file>` (v3 adds the optional ⏭ skipped bucket); any other schema_version
 warns-and-skips that line (never mis-renders).
 
 Pure stdlib, offline, deterministic. Never raises on a missing/unreadable summary — it degrades
@@ -131,6 +134,7 @@ def build_comment(
     marker: str,
     arch: str,
     summaries: dict[str, str],
+    writes_summaries: dict[str, str],
     url: str | None,
     run_meta_path: str | None,
 ) -> str:
@@ -142,23 +146,36 @@ def build_comment(
         "Identical recorded workload replayed into each engine image, measured **back-to-back on "
         "one runner**. `PR vs main` gates on strict p50 budgets (result divergence fails it); the "
         "C-engine comparisons use looser cross-engine budgets and are **advisory** — divergence "
-        "never gates them. **Non-blocking.**"
+        "never gates them. Write ops are latency-only (correctness not gated). **Non-blocking.**"
     )
     out.append("")
 
     loaded: dict[str, dict[str, Any] | None] = {
         cid: _load(summaries[cid]) if cid in summaries else None for cid in COMPARISON_IDS
     }
+    # Writes summaries are opt-in per comparison: no file → no line (a REPO_WRITES-disabled run
+    # must not add noise). A PROVIDED-but-unreadable file still degrades to the honest line.
+    writes_loaded: dict[str, dict[str, Any] | None] = {
+        cid: _load(writes_summaries[cid]) for cid in COMPARISON_IDS if cid in writes_summaries
+    }
     for cid, label in COMPARISONS:
         out.append(verdict_line(cid, label, loaded[cid]))
+        if cid in writes_loaded:
+            out.append(verdict_line(cid, f"{label} (writes)", writes_loaded[cid]))
     out.append("")
 
-    main_pr = loaded.get("main-pr")
-    if main_pr is not None and str(main_pr.get("schema_version", "")) in SUPPORTED_SCHEMAS:
-        offenders = main_pr.get("worst_offenders") or []
+    def offenders_block(summary: dict[str, Any] | None, heading: str) -> None:
+        if summary is None or str(summary.get("schema_version", "")) not in SUPPORTED_SCHEMAS:
+            return
+        offenders = summary.get("worst_offenders") or []
         if isinstance(offenders, list) and offenders:
-            out.append(f"**Worst offenders (PR vs main):** {_offenders_line(offenders)}")
+            out.append(f"**{heading}:** {_offenders_line(offenders)}")
             out.append("")
+
+    # Reads and writes offenders stay on SEPARATE lines: each list is already truncated by the
+    # tool, so merging them could drop the true worst op of one kind behind the other's tail.
+    offenders_block(loaded.get("main-pr"), "Worst offenders (PR vs main)")
+    offenders_block(writes_loaded.get("main-pr"), "Worst offenders (PR vs main, writes)")
 
     tail_parts: list[str] = []
     elapsed = None
@@ -190,8 +207,13 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument(
         "--summary", action="append", default=[], metavar="ID=FILE", type=_parse_summary_arg,
-        help="a report --summary v2 JSON, tagged with its comparison id "
+        help="a report --summary v2 JSON for the READS kind, tagged with its comparison id "
              "(main-pr|c-pr|c-main); repeatable",
+    )
+    ap.add_argument(
+        "--summary-writes", action="append", default=[], metavar="ID=FILE", type=_parse_summary_arg,
+        help="a report --summary v2 JSON for the WRITES kind, same ID grammar; repeatable — "
+             "omit entirely for runs without write legs (no line is rendered)",
     )
     ap.add_argument("--run-meta", default="", metavar="FILE",
                     help="run-meta.json with the run's elapsed_secs (optional)")
@@ -209,8 +231,15 @@ def main(argv: list[str] | None = None) -> int:
         if cid in summaries:
             ap.error(f"duplicate --summary id {cid!r}")
         summaries[cid] = path
+    writes_summaries: dict[str, str] = {}
+    for cid, path in args.summary_writes:
+        if cid in writes_summaries:
+            ap.error(f"duplicate --summary-writes id {cid!r}")
+        writes_summaries[cid] = path
 
-    body = build_comment(args.marker, args.arch, summaries, args.url or None, args.run_meta or None)
+    body = build_comment(
+        args.marker, args.arch, summaries, writes_summaries, args.url or None, args.run_meta or None
+    )
     if args.out:
         with open(args.out, "w", encoding="utf-8") as fh:
             fh.write(body)

@@ -1,5 +1,5 @@
 {
- "schema_version": 1,
+ "schema_version": 2,
  "meta": {
   "schema_version": 1,
   "elapsed_secs": 1234,
@@ -37,306 +37,312 @@
  },
  "comparisons": {
   "main-pr": {
-   "status": "ok",
-   "analysis": {
-    "schema_version": 2,
-    "comparison": {
-     "baseline_label": "main",
-     "candidate_label": "pr",
-     "slug": "synthetic-pr-vs-main-4595c4e6f0d4"
-    },
-    "meta": {
-     "baseline": {
-      "module_version": "99.99.99",
-      "server_image": "test/main@sha256:eeee",
-      "workload_hash": "sha256:4595c4e6f0d46a3a12b3af37965ac9291e8973d59fb812b597116eda11f787c6",
-      "samples": 20,
-      "warmup": 3,
-      "concurrency": [
-       1,
-       8
-      ]
+   "reads": {
+    "status": "ok",
+    "analysis": {
+     "schema_version": 2,
+     "comparison": {
+      "baseline_label": "main",
+      "candidate_label": "pr",
+      "slug": "synthetic-pr-vs-main-4595c4e6f0d4"
      },
-     "candidate": {
-      "module_version": "99.99.99",
-      "server_image": "test/pr@sha256:eeee",
-      "workload_hash": "sha256:4595c4e6f0d46a3a12b3af37965ac9291e8973d59fb812b597116eda11f787c6",
-      "samples": 20,
-      "warmup": 3,
-      "concurrency": [
-       1,
-       8
-      ]
-     },
-     "thresholds": {
-      "metric": "p50",
-      "default_budget_pct": 10.0,
-      "default_floor_ms": 0.5,
-      "ops": [
-       {
-        "op": "expand_hops_5",
-        "budget_pct": 12.0,
-        "concurrency_budget_pct": {
-         "16": 18.0,
-         "32": 25.0
-        }
-       },
-       {
-        "op": "match_by_index",
-        "budget_pct": 15.0
-       },
-       {
-        "op": "property_projection",
-        "budget_pct": 15.0
-       },
-       {
-        "op": "return_const",
-        "budget_pct": 15.0
-       },
-       {
-        "op": "shortest_path",
-        "budget_pct": 12.0,
-        "concurrency_budget_pct": {
-         "16": 18.0,
-         "32": 25.0
-        }
-       }
-      ]
-     }
-    },
-    "budget_profile": "strict",
-    "divergence_policy": "gate",
-    "gated_metric": "total_ms.p50",
-    "status": {
-     "kind": "comparable"
-    },
-    "warnings": [
-     "a FalkorDB module version is the dev placeholder \u2014 use tagged release images for a meaningful version comparison",
-     "server image changed: test/main@sha256:eeee \u2192 test/pr@sha256:eeee"
-    ],
-    "elapsed_secs": null,
-    "verdict": "pass",
-    "totals": {
-     "pass": 1,
-     "regressed": 0,
-     "diverged": 0,
-     "not_applicable": 0,
-     "skipped": 0
-    },
-    "comparable_cells": 2,
-    "regressed_cells": 0,
-    "ops": {
-     "aggregate_count_users": {
-      "tier": "core",
-      "correctness": "match",
-      "op_outcome": "pass",
-      "cells": [
-       {
-        "concurrency": 1,
-        "cache_mode": "uncached",
-        "baseline_p50_ms": 0.3102085,
-        "candidate_p50_ms": 0.3829169999999999,
-        "delta_pct": 23.43859049639191,
-        "delta_ms": 0.0727084999999999,
-        "budget": {
-         "metric": "p50",
-         "budget_pct": 10.0,
-         "floor_ms": 0.5
+     "meta": {
+      "baseline": {
+       "module_version": "99.99.99",
+       "server_image": "test/main@sha256:eeee",
+       "workload_hash": "sha256:4595c4e6f0d46a3a12b3af37965ac9291e8973d59fb812b597116eda11f787c6",
+       "samples": 20,
+       "warmup": 3,
+       "concurrency": [
+        1,
+        8
+       ]
+      },
+      "candidate": {
+       "module_version": "99.99.99",
+       "server_image": "test/pr@sha256:eeee",
+       "workload_hash": "sha256:4595c4e6f0d46a3a12b3af37965ac9291e8973d59fb812b597116eda11f787c6",
+       "samples": 20,
+       "warmup": 3,
+       "concurrency": [
+        1,
+        8
+       ]
+      },
+      "thresholds": {
+       "metric": "p50",
+       "default_budget_pct": 10.0,
+       "default_floor_ms": 0.5,
+       "ops": [
+        {
+         "op": "expand_hops_5",
+         "budget_pct": 12.0,
+         "concurrency_budget_pct": {
+          "16": 18.0,
+          "32": 25.0
+         }
         },
-        "perf_verdict": "pass",
-        "context": {
-         "baseline": {
-          "p90_ms": 0.33787530000000005,
-          "p95_ms": 0.34673335000000005,
-          "p99_ms": 0.35028027,
-          "throughput_ops_per_sec": 3194.250349371132
-         },
-         "candidate": {
-          "p90_ms": 0.4303836,
-          "p95_ms": 0.4326205500000001,
-          "p99_ms": 0.43699131,
-          "throughput_ops_per_sec": 2574.319974071449
+        {
+         "op": "match_by_index",
+         "budget_pct": 15.0
+        },
+        {
+         "op": "property_projection",
+         "budget_pct": 15.0
+        },
+        {
+         "op": "return_const",
+         "budget_pct": 15.0
+        },
+        {
+         "op": "shortest_path",
+         "budget_pct": 12.0,
+         "concurrency_budget_pct": {
+          "16": 18.0,
+          "32": 25.0
          }
         }
-       },
-       {
-        "concurrency": 8,
-        "cache_mode": "uncached",
-        "baseline_p50_ms": 0.5864585,
-        "candidate_p50_ms": 0.6032500000000001,
-        "delta_pct": 2.8632034491784277,
-        "delta_ms": 0.01679150000000007,
-        "budget": {
-         "metric": "p50",
-         "budget_pct": 10.0,
-         "floor_ms": 0.5
-        },
-        "perf_verdict": "pass",
-        "context": {
-         "baseline": {
-          "p90_ms": 0.7893041000000001,
-          "p95_ms": 0.8619461499999997,
-          "p99_ms": 0.97430553,
-          "throughput_ops_per_sec": 12374.562539878962
+       ]
+      }
+     },
+     "budget_profile": "strict",
+     "divergence_policy": "gate",
+     "gated_metric": "total_ms.p50",
+     "status": {
+      "kind": "comparable"
+     },
+     "warnings": [
+      "a FalkorDB module version is the dev placeholder — use tagged release images for a meaningful version comparison",
+      "server image changed: test/main@sha256:eeee → test/pr@sha256:eeee"
+     ],
+     "elapsed_secs": null,
+     "verdict": "pass",
+     "totals": {
+      "pass": 1,
+      "regressed": 0,
+      "diverged": 0,
+      "not_applicable": 0,
+      "skipped": 0
+     },
+     "comparable_cells": 2,
+     "regressed_cells": 0,
+     "ops": {
+      "aggregate_count_users": {
+       "tier": "core",
+       "correctness": "match",
+       "op_outcome": "pass",
+       "cells": [
+        {
+         "concurrency": 1,
+         "cache_mode": "uncached",
+         "baseline_p50_ms": 0.3102085,
+         "candidate_p50_ms": 0.3829169999999999,
+         "delta_pct": 23.43859049639191,
+         "delta_ms": 0.0727084999999999,
+         "budget": {
+          "metric": "p50",
+          "budget_pct": 10.0,
+          "floor_ms": 0.5
          },
-         "candidate": {
-          "p90_ms": 0.829875,
-          "p95_ms": 0.890083,
-          "p99_ms": 0.9601255,
-          "throughput_ops_per_sec": 12613.985093738464
+         "perf_verdict": "pass",
+         "context": {
+          "baseline": {
+           "p90_ms": 0.33787530000000005,
+           "p95_ms": 0.34673335000000005,
+           "p99_ms": 0.35028027,
+           "throughput_ops_per_sec": 3194.250349371132
+          },
+          "candidate": {
+           "p90_ms": 0.4303836,
+           "p95_ms": 0.4326205500000001,
+           "p99_ms": 0.43699131,
+           "throughput_ops_per_sec": 2574.319974071449
+          }
+         }
+        },
+        {
+         "concurrency": 8,
+         "cache_mode": "uncached",
+         "baseline_p50_ms": 0.5864585,
+         "candidate_p50_ms": 0.6032500000000001,
+         "delta_pct": 2.8632034491784277,
+         "delta_ms": 0.01679150000000007,
+         "budget": {
+          "metric": "p50",
+          "budget_pct": 10.0,
+          "floor_ms": 0.5
+         },
+         "perf_verdict": "pass",
+         "context": {
+          "baseline": {
+           "p90_ms": 0.7893041000000001,
+           "p95_ms": 0.8619461499999997,
+           "p99_ms": 0.97430553,
+           "throughput_ops_per_sec": 12374.562539878962
+          },
+          "candidate": {
+           "p90_ms": 0.829875,
+           "p95_ms": 0.890083,
+           "p99_ms": 0.9601255,
+           "throughput_ops_per_sec": 12613.985093738464
+          }
          }
         }
-       }
-      ]
+       ]
+      }
      }
     }
    }
   },
   "c-pr": {
-   "status": "ok",
-   "analysis": {
-    "schema_version": 2,
-    "comparison": {
-     "baseline_label": "c-engine",
-     "candidate_label": "pr",
-     "slug": "synthetic-pr-vs-c-engine-4595c4e6f0d4"
-    },
-    "meta": {
-     "baseline": {
-      "module_version": "99.99.99",
-      "server_image": "test/c-engine@sha256:eeee",
-      "workload_hash": "sha256:4595c4e6f0d46a3a12b3af37965ac9291e8973d59fb812b597116eda11f787c6",
-      "samples": 20,
-      "warmup": 3,
-      "concurrency": [
-       1,
-       8
-      ]
+   "reads": {
+    "status": "ok",
+    "analysis": {
+     "schema_version": 2,
+     "comparison": {
+      "baseline_label": "c-engine",
+      "candidate_label": "pr",
+      "slug": "synthetic-pr-vs-c-engine-4595c4e6f0d4"
      },
-     "candidate": {
-      "module_version": "99.99.99",
-      "server_image": "test/pr@sha256:eeee",
-      "workload_hash": "sha256:4595c4e6f0d46a3a12b3af37965ac9291e8973d59fb812b597116eda11f787c6",
-      "samples": 20,
-      "warmup": 3,
-      "concurrency": [
-       1,
-       8
-      ]
+     "meta": {
+      "baseline": {
+       "module_version": "99.99.99",
+       "server_image": "test/c-engine@sha256:eeee",
+       "workload_hash": "sha256:4595c4e6f0d46a3a12b3af37965ac9291e8973d59fb812b597116eda11f787c6",
+       "samples": 20,
+       "warmup": 3,
+       "concurrency": [
+        1,
+        8
+       ]
+      },
+      "candidate": {
+       "module_version": "99.99.99",
+       "server_image": "test/pr@sha256:eeee",
+       "workload_hash": "sha256:4595c4e6f0d46a3a12b3af37965ac9291e8973d59fb812b597116eda11f787c6",
+       "samples": 20,
+       "warmup": 3,
+       "concurrency": [
+        1,
+        8
+       ]
+      },
+      "thresholds": {
+       "metric": "p50",
+       "default_budget_pct": 150.0,
+       "default_floor_ms": 2.0,
+       "ops": []
+      }
      },
-     "thresholds": {
-      "metric": "p50",
-      "default_budget_pct": 150.0,
-      "default_floor_ms": 2.0,
-      "ops": []
-     }
-    },
-    "budget_profile": "cross-engine",
-    "divergence_policy": "advisory",
-    "gated_metric": "total_ms.p50",
-    "status": {
-     "kind": "comparable"
-    },
-    "warnings": [
-     "a FalkorDB module version is the dev placeholder \u2014 use tagged release images for a meaningful version comparison",
-     "server image changed: test/c-engine@sha256:eeee \u2192 test/pr@sha256:eeee"
-    ],
-    "elapsed_secs": null,
-    "verdict": "pass",
-    "totals": {
-     "pass": 1,
-     "regressed": 0,
-     "diverged": 0,
-     "not_applicable": 0,
-     "skipped": 2
-    },
-    "comparable_cells": 2,
-    "regressed_cells": 0,
-    "ops": {
-     "aggregate_count_users": {
-      "tier": "core",
-      "correctness": "match",
-      "op_outcome": "pass",
-      "cells": [
-       {
-        "concurrency": 1,
-        "cache_mode": "uncached",
-        "baseline_p50_ms": 0.28689549999999997,
-        "candidate_p50_ms": 0.3829169999999999,
-        "delta_pct": 33.46915514534036,
-        "delta_ms": 0.09602149999999993,
-        "budget": {
-         "metric": "p50",
-         "budget_pct": 150.0,
-         "floor_ms": 2.0
-        },
-        "perf_verdict": "pass",
-        "context": {
-         "baseline": {
-          "p90_ms": 0.31816690000000003,
-          "p95_ms": 0.32628270000000004,
-          "p99_ms": 0.32995654,
-          "throughput_ops_per_sec": 3437.0408865228296
+     "budget_profile": "cross-engine",
+     "divergence_policy": "advisory",
+     "gated_metric": "total_ms.p50",
+     "status": {
+      "kind": "comparable"
+     },
+     "warnings": [
+      "a FalkorDB module version is the dev placeholder — use tagged release images for a meaningful version comparison",
+      "server image changed: test/c-engine@sha256:eeee → test/pr@sha256:eeee"
+     ],
+     "elapsed_secs": null,
+     "verdict": "pass",
+     "totals": {
+      "pass": 1,
+      "regressed": 0,
+      "diverged": 0,
+      "not_applicable": 0,
+      "skipped": 2
+     },
+     "comparable_cells": 2,
+     "regressed_cells": 0,
+     "ops": {
+      "aggregate_count_users": {
+       "tier": "core",
+       "correctness": "match",
+       "op_outcome": "pass",
+       "cells": [
+        {
+         "concurrency": 1,
+         "cache_mode": "uncached",
+         "baseline_p50_ms": 0.28689549999999997,
+         "candidate_p50_ms": 0.3829169999999999,
+         "delta_pct": 33.46915514534036,
+         "delta_ms": 0.09602149999999993,
+         "budget": {
+          "metric": "p50",
+          "budget_pct": 150.0,
+          "floor_ms": 2.0
          },
-         "candidate": {
-          "p90_ms": 0.4303836,
-          "p95_ms": 0.4326205500000001,
-          "p99_ms": 0.43699131,
-          "throughput_ops_per_sec": 2574.319974071449
+         "perf_verdict": "pass",
+         "context": {
+          "baseline": {
+           "p90_ms": 0.31816690000000003,
+           "p95_ms": 0.32628270000000004,
+           "p99_ms": 0.32995654,
+           "throughput_ops_per_sec": 3437.0408865228296
+          },
+          "candidate": {
+           "p90_ms": 0.4303836,
+           "p95_ms": 0.4326205500000001,
+           "p99_ms": 0.43699131,
+           "throughput_ops_per_sec": 2574.319974071449
+          }
+         }
+        },
+        {
+         "concurrency": 8,
+         "cache_mode": "uncached",
+         "baseline_p50_ms": 0.60375,
+         "candidate_p50_ms": 0.6032500000000001,
+         "delta_pct": -0.08281573498963891,
+         "delta_ms": -0.0004999999999999449,
+         "budget": {
+          "metric": "p50",
+          "budget_pct": 150.0,
+          "floor_ms": 2.0
+         },
+         "perf_verdict": "pass",
+         "context": {
+          "baseline": {
+           "p90_ms": 0.8141334000000001,
+           "p95_ms": 0.8726916,
+           "p99_ms": 0.9519011600000002,
+           "throughput_ops_per_sec": 11738.30935918148
+          },
+          "candidate": {
+           "p90_ms": 0.829875,
+           "p95_ms": 0.890083,
+           "p99_ms": 0.9601255,
+           "throughput_ops_per_sec": 12613.985093738464
+          }
          }
         }
-       },
-       {
-        "concurrency": 8,
-        "cache_mode": "uncached",
-        "baseline_p50_ms": 0.60375,
-        "candidate_p50_ms": 0.6032500000000001,
-        "delta_pct": -0.08281573498963891,
-        "delta_ms": -0.0004999999999999449,
-        "budget": {
-         "metric": "p50",
-         "budget_pct": 150.0,
-         "floor_ms": 2.0
-        },
-        "perf_verdict": "pass",
-        "context": {
-         "baseline": {
-          "p90_ms": 0.8141334000000001,
-          "p95_ms": 0.8726916,
-          "p99_ms": 0.9519011600000002,
-          "throughput_ops_per_sec": 11738.30935918148
-         },
-         "candidate": {
-          "p90_ms": 0.829875,
-          "p95_ms": 0.890083,
-          "p99_ms": 0.9601255,
-          "throughput_ops_per_sec": 12613.985093738464
-         }
-        }
-       }
-      ]
-     },
-     "algo_bfs": {
-      "tier": "full",
-      "correctness": "not_gated",
-      "op_outcome": "skipped",
-      "skipped_baseline": true,
-      "skipped_candidate": true,
-      "cells": []
-     },
-     "algo_pagerank": {
-      "tier": "full",
-      "correctness": "not_gated",
-      "op_outcome": "skipped",
-      "skipped_candidate": true,
-      "cells": []
+       ]
+      },
+      "algo_bfs": {
+       "tier": "full",
+       "correctness": "not_gated",
+       "op_outcome": "skipped",
+       "skipped_baseline": true,
+       "skipped_candidate": true,
+       "cells": []
+      },
+      "algo_pagerank": {
+       "tier": "full",
+       "correctness": "not_gated",
+       "op_outcome": "skipped",
+       "skipped_candidate": true,
+       "cells": []
+      }
      }
     }
    }
   },
   "c-main": {
-   "status": "unavailable",
-   "reason": "C leg failed (exit 1) during: measuring the C engine"
+   "reads": {
+    "status": "unavailable",
+    "reason": "C leg failed (exit 1) during: measuring the C engine"
+   }
   }
  }
 }

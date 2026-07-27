@@ -1,7 +1,10 @@
 # Pinned workload for the per-PR **synthetic** benchmark check. `FalkorDB/benchmark synthetic
 # record --config <this file> --repo-reads full` reads `seed` / `graph` / `nodes` / `edges` to build the
 # offline recording (its `workload_hash` must be identical for every image compared, which it is
-# since all images replay this one recorded bundle).
+# since all images replay this one recorded bundle). The same file also feeds the WRITES bundle
+# (`synthetic record --config <this file> --repo-writes`, a second single-kind recording with its
+# own `workload_hash`): write ops carry recorded per-op budgets that pin concurrency 1 and their
+# own samples/warm-up at replay, so the run script's global knobs below only shape the READ legs.
 #
 # The measurement knobs (samples / warm-up / the concurrency sweep + cache mode) are pinned in the
 # run script (.github/scripts/benchmark/synthetic-run.sh — the SAMPLES / WARMUP / SWEEP / CACHE vars),

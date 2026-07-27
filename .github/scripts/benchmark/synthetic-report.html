@@ -8,7 +8,9 @@
 <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%236a4dff'/%3E%3Crect x='7' y='14' width='4.5' height='11' rx='1.5' fill='%23fff'/%3E%3Crect x='13.75' y='9' width='4.5' height='16' rx='1.5' fill='%23fff'/%3E%3Crect x='20.5' y='17' width='4.5' height='8' rx='1.5' fill='%23fff'/%3E%3C/svg%3E"/>
 <title>FalkorDB — synthetic three-way benchmark report</title>
 <!--
-  Interactive per-PR synthetic benchmark report (three-way: PR vs main, PR vs C, main vs C).
+  Interactive per-PR synthetic benchmark report (three-way: PR vs main, PR vs C, main vs C;
+  per kind: the recorded READS bundle and, when enabled, the recorded WRITES bundle — write ops
+  are latency-only, correctness not gated).
 
   A single dependency-free static file: no build step, no external libs, no CDN. It fetches its
   SIBLING data.json (assembled by the measure job — see assemble-synthetic-data.py) and only
@@ -147,6 +149,9 @@
     { id: 'c-main', label: 'main vs C' }
   ];
   var MATRIX = 'matrix';
+  // Slot kinds, in render order. data.json v2 keys each comparison by kind; reads/writes op
+  // names are disjoint (the assembler rejects clashes), so an op name resolves to ONE kind.
+  var KINDS = ['reads', 'writes'];
   var METRICS = [
     { id: 'p50', label: 'p50 (gated)' },
     { id: 'p90', label: 'p90' },
@@ -169,7 +174,7 @@
       global: 'ops regressed vs main (main-pr) — global, same in every view' }
   ];
 
-  var state = { view: MATRIX, metric: 'p50', cache: 'uncached', chip: 'all', q: '' };
+  var state = { view: MATRIX, metric: 'p50', cache: 'uncached', chip: 'all', kind: 'all', q: '' };
   var data = null;
 
   // ---- tiny DOM helpers (createElement/textContent ONLY — no HTML-string sinks) ---------------
@@ -182,33 +187,82 @@
   function clear(node) { while (node.firstChild) { node.removeChild(node.firstChild); } }
 
   // ---- data access ----------------------------------------------------------------------------
+  // v2 slot model: data.comparisons[id][kind] = {status:'ok',analysis}|{status:'unavailable',
+  // reason}; a kind disabled for the run (e.g. REPO_WRITES=0) simply has no key. A comparison is
+  // usable when ANY of its kinds is ok; per-kind availability drives cells and cards.
   function comparison(id) {
     var c = data && data.comparisons ? data.comparisons[id] : undefined;
     return (c && typeof c === 'object') ? c : null;
   }
-  function isOk(id) {
+  function slot(id, kind) {
     var c = comparison(id);
-    return !!(c && c.status === 'ok' && c.analysis && typeof c.analysis === 'object');
+    var s = c ? c[kind] : undefined;
+    return (s && typeof s === 'object') ? s : null;
+  }
+  function slotOk(id, kind) {
+    var s = slot(id, kind);
+    return !!(s && s.status === 'ok' && s.analysis && typeof s.analysis === 'object');
+  }
+  function slotReason(id, kind) {
+    var s = slot(id, kind);
+    if (!s) { return 'not part of this run'; }
+    return String(s.reason || 'unavailable');
+  }
+  function isOk(id) {
+    return KINDS.some(function (k) { return slotOk(id, k); });
   }
   function unavailReason(id) {
     var c = comparison(id);
     if (!c) { return 'not part of this run'; }
-    return String(c.reason || 'unavailable');
+    // No kind is ok — surface each present kind's reason once (they usually coincide).
+    var parts = [];
+    var seen = {};
+    KINDS.forEach(function (k) {
+      if (!slot(id, k)) { return; }
+      var r = slotReason(id, k);
+      if (!seen[r]) { seen[r] = true; parts.push(r); }
+    });
+    return parts.join(' · ') || 'unavailable';
   }
-  function analysisOps(id) {
-    var c = comparison(id);
-    var ops = (c && c.analysis && c.analysis.ops && typeof c.analysis.ops === 'object') ? c.analysis.ops : {};
+  function analysisOps(id, kind) {
+    var s = slot(id, kind);
+    var ops = (s && s.analysis && s.analysis.ops && typeof s.analysis.ops === 'object') ? s.analysis.ops : {};
     return ops;
+  }
+  function kindsInData() {
+    // Kinds present (any status) in at least one comparison — a run without writes slots never
+    // shows the kind chips.
+    return KINDS.filter(function (k) {
+      return COMPARISONS.some(function (c) { return slot(c.id, k) !== null; });
+    });
+  }
+  function opKindMap() {
+    // op name → kind over the union of ok slots. KINDS order makes a hypothetical clash
+    // deterministic (first kind wins); the assembler already rejects real ones per comparison.
+    var map = {};
+    KINDS.forEach(function (k) {
+      COMPARISONS.forEach(function (c) {
+        Object.keys(analysisOps(c.id, k)).forEach(function (op) {
+          if (!(op in map)) { map[op] = k; }
+        });
+      });
+    });
+    return map;
   }
   function availableIds() {
     return COMPARISONS.map(function (c) { return c.id; }).filter(isOk);
   }
+  function availableIdsFor(kind) {
+    return COMPARISONS.map(function (c) { return c.id; }).filter(function (id) { return slotOk(id, kind); });
+  }
   function cacheModesInData() {
     var modes = {};
-    availableIds().forEach(function (id) {
-      var ops = analysisOps(id);
-      Object.keys(ops).forEach(function (op) {
-        (ops[op].cells || []).forEach(function (cell) { modes[String(cell.cache_mode)] = true; });
+    KINDS.forEach(function (k) {
+      availableIdsFor(k).forEach(function (id) {
+        var ops = analysisOps(id, k);
+        Object.keys(ops).forEach(function (op) {
+          (ops[op].cells || []).forEach(function (cell) { modes[String(cell.cache_mode)] = true; });
+        });
       });
     });
     return Object.keys(modes).sort();
@@ -282,13 +336,16 @@
     clear(strip);
     var seen = {};
     COMPARISONS.forEach(function (c) {
-      if (!isOk(c.id)) { return; }
-      var warns = comparison(c.id).analysis.warnings;
-      (Array.isArray(warns) ? warns : []).forEach(function (w) {
-        var line = c.label + ': ' + String(w);
-        if (seen[line]) { return; }
-        seen[line] = true;
-        strip.appendChild(el('div', 'warn-row', '⚠ ' + line));
+      KINDS.forEach(function (k) {
+        if (!slotOk(c.id, k)) { return; }
+        var warns = slot(c.id, k).analysis.warnings;
+        (Array.isArray(warns) ? warns : []).forEach(function (w) {
+          // Writes warnings carry a kind prefix; reads lines keep their historical form.
+          var line = c.label + ': ' + (k === 'writes' ? '(writes) ' : '') + String(w);
+          if (seen[line]) { return; }
+          seen[line] = true;
+          strip.appendChild(el('div', 'warn-row', '⚠ ' + line));
+        });
       });
     });
     strip.hidden = strip.childNodes.length === 0;
@@ -358,6 +415,23 @@
     var inCmp = state.view !== MATRIX;
     var chips = document.getElementById('chips');
     clear(chips);
+    // Kind chips (all/reads/writes) — only when the run carries more than one kind. They compose
+    // (AND) with the verdict chip and the text filter, in every view.
+    var kinds = kindsInData();
+    if (kinds.length > 1) {
+      if (kinds.indexOf(state.kind) < 0 && state.kind !== 'all') { state.kind = 'all'; }
+      ['all'].concat(kinds).forEach(function (k) {
+        var b = el('button', 'chip' + (state.kind === k ? ' on' : ''), k === 'all' ? 'all kinds' : k);
+        b.type = 'button';
+        b.setAttribute('data-kind', k);
+        b.title = k === 'all' ? 'ops of every kind'
+          : 'only ' + k + ' ops — composes with the verdict filter and the text filter';
+        b.addEventListener('click', function () { state.kind = k; render(); });
+        chips.appendChild(b);
+      });
+    } else {
+      state.kind = 'all';
+    }
     CHIPS.forEach(function (c) {
       var b = el('button', 'chip' + (state.chip === c.id ? ' on' : ''), c.label);
       b.type = 'button';
@@ -383,15 +457,15 @@
   }
 
   // ---- matrix view ----------------------------------------------------------------------------
-  function opOutcome(id, op) {
-    var entry = analysisOps(id)[op];
+  function opOutcome(id, kind, op) {
+    var entry = analysisOps(id, kind)[op];
     return entry ? String(entry.op_outcome || 'not_applicable') : null;
   }
-  function worstMetricCell(id, op) {
+  function worstMetricCell(id, kind, op) {
     // Worst Δ% for the SELECTED metric across concurrencies within the SELECTED cache mode
     // (max Δ% for latency metrics, min for throughput — higher is better there). p50 deltas
     // are the tool-emitted gated ones; other metrics come from context, display-only.
-    var entry = analysisOps(id)[op];
+    var entry = analysisOps(id, kind)[op];
     var cells = (entry && Array.isArray(entry.cells)) ? entry.cells : [];
     var worst = null;
     cells.forEach(function (cell) {
@@ -406,9 +480,10 @@
     });
     return worst;
   }
-  function chipPredicate(op) {
-    var avail = availableIds();
-    function red(id) { return avail.indexOf(id) >= 0 && opOutcome(id, op) === 'regressed'; }
+  function chipPredicate(op, kind) {
+    // Verdict-chip predicate for one op OF ONE KIND: quantifiers range over the comparisons
+    // where that op's kind is ok (mirroring the old "available comparisons" semantics).
+    function red(id) { return slotOk(id, kind) && opOutcome(id, kind, op) === 'regressed'; }
     // any-red / all-green are scoped: in a comparison view they look at THAT comparison's own
     // outcomes; in the matrix they roll up over every available comparison. red-vs-c and
     // red-vs-main keep their global meaning in every view (useful for cross-referencing, and
@@ -416,11 +491,13 @@
     var scoped = state.view !== MATRIX && isOk(state.view) ? state.view : null;
     switch (state.chip) {
       case 'any-red':
-        if (scoped) { return opOutcome(scoped, op) === 'regressed'; }
-        return avail.some(function (id) { return opOutcome(id, op) === 'regressed'; });
-      case 'all-green':
-        if (scoped) { return opOutcome(scoped, op) === 'pass'; }
-        return avail.length > 0 && avail.every(function (id) { return opOutcome(id, op) === 'pass'; });
+        if (scoped) { return opOutcome(scoped, kind, op) === 'regressed'; }
+        return availableIdsFor(kind).some(function (id) { return opOutcome(id, kind, op) === 'regressed'; });
+      case 'all-green': {
+        if (scoped) { return opOutcome(scoped, kind, op) === 'pass'; }
+        var avail = availableIdsFor(kind);
+        return avail.length > 0 && avail.every(function (id) { return opOutcome(id, kind, op) === 'pass'; });
+      }
       case 'red-vs-c':
         return red('c-pr') || red('c-main');
       case 'red-vs-main':
@@ -429,10 +506,20 @@
         return true;
     }
   }
+  function opVisible(op, kind) {
+    // The three composed filters: kind chip AND text AND verdict chip.
+    if (state.kind !== 'all' && kind !== state.kind) { return false; }
+    var q = state.q.trim().toLowerCase();
+    if (q && op.toLowerCase().indexOf(q) < 0) { return false; }
+    return chipPredicate(op, kind);
+  }
   function chipDescription() {
-    if (state.chip === 'all') { return 'all'; }
-    if (state.chip === 'red-vs-c' || state.chip === 'red-vs-main') { return state.chip + ' (global)'; }
-    return state.chip + (state.view === MATRIX ? '' : ' (this comparison)');
+    var parts = [];
+    if (state.kind !== 'all') { parts.push(state.kind + ' only'); }
+    if (state.chip === 'all') { parts.push('all'); }
+    else if (state.chip === 'red-vs-c' || state.chip === 'red-vs-main') { parts.push(state.chip + ' (global)'); }
+    else { parts.push(state.chip + (state.view === MATRIX ? '' : ' (this comparison)')); }
+    return parts.join(' · ');
   }
   function countNote(shown, total) {
     return el('p', 'count-note', shown + ' of ' + total + ' op(s) shown · filter: ' +
@@ -440,15 +527,10 @@
   }
   function renderMatrix(root) {
     var wrap = el('div', 'matrix-wrap');
-    wrap.appendChild(el('p', 'note', 'Emoji = the tool-emitted per-op outcome, a gated p50 rollup across ALL cache modes and concurrencies (worst cell wins) — the selectors never change it. The value under it follows the metric + cache selectors: worst \u0394% across concurrencies within the selected cache mode (latency: max \u0394%; throughput: min \u0394%, higher is better), with that cell\u2019s raw baseline \u2192 candidate underneath. Non-p50 values are informational, not gated.'));
-    var ops = {};
-    availableIds().forEach(function (id) {
-      Object.keys(analysisOps(id)).forEach(function (op) { ops[op] = true; });
-    });
-    var q = state.q.trim().toLowerCase();
-    var names = Object.keys(ops).sort().filter(function (op) {
-      if (q && op.toLowerCase().indexOf(q) < 0) { return false; }
-      return chipPredicate(op);
+    wrap.appendChild(el('p', 'note', 'Emoji = the tool-emitted per-op outcome, a gated p50 rollup across ALL cache modes and concurrencies (worst cell wins) — the selectors never change it. The value under it follows the metric + cache selectors: worst \u0394% across concurrencies within the selected cache mode (latency: max \u0394%; throughput: min \u0394%, higher is better), with that cell\u2019s raw baseline \u2192 candidate underneath. Non-p50 values are informational, not gated. Each row is one op of one kind (reads or writes); a comparison that lacks that op\u2019s kind shows \u2014 with the reason in the tooltip.'));
+    var kindOf = opKindMap();
+    var names = Object.keys(kindOf).sort().filter(function (op) {
+      return opVisible(op, kindOf[op]);
     });
 
     var table = el('table', 'matrix');
@@ -467,20 +549,29 @@
     thead.appendChild(hr);
     table.appendChild(thead);
     var tbody = el('tbody');
+    var showKindTag = kindsInData().length > 1;
     names.forEach(function (op) {
+      var kind = kindOf[op];
       var tr = el('tr');
       tr.setAttribute('data-op', op);
-      tr.appendChild(el('td', 'mono', op));
+      tr.setAttribute('data-kind', kind);
+      var opTd = el('td', 'mono', op);
+      if (showKindTag) { opTd.title = kind === 'writes' ? 'write op' : 'read op'; }
+      tr.appendChild(opTd);
       COMPARISONS.forEach(function (c) {
-        if (!isOk(c.id)) {
-          tr.appendChild(el('td', 'mcell v-na', '—'));
+        if (!slotOk(c.id, kind)) {
+          var na = el('td', 'mcell v-na', '—');
+          if (comparison(c.id) !== null) {
+            na.title = 'unavailable (' + kind + ') — ' + slotReason(c.id, kind);
+          }
+          tr.appendChild(na);
           return;
         }
-        var out = opOutcome(c.id, op);
+        var out = opOutcome(c.id, kind, op);
         var td = el('td', 'mcell', out === null ? '—' : (OUTCOME_EMOJI[out] || out));
         if (out) {
           var title = op + ': ' + out;
-          var worst = worstMetricCell(c.id, op);
+          var worst = worstMetricCell(c.id, kind, op);
           if (worst) {
             td.appendChild(el('span', 'mdelta mono' + (worst.mv.gated ? '' : ' delta-neu'),
               fmtPct(worst.mv.deltaPct)));
@@ -498,7 +589,7 @@
     });
     table.appendChild(tbody);
     wrap.appendChild(table);
-    var totalOps = Object.keys(ops).length;
+    var totalOps = Object.keys(kindOf).length;
     root.appendChild(wrap);
     root.appendChild(countNote(names.length, totalOps));
     if (availableIds().length === 0) {
@@ -608,21 +699,22 @@
     d.appendChild(body);
     return d;
   }
-  function renderComparison(root, id) {
-    var meta = COMPARISONS.filter(function (c) { return c.id === id; })[0];
+  function renderComparisonKind(root, id, meta, kind, multiKind) {
     var card = el('div', 'cmp-card');
+    card.setAttribute('data-kind', kind);
     var head = el('div', 'cmp-head');
-    head.appendChild(el('div', 'cmp-title', meta.label + ' (' + id + ')'));
-    if (!isOk(id)) {
+    var title = meta.label + ' (' + id + ')' + (multiKind ? ' — ' + kind : '');
+    head.appendChild(el('div', 'cmp-title', title));
+    if (!slotOk(id, kind)) {
       card.appendChild(head);
       var b = el('div', 'banner warn');
       b.appendChild(el('b', null, 'unavailable — '));
-      b.appendChild(document.createTextNode(unavailReason(id)));
+      b.appendChild(document.createTextNode(slotReason(id, kind)));
       card.appendChild(b);
       root.appendChild(card);
       return;
     }
-    var a = comparison(id).analysis;
+    var a = slot(id, kind).analysis;
     var labels = {
       baseline: (a.comparison && a.comparison.baseline_label) || 'baseline',
       candidate: (a.comparison && a.comparison.candidate_label) || 'candidate'
@@ -652,8 +744,9 @@
     (Array.isArray(a.warnings) ? a.warnings : []).forEach(function (w) {
       card.appendChild(el('div', 'banner info', '⚠ ' + String(w)));
     });
-    var divergedOps = Object.keys(analysisOps(id)).filter(function (op) {
-      return String(analysisOps(id)[op].correctness) === 'diverged';
+    var ops = analysisOps(id, kind);
+    var divergedOps = Object.keys(ops).filter(function (op) {
+      return String(ops[op].correctness) === 'diverged';
     });
     if (divergedOps.length > 0) {
       var policy = String(a.divergence_policy || 'gate');
@@ -667,17 +760,35 @@
     }
     root.appendChild(card);
 
-    var ops = analysisOps(id);
     var all = Object.keys(ops);
-    var q = state.q.trim().toLowerCase();
-    var names = all.sort().filter(function (op) {
-      if (q && op.toLowerCase().indexOf(q) < 0) { return false; }
-      return chipPredicate(op);
-    });
+    var names = all.sort().filter(function (op) { return opVisible(op, kind); });
     names.forEach(function (op) {
       root.appendChild(opDetails(op, ops[op], labels));
     });
     root.appendChild(countNote(names.length, all.length));
+  }
+  function renderComparison(root, id) {
+    var meta = COMPARISONS.filter(function (c) { return c.id === id; })[0];
+    if (!isOk(id)) {
+      var card = el('div', 'cmp-card');
+      var head = el('div', 'cmp-head');
+      head.appendChild(el('div', 'cmp-title', meta.label + ' (' + id + ')'));
+      card.appendChild(head);
+      var b = el('div', 'banner warn');
+      b.appendChild(el('b', null, 'unavailable — '));
+      b.appendChild(document.createTextNode(unavailReason(id)));
+      card.appendChild(b);
+      root.appendChild(card);
+      return;
+    }
+    // One card per kind present on this comparison, reads first; a kind hidden by the kind chip
+    // is skipped entirely (the chips compose across the whole page).
+    var multiKind = kindsInData().length > 1;
+    KINDS.forEach(function (k) {
+      if (!slot(id, k)) { return; }
+      if (state.kind !== 'all' && k !== state.kind) { return; }
+      renderComparisonKind(root, id, meta, k, multiKind);
+    });
   }
 
   // ---- top-level render -----------------------------------------------------------------------
@@ -721,8 +832,8 @@
         throw new Error('data.json has no comparisons object');
       }
       data = parsed;
-      if (Number(parsed.schema_version) !== 1) {
-        renderFatal('data.json schema_version ' + parsed.schema_version + ' is not the supported v1.');
+      if (Number(parsed.schema_version) !== 2) {
+        renderFatal('data.json schema_version ' + parsed.schema_version + ' is not the supported v2.');
         renderMeta();
         return;
       }
