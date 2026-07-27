@@ -50,8 +50,8 @@ class testGraphRestore():
         try:
             raw.execute_command("GRAPH.RESTORE", "corrupt", b"\x07\x00\x00garbage")
             self.env.assertTrue(False)
-        except ResponseError:
-            pass
+        except ResponseError as e:
+            self.env.assertContains("DUMP payload", str(e))
         self.env.assertEqual(self.conn.exists("corrupt"), 0)
 
         # DUMP payload of a non-graph key, the key must not be created
@@ -61,6 +61,8 @@ class testGraphRestore():
                                 raw.execute_command("DUMP", "plain_string"))
             self.env.assertTrue(False)
         except ResponseError:
+            # a non-graph payload must be rejected; the assertion below
+            # verifies GRAPH.RESTORE did not leave a key behind
             pass
         self.env.assertEqual(self.conn.exists("not_a_graph"), 0)
 
