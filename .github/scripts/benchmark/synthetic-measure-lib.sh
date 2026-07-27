@@ -86,6 +86,7 @@ measure_recording() {
     --endpoint "falkor://127.0.0.1:${DB_PORT}" \
     --label "$label" --server-image "$digest" \
     --concurrency "$SWEEP" --cache "$CACHE" --samples "$SAMPLES" --warmup "$WARMUP" \
+    --client-threads 3 --pipeline-depth 4 \
     --out "$out"
   docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
   echo "::endgroup::"

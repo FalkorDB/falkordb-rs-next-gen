@@ -112,7 +112,7 @@ env:
   # Separate, independently-pinned ref for the SYNTHETIC per-op regression check (the `synthetic-*`
   # jobs below). Kept apart from BENCHMARK_REF so the legacy ab-compare vendor mode above is never
   # perturbed. Bump deliberately (with a `# <what>` note) to move it.
-  SYNTHETIC_BENCHMARK_REF: 31473ac0b6ed3f3b5d9ae544e5b06844da160606 # v2.5.1 — server-time-led diff tables (benchmark#275)
+  SYNTHETIC_BENCHMARK_REF: 04a3bcfbf46abc22e3e9eba9a8d87e67bdde60a5 # pipelined-reads experiment (benchmark#276)
 
 jobs:
   # Expand (size × variant) into a flat combo list the matrices below fan out
