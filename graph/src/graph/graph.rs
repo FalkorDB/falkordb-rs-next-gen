@@ -1996,15 +1996,23 @@ impl Graph {
 
     /// Flush delta-plus into base for all shared matrices.
     /// Reduces dp accumulation across multiple GRAPH.BULK commands.
+    /// `flush` is gated on a flag that only `wait` recomputes, so wait first —
+    /// bulk-import write bursts never wait on their own.
     pub fn flush_for_bulk(&mut self) {
+        self.all_nodes_matrix.wait();
         self.all_nodes_matrix.flush();
+        self.node_labels_matrix.wait();
         self.node_labels_matrix.flush();
         for m in &mut self.labels_matices {
+            m.wait();
             m.flush();
         }
+        self.adjacancy_matrix.wait();
         self.adjacancy_matrix.flush();
+        self.relationship_type_matrix.wait();
         self.relationship_type_matrix.flush();
         for t in &mut self.relationship_matrices {
+            t.wait();
             t.flush();
         }
     }
@@ -3620,6 +3628,13 @@ impl Graph {
     ) -> Matrix<bool> {
         if rel_types.is_empty() {
             self.adjacancy_matrix.extract()
+        } else if let [rel_type] = rel_types {
+            // Single type: the extract already materializes an owned bool
+            // matrix; skip the extra new + eWiseAdd pass.
+            self.get_type_id(rel_type).map_or_else(
+                || Matrix::<bool>::new(self.node_cap, self.node_cap),
+                |type_id| self.relationship_matrices[usize::from(type_id)].extract(),
+            )
         } else {
             let mut result = Matrix::<bool>::new(self.node_cap, self.node_cap);
             for rel_type in rel_types {

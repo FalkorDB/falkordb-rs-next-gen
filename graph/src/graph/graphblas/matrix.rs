@@ -492,11 +492,12 @@ impl<T> Encode<19> for Matrix<T> {
 impl<T> Matrix<T> {
     /// Pin this matrix to hypersparse storage and return it (builder-style,
     /// for delta matrices at construction). Deltas inherit the base's
-    /// dimensions but stay small; in plain sparse format every `GB_wait` /
-    /// zombie-select on them pays `O(nrows)` row-pointer work (measured on
-    /// 100-node creates after a bulk write inflated capacity to 1m rows).
-    /// Hypersparse makes those ops `O(nvec)`. The C implementation pins its
-    /// delta matrices hypersparse for the same reason.
+    /// dimensions but the fold policy keeps their nvals small; in plain
+    /// sparse format every `GB_wait` / zombie-select on them pays `O(nrows)`
+    /// row-pointer work (measured 18x on 100-node creates after a bulk write
+    /// inflated capacity to 1m rows). Hypersparse makes those ops `O(nvec)`.
+    /// The C implementation pins its delta matrices hypersparse for the same
+    /// reason.
     #[must_use]
     pub(super) fn into_hyper(self) -> Self {
         unsafe {
@@ -963,23 +964,27 @@ impl Matrix<u64> {
         self.has_pending.store(true, Ordering::Relaxed);
     }
 
-    /// `self = self ⊕ b`, value-preserving: on intersecting entries `b`'s
-    /// value wins (`SECOND`). Unlike the bool-semiring [`Self::element_wise_add`],
-    /// this keeps u64 values intact, so a delta-plus layer that shadows its
-    /// base can be merged with the live (`dp`) value taking precedence.
+    /// `self<mask> = a ⊕ b` (`a` defaults to `self`), value-preserving: on
+    /// intersecting entries `b`'s value wins (`SECOND`). Unlike the
+    /// bool-semiring [`Self::element_wise_add`], this keeps u64 values
+    /// intact, so a delta-plus layer that shadows its base can be merged
+    /// with the live (`dp`) value taking precedence.
     pub fn element_wise_add_second(
         &mut self,
+        mask: Option<&Matrix<bool>>,
+        a: Option<&Self>,
         b: &Self,
+        descriptor: Option<Descriptor>,
     ) {
         unsafe {
             let info = GrB_Matrix_eWiseAdd_BinaryOp(
                 *self.m,
-                null_mut(),
+                mask.map_or(null_mut(), |m| *m.m),
                 null_mut(),
                 GrB_SECOND_UINT64,
-                *self.m,
+                a.map_or(*self.m, |a| *a.m),
                 *b.m,
-                null_mut(),
+                descriptor.map_or(null_mut(), std::convert::Into::into),
             );
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
