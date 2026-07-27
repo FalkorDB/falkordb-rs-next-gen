@@ -877,6 +877,16 @@ impl Graph {
         &self.name
     }
 
+    /// Rename the graph. Used after an RDB/DUMP restore so the decoded graph
+    /// carries the name of the key it was loaded into rather than the name it
+    /// was serialized under (they differ when restoring to a different key).
+    pub fn set_name(
+        &mut self,
+        name: &str,
+    ) {
+        self.name = name.to_string();
+    }
+
     #[must_use]
     pub const fn node_count(&self) -> u64 {
         self.node_count

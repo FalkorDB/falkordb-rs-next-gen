@@ -84,8 +84,13 @@ unsafe extern "C" fn graph_rdb_load(
     };
 
     match serializers::decoder::rdb_load_graph(rdb, DEFAULT_CACHE_SIZE) {
-        Ok(Some(graph)) => {
+        Ok(Some(mut graph)) => {
             // Single-key load (key_count == 1) -- graph is fully loaded.
+            // Adopt the destination key's name: RESTORE (and GRAPH.RESTORE with
+            // a DUMP payload) can load a graph into a key other than the one it
+            // was dumped from, and a stale embedded name would collide with the
+            // source graph in the multi-key RDB decode state.
+            graph.set_name(&key_name);
             let mvcc = MvccGraph::from_graph(graph);
             let graph_arc = mvcc.read();
             graph_arc.borrow().set_indexer_graph(graph_arc.clone());
