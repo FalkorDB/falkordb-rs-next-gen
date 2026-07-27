@@ -112,7 +112,7 @@ env:
   # Separate, independently-pinned ref for the SYNTHETIC per-op regression check (the `synthetic-*`
   # jobs below). Kept apart from BENCHMARK_REF so the legacy ab-compare vendor mode above is never
   # perturbed. Bump deliberately (with a `# <what>` note) to move it.
-  SYNTHETIC_BENCHMARK_REF: b09353e66d9a384258ff82276c0dac437f2e1f9a # v2.4 — recorded write bundles / --repo-writes (benchmark#269, design #270)
+  SYNTHETIC_BENCHMARK_REF: d39bc8e167867d110f973923242f8c626694a0ae # v2.5 — server_ms regression gating by default (benchmark#273)
 
 jobs:
   # Expand (size × variant) into a flat combo list the matrices below fan out
