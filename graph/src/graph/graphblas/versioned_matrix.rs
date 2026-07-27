@@ -558,6 +558,22 @@ impl VersionedMatrix<bool> {
         }
     }
 
+    /// Latch the fold decision from the current (materialized) delta sizes
+    /// and execute it immediately. Only safe once a transaction has finished
+    /// mutating — e.g. the end of a GRAPH.BULK command — where the mid-tx
+    /// pathology `wait` guards against (folding a transaction's own pending
+    /// adds right before it deletes them) cannot occur. Without this,
+    /// the decision latched by `wait` only runs at the *next* version's
+    /// first mutation (via `dup` → `flush`), so the final bulk command's
+    /// deltas would stay unfolded.
+    pub fn fold_latched(&mut self) {
+        self.wait();
+        if self.fold_dp.load(Ordering::Relaxed) || self.fold_dm.load(Ordering::Relaxed) {
+            self.needs_flush.store(true, Ordering::Relaxed);
+            self.flush();
+        }
+    }
+
     /// Set multiple entries, checking dm emptiness once upfront.
     ///
     /// If dm is empty, uses the fast path (1 FFI call per entry).

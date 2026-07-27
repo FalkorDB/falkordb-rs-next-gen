@@ -1994,26 +1994,22 @@ impl Graph {
             .set_all(rel_ids.iter().copied().zip(type_ids.iter().copied()));
     }
 
-    /// Flush delta-plus into base for all shared matrices.
-    /// Reduces dp accumulation across multiple GRAPH.BULK commands.
-    /// `flush` is gated on a flag that only `wait` recomputes, so wait first —
-    /// bulk-import write bursts never wait on their own.
+    /// Fold oversized delta-plus into the base for all shared matrices at
+    /// the end of a GRAPH.BULK command, preventing dp accumulation across
+    /// commands. `fold_latched` latches the fold decision (via `wait`) and
+    /// executes it immediately — mutations are done here, so the mid-tx
+    /// fold pathology cannot occur, and deferring to the next version's
+    /// `dup`/`flush` would leave the final command's deltas unfolded.
     pub fn flush_for_bulk(&mut self) {
-        self.all_nodes_matrix.wait();
-        self.all_nodes_matrix.flush();
-        self.node_labels_matrix.wait();
-        self.node_labels_matrix.flush();
+        self.all_nodes_matrix.fold_latched();
+        self.node_labels_matrix.fold_latched();
         for m in &mut self.labels_matices {
-            m.wait();
-            m.flush();
+            m.fold_latched();
         }
-        self.adjacancy_matrix.wait();
-        self.adjacancy_matrix.flush();
-        self.relationship_type_matrix.wait();
-        self.relationship_type_matrix.flush();
+        self.adjacancy_matrix.fold_latched();
+        self.relationship_type_matrix.fold_latched();
         for t in &mut self.relationship_matrices {
-            t.wait();
-            t.flush();
+            t.fold_latched();
         }
     }
 
