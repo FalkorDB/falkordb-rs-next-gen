@@ -1,17 +1,17 @@
 {
   "schema_version": 1,
-  "elapsed_secs": 317,
+  "elapsed_secs": 344,
   "arch": "x86",
   "pr_number": "745",
-  "head_sha": "9d2327ac827f45a4fcdcc48770e1cc9bf5fc6d6f",
+  "head_sha": "e4c9a35dd75506bd480f93a9e0b1afefd17a0b93",
   "images": {
     "pr": {
       "ref": "ghcr.io/falkordb/falkordb-server:rc-pr-745",
-      "digest": "ghcr.io/falkordb/falkordb-server@sha256:d4f9dbb30b9f70e6d965d2dce47b239c27fb238fd4d3a272d1434cd7762414f7"
+      "digest": "ghcr.io/falkordb/falkordb-server@sha256:3a8a2508bf220131681807ac603325f29afd9ef4c4c4efbafa140859db2b08cb"
     },
     "main": {
       "ref": "ghcr.io/falkordb/falkordb-server:edge-rs",
-      "digest": "ghcr.io/falkordb/falkordb-server@sha256:8b5e5c3b1fe54d523552910dd06e2ae5fa9e8fc2d74fd4968b2eadbd1d1c986c"
+      "digest": "ghcr.io/falkordb/falkordb-server@sha256:215d05fcfb400f14ccd553f34f1b188d1ffcd9850421cc5c5baab38c49e0c0c5"
     },
     "c-engine": {
       "ref": "docker.io/falkordb/falkordb:edge",
