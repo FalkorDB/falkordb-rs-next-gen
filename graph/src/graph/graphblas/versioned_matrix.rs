@@ -519,22 +519,14 @@ impl VersionedMatrix<bool> {
                 // Clearing through the Cow would deep-copy a still-shared
                 // delta just to empty it; swap in a fresh empty matrix.
                 if fold_dp {
-                    if self.dp.is_shared() {
-                        self.dp
-                            .replace(Matrix::<bool>::new(nrows, ncols).into_hyper());
-                    } else {
-                        self.dp.clear();
-                    }
+                    self.dp
+                        .replace(Matrix::<bool>::new(nrows, ncols).into_hyper());
                     *self.dp_count.get_mut() = 0;
                     self.dp_tx_nvals = 0;
                 }
                 if fold_dm {
-                    if self.dm.is_shared() {
-                        self.dm
-                            .replace(Matrix::<bool>::new(nrows, ncols).into_hyper());
-                    } else {
-                        self.dm.clear();
-                    }
+                    self.dm
+                        .replace(Matrix::<bool>::new(nrows, ncols).into_hyper());
                     *self.dm_count.get_mut() = 0;
                     self.dm_tx_nvals = 0;
                 }
