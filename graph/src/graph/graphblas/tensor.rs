@@ -621,39 +621,31 @@ impl Tensor {
             if fold_dp || fold_dm {
                 let nrows = self.m.nrows();
                 let ncols = self.m.ncols();
-                if self.m.is_shared() {
-                    // The base is still shared with the committed snapshot,
-                    // so an in-place fold would deep-copy it (a full O(|m|)
-                    // memcpy) first and then rewrite it. Build the folded
-                    // base into a fresh matrix in one pass and swap it in.
-                    let mut new_m = Matrix::<u64>::new(nrows, ncols);
-                    match (fold_dp, fold_dm) {
-                        // new_m<!dm, replace> = m ⊕ dp (dp wins on shadowed
-                        // pairs); dp ∩ dm = ∅, so no pending add is lost.
-                        (true, true) => new_m.element_wise_add_second(
-                            Some(&self.dm),
-                            Some(&self.m),
-                            &self.dp,
-                            Some(Descriptor::RC),
-                        ),
-                        (true, false) => {
-                            new_m.element_wise_add_second(None, Some(&self.m), &self.dp, None);
-                        }
-                        // new_m<!dm, replace> = m
-                        (false, true) => new_m.select(&self.dm, &self.m),
-                        (false, false) => unreachable!(),
+                // Always build the folded base into a fresh matrix and swap
+                // it in. When `m` is shared with the committed snapshot an
+                // in-place fold would deep-copy it (a full O(|m|) memcpy)
+                // first; when it is not, GraphBLAS materializes the eWiseAdd
+                // result in a temporary anyway, so the fresh build costs the
+                // same — and under full MVCC the base is always shared.
+                let mut new_m = Matrix::<u64>::new(nrows, ncols);
+                match (fold_dp, fold_dm) {
+                    // new_m<!dm, replace> = m ⊕ dp (dp wins on shadowed
+                    // pairs); dp ∩ dm = ∅, so no pending add is lost.
+                    (true, true) => new_m.element_wise_add_second(
+                        Some(&self.dm),
+                        Some(&self.m),
+                        &self.dp,
+                        Some(Descriptor::RC),
+                    ),
+                    (true, false) => {
+                        new_m.element_wise_add_second(None, Some(&self.m), &self.dp, None);
                     }
-                    new_m.wait();
-                    self.m.replace(new_m);
-                } else {
-                    if fold_dp {
-                        self.m.element_wise_add_second(None, None, &self.dp, None);
-                    }
-                    if fold_dm {
-                        self.m.remove_all(&self.dm);
-                    }
-                    self.m.wait();
+                    // new_m<!dm, replace> = m
+                    (false, true) => new_m.select(&self.dm, &self.m),
+                    (false, false) => unreachable!(),
                 }
+                new_m.wait();
+                self.m.replace(new_m);
                 // Clearing through the Cow would deep-copy a still-shared
                 // delta just to empty it; swap in a fresh empty matrix.
                 if fold_dp {
