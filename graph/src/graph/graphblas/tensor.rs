@@ -361,6 +361,12 @@ impl Tensor {
         }
 
         self.flush();
+        // `flush` no-ops unless a fold was latched; materialize the deltas
+        // explicitly (single atomic load each when already synced) so the
+        // read phase's per-edge lookups never trigger implicit GraphBLAS
+        // waits. `m` is never pending (see `wait_fwd`).
+        self.dp.wait();
+        self.dm.wait();
         let dm_empty = self.dm.nvals() == 0;
 
         // Read phase: decide each edge's placement. `batch` maps a pair to
@@ -605,8 +611,9 @@ impl Tensor {
     /// order-independent and all invariants are preserved. `mt` and `me`
     /// flush themselves.
     ///
-    /// Gated on the `needs_flush` flag recomputed by `wait_fwd`, so calling
-    /// this on every write is a single atomic load in the common case.
+    /// Gated on the `needs_flush` flag, which is set by `dup` (carrying the
+    /// decision `wait_fwd` latched) or by `fold_latched`, so calling this on
+    /// every write is a single atomic load in the common case.
     pub fn flush(&mut self) {
         if self.needs_flush.load(Ordering::Relaxed) {
             let fold_dp = self.fold_dp.swap(false, Ordering::Relaxed) && self.dp.nvals() > 0;
@@ -674,6 +681,20 @@ impl Tensor {
         }
         self.mt.flush();
         self.me.flush();
+    }
+
+    /// Latch the fold decision from the current (materialized) delta sizes
+    /// and execute it immediately, on the forward layers and on `mt`/`me`.
+    /// Only safe once a transaction has finished mutating — e.g. the end of
+    /// a GRAPH.BULK command; see [`VersionedMatrix::fold_latched`].
+    pub fn fold_latched(&mut self) {
+        self.wait_fwd();
+        if self.fold_dp.load(Ordering::Relaxed) || self.fold_dm.load(Ordering::Relaxed) {
+            self.needs_flush.store(true, Ordering::Relaxed);
+            self.flush();
+        }
+        self.mt.fold_latched();
+        self.me.fold_latched();
     }
 
     /// Materialize the effective forward structure as a `bool` matrix:
