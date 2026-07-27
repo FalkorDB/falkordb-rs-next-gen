@@ -14,7 +14,10 @@
 # registry for that image and proceeds as soon as it exists (rust-pr.yml
 # publishes it early, before its slower/flaky test jobs finish). It only fails
 # if the "Rust PR" run for this head SHA finishes without ever publishing the
-# image, so a benchmark never runs against a nonexistent build.
+# image, so a benchmark never runs against a nonexistent build. Stacked PRs
+# (base = another feature branch) get no rc image at all — rust-pr.yml never
+# fires for them — so `prepare` swaps in variant B for C: a digest-identical
+# A/A that still exercises the PR branch's pipeline and measures pure noise.
 #
 # PR benchmarks run only for same-repo branches: a fork PR's GITHUB_TOKEN is
 # read-only and couldn't push to gh-pages or comment (see the `prepare` guard).
@@ -150,6 +153,7 @@ jobs:
       image_a: ${{ steps.derive.outputs.image_a }}
       image_b: ${{ steps.derive.outputs.image_b }}
       image_c: ${{ steps.derive.outputs.image_c }}
+      rc_wait: ${{ steps.derive.outputs.rc_wait }}
       view: ${{ steps.derive.outputs.view }}
       pr_number: ${{ steps.derive.outputs.pr_number }}
       sizes: ${{ steps.derive.outputs.sizes }}
@@ -176,9 +180,11 @@ jobs:
           DISPATCH_REF_NAME: ${{ github.ref_name }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
           LABEL_NAME: ${{ github.event.label.name }}
         run: |
           set -euo pipefail
+          RC_WAIT="true"
           case "$EVENT_NAME" in
             workflow_dispatch)
               # Ad-hoc A/B of two published tags, one chosen size, no PR image.
@@ -204,6 +210,20 @@ jobs:
               IMAGE_B="ghcr.io/falkordb/falkordb-server:edge-rs"
               IMAGE_C="ghcr.io/falkordb/falkordb-server:rc-pr-${PR_NUMBER}"
               OUT_PR_NUMBER="$PR_NUMBER"
+              # rust-pr.yml (which builds rc-pr-<N>) only fires on PRs based on
+              # main or a version branch. A stacked PR (base = another feature
+              # branch) would hang in wait-for-rc-image for an image that can
+              # never appear — so fall back to measuring B against itself: a
+              # digest-identical A/A that exercises the PR branch's own
+              # pipeline scripts and quantifies measurement noise instead.
+              case "$BASE_REF" in
+                main|[0-9]*.[0-9]*) ;;
+                *)
+                  echo "stacked PR (base ${BASE_REF}): no rc image — running A/A with C=B"
+                  IMAGE_C="$IMAGE_B"
+                  RC_WAIT="false"
+                  ;;
+              esac
               # One size + arch per run, from the benchmark-<size>[-arm] label
               # that was added (benchmark-small -> small/x86; benchmark-small-arm
               # -> small/arm). The prepare gate guarantees LABEL_NAME is one of
@@ -239,6 +259,7 @@ jobs:
             echo "image_a=${IMAGE_A}"
             echo "image_b=${IMAGE_B}"
             echo "image_c=${IMAGE_C}"
+            echo "rc_wait=${RC_WAIT}"
             echo "view=${VIEW}"
             echo "pr_number=${OUT_PR_NUMBER}"
             echo "sizes=${SIZES}"
@@ -259,7 +280,7 @@ jobs:
     # Explicit guard (not a bare `if`): in a chain where an ancestor was skipped
     # (validate-dispatch-images), a bare condition inherits the skip. Mirror
     # run-benchmark's pattern so this actually runs on the PR path.
-    if: ${{ !cancelled() && needs.prepare.result == 'success' && github.event_name == 'pull_request' }}
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && github.event_name == 'pull_request' && needs.prepare.outputs.rc_wait == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
