@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "elapsed_secs": 643,
+  "arch": "x86",
+  "pr_number": "773",
+  "head_sha": "1d543dcd752bb19367f1e19ec97f7252c7b8b5d3",
+  "images": {
+    "pr": {
+      "ref": "ghcr.io/falkordb/falkordb-server:edge-rs",
+      "digest": "ghcr.io/falkordb/falkordb-server@sha256:311a2361cd17511cdb2811d161733cbf9db13a1877be706f1c591e809db51c43"
+    },
+    "main": {
+      "ref": "ghcr.io/falkordb/falkordb-server:edge-rs",
+      "digest": "ghcr.io/falkordb/falkordb-server@sha256:311a2361cd17511cdb2811d161733cbf9db13a1877be706f1c591e809db51c43"
+    },
+    "c-engine": {
+      "ref": "docker.io/falkordb/falkordb:edge",
+      "digest": "falkordb/falkordb@sha256:e47e0fb112ff29764965a1c25e2f983dd269de33367ca3f2fba61368b735f38c"
+    }
+  },
+  "comparisons": {
+    "main-pr": {
+      "budget_profile": "strict",
+      "divergence_policy": "gate"
+    },
+    "c-pr": {
+      "budget_profile": "cross-engine",
+      "divergence_policy": "advisory"
+    },
+    "c-main": {
+      "budget_profile": "cross-engine",
+      "divergence_policy": "advisory"
+    }
+  }
+}

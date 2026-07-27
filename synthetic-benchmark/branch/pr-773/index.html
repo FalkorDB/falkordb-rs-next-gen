@@ -1,0 +1,1153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<meta name="robots" content="noindex"/>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%236a4dff'/%3E%3Crect x='7' y='14' width='4.5' height='11' rx='1.5' fill='%23fff'/%3E%3Crect x='13.75' y='9' width='4.5' height='16' rx='1.5' fill='%23fff'/%3E%3Crect x='20.5' y='17' width='4.5' height='8' rx='1.5' fill='%23fff'/%3E%3C/svg%3E"/>
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%236a4dff'/%3E%3Crect x='7' y='14' width='4.5' height='11' rx='1.5' fill='%23fff'/%3E%3Crect x='13.75' y='9' width='4.5' height='16' rx='1.5' fill='%23fff'/%3E%3Crect x='20.5' y='17' width='4.5' height='8' rx='1.5' fill='%23fff'/%3E%3C/svg%3E"/>
+<title>FalkorDB — synthetic three-way benchmark report</title>
+<!--
+  Interactive per-PR synthetic benchmark report (three-way: PR vs main, PR vs C, main vs C;
+  per kind: the recorded READS bundle and, when enabled, the recorded WRITES bundle — write ops
+  are latency-only, correctness not gated).
+
+  A single dependency-free static file: no build step, no external libs, no CDN. It fetches its
+  SIBLING data.json (assembled by the measure job — see assemble-synthetic-data.py) and only
+  RENDERS it: every verdict (per-cell perf_verdict, per-op op_outcome, per-comparison verdict) is
+  computed by the Rust tool and serialized in the cells JSON; the page never derives one.
+
+  Security: all dynamic content is rendered via document.createElement + textContent — no
+  HTML-string injection sink of any kind (enforced by tests/synthetic-report/).
+  Visually it follows the trend page (segmented buttons, cards, light/dark), not its string-built
+  DOM.
+-->
+<style>
+  :root{
+    --bg:#f4f6fb; --surface:#ffffff; --surface-2:#f0f2f8; --border:#e2e5ef;
+    --ink:#1a2030; --muted:#5c657c; --faint:#8a93a8; --accent:#6a4dff;
+    --good:#0e8f66; --bad:#c0384a; --warn:#b9761c; --grid:#eceef4;
+    --shadow:0 1px 2px rgba(20,26,48,.05),0 8px 24px rgba(20,26,48,.05);
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#0e1320; --surface:#161c2a; --surface-2:#1c2334; --border:#28314a;
+      --ink:#e8edf5; --muted:#9aa6bd; --faint:#68748c; --accent:#9d90ff;
+      --good:#28c090; --bad:#e0687a; --warn:#c9862b; --grid:#212a40;
+      --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 30px rgba(0,0,0,.28);
+    }
+  }
+  :root[data-theme="light"]{--bg:#f4f6fb;--surface:#fff;--surface-2:#f0f2f8;--border:#e2e5ef;--ink:#1a2030;--muted:#5c657c;--faint:#8a93a8;--accent:#6a4dff;--good:#0e8f66;--bad:#c0384a;--warn:#b9761c;--grid:#eceef4;}
+  :root[data-theme="dark"]{--bg:#0e1320;--surface:#161c2a;--surface-2:#1c2334;--border:#28314a;--ink:#e8edf5;--muted:#9aa6bd;--faint:#68748c;--accent:#9d90ff;--good:#28c090;--bad:#e0687a;--warn:#c9862b;--grid:#212a40;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
+  main{max-width:1150px;margin:0 auto;padding:32px 24px 80px}
+  [hidden]{display:none !important}
+  .mono{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+  h1{font-size:24px;margin:0 0 4px;letter-spacing:-.02em}
+  .lede{color:var(--muted);max-width:78ch;margin:.2em 0 0;font-size:14.5px}
+  header.hero{padding-bottom:16px;border-bottom:1px solid var(--border)}
+  .topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap}
+  button.ghost{appearance:none;background:var(--surface);border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:6px 10px;font:inherit;font-size:12.5px;cursor:pointer}
+  .meta-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px;margin-top:14px}
+  .meta-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:9px 12px;box-shadow:var(--shadow)}
+  .meta-card .k{font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--faint)}
+  .meta-card .v{font-size:13px;margin-top:2px;word-break:break-all}
+  .meta-card .v .sub{color:var(--faint);font-size:11.5px;display:block}
+  .controls{position:sticky;top:0;z-index:5;display:flex;gap:14px;align-items:center;flex-wrap:wrap;
+    background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(8px);
+    border:1px solid var(--border);border-radius:12px;padding:10px 14px;margin:18px 0 10px}
+  .controls.secondary{position:static;margin-top:0}
+  .cl{font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--faint)}
+  .seg{display:inline-flex;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;padding:3px;flex-wrap:wrap}
+  .seg button{appearance:none;border:0;background:transparent;color:var(--muted);font:inherit;font-size:13px;font-weight:600;padding:5px 12px;border-radius:6px;cursor:pointer}
+  .seg button:hover{color:var(--ink)}
+  .seg button.on{background:var(--surface);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.12)}
+  .seg button.unavail{opacity:.45;cursor:not-allowed;color:var(--faint)}
+  .seg button.unavail:hover{color:var(--faint)}
+  :root[data-theme="dark"] .seg button.on{background:var(--accent);color:#fff;box-shadow:none}
+  @media (prefers-color-scheme:dark){ :root:not([data-theme="light"]) .seg button.on{background:var(--accent);color:#fff;box-shadow:none} }
+  .seg button:disabled{opacity:.42;cursor:not-allowed;text-decoration:line-through}
+  .chip{appearance:none;border:1px solid var(--border);background:var(--surface);color:var(--muted);font:inherit;font-size:12.5px;font-weight:600;border-radius:999px;padding:4px 12px;cursor:pointer}
+  .chip.on{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 10%,transparent)}
+  input.opq{font:inherit;font-size:13px;color:var(--ink);background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:5px 10px;min-width:180px}
+  .note{color:var(--muted);font-size:12.5px;border-left:3px solid var(--border);padding-left:11px;margin:10px 0}
+  .banner{border:1px solid var(--border);border-left-width:4px;border-radius:10px;padding:10px 14px;margin:10px 0;font-size:13.5px;background:var(--surface)}
+  .banner.warn{border-left-color:var(--warn)}
+  .banner.bad{border-left-color:var(--bad)}
+  .banner.info{border-left-color:var(--accent)}
+  table{border-collapse:collapse;font-variant-numeric:tabular-nums;font-size:13px;width:100%}
+  th,td{border:1px solid var(--grid);padding:5px 10px;text-align:left}
+  th{background:var(--surface-2);font-size:12px}
+  td.num,th.num{text-align:right}
+  .matrix-wrap{background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow);overflow:auto;max-height:max(340px,calc(100vh - 210px))}
+  /* Sticky thead needs border-collapse:separate (collapsed borders scroll away with the rows),
+     so the matrix grid is emulated with per-cell bottom/right borders. */
+  table.matrix{width:100%;border-collapse:separate;border-spacing:0}
+  table.matrix th,table.matrix td{border:0;border-bottom:1px solid var(--grid);border-right:1px solid var(--grid)}
+  table.matrix th:last-child,table.matrix td:last-child{border-right:0}
+  table.matrix tbody tr:last-child td{border-bottom:0}
+  table.matrix thead th{position:sticky;top:0;z-index:3;background:var(--surface-2)}
+  table.matrix td:first-child{position:sticky;left:0;z-index:2;background:var(--surface)}
+  table.matrix thead th:first-child{left:0;z-index:4}
+  table.matrix tbody tr:hover td{background:color-mix(in srgb,var(--accent) 5%,var(--surface))}
+  td.mcell{text-align:center;font-size:15px}
+  td.mcell .mdelta{display:block;font-size:11px;line-height:1.4;color:var(--faint)}
+  td.mcell .mraw{display:block;font-size:10px;line-height:1.3;color:var(--faint)}
+  th.cmp-col .sub{display:block;font-weight:400;color:var(--faint);font-size:10.5px}
+  th.cmp-col.unavail{opacity:.5}
+  .cmp-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 18px;box-shadow:var(--shadow);margin-top:10px}
+  .cmp-head{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:baseline}
+  .cmp-title{font-size:16px;font-weight:700}
+  .cmp-sub{color:var(--muted);font-size:12.5px}
+  .verdict-badge{display:inline-block;font-size:12.5px;font-weight:700;border-radius:999px;padding:3px 12px}
+  .verdict-badge.pass{color:var(--good);background:color-mix(in srgb,var(--good) 14%,transparent)}
+  .verdict-badge.regressed{color:var(--bad);background:color-mix(in srgb,var(--bad) 14%,transparent)}
+  .verdict-badge.advisory,.verdict-badge.not_comparable{color:var(--warn);background:color-mix(in srgb,var(--warn) 16%,transparent)}
+  details.op{border:1px solid var(--border);border-radius:9px;margin:8px 0;background:var(--surface)}
+  details.op>summary{cursor:pointer;padding:7px 12px;font-size:13.5px;font-weight:600;display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+  details.op>summary .tier{font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--faint);border:1px solid var(--border);border-radius:5px;padding:0 6px}
+  details.op>summary .corr{font-size:11.5px;color:var(--muted)}
+  details.op .body{padding:4px 12px 12px;overflow-x:auto}
+  .delta-neu{color:var(--muted)}
+  .v-ok{color:var(--good);font-weight:700}
+  .v-bad{color:var(--bad);font-weight:700}
+  .v-na{color:var(--faint)}
+  .msg{color:var(--muted);padding:40px 0;text-align:center}
+  .count-note{color:var(--faint);font-size:12px;margin:6px 2px}
+  .warn-strip{display:flex;flex-direction:column;gap:4px;margin-top:10px}
+  .warn-strip .warn-row{font-size:12.5px;color:var(--warn-fg,#8a6d00);background:var(--warn-bg,rgba(255,193,7,.12));border:1px solid var(--warn-bd,rgba(255,193,7,.35));border-radius:8px;padding:5px 10px}
+  :root[data-theme="dark"] .warn-strip .warn-row,:root[data-theme="dark"] details.warnbox>summary{--warn-fg:#e3c56b}
+  @media (prefers-color-scheme:dark){ :root:not([data-theme="light"]) .warn-strip .warn-row,:root:not([data-theme="light"]) details.warnbox>summary{--warn-fg:#e3c56b} }
+  details.warnbox{margin-top:12px;border:1px solid var(--warn-bd,rgba(255,193,7,.35));border-radius:10px;background:var(--warn-bg,rgba(255,193,7,.12))}
+  details.warnbox>summary{cursor:pointer;padding:8px 12px;font-size:12.5px;font-weight:700;color:var(--warn-fg,#8a6d00)}
+  details.warnbox .warn-strip{margin:0;padding:0 10px 10px}
+  .verdict-strip{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}
+  .vpill{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--border);background:var(--surface);border-radius:999px;padding:4px 12px;font:inherit;font-size:12.5px;font-weight:600;color:var(--muted);cursor:pointer;box-shadow:var(--shadow)}
+  .vpill:hover{color:var(--ink)}
+  .vpill.on{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 8%,transparent)}
+  .vpill .vword{font-weight:700}
+  .vpill .vword.pass{color:var(--good)}
+  .vpill .vword.regressed{color:var(--bad)}
+  .vpill .vword.advisory,.vpill .vword.not_comparable{color:var(--warn)}
+  .vpill .vword.unavailable{color:var(--faint)}
+  .dot{display:inline-block;width:11px;height:11px;border-radius:50%;vertical-align:-1px}
+  .dot.pass{background:var(--good)}
+  .dot.bad{background:var(--bad)}
+  .dot.warn{background:var(--warn)}
+  .dot.skip{background:transparent;box-shadow:inset 0 0 0 2px var(--faint)}
+  td.mcell .dot{width:13px;height:13px}
+  .d-good{color:var(--good) !important}
+  .d-warn{color:var(--warn) !important}
+  .d-bad{color:var(--bad) !important;font-weight:700}
+  .chip .cnt{opacity:.6;font-weight:500;margin-left:4px}
+  .ktag{font-size:9.5px;font-weight:700;letter-spacing:.05em;color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 40%,transparent);border-radius:5px;padding:0 5px;margin-left:7px;vertical-align:1px}
+  details.note-details{margin:8px 0}
+  details.note-details>summary{cursor:pointer;color:var(--muted);font-size:12.5px;font-weight:600}
+  details.note-details .note{margin-top:6px}
+  .list-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:12px}
+  .list-tools .count-note{margin:0;flex:1}
+  button.mini{appearance:none;background:var(--surface);border:1px solid var(--border);color:var(--muted);border-radius:7px;padding:3px 9px;font:inherit;font-size:11.5px;font-weight:600;cursor:pointer}
+  button.mini:hover{color:var(--ink)}
+  details.op>summary .wd{margin-left:auto;font-size:12px}
+  details.op>summary .wd .at{color:var(--faint);font-weight:400}
+</style>
+</head>
+<body>
+<main>
+  <header class="hero">
+    <div class="topbar">
+      <div>
+        <h1>Synthetic per-op benchmark — three-way</h1>
+        <p class="lede">One recorded workload replayed into each engine image, measured back-to-back on one runner.
+          <b>p50 is the only gated metric</b>; every verdict below is computed by the benchmark tool, this page only renders.
+          Informational / non-blocking.</p>
+      </div>
+      <button class="ghost" id="themeBtn" type="button">◐ theme</button>
+    </div>
+    <div class="meta-grid" id="metaGrid"></div>
+    <details class="warnbox" id="warnBox" hidden>
+      <summary id="warnSummary">⚠ advisories</summary>
+      <div class="warn-strip" id="warnStrip"></div>
+    </details>
+  </header>
+
+  <div class="verdict-strip" id="verdictStrip" hidden></div>
+
+  <div class="controls">
+    <span class="cl">Comparison</span><div class="seg" id="cmpSeg"></div>
+    <span class="cl">Metric</span><div class="seg" id="metricSeg"></div>
+    <span class="cl" id="cacheLbl" hidden>Cache</span><div class="seg" id="cacheSeg" hidden></div>
+  </div>
+  <div class="controls secondary" id="matrixControls" hidden>
+    <span class="cl">Sort</span><div class="seg" id="sortSeg"></div>
+    <span class="cl">Filter</span><div id="chips"></div>
+    <input class="opq" id="opFilter" type="search" placeholder="filter ops by name…" autocomplete="off"/>
+  </div>
+
+  <div id="metricNote"></div>
+  <section id="view"><p class="msg">Loading data.json…</p></section>
+</main>
+<script>
+'use strict';
+(function () {
+  // ---- constants ------------------------------------------------------------------------------
+  var COMPARISONS = [
+    { id: 'main-pr', label: 'PR vs main' },
+    { id: 'c-pr', label: 'PR vs C' },
+    { id: 'c-main', label: 'main vs C' }
+  ];
+  var MATRIX = 'matrix';
+  // Slot kinds, in render order. data.json v2 keys each comparison by kind; reads/writes op
+  // names are disjoint (the assembler rejects clashes), so an op name resolves to ONE kind.
+  var KINDS = ['reads', 'writes'];
+  var METRICS = [
+    { id: 'p50', label: 'p50 (gated)' },
+    { id: 'p90', label: 'p90' },
+    { id: 'p95', label: 'p95' },
+    { id: 'p99', label: 'p99' },
+    { id: 'throughput', label: 'throughput' }
+  ];
+  var OUTCOME_MARKS = {
+    pass: { cls: 'pass', label: 'pass' },
+    regressed: { cls: 'bad', label: 'regressed' },
+    diverged_advisory: { cls: 'warn', label: 'diverged (advisory)' },
+    skipped: { cls: 'skip', label: 'skipped' }
+  };
+  var OUTCOME_RANK = { regressed: 3, diverged_advisory: 2, pass: 1 };
+  var CHIPS = [
+    { id: 'all', label: 'all' },
+    { id: 'any-red', label: 'any red', scoped: {
+      matrix: 'ops regressed in any available comparison',
+      cmp: 'ops regressed in the displayed comparison' } },
+    { id: 'all-green', label: 'all green', scoped: {
+      matrix: 'ops that pass in every available comparison',
+      cmp: 'ops that pass in the displayed comparison' } },
+    { id: 'red-vs-c', label: 'red vs C',
+      global: 'ops regressed vs the C engine (c-pr or c-main) — global, same in every view' },
+    { id: 'red-vs-main', label: 'red vs main',
+      global: 'ops regressed vs main (main-pr) — global, same in every view' }
+  ];
+
+  var state = { view: MATRIX, metric: 'p50', cache: 'uncached', chip: 'all', kind: 'all', q: '', sort: 'name' };
+  var data = null;
+
+  // ---- tiny DOM helpers (createElement/textContent ONLY — no HTML-string sinks) ---------------
+  function el(tag, className, text) {
+    var node = document.createElement(tag);
+    if (className) { node.className = className; }
+    if (text !== undefined && text !== null) { node.textContent = String(text); }
+    return node;
+  }
+  function clear(node) { while (node.firstChild) { node.removeChild(node.firstChild); } }
+  function outcomeMark(outcome) {
+    // Verdict indicator: a theme-aware CSS dot (native emoji glare in dark mode); unknown
+    // outcomes and not_applicable stay visible as plain text.
+    if (outcome === 'not_applicable') { return el('span', 'v-na', 'N/A'); }
+    var m = OUTCOME_MARKS[outcome];
+    if (!m) { return el('span', null, outcome); }
+    var s = el('span', 'dot ' + m.cls);
+    s.setAttribute('role', 'img');
+    s.setAttribute('aria-label', m.label);
+    s.title = m.label;
+    return s;
+  }
+
+  // ---- data access ----------------------------------------------------------------------------
+  // v2 slot model: data.comparisons[id][kind] = {status:'ok',analysis}|{status:'unavailable',
+  // reason}; a kind disabled for the run (e.g. REPO_WRITES=0) simply has no key. A comparison is
+  // usable when ANY of its kinds is ok; per-kind availability drives cells and cards.
+  function comparison(id) {
+    var c = data && data.comparisons ? data.comparisons[id] : undefined;
+    return (c && typeof c === 'object') ? c : null;
+  }
+  function slot(id, kind) {
+    var c = comparison(id);
+    var s = c ? c[kind] : undefined;
+    return (s && typeof s === 'object') ? s : null;
+  }
+  function slotOk(id, kind) {
+    var s = slot(id, kind);
+    return !!(s && s.status === 'ok' && s.analysis && typeof s.analysis === 'object');
+  }
+  function slotReason(id, kind) {
+    var s = slot(id, kind);
+    if (!s) { return 'not part of this run'; }
+    return String(s.reason || 'unavailable');
+  }
+  function isOk(id) {
+    return KINDS.some(function (k) { return slotOk(id, k); });
+  }
+  function unavailReason(id) {
+    var c = comparison(id);
+    if (!c) { return 'not part of this run'; }
+    // No kind is ok — surface each present kind's reason once (they usually coincide).
+    var parts = [];
+    var seen = {};
+    KINDS.forEach(function (k) {
+      if (!slot(id, k)) { return; }
+      var r = slotReason(id, k);
+      if (!seen[r]) { seen[r] = true; parts.push(r); }
+    });
+    return parts.join(' · ') || 'unavailable';
+  }
+  function analysisOps(id, kind) {
+    var s = slot(id, kind);
+    var ops = (s && s.analysis && s.analysis.ops && typeof s.analysis.ops === 'object') ? s.analysis.ops : {};
+    return ops;
+  }
+  function kindsInData() {
+    // Kinds present (any status) in at least one comparison — a run without writes slots never
+    // shows the kind chips.
+    return KINDS.filter(function (k) {
+      return COMPARISONS.some(function (c) { return slot(c.id, k) !== null; });
+    });
+  }
+  function opKindMap() {
+    // op name → kind over the union of ok slots. KINDS order makes a hypothetical clash
+    // deterministic (first kind wins); the assembler already rejects real ones per comparison.
+    var map = {};
+    KINDS.forEach(function (k) {
+      COMPARISONS.forEach(function (c) {
+        Object.keys(analysisOps(c.id, k)).forEach(function (op) {
+          if (!(op in map)) { map[op] = k; }
+        });
+      });
+    });
+    return map;
+  }
+  function availableIds() {
+    return COMPARISONS.map(function (c) { return c.id; }).filter(isOk);
+  }
+  function availableIdsFor(kind) {
+    return COMPARISONS.map(function (c) { return c.id; }).filter(function (id) { return slotOk(id, kind); });
+  }
+  function cacheModesInData() {
+    var modes = {};
+    KINDS.forEach(function (k) {
+      availableIdsFor(k).forEach(function (id) {
+        var ops = analysisOps(id, k);
+        Object.keys(ops).forEach(function (op) {
+          (ops[op].cells || []).forEach(function (cell) { modes[String(cell.cache_mode)] = true; });
+        });
+      });
+    });
+    return Object.keys(modes).sort();
+  }
+
+  // ---- formatting -----------------------------------------------------------------------------
+  function fmtMs(v) { return (typeof v === 'number' && isFinite(v)) ? v.toFixed(3) + ' ms' : '—'; }
+  function fmtThroughput(v) { return (typeof v === 'number' && isFinite(v)) ? v.toFixed(1) + ' ops/s' : '—'; }
+  function fmtPct(v) {
+    if (typeof v !== 'number' || !isFinite(v)) { return '—'; }
+    return (v >= 0 ? '+' : '') + v.toFixed(1) + '%';
+  }
+  function fmtPair(base, cand) {
+    // Compact raw baseline → candidate line for matrix cells: the unit once, at the end.
+    var thr = state.metric === 'throughput';
+    if (typeof base === 'number' && isFinite(base) && typeof cand === 'number' && isFinite(cand)) {
+      return thr ? base.toFixed(1) + ' → ' + cand.toFixed(1) + ' ops/s'
+                 : base.toFixed(3) + ' → ' + cand.toFixed(3) + ' ms';
+    }
+    var f = thr ? fmtThroughput : fmtMs;
+    return f(base) + ' → ' + f(cand);
+  }
+  function fmtDuration(secs) {
+    if (typeof secs !== 'number' || !isFinite(secs) || secs < 0) { return '—'; }
+    var s = Math.round(secs);
+    var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
+    return (h ? h + 'h ' : '') + (h || m ? m + 'm ' : '') + r + 's';
+  }
+  function shortDigest(ref) {
+    var s = String(ref || '');
+    var at = s.indexOf('@sha256:');
+    if (at < 0) { return s || '—'; }
+    return s.slice(0, at) + '@sha256:' + s.slice(at + 8, at + 20) + '…';
+  }
+
+  // ---- header meta ----------------------------------------------------------------------------
+  function metaCard(key, value, sub) {
+    var card = el('div', 'meta-card');
+    card.appendChild(el('div', 'k', key));
+    var v = el('div', 'v mono', value);
+    if (sub) { v.appendChild(el('span', 'sub', sub)); }
+    card.appendChild(v);
+    return card;
+  }
+  function renderMeta() {
+    var grid = document.getElementById('metaGrid');
+    clear(grid);
+    var meta = (data && data.meta && typeof data.meta === 'object') ? data.meta : {};
+    var pr = meta.pr_number ? '#' + meta.pr_number : '—';
+    var sha = meta.head_sha ? String(meta.head_sha).slice(0, 12) : '—';
+    grid.appendChild(metaCard('PR / head SHA', pr + ' @ ' + sha));
+    grid.appendChild(metaCard('Arch', meta.arch || '—'));
+    grid.appendChild(metaCard('Total benchmark wall-clock', fmtDuration(meta.elapsed_secs), 'record + all measurements + reports'));
+    var images = (meta.images && typeof meta.images === 'object') ? meta.images : {};
+    var imgPairs = [['pr', 'PR'], ['main', 'main'], ['c-engine', 'C engine']].filter(function (pair) {
+      return images[pair[0]] && typeof images[pair[0]] === 'object';
+    });
+    // One card for all engine images (three separate cards wasted a grid row).
+    if (imgPairs.length > 0) {
+      var ic = el('div', 'meta-card');
+      ic.appendChild(el('div', 'k', 'Images'));
+      imgPairs.forEach(function (pair) {
+        var img = images[pair[0]];
+        var v = el('div', 'v mono', pair[1] + ' · ' + String(img.ref || '—'));
+        var sub = el('span', 'sub', img.digest ? shortDigest(img.digest) : 'digest unresolved');
+        if (img.digest) { sub.title = String(img.digest); }
+        v.appendChild(sub);
+        ic.appendChild(v);
+      });
+      grid.appendChild(ic);
+    }
+    var cmps = (meta.comparisons && typeof meta.comparisons === 'object') ? meta.comparisons : {};
+    COMPARISONS.forEach(function (c) {
+      var m = cmps[c.id];
+      if (m && typeof m === 'object') {
+        grid.appendChild(metaCard(c.label + ' (' + c.id + ')',
+          'budgets: ' + String(m.budget_profile || '—'),
+          'divergence policy: ' + String(m.divergence_policy || '—')));
+      }
+    });
+    var box = document.getElementById('warnBox');
+    var strip = document.getElementById('warnStrip');
+    clear(strip);
+    // Dedupe identical warning texts across (comparison, kind) slots: one row per unique
+    // text prefixed with every slot that emitted it, collapsed behind a count summary —
+    // otherwise a three-way multi-kind run opens on a wall of near-identical banners.
+    var order = [];
+    var groups = {};
+    var raw = 0;
+    COMPARISONS.forEach(function (c) {
+      KINDS.forEach(function (k) {
+        if (!slotOk(c.id, k)) { return; }
+        var warns = slot(c.id, k).analysis.warnings;
+        (Array.isArray(warns) ? warns : []).forEach(function (w) {
+          var text = String(w);
+          raw += 1;
+          var label = c.label + (k === 'writes' ? ' (writes)' : '');
+          if (!groups[text]) { groups[text] = []; order.push(text); }
+          if (groups[text].indexOf(label) < 0) { groups[text].push(label); }
+        });
+      });
+    });
+    order.forEach(function (text) {
+      strip.appendChild(el('div', 'warn-row', '⚠ ' + groups[text].join(', ') + ': ' + text));
+    });
+    document.getElementById('warnSummary').textContent =
+      '⚠ ' + order.length + (order.length === 1 ? ' advisory' : ' advisories') +
+      (raw > order.length ? ' (deduplicated from ' + raw + ')' : '');
+    box.hidden = order.length === 0;
+  }
+
+  // ---- controls -------------------------------------------------------------------------------
+  function renderVerdictStrip() {
+    // At-a-glance health: one clickable pill per (comparison, kind) slot, mirroring the
+    // PR-comment verdict lines; clicking jumps straight to that comparison + kind.
+    var stripEl = document.getElementById('verdictStrip');
+    clear(stripEl);
+    var multiKind = kindsInData().length > 1;
+    var pills = 0;
+    COMPARISONS.forEach(function (c) {
+      KINDS.forEach(function (k) {
+        if (!slot(c.id, k)) { return; }
+        var ok = slotOk(c.id, k);
+        var verdict = ok ? String(slot(c.id, k).analysis.verdict || 'unavailable') : 'unavailable';
+        var b = el('button', 'vpill');
+        b.type = 'button';
+        b.setAttribute('data-vp', c.id + '/' + k);
+        if (state.view === c.id && (state.kind === k || state.kind === 'all')) { b.classList.add('on'); }
+        b.appendChild(el('span', null, multiKind ? c.label + ' · ' + k : c.label));
+        b.appendChild(el('span', 'vword ' + verdict, verdict.replace(/_/g, ' ')));
+        b.title = c.label + ' (' + k + '): ' + (ok ? verdict : slotReason(c.id, k));
+        b.addEventListener('click', function () {
+          state.view = c.id;
+          if (multiKind) { state.kind = k; }
+          render();
+        });
+        stripEl.appendChild(b);
+        pills += 1;
+      });
+    });
+    stripEl.hidden = pills === 0;
+  }
+  function opUniverse() {
+    // The (op → kind) universe the filters range over in the CURRENT view.
+    if (state.view === MATRIX || !isOk(state.view)) { return opKindMap(); }
+    var map = {};
+    KINDS.forEach(function (k) {
+      Object.keys(analysisOps(state.view, k)).forEach(function (op) {
+        if (!(op in map)) { map[op] = k; }
+      });
+    });
+    return map;
+  }
+  function countWith(mutate) {
+    // Visible-op count under a temporary state override — live counts on filter chips.
+    var savedChip = state.chip, savedKind = state.kind;
+    mutate();
+    var uni = opUniverse();
+    var n = Object.keys(uni).filter(function (op) { return opVisible(op, uni[op]); }).length;
+    state.chip = savedChip; state.kind = savedKind;
+    return n;
+  }
+  function chipCount(button, count) {
+    button.appendChild(el('span', 'cnt', '(' + count + ')'));
+  }
+  function segButton(label, on, disabled, title, onClick) {
+    var b = el('button', on ? 'on' : '', label);
+    b.type = 'button';
+    if (disabled) { b.disabled = true; }
+    if (title) { b.title = title; }
+    b.addEventListener('click', onClick);
+    return b;
+  }
+  function renderControls() {
+    var cmpSeg = document.getElementById('cmpSeg');
+    clear(cmpSeg);
+    COMPARISONS.forEach(function (c) {
+      var ok = isOk(c.id);
+      var title = ok ? '' : 'unavailable — click for reason: ' + unavailReason(c.id);
+      var b = segButton(c.label, state.view === c.id, false, title, function () { state.view = c.id; render(); });
+      b.setAttribute('data-cmp', c.id);
+      if (!ok) {
+        // Stays a real, clickable button (it reveals the reason card) — unavailability is
+        // conveyed by the greyed styling and the title/aria-label, NOT by aria-disabled,
+        // which would contradict the live click handler.
+        b.classList.add('unavail');
+        b.setAttribute('aria-label', c.label + ' — ' + title);
+      }
+      cmpSeg.appendChild(b);
+    });
+    var mb = segButton('matrix', state.view === MATRIX, false, '', function () { state.view = MATRIX; render(); });
+    mb.setAttribute('data-cmp', MATRIX);
+    cmpSeg.appendChild(mb);
+
+    var metricSeg = document.getElementById('metricSeg');
+    clear(metricSeg);
+    METRICS.forEach(function (m) {
+      var b = segButton(m.label, state.metric === m.id, false, '', function () { state.metric = m.id; render(); });
+      b.setAttribute('data-metric', m.id);
+      metricSeg.appendChild(b);
+    });
+
+    var modes = cacheModesInData();
+    var cacheSeg = document.getElementById('cacheSeg');
+    var cacheLbl = document.getElementById('cacheLbl');
+    clear(cacheSeg);
+    // Cache selector works in EVERY view (matrix values follow it too); it only hides when
+    // the data carries a single mode, where there is nothing to switch.
+    var showCache = modes.length > 1;
+    cacheSeg.hidden = !showCache;
+    cacheLbl.hidden = !showCache;
+    if (modes.length > 1 && modes.indexOf(state.cache) < 0) { state.cache = modes.indexOf('uncached') >= 0 ? 'uncached' : modes[0]; }
+    if (modes.length === 1) { state.cache = modes[0]; }
+    if (showCache) {
+      modes.forEach(function (m) {
+        var b = segButton(m, state.cache === m, false, '', function () { state.cache = m; render(); });
+        b.setAttribute('data-cache', m);
+        cacheSeg.appendChild(b);
+      });
+    }
+
+    var mc = document.getElementById('matrixControls');
+    // Filters apply to the matrix AND to any available comparison view (an unavailable
+    // comparison renders only its reason card — nothing to filter).
+    mc.hidden = !(state.view === MATRIX || isOk(state.view));
+    var inCmp = state.view !== MATRIX;
+    var sortSeg = document.getElementById('sortSeg');
+    clear(sortSeg);
+    [{ id: 'name', label: 'name', title: 'alphabetical' },
+     { id: 'worst', label: 'worst first', title: 'most regressed first — outcome severity, then the worst Δ% for the selected metric' }
+    ].forEach(function (s) {
+      var b = segButton(s.label, state.sort === s.id, false, s.title, function () { state.sort = s.id; render(); });
+      b.setAttribute('data-sort', s.id);
+      sortSeg.appendChild(b);
+    });
+    var chips = document.getElementById('chips');
+    clear(chips);
+    // Kind chips (all/reads/writes) — only when the run carries more than one kind. They compose
+    // (AND) with the verdict chip and the text filter, in every view.
+    var kinds = kindsInData();
+    if (kinds.length > 1) {
+      if (kinds.indexOf(state.kind) < 0 && state.kind !== 'all') { state.kind = 'all'; }
+      ['all'].concat(kinds).forEach(function (k) {
+        var b = el('button', 'chip' + (state.kind === k ? ' on' : ''), k === 'all' ? 'all kinds' : k);
+        b.type = 'button';
+        b.setAttribute('data-kind', k);
+        b.title = k === 'all' ? 'ops of every kind'
+          : 'only ' + k + ' ops — composes with the verdict filter and the text filter';
+        chipCount(b, countWith(function () { state.kind = k; }));
+        b.addEventListener('click', function () { state.kind = k; render(); });
+        chips.appendChild(b);
+      });
+    } else {
+      state.kind = 'all';
+    }
+    CHIPS.forEach(function (c) {
+      var b = el('button', 'chip' + (state.chip === c.id ? ' on' : ''), c.label);
+      b.type = 'button';
+      b.setAttribute('data-chip', c.id);
+      if (c.scoped) { b.title = inCmp ? c.scoped.cmp : c.scoped.matrix; }
+      else if (c.global) { b.title = c.global; }
+      chipCount(b, countWith(function () { state.chip = c.id; }));
+      b.addEventListener('click', function () { state.chip = c.id; render(); });
+      chips.appendChild(b);
+    });
+
+    var note = document.getElementById('metricNote');
+    clear(note);
+    if (state.metric !== 'p50') {
+      var n = el('p', 'note');
+      n.appendChild(el('b', null, state.metric + ' is informational — not gated. '));
+      n.appendChild(document.createTextNode('Values render neutrally (no verdict). '));
+      if (state.metric === 'throughput') {
+        n.appendChild(el('b', null, 'Higher is better'));
+        n.appendChild(document.createTextNode(' for throughput (a positive delta means the candidate did more ops/s).'));
+      }
+      note.appendChild(n);
+    }
+  }
+
+  // ---- matrix view ----------------------------------------------------------------------------
+  function opOutcome(id, kind, op) {
+    var entry = analysisOps(id, kind)[op];
+    return entry ? String(entry.op_outcome || 'not_applicable') : null;
+  }
+  function worstCellOfEntry(entry) {
+    // Worst Δ% for the SELECTED metric across concurrencies within the SELECTED cache mode
+    // (max Δ% for latency metrics, min for throughput — higher is better there). p50 deltas
+    // are the tool-emitted gated ones; other metrics come from context, display-only.
+    var cells = (entry && Array.isArray(entry.cells)) ? entry.cells : [];
+    var worst = null;
+    cells.forEach(function (cell) {
+      if (String(cell.cache_mode) !== state.cache) { return; }
+      var mv = cellMetricValues(cell);
+      if (typeof mv.deltaPct !== 'number' || !isFinite(mv.deltaPct)) { return; }
+      if (worst === null ||
+          (state.metric === 'throughput' ? mv.deltaPct < worst.mv.deltaPct
+                                         : mv.deltaPct > worst.mv.deltaPct)) {
+        worst = { cell: cell, mv: mv };
+      }
+    });
+    return worst;
+  }
+  function worstMetricCell(id, kind, op) {
+    return worstCellOfEntry(analysisOps(id, kind)[op]);
+  }
+  function deltaClass(deltaPct, regressed) {
+    // Severity color for a displayed Δ% — display-only, never a verdict: red only echoes
+    // the tool-emitted regressed outcome; ±5% separates noise from notable movement.
+    if (regressed) { return ' d-bad'; }
+    if (typeof deltaPct !== 'number' || !isFinite(deltaPct)) { return ''; }
+    var worse = state.metric === 'throughput' ? -deltaPct : deltaPct;
+    if (worse <= -5) { return ' d-good'; }
+    if (worse >= 5) { return ' d-warn'; }
+    return '';
+  }
+  function worstBadness(op, kind, ids) {
+    // Sort key for worst-first: outcome severity (gated), then the worst displayed Δ%
+    // (throughput inverted — lower is worse there).
+    var rank = 0, delta = null;
+    ids.forEach(function (id) {
+      if (!slotOk(id, kind)) { return; }
+      var out = opOutcome(id, kind, op);
+      if (out === null) { return; }
+      var r = OUTCOME_RANK[String(out)] || 0;
+      if (r > rank) { rank = r; }
+      var w = worstMetricCell(id, kind, op);
+      if (w) {
+        var d = state.metric === 'throughput' ? -w.mv.deltaPct : w.mv.deltaPct;
+        if (delta === null || d > delta) { delta = d; }
+      }
+    });
+    return { rank: rank, delta: delta };
+  }
+  function sortOps(names, kindOf, idsFor) {
+    if (state.sort !== 'worst') { return names.sort(); }
+    var keys = {};
+    names.forEach(function (op) { keys[op] = worstBadness(op, kindOf[op], idsFor(op)); });
+    return names.sort(function (a, b) {
+      var ka = keys[a], kb = keys[b];
+      if (ka.rank !== kb.rank) { return kb.rank - ka.rank; }
+      if (ka.delta === null && kb.delta === null) { return a < b ? -1 : a > b ? 1 : 0; }
+      if (ka.delta === null) { return 1; }
+      if (kb.delta === null) { return -1; }
+      if (ka.delta !== kb.delta) { return kb.delta - ka.delta; }
+      return a < b ? -1 : a > b ? 1 : 0;
+    });
+  }
+  function chipPredicate(op, kind) {
+    // Verdict-chip predicate for one op OF ONE KIND: quantifiers range over the comparisons
+    // where that op's kind is ok (mirroring the old "available comparisons" semantics).
+    function red(id) { return slotOk(id, kind) && opOutcome(id, kind, op) === 'regressed'; }
+    // any-red / all-green are scoped: in a comparison view they look at THAT comparison's own
+    // outcomes; in the matrix they roll up over every available comparison. red-vs-c and
+    // red-vs-main keep their global meaning in every view (useful for cross-referencing, and
+    // switching views never invalidates the active chip).
+    var scoped = state.view !== MATRIX && isOk(state.view) ? state.view : null;
+    switch (state.chip) {
+      case 'any-red':
+        if (scoped) { return opOutcome(scoped, kind, op) === 'regressed'; }
+        return availableIdsFor(kind).some(function (id) { return opOutcome(id, kind, op) === 'regressed'; });
+      case 'all-green': {
+        if (scoped) { return opOutcome(scoped, kind, op) === 'pass'; }
+        var avail = availableIdsFor(kind);
+        return avail.length > 0 && avail.every(function (id) { return opOutcome(id, kind, op) === 'pass'; });
+      }
+      case 'red-vs-c':
+        return red('c-pr') || red('c-main');
+      case 'red-vs-main':
+        return red('main-pr');
+      default:
+        return true;
+    }
+  }
+  function opVisible(op, kind) {
+    // The three composed filters: kind chip AND text AND verdict chip.
+    if (state.kind !== 'all' && kind !== state.kind) { return false; }
+    var q = state.q.trim().toLowerCase();
+    if (q && op.toLowerCase().indexOf(q) < 0) { return false; }
+    return chipPredicate(op, kind);
+  }
+  function chipDescription() {
+    var parts = [];
+    if (state.kind !== 'all') { parts.push(state.kind + ' only'); }
+    if (state.chip === 'all') { parts.push('all'); }
+    else if (state.chip === 'red-vs-c' || state.chip === 'red-vs-main') { parts.push(state.chip + ' (global)'); }
+    else { parts.push(state.chip + (state.view === MATRIX ? '' : ' (this comparison)')); }
+    return parts.join(' · ');
+  }
+  function countNote(shown, total) {
+    return el('p', 'count-note', shown + ' of ' + total + ' op(s) shown · filter: ' +
+      chipDescription() + (state.q.trim() ? ' · text: "' + state.q.trim() + '"' : ''));
+  }
+  function renderMatrix(root) {
+    var expl = el('details', 'note-details');
+    expl.appendChild(el('summary', null, 'how to read this matrix'));
+    expl.appendChild(el('p', 'note', 'The dot is the tool-emitted per-op outcome, a gated p50 rollup across ALL cache modes and concurrencies (worst cell wins; green = pass, red = regressed, amber = diverged-advisory, hollow = skipped) — the selectors never change it. The value under it follows the metric + cache selectors: worst \u0394% across concurrencies within the selected cache mode (latency: max \u0394%; throughput: min \u0394%, higher is better), with that cell\u2019s raw baseline \u2192 candidate underneath. Non-p50 values are informational, not gated. Each row is one op of one kind (reads or writes); a comparison that lacks that op\u2019s kind shows \u2014 with the reason in the tooltip.'));
+    root.appendChild(expl);
+    var kindOf = opKindMap();
+    var totalOps = Object.keys(kindOf).length;
+    var names = sortOps(Object.keys(kindOf).filter(function (op) {
+      return opVisible(op, kindOf[op]);
+    }), kindOf, function (op) { return availableIdsFor(kindOf[op]); });
+    root.appendChild(countNote(names.length, totalOps));
+
+    var wrap = el('div', 'matrix-wrap');
+    var table = el('table', 'matrix');
+    var thead = el('thead');
+    var hr = el('tr');
+    hr.appendChild(el('th', null, 'op'));
+    COMPARISONS.forEach(function (c) {
+      var th = el('th', 'cmp-col', c.label);
+      if (!isOk(c.id)) {
+        th.classList.add('unavail');
+        th.appendChild(el('span', 'sub', unavailReason(c.id)));
+        th.title = 'unavailable — ' + unavailReason(c.id);
+      }
+      hr.appendChild(th);
+    });
+    thead.appendChild(hr);
+    table.appendChild(thead);
+    var tbody = el('tbody');
+    var showKindTag = kindsInData().length > 1;
+    names.forEach(function (op) {
+      var kind = kindOf[op];
+      var tr = el('tr');
+      tr.setAttribute('data-op', op);
+      tr.setAttribute('data-kind', kind);
+      var opTd = el('td', 'mono', op);
+      if (showKindTag) {
+        opTd.title = kind === 'writes' ? 'write op' : 'read op';
+        if (kind === 'writes') { opTd.appendChild(el('span', 'ktag', 'write')); }
+      }
+      tr.appendChild(opTd);
+      COMPARISONS.forEach(function (c) {
+        if (!slotOk(c.id, kind)) {
+          var na = el('td', 'mcell v-na', '—');
+          if (comparison(c.id) !== null) {
+            na.title = 'unavailable (' + kind + ') — ' + slotReason(c.id, kind);
+          }
+          tr.appendChild(na);
+          return;
+        }
+        var out = opOutcome(c.id, kind, op);
+        var td = el('td', 'mcell');
+        if (out === null) { td.textContent = '—'; }
+        else { td.appendChild(outcomeMark(out)); }
+        if (out) {
+          var title = op + ': ' + out;
+          var worst = worstMetricCell(c.id, kind, op);
+          if (worst) {
+            td.appendChild(el('span', 'mdelta mono' + (worst.mv.gated ? '' : ' delta-neu') +
+              deltaClass(worst.mv.deltaPct, out === 'regressed' && state.metric === 'p50'),
+              fmtPct(worst.mv.deltaPct)));
+            td.appendChild(el('span', 'mraw mono', fmtPair(worst.mv.base, worst.mv.cand)));
+            var fmt = state.metric === 'throughput' ? fmtThroughput : fmtMs;
+            title += ' — worst ' + state.metric + ' Δ ' + fmtPct(worst.mv.deltaPct) +
+              ' (' + fmt(worst.mv.base) + ' → ' + fmt(worst.mv.cand) +
+              ', C=' + worst.cell.concurrency + ', ' + worst.cell.cache_mode + ')';
+          }
+          td.title = title;
+        }
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+    root.appendChild(wrap);
+    if (availableIds().length === 0) {
+      root.appendChild(el('p', 'msg', 'No comparison in this run produced an analysis.'));
+    }
+  }
+
+  // ---- comparison (card/table) view -----------------------------------------------------------
+  function cellMetricValues(cell) {
+    // Returns {base, cand, delta_pct, delta_ms, gated} for the selected metric. For p50 the
+    // Rust-emitted deltas are used verbatim; other metrics come from the OPTIONAL context and the
+    // display-only delta is computed here (neutral — never a verdict).
+    if (state.metric === 'p50') {
+      return { base: cell.baseline_p50_ms, cand: cell.candidate_p50_ms, deltaPct: cell.delta_pct, deltaMs: cell.delta_ms, gated: true };
+    }
+    var ctx = (cell.context && typeof cell.context === 'object') ? cell.context : null;
+    var b = ctx && ctx.baseline ? ctx.baseline : null;
+    var c = ctx && ctx.candidate ? ctx.candidate : null;
+    var key = state.metric === 'throughput' ? 'throughput_ops_per_sec' : state.metric + '_ms';
+    var bv = b ? b[key] : null;
+    var cv = c ? c[key] : null;
+    var deltaPct = null;
+    if (typeof bv === 'number' && typeof cv === 'number' && isFinite(bv) && isFinite(cv) && bv !== 0) {
+      deltaPct = (cv - bv) / bv * 100;
+    }
+    return { base: bv, cand: cv, deltaPct: deltaPct, deltaMs: null, gated: false };
+  }
+  function verdictCell(cell) {
+    var v = String(cell.perf_verdict || 'not_applicable');
+    if (v === 'pass' || v === 'regressed') {
+      var td = el('td', v === 'pass' ? 'v-ok' : 'v-bad');
+      td.appendChild(outcomeMark(v));
+      td.appendChild(document.createTextNode(v === 'pass' ? ' within budget' : ' over budget'));
+      return td;
+    }
+    return el('td', 'v-na', 'N/A');
+  }
+  function budgetText(cell) {
+    var b = cell.budget;
+    if (!b || typeof b !== 'object') { return '—'; }
+    var pct = (typeof b.budget_pct === 'number') ? b.budget_pct + '%' : '—';
+    var floor = (typeof b.floor_ms === 'number') ? b.floor_ms + ' ms' : '—';
+    return pct + ' / ' + floor;
+  }
+  function opDetails(op, entry, labels) {
+    var d = el('details', 'op');
+    d.setAttribute('data-op', op);
+    var summary = el('summary');
+    var outcome = String(entry.op_outcome || 'not_applicable');
+    summary.appendChild(outcomeMark(outcome));
+    summary.appendChild(el('span', 'mono', op));
+    if (entry.tier) { summary.appendChild(el('span', 'tier', entry.tier)); }
+    var corr = String(entry.correctness || '');
+    if (corr === 'diverged') { summary.appendChild(el('span', 'corr', '⚠ results diverged')); }
+    else if (corr === 'not_gated') { summary.appendChild(el('span', 'corr', 'correctness not gated')); }
+    var worst = worstCellOfEntry(entry);
+    if (worst) {
+      // Scannability without opening the row: the worst Δ% for the current metric+cache.
+      var wd = el('span', 'wd mono' + (worst.mv.gated ? '' : ' delta-neu') +
+        deltaClass(worst.mv.deltaPct, outcome === 'regressed' && state.metric === 'p50'),
+        'worst Δ ' + fmtPct(worst.mv.deltaPct));
+      wd.appendChild(el('span', 'at', ' @C=' + worst.cell.concurrency));
+      wd.title = 'worst ' + state.metric + ' Δ in cache mode "' + state.cache + '": ' +
+        fmtPair(worst.mv.base, worst.mv.cand);
+      summary.appendChild(wd);
+    }
+    d.appendChild(summary);
+
+    var body = el('div', 'body');
+    var all = entry.cells || [];
+    var cells = all.filter(function (cell) { return String(cell.cache_mode) === state.cache; });
+    if (outcome === 'skipped') {
+      var sides = [];
+      if (entry.skipped_baseline) { sides.push('baseline'); }
+      if (entry.skipped_candidate) { sides.push('candidate'); }
+      body.appendChild(el('p', 'note', '⏭ op skipped' +
+        (sides.length ? ' on ' + sides.join(' + ') : '') +
+        ' — capability not supported; excluded from pass/regressed rollups'));
+    }
+    if (all.length === 0) {
+      if (outcome !== 'skipped') {
+        body.appendChild(el('p', 'note', 'no latency cells — correctness-only result for this op'));
+      }
+    } else if (cells.length === 0) {
+      body.appendChild(el('p', 'note', 'no cells in cache mode "' + state.cache + '"'));
+    } else {
+      var table = el('table');
+      var hr = el('tr');
+      hr.appendChild(el('th', null, 'C'));
+      hr.appendChild(el('th', 'num', labels.baseline + ' (baseline)'));
+      hr.appendChild(el('th', 'num', labels.candidate + ' (candidate)'));
+      hr.appendChild(el('th', 'num', 'Δ%'));
+      if (state.metric === 'p50') {
+        hr.appendChild(el('th', 'num', 'Δms'));
+        hr.appendChild(el('th', null, 'budget (pct / floor)'));
+        hr.appendChild(el('th', null, 'verdict (p50, gated)'));
+      } else {
+        hr.appendChild(el('th', null, 'informational — not gated'));
+      }
+      var thead = el('thead'); thead.appendChild(hr); table.appendChild(thead);
+      var tbody = el('tbody');
+      cells.forEach(function (cell) {
+        var tr = el('tr');
+        tr.appendChild(el('td', 'num', String(cell.concurrency)));
+        var mv = cellMetricValues(cell);
+        var fmt = state.metric === 'throughput' ? fmtThroughput : fmtMs;
+        tr.appendChild(el('td', 'num', fmt(mv.base)));
+        tr.appendChild(el('td', 'num', fmt(mv.cand)));
+        tr.appendChild(el('td', 'num ' + (mv.gated ? '' : 'delta-neu'), fmtPct(mv.deltaPct)));
+        if (state.metric === 'p50') {
+          tr.appendChild(el('td', 'num', (typeof mv.deltaMs === 'number' && isFinite(mv.deltaMs)) ? (mv.deltaMs >= 0 ? '+' : '') + mv.deltaMs.toFixed(3) + ' ms' : '—'));
+          tr.appendChild(el('td', null, budgetText(cell)));
+          tr.appendChild(verdictCell(cell));
+        } else {
+          tr.appendChild(el('td', 'delta-neu', state.metric === 'throughput' ? 'higher is better' : 'lower is better'));
+        }
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      body.appendChild(table);
+    }
+    d.appendChild(body);
+    return d;
+  }
+  function renderComparisonKind(root, id, meta, kind, multiKind) {
+    var card = el('div', 'cmp-card');
+    card.setAttribute('data-kind', kind);
+    var head = el('div', 'cmp-head');
+    var title = meta.label + ' (' + id + ')' + (multiKind ? ' — ' + kind : '');
+    head.appendChild(el('div', 'cmp-title', title));
+    if (!slotOk(id, kind)) {
+      card.appendChild(head);
+      var b = el('div', 'banner warn');
+      b.appendChild(el('b', null, 'unavailable — '));
+      b.appendChild(document.createTextNode(slotReason(id, kind)));
+      card.appendChild(b);
+      root.appendChild(card);
+      return;
+    }
+    var a = slot(id, kind).analysis;
+    var labels = {
+      baseline: (a.comparison && a.comparison.baseline_label) || 'baseline',
+      candidate: (a.comparison && a.comparison.candidate_label) || 'candidate'
+    };
+    var verdict = String(a.verdict || '—');
+    var badge = el('span', 'verdict-badge ' + verdict, verdict.replace(/_/g, ' '));
+    head.appendChild(badge);
+    card.appendChild(head);
+    var totals = (a.totals && typeof a.totals === 'object') ? a.totals : {};
+    var sub = el('div', 'cmp-sub');
+    sub.appendChild(document.createTextNode(labels.baseline + ' → ' + labels.candidate +
+      ' · budgets: ' + String(a.budget_profile || '—') +
+      ' · divergence policy: ' + String(a.divergence_policy || '—') + ' · ops: '));
+    function bucket(cls, n, word) {
+      if (cls) { sub.appendChild(el('span', 'dot ' + cls)); sub.appendChild(document.createTextNode(' ')); }
+      sub.appendChild(document.createTextNode(n + ' ' + word));
+    }
+    bucket('pass', totals.pass || 0, 'pass');
+    sub.appendChild(document.createTextNode(' · '));
+    bucket('bad', totals.regressed || 0, 'regressed');
+    sub.appendChild(document.createTextNode(' · '));
+    bucket('warn', totals.diverged || 0, 'diverged');
+    sub.appendChild(document.createTextNode(' · ' + (totals.not_applicable || 0) + ' n/a'));
+    if (Number(totals.skipped) > 0) {
+      sub.appendChild(document.createTextNode(' · '));
+      bucket('skip', totals.skipped, 'skipped');
+    }
+    sub.appendChild(document.createTextNode(' · ' + (a.comparable_cells || 0) +
+      ' comparable p50 cell(s), ' + (a.regressed_cells || 0) + ' over budget'));
+    card.appendChild(sub);
+
+    if (a.status && a.status.kind && a.status.kind !== 'comparable') {
+      var nb = el('div', 'banner bad');
+      nb.appendChild(el('b', null, 'not comparable (' + String(a.status.kind).replace(/_/g, ' ') + ')'));
+      if (a.status.reason) {
+        nb.appendChild(document.createTextNode(' — ' + String(a.status.reason)));
+      }
+      card.appendChild(nb);
+    }
+    (Array.isArray(a.warnings) ? a.warnings : []).forEach(function (w) {
+      card.appendChild(el('div', 'banner info', '⚠ ' + String(w)));
+    });
+    var ops = analysisOps(id, kind);
+    var divergedOps = Object.keys(ops).filter(function (op) {
+      return String(ops[op].correctness) === 'diverged';
+    });
+    if (divergedOps.length > 0) {
+      var policy = String(a.divergence_policy || 'gate');
+      var db = el('div', 'banner ' + (policy === 'advisory' ? 'warn' : 'bad'));
+      db.appendChild(el('b', null, divergedOps.length + ' op(s) returned different results: '));
+      db.appendChild(document.createTextNode(divergedOps.join(', ') + '. '));
+      db.appendChild(document.createTextNode(policy === 'advisory'
+        ? 'Advisory policy (cross-engine): marked ⚠, latency cells are N/A — the engines did different work, so a latency verdict would be meaningless.'
+        : 'Gate policy (same-engine): a correctness failure — the op counts as regressed and its latency cells are N/A.'));
+      card.appendChild(db);
+    }
+    root.appendChild(card);
+
+    var all = Object.keys(ops);
+    var kindOfC = {};
+    all.forEach(function (op) { kindOfC[op] = kind; });
+    var names = sortOps(all.filter(function (op) { return opVisible(op, kind); }),
+      kindOfC, function () { return [id]; });
+    // Count-note first (was buried under the list), plus bulk open/close for the details.
+    var tools = el('div', 'list-tools');
+    tools.appendChild(countNote(names.length, all.length));
+    var detailNodes = [];
+    if (names.length > 0) {
+      [['expand', 'expand all', true], ['collapse', 'collapse all', false]].forEach(function (spec) {
+        var b = el('button', 'mini', spec[1]);
+        b.type = 'button';
+        b.setAttribute('data-act', spec[0]);
+        b.addEventListener('click', function () {
+          detailNodes.forEach(function (d) { d.open = spec[2]; });
+        });
+        tools.appendChild(b);
+      });
+    }
+    root.appendChild(tools);
+    names.forEach(function (op) {
+      var d = opDetails(op, ops[op], labels);
+      detailNodes.push(d);
+      root.appendChild(d);
+    });
+  }
+  function renderComparison(root, id) {
+    var meta = COMPARISONS.filter(function (c) { return c.id === id; })[0];
+    if (!isOk(id)) {
+      var card = el('div', 'cmp-card');
+      var head = el('div', 'cmp-head');
+      head.appendChild(el('div', 'cmp-title', meta.label + ' (' + id + ')'));
+      card.appendChild(head);
+      var b = el('div', 'banner warn');
+      b.appendChild(el('b', null, 'unavailable — '));
+      b.appendChild(document.createTextNode(unavailReason(id)));
+      card.appendChild(b);
+      root.appendChild(card);
+      return;
+    }
+    // One card per kind present on this comparison, reads first; a kind hidden by the kind chip
+    // is skipped entirely (the chips compose across the whole page).
+    var multiKind = kindsInData().length > 1;
+    KINDS.forEach(function (k) {
+      if (!slot(id, k)) { return; }
+      if (state.kind !== 'all' && k !== state.kind) { return; }
+      renderComparisonKind(root, id, meta, k, multiKind);
+    });
+  }
+
+  // ---- shareable URL-hash state ---------------------------------------------------------------
+  function updateHash() {
+    // Only non-defaults, so pristine URLs stay clean; replaceState avoids history spam
+    // and never scrolls. Invalid values were already normalized by renderControls.
+    var p = [];
+    if (state.view !== MATRIX) { p.push('view=' + encodeURIComponent(state.view)); }
+    if (state.kind !== 'all') { p.push('kind=' + encodeURIComponent(state.kind)); }
+    if (state.metric !== 'p50') { p.push('metric=' + encodeURIComponent(state.metric)); }
+    if (cacheModesInData().length > 1 && state.cache !== 'uncached') { p.push('cache=' + encodeURIComponent(state.cache)); }
+    if (state.chip !== 'all') { p.push('chip=' + encodeURIComponent(state.chip)); }
+    if (state.sort !== 'name') { p.push('sort=' + encodeURIComponent(state.sort)); }
+    if (state.q.trim()) { p.push('q=' + encodeURIComponent(state.q.trim())); }
+    var next = p.length ? '#' + p.join('&') : '';
+    if (next === location.hash || (!next && !location.hash)) { return; }
+    try {
+      history.replaceState(null, '', next || location.pathname + location.search);
+    } catch (e) { /* sandboxed / file:// — state stays in-page only */ }
+  }
+  function applyHash() {
+    var raw = String(location.hash || '').replace(/^#/, '');
+    if (!raw) { return; }
+    var vals = {};
+    raw.split('&').forEach(function (part) {
+      var eq = part.indexOf('=');
+      if (eq <= 0) { return; }
+      try { vals[part.slice(0, eq)] = decodeURIComponent(part.slice(eq + 1)); }
+      catch (e) { /* malformed escape — ignore this key */ }
+    });
+    var views = COMPARISONS.map(function (c) { return c.id; }).concat([MATRIX]);
+    if (views.indexOf(vals.view) >= 0) { state.view = vals.view; }
+    if (vals.kind === 'all' || KINDS.indexOf(vals.kind) >= 0) { state.kind = vals.kind; }
+    if (METRICS.some(function (m) { return m.id === vals.metric; })) { state.metric = vals.metric; }
+    if (typeof vals.cache === 'string' && vals.cache) { state.cache = vals.cache; }
+    if (CHIPS.some(function (c) { return c.id === vals.chip; })) { state.chip = vals.chip; }
+    if (vals.sort === 'name' || vals.sort === 'worst') { state.sort = vals.sort; }
+    if (typeof vals.q === 'string') {
+      state.q = vals.q;
+      document.getElementById('opFilter').value = vals.q;
+    }
+  }
+
+  // ---- top-level render -----------------------------------------------------------------------
+  function render() {
+    renderVerdictStrip();
+    renderControls();
+    updateHash();
+    var root = document.getElementById('view');
+    clear(root);
+    if (state.view === MATRIX) { renderMatrix(root); }
+    else { renderComparison(root, state.view); }
+  }
+  function renderFatal(text) {
+    var root = document.getElementById('view');
+    clear(root);
+    root.appendChild(el('p', 'msg', text));
+  }
+
+  // ---- theme ----------------------------------------------------------------------------------
+  document.getElementById('themeBtn').addEventListener('click', function () {
+    var cur = document.documentElement.getAttribute('data-theme');
+    var next = cur === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    try { localStorage.setItem('synth-theme', next); } catch (e) { /* private mode */ }
+  });
+  try {
+    var saved = localStorage.getItem('synth-theme');
+    if (saved === 'light' || saved === 'dark') { document.documentElement.setAttribute('data-theme', saved); }
+  } catch (e) { /* private mode */ }
+
+  // ---- boot -----------------------------------------------------------------------------------
+  document.getElementById('opFilter').addEventListener('input', function (ev) {
+    state.q = String(ev.target.value || '');
+    render();
+  });
+  window.addEventListener('hashchange', function () {
+    if (!data) { return; }
+    applyHash();
+    render();
+  });
+  fetch('data.json', { cache: 'no-store' })
+    .then(function (resp) {
+      if (!resp.ok) { throw new Error('HTTP ' + resp.status); }
+      return resp.json();
+    })
+    .then(function (parsed) {
+      if (!parsed || typeof parsed !== 'object' || typeof parsed.comparisons !== 'object') {
+        throw new Error('data.json has no comparisons object');
+      }
+      data = parsed;
+      if (Number(parsed.schema_version) !== 2) {
+        renderFatal('data.json schema_version ' + parsed.schema_version + ' is not the supported v2.');
+        renderMeta();
+        return;
+      }
+      applyHash();
+      renderMeta();
+      render();
+    })
+    .catch(function (err) {
+      renderFatal('Could not load data.json: ' + String(err && err.message ? err.message : err));
+    });
+})();
+</script>
+</body>
+</html>
