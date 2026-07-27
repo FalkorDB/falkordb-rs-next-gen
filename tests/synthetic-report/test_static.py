@@ -81,11 +81,15 @@ def test_template_fetches_sibling_data_json():
 def test_template_has_inline_data_uri_favicon():
     """Favicon must be an inline data: URI — zero extra network fetches (B3)."""
     text = TEMPLATE.read_text(encoding="utf-8")
-    assert '<link rel="icon" href="data:image/svg+xml,' in text
-    icon_hrefs = re.findall(r'<link rel="(?:icon|apple-touch-icon)" href="([^"]+)"', text)
-    assert icon_hrefs, "icon links missing"
-    for href in icon_hrefs:
-        assert href.startswith("data:image/svg+xml,"), href
+    # Formatting-resilient: any quoting, attribute order, or extra attributes.
+    icon_links = re.findall(
+        r"<link\b[^>]*\brel\s*=\s*[\"']?(?:icon|apple-touch-icon)[\"']?[^>]*>",
+        text, re.IGNORECASE)
+    assert icon_links, "icon links missing"
+    for link in icon_links:
+        href = re.search(r"\bhref\s*=\s*[\"']?([^\"'\s>]+)", link, re.IGNORECASE)
+        assert href, link
+        assert href.group(1).startswith("data:image/svg+xml,"), link
 
 
 # --- 2. fixture schema: what the page consumes ------------------------------
