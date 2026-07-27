@@ -463,9 +463,9 @@ impl VersionedMatrix<bool> {
     /// dup overhead of re-building inside the versioned wrapper.
     #[must_use]
     pub fn from_matrix(m: Matrix<bool>) -> Self {
-        // The base must uphold the never-pending invariant (`wait` asserts
-        // it); merged matrices arrive here with pending work (e.g. from
-        // accumulating `set_pattern` / apply ops).
+        // Freshly merged matrices (e.g. `set_pattern` unions) may carry
+        // pending GraphBLAS work; the base slot is required to be synced
+        // (`wait` debug-asserts `!m.pending()`).
         m.wait();
         let nrows = m.nrows();
         let ncols = m.ncols();

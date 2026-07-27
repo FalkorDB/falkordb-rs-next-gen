@@ -1175,10 +1175,11 @@ mod tests {
         t.set_all_from_slices(&srcs, &dsts, &ids);
         // Fold the pending adds into the committed base so edge id 0 lives
         // in the u64 base matrix. The fold decision is latched at version
-        // creation (`dup`) and executed by the next `flush` — mirror the
-        // real transaction handoff.
+        // creation (`dup`) and executed by the next `flush`, which folds via
+        // a (possibly pending) eWiseAdd — materialize before the probe.
         let mut t = t.dup();
         t.flush();
+        t.fwd_m().wait();
         assert!(t.fwd_m().contains(0, 1), "edge id 0 not folded into base");
 
         // Bulk-delete edge id 0 (and a nonzero control) via the fast path.
@@ -1188,6 +1189,8 @@ mod tests {
         assert!(t.get(5, 6).next().is_none(), "edge id 5 still readable");
 
         let ex = t.extract();
+        ex.wait();
+        assert!(ex.contains(1, 2), "unrelated live pair (1,2) disappeared");
         assert!(!ex.contains(5, 6), "control pair (5,6) not deleted");
         assert!(
             !ex.contains(0, 1),
