@@ -1593,60 +1593,108 @@ impl Graph {
         self.deleted_nodes |= deleted_nodes;
         self.node_count -= deleted_nodes.len();
 
-        // Build a diagonal mask matrix from all deleted node IDs
-        let n = self.node_cap;
-        let mut diag_mask = Matrix::<bool>::new(n, n);
-        for id in deleted_nodes {
-            diag_mask.set(id, id, true);
+        // Small deletes: per-element delta ops. The bulk path below has a
+        // fixed cost per masked op (mask build + eWiseMult + dp rewrite),
+        // which dominates below a few hundred nodes; the per-element path
+        // turns quadratic well above this (measured crossover ~100-1000).
+        const SMALL_DELETE_LIMIT: u64 = 256;
+        if deleted_nodes.len() <= SMALL_DELETE_LIMIT {
+            // Read phase first, writes after: `iter` waits on the matrix's
+            // pending delta, so interleaving it with `remove` forces a
+            // GraphBLAS pending-tuple merge per node — O(deleted × |matrix|)
+            // (delete-100 was 50x C at 500k nodes). One pass = one wait.
+            let mut node_label_pairs: Vec<(u64, u64)> = Vec::new();
+            {
+                let mut nlm_it = self.node_labels_matrix.iter(0, 0);
+                for id in deleted_nodes {
+                    nlm_it.seek(id, id);
+                    for (_, label_id) in nlm_it.by_ref() {
+                        node_label_pairs.push((id, label_id));
+                    }
+                }
+            }
+            for id in deleted_nodes {
+                self.all_nodes_matrix.remove(id, id);
+            }
+            for &(id, label_id) in &node_label_pairs {
+                let lid = label_id as usize;
+                self.labels_matices[lid].remove(id, id);
+                self.node_labels_matrix.remove(id, label_id);
+
+                let label = &self.node_labels[lid];
+                if self.node_indexer.has_index(label) {
+                    for attr in self.node_attrs.get_attrs(id) {
+                        if self.node_indexer.has_indexed_attr(label, &attr) {
+                            remove_docs.entry(label_id).or_default().insert(id);
+                            break;
+                        }
+                    }
+                }
+            }
+            self.node_attrs.remove_all(deleted_nodes);
+            return Ok(());
         }
+
+        // Build a diagonal mask matrix from all deleted node IDs (ascending
+        // from the treemap, so GrB_Matrix_build takes its sorted fast path).
+        let n = self.node_cap;
+        let ids: Vec<u64> = deleted_nodes.iter().collect();
+        let mut diag_mask = Matrix::<bool>::new(n, n);
+        diag_mask.build(&ids, &ids);
 
         // Bulk-remove from all_nodes_matrix
         self.all_nodes_matrix.remove_mask(&diag_mask);
 
-        // Build per-label masks and nlm_mask using a single scan of the
-        // node_labels_matrix instead of one iterator per deleted node.
+        // Collect the deleted nodes' label entries by seeking one reusable
+        // iterator to each deleted row — O(deleted × labels) instead of a
+        // full O(|node_labels_matrix|) scan.
         let num_labels = self.labels_matices.len();
-        let mut label_masks: Vec<Option<Matrix<bool>>> = vec![None; num_labels];
-        let mut nlm_mask = Matrix::<bool>::new(
-            self.node_labels_matrix.nrows().max(1),
-            self.node_labels_matrix
-                .ncols()
-                .max(num_labels as u64)
-                .max(1),
-        );
+        let mut label_ids: Vec<Vec<u64>> = vec![Vec::new(); num_labels];
+        let mut nlm_rows: Vec<u64> = Vec::new();
+        let mut nlm_cols: Vec<u64> = Vec::new();
 
-        // Single scan: iterate all entries in node_labels_matrix and filter
-        // by deleted_nodes membership (O(1) bitmap check per entry).
-        for (node_id, label_id) in self.node_labels_matrix.iter(0, n) {
-            if !deleted_nodes.contains(node_id) {
-                continue;
-            }
-            let lid = label_id as usize;
-            let lm = label_masks[lid].get_or_insert_with(|| Matrix::<bool>::new(n, n));
-            lm.set(node_id, node_id, true);
+        let mut nlm_it = self.node_labels_matrix.iter(0, 0);
+        for &node_id in &ids {
+            nlm_it.seek(node_id, node_id);
+            for (_, label_id) in nlm_it.by_ref() {
+                let lid = label_id as usize;
+                label_ids[lid].push(node_id);
 
-            let label = &self.node_labels[lid];
-            if self.node_indexer.has_index(label) {
-                for attr in self.node_attrs.get_attrs(node_id) {
-                    if self.node_indexer.has_indexed_attr(label, &attr) {
-                        remove_docs.entry(label_id).or_default().insert(node_id);
-                        break;
+                let label = &self.node_labels[lid];
+                if self.node_indexer.has_index(label) {
+                    for attr in self.node_attrs.get_attrs(node_id) {
+                        if self.node_indexer.has_indexed_attr(label, &attr) {
+                            remove_docs.entry(label_id).or_default().insert(node_id);
+                            break;
+                        }
                     }
                 }
-            }
 
-            nlm_mask.set(node_id, label_id, true);
+                nlm_rows.push(node_id);
+                nlm_cols.push(label_id);
+            }
         }
+        drop(nlm_it);
 
         // Bulk-remove from per-label matrices
-        for (lid, mask_opt) in label_masks.into_iter().enumerate() {
-            if let Some(mask) = mask_opt {
+        for (lid, ids) in label_ids.iter().enumerate() {
+            if !ids.is_empty() {
+                let mut mask = Matrix::<bool>::new(n, n);
+                mask.build(ids, ids);
                 self.labels_matices[lid].remove_mask(&mask);
             }
         }
 
         // Bulk-remove from node_labels_matrix
-        if nlm_mask.nvals() > 0 {
+        if !nlm_rows.is_empty() {
+            let mut nlm_mask = Matrix::<bool>::new(
+                self.node_labels_matrix.nrows().max(1),
+                self.node_labels_matrix
+                    .ncols()
+                    .max(num_labels as u64)
+                    .max(1),
+            );
+            nlm_mask.build(&nlm_rows, &nlm_cols);
             self.node_labels_matrix.remove_mask(&nlm_mask);
         }
 
@@ -2186,11 +2234,20 @@ impl Graph {
         }
 
         // Remove every deleted edge from relationship_type_matrix in one masked op.
+        const SMALL_DELETE_LIMIT: usize = 64;
         if !tm_rows.is_empty() {
-            let mut type_mask =
-                Matrix::<bool>::new(self.relationship_cap, self.relationship_types.len() as u64);
-            type_mask.build(&tm_rows, &tm_cols);
-            self.relationship_type_matrix.remove_mask(&type_mask);
+            if tm_rows.len() <= SMALL_DELETE_LIMIT {
+                for (&edge_id, &type_id) in tm_rows.iter().zip(tm_cols.iter()) {
+                    self.relationship_type_matrix.remove(edge_id, type_id);
+                }
+            } else {
+                let mut type_mask = Matrix::<bool>::new(
+                    self.relationship_cap,
+                    self.relationship_types.len() as u64,
+                );
+                type_mask.build(&tm_rows, &tm_cols);
+                self.relationship_type_matrix.remove_mask(&type_mask);
+            }
         }
 
         // Update adjacancy_matrix for pairs that lost all edges.
@@ -2205,12 +2262,18 @@ impl Graph {
                 });
             }
             if !adj_candidates.is_empty() {
-                let node_cap = self.node_cap;
-                let adj_rows: Vec<u64> = adj_candidates.iter().map(|&(src, _)| src).collect();
-                let adj_cols: Vec<u64> = adj_candidates.iter().map(|&(_, dst)| dst).collect();
-                let mut adj_mask = Matrix::<bool>::new(node_cap, node_cap);
-                adj_mask.build(&adj_rows, &adj_cols);
-                self.adjacancy_matrix.remove_mask(&adj_mask);
+                if adj_candidates.len() <= SMALL_DELETE_LIMIT {
+                    for &(src, dst) in &adj_candidates {
+                        self.adjacancy_matrix.remove(src, dst);
+                    }
+                } else {
+                    let node_cap = self.node_cap;
+                    let adj_rows: Vec<u64> = adj_candidates.iter().map(|&(src, _)| src).collect();
+                    let adj_cols: Vec<u64> = adj_candidates.iter().map(|&(_, dst)| dst).collect();
+                    let mut adj_mask = Matrix::<bool>::new(node_cap, node_cap);
+                    adj_mask.build(&adj_rows, &adj_cols);
+                    self.adjacancy_matrix.remove_mask(&adj_mask);
+                }
             }
         }
 
