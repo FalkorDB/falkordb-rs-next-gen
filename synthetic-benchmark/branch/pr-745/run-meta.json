@@ -1,13 +1,13 @@
 {
   "schema_version": 1,
-  "elapsed_secs": 514,
+  "elapsed_secs": 462,
   "arch": "x86",
   "pr_number": "745",
-  "head_sha": "4feea71929cefef85e7e2b60d2d8e9ffde1defa9",
+  "head_sha": "8b01e59441669b61ed6dc3b1ae24bcb8c34f42cf",
   "images": {
     "pr": {
       "ref": "ghcr.io/falkordb/falkordb-server:rc-pr-745",
-      "digest": "ghcr.io/falkordb/falkordb-server@sha256:61abfbbb28bfb890ba13e79520bf54fd58b91832c2bb667213fd3e6d3e9659ff"
+      "digest": "ghcr.io/falkordb/falkordb-server@sha256:146c29a9bcf897899002be990d694ebcc09d6420236f949320553cf9e294993f"
     },
     "main": {
       "ref": "ghcr.io/falkordb/falkordb-server:edge-rs",
