@@ -5,7 +5,7 @@
   "slug": "synthetic-pr-vs-c-engine-3563fbd87df3",
   "budget_profile": "cross-engine",
   "divergence_policy": "advisory",
-  "gated_metric": "total_ms.p50",
+  "gated_metric": "server_ms.p50",
   "elapsed_secs": null,
   "overall_verdict": "regressed",
   "headline": "1 of 10 comparable cell(s) over budget",

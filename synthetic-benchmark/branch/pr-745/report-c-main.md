@@ -3,8 +3,8 @@
 | field | c-engine | main |
 |---|---|---|
 | FalkorDB module | 99.99.99 | 99.99.99 |
-| server image | falkordb/falkordb@sha256:e47e0fb112ff29764965a1c25e2f983dd269de33367ca3f2fba61368b735f38c | ghcr.io/falkordb/falkordb-server@sha256:885151f4b5a5d99ced693d75f663274c38bcfb329008e6af5433eaf7643bdf28 |
-| workload_hash | `sha256:bf459bd5494d130caeb98ff1e0d1d30ac272348b5f991dc405f9878096d885fe` | `sha256:bf459bd5494d130caeb98ff1e0d1d30ac272348b5f991dc405f9878096d885fe` |
+| server image | falkordb/falkordb@sha256:e47e0fb112ff29764965a1c25e2f983dd269de33367ca3f2fba61368b735f38c | ghcr.io/falkordb/falkordb-server@sha256:311a2361cd17511cdb2811d161733cbf9db13a1877be706f1c591e809db51c43 |
+| workload_hash | `sha256:c51a7926ad110d35c36af442710c9b16a29099ecac19ebaaccab614e996f085d` | `sha256:c51a7926ad110d35c36af442710c9b16a29099ecac19ebaaccab614e996f085d` |
 | samples / warmup | 200 / 50 | 200 / 50 |
 | outcome oracle | — | — |
 
@@ -16,15 +16,17 @@
 
 _Metric `p50`. A cell is 🔴 only when the candidate is **slower** than the baseline by **more than** its budget **and** the absolute p50 increase exceeds the floor; faster (or slower within either bound) is 🟢 (N/A if the baseline is missing or ≤ 0). Budget precedence: per-op×concurrency > per-op > default._
 
+**Gated metric: `server_ms.p50`** (default) — the server-reported execution time; client-observed total latency is demoted to the `context:` line and is not part of any verdict in this comparison.
+
 **main vs c-engine** — 🔴 1 of 98 comparable cell(s) over budget
 
 _⚠ 1 op(s) with differing results (perf N/A): temporal_spatial_roundtrip_
 
 > ⚠ a FalkorDB module version is the dev placeholder — use tagged release images for a meaningful version comparison
 
-> ⚠ server image changed: falkordb/falkordb@sha256:e47e0fb112ff29764965a1c25e2f983dd269de33367ca3f2fba61368b735f38c → ghcr.io/falkordb/falkordb-server@sha256:885151f4b5a5d99ced693d75f663274c38bcfb329008e6af5433eaf7643bdf28
+> ⚠ server image changed: falkordb/falkordb@sha256:e47e0fb112ff29764965a1c25e2f983dd269de33367ca3f2fba61368b735f38c → ghcr.io/falkordb/falkordb-server@sha256:311a2361cd17511cdb2811d161733cbf9db13a1877be706f1c591e809db51c43
 
-🟢 = faster or within budget · 🔴 = slower than budget · ⚠ = results differ (advisory — the engines did different work, so perf is N/A) · N/A = no perf verdict. Only **p50** is gated — the `context:` line (p90/p95/p99 · throughput) and `Δms` are informational, never part of the verdict. Non-blocking.
+🟢 = faster or within budget · 🔴 = slower than budget · ⚠ = results differ (advisory — the engines did different work, so perf is N/A) · N/A = no perf verdict. Only **p50** of `server_ms` (server-reported execution time) is gated — the `context:` line (p90/p95/p99 · throughput · client-observed total p50) and `Δms` are informational, never part of the verdict. Non-blocking.
 
 <details><summary>🟢 <code>aggregate_age</code></summary>
 
@@ -32,8 +34,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 1.374<br><sub>context: p90 1.451 · p95 1.479 · p99 1.568 · 720 op/s</sub> | 0.750<br><sub>context: p90 0.825 · p95 0.853 · p99 0.885 · 1309 op/s</sub> | -45.4% (-0.624) | 150% AND 2 ms | 🟢 |
-| 8 | 1.883<br><sub>context: p90 2.440 · p95 2.681 · p99 3.073 · 4038 op/s</sub> | 0.894<br><sub>context: p90 1.040 · p95 1.074 · p99 1.144 · 8750 op/s</sub> | -52.5% (-0.988) | 150% AND 2 ms | 🟢 |
+| 1 | 1.287<br><sub>context: p90 1.348 · p95 1.369 · p99 1.408 · 618 op/s · total p50 1.615</sub> | 0.612<br><sub>context: p90 0.650 · p95 0.661 · p99 0.670 · 981 op/s · total p50 1.012</sub> | -52.5% (-0.675) | 150% AND 2 ms | 🟢 |
+| 8 | 1.778<br><sub>context: p90 2.342 · p95 2.565 · p99 2.988 · 3892 op/s · total p50 1.989</sub> | 0.731<br><sub>context: p90 0.864 · p95 0.885 · p99 0.955 · 7900 op/s · total p50 1.000</sub> | -58.9% (-1.048) | 150% AND 2 ms | 🟢 |
 
 </details>
 
@@ -43,8 +45,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 2.078<br><sub>context: p90 2.182 · p95 2.223 · p99 2.322 · 474 op/s</sub> | 0.809<br><sub>context: p90 0.877 · p95 0.908 · p99 0.963 · 1213 op/s</sub> | -61.1% (-1.269) | 150% AND 2 ms | 🟢 |
-| 8 | 2.659<br><sub>context: p90 3.454 · p95 3.568 · p99 4.099 · 2863 op/s</sub> | 0.986<br><sub>context: p90 1.159 · p95 1.190 · p99 1.258 · 7967 op/s</sub> | -62.9% (-1.673) | 150% AND 2 ms | 🟢 |
+| 1 | 1.989<br><sub>context: p90 2.057 · p95 2.091 · p99 2.152 · 441 op/s · total p50 2.268</sub> | 0.648<br><sub>context: p90 0.687 · p95 0.696 · p99 0.712 · 961 op/s · total p50 1.038</sub> | -67.4% (-1.341) | 150% AND 2 ms | 🟢 |
+| 8 | 2.583<br><sub>context: p90 3.345 · p95 3.496 · p99 3.959 · 2738 op/s · total p50 2.819</sub> | 0.811<br><sub>context: p90 0.995 · p95 1.019 · p99 1.085 · 7384 op/s · total p50 1.067</sub> | -68.6% (-1.772) | 150% AND 2 ms | 🟢 |
 
 </details>
 
@@ -54,8 +56,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 2.033<br><sub>context: p90 2.133 · p95 2.165 · p99 2.256 · 488 op/s</sub> | 1.312<br><sub>context: p90 1.368 · p95 1.385 · p99 1.419 · 756 op/s</sub> | -35.4% (-0.720) | 150% AND 2 ms | 🟢 |
-| 8 | 2.684<br><sub>context: p90 3.509 · p95 3.699 · p99 4.167 · 2824 op/s</sub> | 1.793<br><sub>context: p90 2.327 · p95 2.520 · p99 2.881 · 4277 op/s</sub> | -33.2% (-0.890) | 150% AND 2 ms | 🟢 |
+| 1 | 1.922<br><sub>context: p90 2.003 · p95 2.032 · p99 2.063 · 439 op/s · total p50 2.262</sub> | 1.140<br><sub>context: p90 1.195 · p95 1.204 · p99 1.224 · 650 op/s · total p50 1.525</sub> | -40.7% (-0.782) | 150% AND 2 ms | 🟢 |
+| 8 | 2.638<br><sub>context: p90 3.401 · p95 3.595 · p99 3.930 · 2714 op/s · total p50 2.882</sub> | 1.601<br><sub>context: p90 2.082 · p95 2.244 · p99 2.617 · 4080 op/s · total p50 1.895</sub> | -39.3% (-1.036) | 150% AND 2 ms | 🟢 |
 
 </details>
 
@@ -65,8 +67,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 2.654<br><sub>context: p90 2.802 · p95 2.834 · p99 2.943 · 374 op/s</sub> | 1.415<br><sub>context: p90 1.503 · p95 1.520 · p99 1.572 · 704 op/s</sub> | -46.7% (-1.239) | 150% AND 2 ms | 🟢 |
-| 8 | 3.658<br><sub>context: p90 4.699 · p95 4.970 · p99 5.498 · 2121 op/s</sub> | 1.635<br><sub>context: p90 1.953 · p95 2.007 · p99 2.101 · 4732 op/s</sub> | -55.3% (-2.023) | 150% AND 2 ms | 🟢 |
+| 1 | 2.565<br><sub>context: p90 2.663 · p95 2.685 · p99 2.749 · 336 op/s · total p50 2.969</sub> | 1.235<br><sub>context: p90 1.292 · p95 1.313 · p99 1.352 · 580 op/s · total p50 1.713</sub> | -51.9% (-1.330) | 150% AND 2 ms | 🟢 |
+| 8 | 3.572<br><sub>context: p90 4.525 · p95 4.792 · p99 5.176 · 2032 op/s · total p50 3.809</sub> | 1.461<br><sub>context: p90 1.775 · p95 1.808 · p99 1.883 · 4386 op/s · total p50 1.772</sub> | -59.1% (-2.111) | 150% AND 2 ms | 🟢 |
 
 </details>
 
@@ -76,8 +78,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.156<br><sub>context: p90 0.183 · p95 0.193 · p99 0.211 · 6126 op/s</sub> | 0.148<br><sub>context: p90 0.175 · p95 0.182 · p99 0.190 · 6596 op/s</sub> | -5.3% (-0.008) | 150% AND 2 ms | 🟢 |
-| 8 | 0.238<br><sub>context: p90 0.302 · p95 0.322 · p99 0.366 · 30895 op/s</sub> | 0.220<br><sub>context: p90 0.284 · p95 0.299 · p99 0.335 · 34688 op/s</sub> | -7.6% (-0.018) | 150% AND 2 ms | 🟢 |
+| 1 | 0.103<br><sub>context: p90 0.128 · p95 0.132 · p99 0.145 · 3976 op/s · total p50 0.242</sub> | 0.038<br><sub>context: p90 0.048 · p95 0.051 · p99 0.058 · 4467 op/s · total p50 0.221</sub> | -62.9% (-0.065) | 150% AND 2 ms | 🟢 |
+| 8 | 0.126<br><sub>context: p90 0.177 · p95 0.197 · p99 0.243 · 28979 op/s · total p50 0.256</sub> | 0.026<br><sub>context: p90 0.037 · p95 0.042 · p99 0.051 · 33425 op/s · total p50 0.231</sub> | -79.4% (-0.100) | 150% AND 2 ms | 🟢 |
 
 </details>
 
@@ -87,8 +89,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.340<br><sub>context: p90 0.389 · p95 0.415 · p99 0.433 · 2856 op/s</sub> | 0.214<br><sub>context: p90 0.249 · p95 0.259 · p99 0.284 · 4480 op/s</sub> | -37.0% (-0.126) | 150% AND 2 ms | 🟢 |
-| 8 | 0.438<br><sub>context: p90 0.524 · p95 0.556 · p99 0.614 · 17822 op/s</sub> | 0.328<br><sub>context: p90 0.418 · p95 0.449 · p99 0.497 · 23445 op/s</sub> | -25.1% (-0.110) | 150% AND 2 ms | 🟢 |
+| 1 | 0.266<br><sub>context: p90 0.286 · p95 0.295 · p99 0.305 · 1760 op/s · total p50 0.556</sub> | 0.072<br><sub>context: p90 0.097 · p95 0.104 · p99 0.110 · 2107 op/s · total p50 0.459</sub> | -73.1% (-0.194) | 150% AND 2 ms | 🟢 |
+| 8 | 0.324<br><sub>context: p90 0.430 · p95 0.480 · p99 0.574 · 14408 op/s · total p50 0.522</sub> | 0.064<br><sub>context: p90 0.097 · p95 0.103 · p99 0.122 · 20216 op/s · total p50 0.362</sub> | -80.2% (-0.260) | 150% AND 2 ms | 🟢 |
 
 </details>
 
@@ -98,8 +100,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.355<br><sub>context: p90 0.401 · p95 0.414 · p99 0.460 · 2746 op/s</sub> | 0.243<br><sub>context: p90 0.306 · p95 0.337 · p99 0.391 · 3921 op/s</sub> | -31.6% (-0.112) | 150% AND 2 ms | 🟢 |
-| 8 | 0.473<br><sub>context: p90 0.565 · p95 0.596 · p99 0.662 · 16422 op/s</sub> | 0.354<br><sub>context: p90 0.454 · p95 0.482 · p99 0.542 · 21481 op/s</sub> | -25.1% (-0.119) | 150% AND 2 ms | 🟢 |
+| 1 | 0.285<br><sub>context: p90 0.310 · p95 0.316 · p99 0.334 · 1716 op/s · total p50 0.582</sub> | 0.073<br><sub>context: p90 0.101 · p95 0.105 · p99 0.124 · 1859 op/s · total p50 0.517</sub> | -74.5% (-0.212) | 150% AND 2 ms | 🟢 |
+| 8 | 0.338<br><sub>context: p90 0.422 · p95 0.454 · p99 0.527 · 14519 op/s · total p50 0.515</sub> | 0.064<br><sub>context: p90 0.098 · p95 0.105 · p99 0.116 · 21420 op/s · total p50 0.354</sub> | -81.0% (-0.274) | 150% AND 2 ms | 🟢 |
 
 </details>
 
@@ -109,8 +111,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.412<br><sub>context: p90 0.522 · p95 0.547 · p99 0.584 · 2328 op/s</sub> | 0.356<br><sub>context: p90 0.406 · p95 0.412 · p99 0.449 · 2768 op/s</sub> | -13.6% (-0.056) | 150% AND 2 ms | 🟢 |
-| 8 | 0.531<br><sub>context: p90 0.638 · p95 0.673 · p99 0.744 · 14743 op/s</sub> | 0.451<br><sub>context: p90 0.546 · p95 0.581 · p99 0.642 · 17114 op/s</sub> | -15.1% (-0.080) | 150% AND 2 ms | 🟢 |
+| 1 | 0.303<br><sub>context: p90 0.327 · p95 0.336 · p99 0.343 · 1620 op/s · total p50 0.608</sub> | 0.140<br><sub>context: p90 0.171 · p95 0.179 · p99 0.197 · 1798 op/s · total p50 0.553</sub> | -53.6% (-0.162) | 150% AND 2 ms | 🟢 |
+| 8 | 0.347<br><sub>context: p90 0.427 · p95 0.448 · p99 0.507 · 14119 op/s · total p50 0.547</sub> | 0.142<br><sub>context: p90 0.180 · p95 0.194 · p99 0.220 · 14553 op/s · total p50 0.519</sub> | -59.1% (-0.205) | 150% AND 2 ms | 🟢 |
 
 </details>
 
@@ -120,8 +122,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.449<br><sub>context: p90 0.507 · p95 0.533 · p99 0.592 · 2204 op/s</sub> | 0.389<br><sub>context: p90 0.458 · p95 0.474 · p99 0.510 · 2538 op/s</sub> | -13.3% (-0.060) | 150% AND 2 ms | 🟢 |
-| 8 | 0.560<br><sub>context: p90 0.659 · p95 0.699 · p99 0.751 · 13873 op/s</sub> | 0.479<br><sub>context: p90 0.585 · p95 0.620 · p99 0.703 · 16193 op/s</sub> | -14.5% (-0.081) | 150% AND 2 ms | 🟢 |
+| 1 | 0.308<br><sub>context: p90 0.350 · p95 0.362 · p99 0.388 · 1645 op/s · total p50 0.608</sub> | 0.148<br><sub>context: p90 0.180 · p95 0.189 · p99 0.198 · 1482 op/s · total p50 0.671</sub> | -52.1% (-0.161) | 150% AND 2 ms | 🟢 |
+| 8 | 0.387<br><sub>context: p90 0.469 · p95 0.500 · p99 0.566 · 13103 op/s · total p50 0.594</sub> | 0.153<br><sub>context: p90 0.192 · p95 0.204 · p99 0.259 · 12165 op/s · total p50 0.613</sub> | -60.4% (-0.234) | 150% AND 2 ms | 🟢 |
 
 </details>
 
@@ -131,8 +133,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.562<br><sub>context: p90 0.706 · p95 0.749 · p99 0.931 · 1706 op/s</sub> | 0.482<br><sub>context: p90 0.597 · p95 0.623 · p99 0.722 · 2008 op/s</sub> | -14.3% (-0.080) | 150% AND 2 ms | 🟢 |
-| 8 | 0.738<br><sub>context: p90 0.940 · p95 1.000 · p99 1.098 · 10417 op/s</sub> | 0.640<br><sub>context: p90 0.820 · p95 0.884 · p99 1.043 · 11997 op/s</sub> | -13.3% (-0.098) | 150% AND 2 ms | 🟢 |
+| 1 | 0.369<br><sub>context: p90 0.421 · p95 0.437 · p99 0.461 · 1257 op/s · total p50 0.781</sub> | 0.186<br><sub>context: p90 0.221 · p95 0.235 · p99 0.255 · 1333 op/s · total p50 0.724</sub> | -49.6% (-0.183) | 150% AND 2 ms | 🟢 |
+| 8 | 0.434<br><sub>context: p90 0.535 · p95 0.565 · p99 0.664 · 9932 op/s · total p50 0.779</sub> | 0.185<br><sub>context: p90 0.234 · p95 0.250 · p99 0.281 · 11512 op/s · total p50 0.667</sub> | -57.3% (-0.249) | 150% AND 2 ms | 🟢 |
 
 </details>
 
@@ -142,8 +144,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.603<br><sub>context: p90 0.740 · p95 0.804 · p99 0.898 · 1594 op/s</sub> | 0.539<br><sub>context: p90 0.673 · p95 0.704 · p99 0.774 · 1798 op/s</sub> | -10.5% (-0.064) | 150% AND 2 ms | 🟢 |
-| 8 | 0.785<br><sub>context: p90 0.990 · p95 1.063 · p99 1.237 · 9869 op/s</sub> | 0.670<br><sub>context: p90 0.848 · p95 0.901 · p99 1.032 · 11537 op/s</sub> | -14.7% (-0.115) | 150% AND 2 ms | 🟢 |
+| 1 | 0.391<br><sub>context: p90 0.452 · p95 0.474 · p99 0.507 · 1256 op/s · total p50 0.785</sub> | 0.190<br><sub>context: p90 0.231 · p95 0.246 · p99 0.278 · 1243 op/s · total p50 0.789</sub> | -51.3% (-0.201) | 150% AND 2 ms | 🟢 |
+| 8 | 0.481<br><sub>context: p90 0.595 · p95 0.628 · p99 0.700 · 9419 op/s · total p50 0.827</sub> | 0.190<br><sub>context: p90 0.245 · p95 0.262 · p99 0.290 · 10916 op/s · total p50 0.711</sub> | -60.5% (-0.291) | 150% AND 2 ms | 🟢 |
 
 </details>
 
@@ -153,8 +155,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 1.195<br><sub>context: p90 1.644 · p95 1.788 · p99 2.048 · 811 op/s</sub> | 0.999<br><sub>context: p90 1.327 · p95 1.475 · p99 1.577 · 990 op/s</sub> | -16.4% (-0.196) | 150% AND 2 ms | 🟢 |
-| 8 | 1.549<br><sub>context: p90 2.193 · p95 2.383 · p99 2.777 · 4941 op/s</sub> | 1.304<br><sub>context: p90 1.841 · p95 2.013 · p99 2.299 · 5880 op/s</sub> | -15.8% (-0.245) | 150% AND 2 ms | 🟢 |
+| 1 | 0.599<br><sub>context: p90 0.737 · p95 0.796 · p99 0.879 · 699 op/s · total p50 1.391</sub> | 0.322<br><sub>context: p90 0.382 · p95 0.397 · p99 0.417 · 741 op/s · total p50 1.341</sub> | -46.2% (-0.277) | 150% AND 2 ms | 🟢 |
+| 8 | 0.713<br><sub>context: p90 0.946 · p95 1.021 · p99 1.167 · 4722 op/s · total p50 1.620</sub> | 0.336<br><sub>context: p90 0.442 · p95 0.470 · p99 0.530 · 5344 op/s · total p50 1.429</sub> | -52.9% (-0.377) | 150% AND 2 ms | 🟢 |
 
 </details>
 
@@ -164,8 +166,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 1.230<br><sub>context: p90 1.695 · p95 1.906 · p99 2.143 · 780 op/s</sub> | 1.059<br><sub>context: p90 1.418 · p95 1.612 · p99 1.789 · 919 op/s</sub> | -13.9% (-0.171) | 150% AND 2 ms | 🟢 |
-| 8 | 1.604<br><sub>context: p90 2.252 · p95 2.504 · p99 2.911 · 4715 op/s</sub> | 1.319<br><sub>context: p90 1.863 · p95 2.033 · p99 2.334 · 5724 op/s</sub> | -17.8% (-0.285) | 150% AND 2 ms | 🟢 |
+| 1 | 0.674<br><sub>context: p90 0.850 · p95 0.918 · p99 1.024 · 652 op/s · total p50 1.504</sub> | 0.330<br><sub>context: p90 0.405 · p95 0.422 · p99 0.473 · 742 op/s · total p50 1.318</sub> | -51.0% (-0.344) | 150% AND 2 ms | 🟢 |
+| 8 | 0.802<br><sub>context: p90 1.076 · p95 1.168 · p99 1.349 · 4435 op/s · total p50 1.702</sub> | 0.339<br><sub>context: p90 0.449 · p95 0.479 · p99 0.543 · 5522 op/s · total p50 1.384</sub> | -57.7% (-0.463) | 150% AND 2 ms | 🟢 |
 
 </details>
 
@@ -175,8 +177,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.581<br><sub>context: p90 0.650 · p95 0.669 · p99 0.702 · 1711 op/s</sub> | 0.587<br><sub>context: p90 0.770 · p95 0.804 · p99 0.948 · 1659 op/s</sub> | +1.0% (+0.006) | 150% AND 2 ms | 🟢 |
-| 8 | 0.771<br><sub>context: p90 0.899 · p95 0.947 · p99 1.038 · 10214 op/s</sub> | 0.783<br><sub>context: p90 1.035 · p95 1.102 · p99 1.246 · 10036 op/s</sub> | +1.6% (+0.013) | 150% AND 2 ms | 🟢 |
+| 1 | 0.517<br><sub>context: p90 0.591 · p95 0.612 · p99 0.649 · 1304 op/s · total p50 0.764</sub> | 0.366<br><sub>context: p90 0.537 · p95 0.570 · p99 0.637 · 1344 op/s · total p50 0.754</sub> | -29.3% (-0.152) | 150% AND 2 ms | 🟢 |
+| 8 | 0.630<br><sub>context: p90 0.766 · p95 0.808 · p99 0.883 · 9654 op/s · total p50 0.811</sub> | 0.477<br><sub>context: p90 0.719 · p95 0.785 · p99 0.917 · 9806 op/s · total p50 0.795</sub> | -24.4% (-0.153) | 150% AND 2 ms | 🟢 |
 
 </details>
 
@@ -186,8 +188,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.413<br><sub>context: p90 0.484 · p95 0.501 · p99 0.552 · 2352 op/s</sub> | 0.299<br><sub>context: p90 0.363 · p95 0.382 · p99 0.430 · 3222 op/s</sub> | -27.7% (-0.114) | 150% AND 2 ms | 🟢 |
-| 8 | 0.552<br><sub>context: p90 0.652 · p95 0.684 · p99 0.781 · 14081 op/s</sub> | 0.407<br><sub>context: p90 0.508 · p95 0.538 · p99 0.579 · 19129 op/s</sub> | -26.4% (-0.146) | 150% AND 2 ms | 🟢 |
+| 1 | 0.323<br><sub>context: p90 0.354 · p95 0.363 · p99 0.384 · 1796 op/s · total p50 0.554</sub> | 0.114<br><sub>context: p90 0.142 · p95 0.144 · p99 0.158 · 1950 op/s · total p50 0.505</sub> | -64.6% (-0.208) | 150% AND 2 ms | 🟢 |
+| 8 | 0.412<br><sub>context: p90 0.503 · p95 0.539 · p99 0.609 · 13280 op/s · total p50 0.581</sub> | 0.108<br><sub>context: p90 0.142 · p95 0.152 · p99 0.168 · 18575 op/s · total p50 0.420</sub> | -73.8% (-0.304) | 150% AND 2 ms | 🟢 |
 
 </details>
 
@@ -197,8 +199,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.228<br><sub>context: p90 0.281 · p95 0.304 · p99 0.348 · 4156 op/s</sub> | 0.152<br><sub>context: p90 0.184 · p95 0.199 · p99 0.243 · 6114 op/s</sub> | -33.4% (-0.076) | 150% AND 2 ms | 🟢 |
-| 8 | 0.333<br><sub>context: p90 0.408 · p95 0.438 · p99 0.506 · 22999 op/s</sub> | 0.222<br><sub>context: p90 0.290 · p95 0.310 · p99 0.360 · 34463 op/s</sub> | -33.2% (-0.111) | 150% AND 2 ms | 🟢 |
+| 1 | 0.181<br><sub>context: p90 0.203 · p95 0.209 · p99 0.219 · 2578 op/s · total p50 0.383</sub> | 0.004<br><sub>context: p90 0.006 · p95 0.006 · p99 0.008 · 4930 op/s · total p50 0.195</sub> | -97.9% (-0.177) | 150% AND 2 ms | 🟢 |
+| 8 | 0.213<br><sub>context: p90 0.295 · p95 0.324 · p99 0.398 · 19618 op/s · total p50 0.363</sub> | 0.003<br><sub>context: p90 0.004 · p95 0.005 · p99 0.006 · 32061 op/s · total p50 0.236</sub> | -98.6% (-0.210) | 150% AND 2 ms | 🟢 |
 
 </details>
 
@@ -208,8 +210,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.183<br><sub>context: p90 0.231 · p95 0.271 · p99 0.307 · 4920 op/s</sub> | 0.119<br><sub>context: p90 0.140 · p95 0.144 · p99 0.161 · 8156 op/s</sub> | -35.1% (-0.064) | 150% AND 2 ms | 🟢 |
-| 8 | 0.266<br><sub>context: p90 0.336 · p95 0.356 · p99 0.406 · 27518 op/s</sub> | 0.197<br><sub>context: p90 0.270 · p95 0.295 · p99 0.369 · 38090 op/s</sub> | -26.2% (-0.070) | 150% AND 2 ms | 🟢 |
+| 1 | 0.128<br><sub>context: p90 0.149 · p95 0.152 · p99 0.167 · 3413 op/s · total p50 0.283</sub> | 0.003<br><sub>context: p90 0.006 · p95 0.006 · p99 0.008 · 6438 op/s · total p50 0.145</sub> | -97.6% (-0.125) | 150% AND 2 ms | 🟢 |
+| 8 | 0.155<br><sub>context: p90 0.217 · p95 0.241 · p99 0.295 · 24721 op/s · total p50 0.294</sub> | 0.003<br><sub>context: p90 0.004 · p95 0.004 · p99 0.006 · 35438 op/s · total p50 0.214</sub> | -98.2% (-0.152) | 150% AND 2 ms | 🟢 |
 
 </details>
 
@@ -219,8 +221,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.525<br><sub>context: p90 0.613 · p95 0.631 · p99 0.675 · 1869 op/s</sub> | 0.357<br><sub>context: p90 0.406 · p95 0.431 · p99 0.468 · 2796 op/s</sub> | -32.0% (-0.168) | 150% AND 2 ms | 🟢 |
-| 8 | 0.667<br><sub>context: p90 0.786 · p95 0.821 · p99 0.889 · 11657 op/s</sub> | 0.441<br><sub>context: p90 0.545 · p95 0.576 · p99 0.630 · 17430 op/s</sub> | -33.9% (-0.226) | 150% AND 2 ms | 🟢 |
+| 1 | 0.399<br><sub>context: p90 0.434 · p95 0.444 · p99 0.454 · 1338 op/s · total p50 0.747</sub> | 0.086<br><sub>context: p90 0.117 · p95 0.121 · p99 0.133 · 1971 op/s · total p50 0.492</sub> | -78.4% (-0.313) | 150% AND 2 ms | 🟢 |
+| 8 | 0.495<br><sub>context: p90 0.603 · p95 0.637 · p99 0.719 · 11067 op/s · total p50 0.700</sub> | 0.085<br><sub>context: p90 0.121 · p95 0.130 · p99 0.153 · 16773 op/s · total p50 0.456</sub> | -82.9% (-0.410) | 150% AND 2 ms | 🟢 |
 
 </details>
 
@@ -230,8 +232,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.784<br><sub>context: p90 1.074 · p95 1.157 · p99 1.316 · 1230 op/s</sub> | 1.570<br><sub>context: p90 2.313 · p95 2.415 · p99 2.649 · 623 op/s</sub> | +100.2% (+0.786) | 150% AND 2 ms | 🟢 |
-| 8 | 1.048<br><sub>context: p90 1.562 · p95 1.730 · p99 2.040 · 7117 op/s</sub> | 2.278<br><sub>context: p90 3.572 · p95 3.959 · p99 4.630 · 3375 op/s</sub> | +117.3% (+1.229) | 150% AND 2 ms | 🟢 |
+| 1 | 0.729<br><sub>context: p90 1.041 · p95 1.154 · p99 1.238 · 895 op/s · total p50 1.085</sub> | 1.183<br><sub>context: p90 1.904 · p95 2.118 · p99 2.397 · 600 op/s · total p50 1.625</sub> | +62.2% (+0.454) | 150% AND 2 ms | 🟢 |
+| 8 | 0.949<br><sub>context: p90 1.452 · p95 1.647 · p99 1.969 · 6277 op/s · total p50 1.183</sub> | 2.025<br><sub>context: p90 3.322 · p95 3.801 · p99 4.555 · 3210 op/s · total p50 2.361</sub> | +113.4% (+1.076) | 150% AND 2 ms | 🟢 |
 
 </details>
 
@@ -241,8 +243,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 2.391<br><sub>context: p90 3.730 · p95 4.251 · p99 4.594 · 397 op/s</sub> | 4.932<br><sub>context: p90 7.523 · p95 8.248 · p99 8.710 · 196 op/s</sub> | +106.3% (+2.541) | 150% AND 2 ms | 🟢 |
-| 8 | 3.224<br><sub>context: p90 5.238 · p95 5.934 · p99 7.144 · 2310 op/s</sub> | 8.702<br><sub>context: p90 13.267 · p95 14.489 · p99 16.345 · 890 op/s</sub> | +169.9% (+5.478) | 150% AND 2 ms | 🔴 |
+| 1 | 2.389<br><sub>context: p90 3.850 · p95 4.392 · p99 4.609 · 345 op/s · total p50 2.790</sub> | 4.805<br><sub>context: p90 7.359 · p95 8.273 · p99 9.065 · 181 op/s · total p50 5.325</sub> | +101.1% (+2.416) | 150% AND 2 ms | 🟢 |
+| 8 | 3.172<br><sub>context: p90 5.606 · p95 6.422 · p99 8.170 · 2125 op/s · total p50 3.452</sub> | 8.385<br><sub>context: p90 13.215 · p95 14.481 · p99 16.630 · 869 op/s · total p50 8.792</sub> | +164.3% (+5.213) | 150% AND 2 ms | 🔴 |
 
 </details>
 
@@ -252,8 +254,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.240<br><sub>context: p90 0.310 · p95 0.325 · p99 0.361 · 3922 op/s</sub> | 0.170<br><sub>context: p90 0.196 · p95 0.202 · p99 0.216 · 5693 op/s</sub> | -29.2% (-0.070) | 150% AND 2 ms | 🟢 |
-| 8 | 0.360<br><sub>context: p90 0.437 · p95 0.462 · p99 0.512 · 21545 op/s</sub> | 0.299<br><sub>context: p90 0.402 · p95 0.434 · p99 0.517 · 25341 op/s</sub> | -17.1% (-0.062) | 150% AND 2 ms | 🟢 |
+| 1 | 0.179<br><sub>context: p90 0.203 · p95 0.209 · p99 0.218 · 2331 op/s · total p50 0.428</sub> | 0.026<br><sub>context: p90 0.042 · p95 0.045 · p99 0.048 · 3880 op/s · total p50 0.244</sub> | -85.3% (-0.153) | 150% AND 2 ms | 🟢 |
+| 8 | 0.208<br><sub>context: p90 0.284 · p95 0.317 · p99 0.372 · 18466 op/s · total p50 0.400</sub> | 0.022<br><sub>context: p90 0.030 · p95 0.033 · p99 0.042 · 28639 op/s · total p50 0.266</sub> | -89.4% (-0.186) | 150% AND 2 ms | 🟢 |
 
 </details>
 
@@ -263,8 +265,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.239<br><sub>context: p90 0.294 · p95 0.332 · p99 0.353 · 3987 op/s</sub> | 0.189<br><sub>context: p90 0.213 · p95 0.229 · p99 0.238 · 5082 op/s</sub> | -20.9% (-0.050) | 150% AND 2 ms | 🟢 |
-| 8 | 0.362<br><sub>context: p90 0.443 · p95 0.465 · p99 0.514 · 21247 op/s</sub> | 0.296<br><sub>context: p90 0.388 · p95 0.419 · p99 0.478 · 25870 op/s</sub> | -18.1% (-0.066) | 150% AND 2 ms | 🟢 |
+| 1 | 0.185<br><sub>context: p90 0.207 · p95 0.210 · p99 0.225 · 2286 op/s · total p50 0.431</sub> | 0.035<br><sub>context: p90 0.041 · p95 0.042 · p99 0.048 · 3398 op/s · total p50 0.284</sub> | -81.3% (-0.150) | 150% AND 2 ms | 🟢 |
+| 8 | 0.210<br><sub>context: p90 0.279 · p95 0.306 · p99 0.365 · 19115 op/s · total p50 0.393</sub> | 0.022<br><sub>context: p90 0.030 · p95 0.033 · p99 0.041 · 28143 op/s · total p50 0.272</sub> | -89.7% (-0.189) | 150% AND 2 ms | 🟢 |
 
 </details>
 
@@ -274,8 +276,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.360<br><sub>context: p90 0.430 · p95 0.462 · p99 0.476 · 2662 op/s</sub> | 0.252<br><sub>context: p90 0.306 · p95 0.317 · p99 0.359 · 3760 op/s</sub> | -29.9% (-0.107) | 150% AND 2 ms | 🟢 |
-| 8 | 0.480<br><sub>context: p90 0.594 · p95 0.636 · p99 0.728 · 15944 op/s</sub> | 0.362<br><sub>context: p90 0.465 · p95 0.513 · p99 0.590 · 20880 op/s</sub> | -24.5% (-0.117) | 150% AND 2 ms | 🟢 |
+| 1 | 0.194<br><sub>context: p90 0.216 · p95 0.221 · p99 0.230 · 1674 op/s · total p50 0.605</sub> | 0.010<br><sub>context: p90 0.014 · p95 0.016 · p99 0.017 · 3900 op/s · total p50 0.241</sub> | -94.9% (-0.185) | 150% AND 2 ms | 🟢 |
+| 8 | 0.219<br><sub>context: p90 0.287 · p95 0.307 · p99 0.346 · 14557 op/s · total p50 0.527</sub> | 0.013<br><sub>context: p90 0.017 · p95 0.019 · p99 0.022 · 20217 op/s · total p50 0.373</sub> | -94.2% (-0.206) | 150% AND 2 ms | 🟢 |
 
 </details>
 
@@ -285,8 +287,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.201<br><sub>context: p90 0.242 · p95 0.256 · p99 0.288 · 4701 op/s</sub> | 0.135<br><sub>context: p90 0.165 · p95 0.172 · p99 0.180 · 6994 op/s</sub> | -32.7% (-0.066) | 150% AND 2 ms | 🟢 |
-| 8 | 0.291<br><sub>context: p90 0.358 · p95 0.383 · p99 0.429 · 26433 op/s</sub> | 0.223<br><sub>context: p90 0.292 · p95 0.311 · p99 0.348 · 34679 op/s</sub> | -23.2% (-0.068) | 150% AND 2 ms | 🟢 |
+| 1 | 0.159<br><sub>context: p90 0.175 · p95 0.180 · p99 0.192 · 2579 op/s · total p50 0.379</sub> | 0.007<br><sub>context: p90 0.013 · p95 0.014 · p99 0.019 · 5608 op/s · total p50 0.163</sub> | -95.6% (-0.152) | 150% AND 2 ms | 🟢 |
+| 8 | 0.174<br><sub>context: p90 0.237 · p95 0.261 · p99 0.310 · 24080 op/s · total p50 0.313</sub> | 0.007<br><sub>context: p90 0.010 · p95 0.011 · p99 0.014 · 33906 op/s · total p50 0.228</sub> | -96.0% (-0.168) | 150% AND 2 ms | 🟢 |
 
 </details>
 
@@ -296,8 +298,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.361<br><sub>context: p90 0.439 · p95 0.469 · p99 0.502 · 2670 op/s</sub> | 0.338<br><sub>context: p90 0.387 · p95 0.401 · p99 0.421 · 2934 op/s</sub> | -6.3% (-0.023) | 150% AND 2 ms | 🟢 |
-| 8 | 0.452<br><sub>context: p90 0.536 · p95 0.566 · p99 0.622 · 17144 op/s</sub> | 0.387<br><sub>context: p90 0.470 · p95 0.499 · p99 0.552 · 20011 op/s</sub> | -14.4% (-0.065) | 150% AND 2 ms | 🟢 |
+| 1 | 0.285<br><sub>context: p90 0.306 · p95 0.315 · p99 0.330 · 1620 op/s · total p50 0.608</sub> | 0.155<br><sub>context: p90 0.193 · p95 0.203 · p99 0.224 · 1980 op/s · total p50 0.501</sub> | -45.8% (-0.130) | 150% AND 2 ms | 🟢 |
+| 8 | 0.329<br><sub>context: p90 0.413 · p95 0.438 · p99 0.502 · 14910 op/s · total p50 0.505</sub> | 0.152<br><sub>context: p90 0.202 · p95 0.212 · p99 0.241 · 19318 op/s · total p50 0.403</sub> | -53.7% (-0.177) | 150% AND 2 ms | 🟢 |
 
 </details>
 
@@ -307,8 +309,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.281<br><sub>context: p90 0.340 · p95 0.372 · p99 0.407 · 3460 op/s</sub> | 0.234<br><sub>context: p90 0.271 · p95 0.289 · p99 0.329 · 4108 op/s</sub> | -16.7% (-0.047) | 150% AND 2 ms | 🟢 |
-| 8 | 0.381<br><sub>context: p90 0.459 · p95 0.479 · p99 0.536 · 20331 op/s</sub> | 0.327<br><sub>context: p90 0.413 · p95 0.439 · p99 0.500 · 23443 op/s</sub> | -14.2% (-0.054) | 150% AND 2 ms | 🟢 |
+| 1 | 0.221<br><sub>context: p90 0.244 · p95 0.253 · p99 0.274 · 1913 op/s · total p50 0.502</sub> | 0.081<br><sub>context: p90 0.112 · p95 0.119 · p99 0.146 · 3116 op/s · total p50 0.320</sub> | -63.3% (-0.140) | 150% AND 2 ms | 🟢 |
+| 8 | 0.247<br><sub>context: p90 0.308 · p95 0.328 · p99 0.377 · 19293 op/s · total p50 0.396</sub> | 0.080<br><sub>context: p90 0.114 · p95 0.122 · p99 0.144 · 23631 op/s · total p50 0.319</sub> | -67.8% (-0.168) | 150% AND 2 ms | 🟢 |
 
 </details>
 
@@ -318,8 +320,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.421<br><sub>context: p90 0.504 · p95 0.534 · p99 0.598 · 2334 op/s</sub> | 0.346<br><sub>context: p90 0.397 · p95 0.419 · p99 0.455 · 2855 op/s</sub> | -17.8% (-0.075) | 150% AND 2 ms | 🟢 |
-| 8 | 0.508<br><sub>context: p90 0.611 · p95 0.645 · p99 0.709 · 15163 op/s</sub> | 0.436<br><sub>context: p90 0.538 · p95 0.568 · p99 0.639 · 17595 op/s</sub> | -14.2% (-0.072) | 150% AND 2 ms | 🟢 |
+| 1 | 0.294<br><sub>context: p90 0.322 · p95 0.336 · p99 0.348 · 1640 op/s · total p50 0.616</sub> | 0.132<br><sub>context: p90 0.160 · p95 0.167 · p99 0.191 · 1775 op/s · total p50 0.559</sub> | -55.0% (-0.162) | 150% AND 2 ms | 🟢 |
+| 8 | 0.344<br><sub>context: p90 0.441 · p95 0.481 · p99 0.558 · 13170 op/s · total p50 0.567</sub> | 0.127<br><sub>context: p90 0.164 · p95 0.176 · p99 0.197 · 16664 op/s · total p50 0.457</sub> | -63.0% (-0.217) | 150% AND 2 ms | 🟢 |
 
 </details>
 
@@ -329,8 +331,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.497<br><sub>context: p90 0.606 · p95 0.633 · p99 0.662 · 1971 op/s</sub> | 0.490<br><sub>context: p90 0.595 · p95 0.626 · p99 0.689 · 2014 op/s</sub> | -1.4% (-0.007) | 150% AND 2 ms | 🟢 |
-| 8 | 0.663<br><sub>context: p90 0.830 · p95 0.877 · p99 1.030 · 11711 op/s</sub> | 0.620<br><sub>context: p90 0.798 · p95 0.843 · p99 0.935 · 12453 op/s</sub> | -6.4% (-0.042) | 150% AND 2 ms | 🟢 |
+| 1 | 0.286<br><sub>context: p90 0.313 · p95 0.320 · p99 0.337 · 1468 op/s · total p50 0.675</sub> | 0.133<br><sub>context: p90 0.165 · p95 0.172 · p99 0.180 · 1504 op/s · total p50 0.652</sub> | -53.6% (-0.153) | 150% AND 2 ms | 🟢 |
+| 8 | 0.333<br><sub>context: p90 0.408 · p95 0.429 · p99 0.487 · 11224 op/s · total p50 0.696</sub> | 0.131<br><sub>context: p90 0.169 · p95 0.180 · p99 0.199 · 12379 op/s · total p50 0.621</sub> | -60.7% (-0.202) | 150% AND 2 ms | 🟢 |
 
 </details>
 
@@ -340,8 +342,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.566<br><sub>context: p90 0.692 · p95 0.761 · p99 0.788 · 1735 op/s</sub> | 0.485<br><sub>context: p90 0.591 · p95 0.618 · p99 0.684 · 2010 op/s</sub> | -14.3% (-0.081) | 150% AND 2 ms | 🟢 |
-| 8 | 0.666<br><sub>context: p90 0.821 · p95 0.883 · p99 1.024 · 11494 op/s</sub> | 0.634<br><sub>context: p90 0.791 · p95 0.839 · p99 0.959 · 12184 op/s</sub> | -4.8% (-0.032) | 150% AND 2 ms | 🟢 |
+| 1 | 0.318<br><sub>context: p90 0.351 · p95 0.357 · p99 0.376 · 1355 op/s · total p50 0.737</sub> | 0.135<br><sub>context: p90 0.170 · p95 0.176 · p99 0.182 · 1365 op/s · total p50 0.723</sub> | -57.4% (-0.183) | 150% AND 2 ms | 🟢 |
+| 8 | 0.364<br><sub>context: p90 0.446 · p95 0.473 · p99 0.544 · 10763 op/s · total p50 0.714</sub> | 0.136<br><sub>context: p90 0.173 · p95 0.184 · p99 0.206 · 12106 op/s · total p50 0.641</sub> | -62.6% (-0.228) | 150% AND 2 ms | 🟢 |
 
 </details>
 
@@ -351,8 +353,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.487<br><sub>context: p90 0.602 · p95 0.631 · p99 0.716 · 1995 op/s</sub> | 0.361<br><sub>context: p90 0.410 · p95 0.417 · p99 0.443 · 2752 op/s</sub> | -25.9% (-0.126) | 150% AND 2 ms | 🟢 |
-| 8 | 0.549<br><sub>context: p90 0.658 · p95 0.693 · p99 0.780 · 14171 op/s</sub> | 0.463<br><sub>context: p90 0.568 · p95 0.604 · p99 0.660 · 16536 op/s</sub> | -15.6% (-0.086) | 150% AND 2 ms | 🟢 |
+| 1 | 0.318<br><sub>context: p90 0.343 · p95 0.354 · p99 0.365 · 1657 op/s · total p50 0.596</sub> | 0.134<br><sub>context: p90 0.162 · p95 0.170 · p99 0.186 · 1751 op/s · total p50 0.562</sub> | -58.0% (-0.184) | 150% AND 2 ms | 🟢 |
+| 8 | 0.370<br><sub>context: p90 0.459 · p95 0.486 · p99 0.558 · 13385 op/s · total p50 0.577</sub> | 0.135<br><sub>context: p90 0.173 · p95 0.184 · p99 0.207 · 15563 op/s · total p50 0.497</sub> | -63.6% (-0.236) | 150% AND 2 ms | 🟢 |
 
 </details>
 
@@ -362,8 +364,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.407<br><sub>context: p90 0.445 · p95 0.462 · p99 0.490 · 2410 op/s</sub> | 0.300<br><sub>context: p90 0.359 · p95 0.384 · p99 0.470 · 3244 op/s</sub> | -26.2% (-0.107) | 150% AND 2 ms | 🟢 |
-| 8 | 0.549<br><sub>context: p90 0.647 · p95 0.682 · p99 0.742 · 14299 op/s</sub> | 0.389<br><sub>context: p90 0.483 · p95 0.509 · p99 0.562 · 19784 op/s</sub> | -29.1% (-0.160) | 150% AND 2 ms | 🟢 |
+| 1 | 0.329<br><sub>context: p90 0.358 · p95 0.370 · p99 0.396 · 1587 op/s · total p50 0.624</sub> | 0.110<br><sub>context: p90 0.143 · p95 0.148 · p99 0.154 · 1968 op/s · total p50 0.506</sub> | -66.7% (-0.219) | 150% AND 2 ms | 🟢 |
+| 8 | 0.396<br><sub>context: p90 0.489 · p95 0.524 · p99 0.606 · 13360 op/s · total p50 0.579</sub> | 0.103<br><sub>context: p90 0.138 · p95 0.147 · p99 0.171 · 19620 op/s · total p50 0.393</sub> | -74.0% (-0.293) | 150% AND 2 ms | 🟢 |
 
 </details>
 
@@ -373,8 +375,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 18.402<br><sub>context: p90 18.554 · p95 18.644 · p99 18.718 · 54 op/s</sub> | 15.252<br><sub>context: p90 15.419 · p95 15.521 · p99 15.700 · 66 op/s</sub> | -17.1% (-3.150) | 150% AND 2 ms | 🟢 |
-| 8 | 23.938<br><sub>context: p90 32.661 · p95 35.696 · p99 40.431 · 309 op/s</sub> | 18.231<br><sub>context: p90 24.498 · p95 27.285 · p99 31.201 · 393 op/s</sub> | -23.8% (-5.707) | 150% AND 2 ms | 🟢 |
+| 1 | 6.362<br><sub>context: p90 6.657 · p95 6.739 · p99 6.869 · 52 op/s · total p50 19.184</sub> | 2.969<br><sub>context: p90 3.101 · p95 3.140 · p99 3.190 · 63 op/s · total p50 15.744</sub> | -53.3% (-3.392) | 150% AND 2 ms | 🟢 |
+| 8 | 7.806<br><sub>context: p90 9.954 · p95 10.312 · p99 11.054 · 297 op/s · total p50 24.726</sub> | 3.201<br><sub>context: p90 4.234 · p95 4.363 · p99 4.617 · 373 op/s · total p50 19.478</sub> | -59.0% (-4.605) | 150% AND 2 ms | 🟢 |
 
 </details>
 
@@ -384,8 +386,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.482<br><sub>context: p90 0.544 · p95 0.568 · p99 0.602 · 2031 op/s</sub> | 0.381<br><sub>context: p90 0.472 · p95 0.497 · p99 0.537 · 2526 op/s</sub> | -20.9% (-0.101) | 150% AND 2 ms | 🟢 |
-| 8 | 0.646<br><sub>context: p90 0.756 · p95 0.791 · p99 0.867 · 12061 op/s</sub> | 0.449<br><sub>context: p90 0.545 · p95 0.575 · p99 0.637 · 17271 op/s</sub> | -30.5% (-0.197) | 150% AND 2 ms | 🟢 |
+| 1 | 0.403<br><sub>context: p90 0.446 · p95 0.454 · p99 0.477 · 1489 op/s · total p50 0.667</sub> | 0.137<br><sub>context: p90 0.168 · p95 0.174 · p99 0.179 · 1900 op/s · total p50 0.515</sub> | -66.0% (-0.266) | 150% AND 2 ms | 🟢 |
+| 8 | 0.512<br><sub>context: p90 0.622 · p95 0.659 · p99 0.734 · 11335 op/s · total p50 0.688</sub> | 0.138<br><sub>context: p90 0.174 · p95 0.186 · p99 0.211 · 15314 op/s · total p50 0.503</sub> | -73.0% (-0.374) | 150% AND 2 ms | 🟢 |
 
 </details>
 
@@ -395,8 +397,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 1.478<br><sub>context: p90 1.982 · p95 2.216 · p99 2.676 · 664 op/s</sub> | 1.276<br><sub>context: p90 1.730 · p95 1.850 · p99 2.028 · 765 op/s</sub> | -13.7% (-0.202) | 150% AND 2 ms | 🟢 |
-| 8 | 1.819<br><sub>context: p90 2.565 · p95 2.840 · p99 3.358 · 4253 op/s</sub> | 1.597<br><sub>context: p90 2.248 · p95 2.482 · p99 2.968 · 4841 op/s</sub> | -12.2% (-0.221) | 150% AND 2 ms | 🟢 |
+| 1 | 0.595<br><sub>context: p90 0.694 · p95 0.729 · p99 0.768 · 574 op/s · total p50 1.711</sub> | 0.299<br><sub>context: p90 0.362 · p95 0.377 · p99 0.405 · 660 op/s · total p50 1.484</sub> | -49.7% (-0.295) | 150% AND 2 ms | 🟢 |
+| 8 | 0.665<br><sub>context: p90 0.847 · p95 0.897 · p99 1.007 · 4034 op/s · total p50 1.934</sub> | 0.314<br><sub>context: p90 0.411 · p95 0.438 · p99 0.499 · 4515 op/s · total p50 1.714</sub> | -52.9% (-0.351) | 150% AND 2 ms | 🟢 |
 
 </details>
 
@@ -406,8 +408,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.421<br><sub>context: p90 0.504 · p95 0.534 · p99 0.582 · 2315 op/s</sub> | 0.382<br><sub>context: p90 0.485 · p95 0.520 · p99 0.559 · 2510 op/s</sub> | -9.3% (-0.039) | 150% AND 2 ms | 🟢 |
-| 8 | 0.559<br><sub>context: p90 0.673 · p95 0.711 · p99 0.774 · 13970 op/s</sub> | 0.490<br><sub>context: p90 0.606 · p95 0.638 · p99 0.729 · 15935 op/s</sub> | -12.4% (-0.069) | 150% AND 2 ms | 🟢 |
+| 1 | 0.316<br><sub>context: p90 0.344 · p95 0.351 · p99 0.365 · 1551 op/s · total p50 0.643</sub> | 0.138<br><sub>context: p90 0.169 · p95 0.176 · p99 0.186 · 1668 op/s · total p50 0.596</sub> | -56.4% (-0.178) | 150% AND 2 ms | 🟢 |
+| 8 | 0.359<br><sub>context: p90 0.438 · p95 0.460 · p99 0.520 · 13338 op/s · total p50 0.582</sub> | 0.129<br><sub>context: p90 0.168 · p95 0.179 · p99 0.199 · 16571 op/s · total p50 0.459</sub> | -64.0% (-0.230) | 150% AND 2 ms | 🟢 |
 
 </details>
 
@@ -417,8 +419,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 2.256<br><sub>context: p90 2.812 · p95 2.871 · p99 2.998 · 455 op/s</sub> | 0.366<br><sub>context: p90 0.455 · p95 0.481 · p99 0.538 · 2665 op/s</sub> | -83.8% (-1.890) | 150% AND 2 ms | 🟢 |
-| 8 | 2.559<br><sub>context: p90 3.302 · p95 3.497 · p99 3.710 · 3145 op/s</sub> | 0.433<br><sub>context: p90 0.541 · p95 0.576 · p99 0.651 · 17816 op/s</sub> | -83.1% (-2.127) | 150% AND 2 ms | 🟢 |
+| 1 | 2.073<br><sub>context: p90 2.671 · p95 2.744 · p99 2.892 · 423 op/s · total p50 2.421</sub> | 0.134<br><sub>context: p90 0.182 · p95 0.198 · p99 0.218 · 2061 op/s · total p50 0.479</sub> | -93.6% (-1.940) | 150% AND 2 ms | 🟢 |
+| 8 | 2.376<br><sub>context: p90 3.156 · p95 3.345 · p99 3.565 · 3049 op/s · total p50 2.625</sub> | 0.136<br><sub>context: p90 0.192 · p95 0.208 · p99 0.242 · 18407 op/s · total p50 0.411</sub> | -94.3% (-2.241) | 150% AND 2 ms | 🟢 |
 
 </details>
 
@@ -428,8 +430,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 2.254<br><sub>context: p90 2.865 · p95 2.924 · p99 3.083 · 457 op/s</sub> | 0.367<br><sub>context: p90 0.434 · p95 0.454 · p99 0.482 · 2701 op/s</sub> | -83.7% (-1.887) | 150% AND 2 ms | 🟢 |
-| 8 | 2.579<br><sub>context: p90 3.334 · p95 3.541 · p99 3.783 · 3141 op/s</sub> | 0.447<br><sub>context: p90 0.557 · p95 0.596 · p99 0.680 · 17256 op/s</sub> | -82.7% (-2.131) | 150% AND 2 ms | 🟢 |
+| 1 | 2.134<br><sub>context: p90 2.732 · p95 2.833 · p99 2.888 · 416 op/s · total p50 2.483</sub> | 0.151<br><sub>context: p90 0.201 · p95 0.218 · p99 0.249 · 1658 op/s · total p50 0.603</sub> | -92.9% (-1.983) | 150% AND 2 ms | 🟢 |
+| 8 | 2.411<br><sub>context: p90 3.253 · p95 3.409 · p99 3.704 · 3031 op/s · total p50 2.663</sub> | 0.143<br><sub>context: p90 0.207 · p95 0.227 · p99 0.266 · 16579 op/s · total p50 0.466</sub> | -94.1% (-2.268) | 150% AND 2 ms | 🟢 |
 
 </details>
 
@@ -439,8 +441,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.239<br><sub>context: p90 0.289 · p95 0.313 · p99 0.345 · 4090 op/s</sub> | 0.178<br><sub>context: p90 0.214 · p95 0.222 · p99 0.251 · 5440 op/s</sub> | -25.8% (-0.062) | 150% AND 2 ms | 🟢 |
-| 8 | 0.302<br><sub>context: p90 0.377 · p95 0.405 · p99 0.452 · 25167 op/s</sub> | 0.300<br><sub>context: p90 0.410 · p95 0.445 · p99 0.527 · 25159 op/s</sub> | -0.8% (-0.002) | 150% AND 2 ms | 🟢 |
+| 1 | 0.163<br><sub>context: p90 0.181 · p95 0.189 · p99 0.201 · 2743 op/s · total p50 0.350</sub> | 0.048<br><sub>context: p90 0.077 · p95 0.080 · p99 0.091 · 2395 op/s · total p50 0.387</sub> | -70.8% (-0.115) | 150% AND 2 ms | 🟢 |
+| 8 | 0.177<br><sub>context: p90 0.248 · p95 0.278 · p99 0.339 · 21336 op/s · total p50 0.347</sub> | 0.042<br><sub>context: p90 0.076 · p95 0.081 · p99 0.091 · 25783 op/s · total p50 0.295</sub> | -76.0% (-0.135) | 150% AND 2 ms | 🟢 |
 
 </details>
 
@@ -450,8 +452,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.320<br><sub>context: p90 0.369 · p95 0.387 · p99 0.409 · 3056 op/s</sub> | 0.168<br><sub>context: p90 0.190 · p95 0.196 · p99 0.216 · 5686 op/s</sub> | -47.6% (-0.152) | 150% AND 2 ms | ⚠ N/A |
-| 8 | 0.414<br><sub>context: p90 0.490 · p95 0.515 · p99 0.569 · 18744 op/s</sub> | 0.243<br><sub>context: p90 0.304 · p95 0.323 · p99 0.368 · 31838 op/s</sub> | -41.5% (-0.172) | 150% AND 2 ms | ⚠ N/A |
+| 1 | 0.235<br><sub>context: p90 0.255 · p95 0.261 · p99 0.271 · 1864 op/s · total p50 0.529</sub> | 0.006<br><sub>context: p90 0.009 · p95 0.011 · p99 0.013 · 4441 op/s · total p50 0.213</sub> | -97.4% (-0.229) | 150% AND 2 ms | ⚠ N/A |
+| 8 | 0.289<br><sub>context: p90 0.352 · p95 0.375 · p99 0.442 · 16937 op/s · total p50 0.452</sub> | 0.005<br><sub>context: p90 0.008 · p95 0.010 · p99 0.011 · 27561 op/s · total p50 0.267</sub> | -98.3% (-0.284) | 150% AND 2 ms | ⚠ N/A |
 
 </details>
 
@@ -461,8 +463,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.312<br><sub>context: p90 0.363 · p95 0.379 · p99 0.405 · 3135 op/s</sub> | 0.217<br><sub>context: p90 0.251 · p95 0.269 · p99 0.308 · 4410 op/s</sub> | -30.5% (-0.095) | 150% AND 2 ms | 🟢 |
-| 8 | 0.432<br><sub>context: p90 0.518 · p95 0.547 · p99 0.614 · 17999 op/s</sub> | 0.363<br><sub>context: p90 0.465 · p95 0.501 · p99 0.575 · 21079 op/s</sub> | -16.0% (-0.069) | 150% AND 2 ms | 🟢 |
+| 1 | 0.240<br><sub>context: p90 0.265 · p95 0.274 · p99 0.293 · 2162 op/s · total p50 0.464</sub> | 0.059<br><sub>context: p90 0.084 · p95 0.092 · p99 0.102 · 2974 op/s · total p50 0.335</sub> | -75.4% (-0.181) | 150% AND 2 ms | 🟢 |
+| 8 | 0.306<br><sub>context: p90 0.395 · p95 0.435 · p99 0.492 · 16370 op/s · total p50 0.469</sub> | 0.053<br><sub>context: p90 0.087 · p95 0.092 · p99 0.102 · 24170 op/s · total p50 0.322</sub> | -82.6% (-0.253) | 150% AND 2 ms | 🟢 |
 
 </details>
 
@@ -472,8 +474,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.316<br><sub>context: p90 0.375 · p95 0.405 · p99 0.460 · 3045 op/s</sub> | 0.253<br><sub>context: p90 0.324 · p95 0.341 · p99 0.384 · 3728 op/s</sub> | -19.8% (-0.062) | 150% AND 2 ms | 🟢 |
-| 8 | 0.444<br><sub>context: p90 0.536 · p95 0.573 · p99 0.650 · 17394 op/s</sub> | 0.369<br><sub>context: p90 0.483 · p95 0.520 · p99 0.587 · 20544 op/s</sub> | -16.8% (-0.075) | 150% AND 2 ms | 🟢 |
+| 1 | 0.248<br><sub>context: p90 0.275 · p95 0.279 · p99 0.304 · 1994 op/s · total p50 0.488</sub> | 0.078<br><sub>context: p90 0.136 · p95 0.145 · p99 0.162 · 2573 op/s · total p50 0.373</sub> | -68.6% (-0.170) | 150% AND 2 ms | 🟢 |
+| 8 | 0.318<br><sub>context: p90 0.412 · p95 0.457 · p99 0.545 · 15697 op/s · total p50 0.470</sub> | 0.078<br><sub>context: p90 0.148 · p95 0.155 · p99 0.165 · 23768 op/s · total p50 0.320</sub> | -75.6% (-0.240) | 150% AND 2 ms | 🟢 |
 
 </details>
 
@@ -483,8 +485,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.261<br><sub>context: p90 0.324 · p95 0.339 · p99 0.394 · 3638 op/s</sub> | 0.216<br><sub>context: p90 0.257 · p95 0.267 · p99 0.319 · 4581 op/s</sub> | -17.4% (-0.046) | 150% AND 2 ms | 🟢 |
-| 8 | 0.387<br><sub>context: p90 0.467 · p95 0.490 · p99 0.547 · 20071 op/s</sub> | 0.311<br><sub>context: p90 0.403 · p95 0.436 · p99 0.513 · 24386 op/s</sub> | -19.6% (-0.076) | 150% AND 2 ms | 🟢 |
+| 1 | 0.227<br><sub>context: p90 0.252 · p95 0.256 · p99 0.283 · 1830 op/s · total p50 0.543</sub> | 0.049<br><sub>context: p90 0.079 · p95 0.082 · p99 0.092 · 2703 op/s · total p50 0.355</sub> | -78.5% (-0.178) | 150% AND 2 ms | 🟢 |
+| 8 | 0.271<br><sub>context: p90 0.350 · p95 0.378 · p99 0.439 · 17481 op/s · total p50 0.430</sub> | 0.044<br><sub>context: p90 0.079 · p95 0.082 · p99 0.089 · 26806 op/s · total p50 0.290</sub> | -83.9% (-0.227) | 150% AND 2 ms | 🟢 |
 
 </details>
 
@@ -494,8 +496,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 1.374<br><sub>context: p90 1.455 · p95 1.492 · p99 1.566 · 723 op/s</sub> | 0.935<br><sub>context: p90 0.989 · p95 0.999 · p99 1.026 · 1062 op/s</sub> | -31.9% (-0.439) | 150% AND 2 ms | 🟢 |
-| 8 | 1.827<br><sub>context: p90 2.192 · p95 2.330 · p99 2.677 · 4256 op/s</sub> | 1.185<br><sub>context: p90 1.345 · p95 1.402 · p99 1.507 · 6648 op/s</sub> | -35.1% (-0.642) | 150% AND 2 ms | 🟢 |
+| 1 | 1.151<br><sub>context: p90 1.213 · p95 1.230 · p99 1.248 · 616 op/s · total p50 1.616</sub> | 0.624<br><sub>context: p90 0.665 · p95 0.676 · p99 0.696 · 779 op/s · total p50 1.291</sub> | -45.8% (-0.527) | 150% AND 2 ms | 🟢 |
+| 8 | 1.480<br><sub>context: p90 1.843 · p95 1.974 · p99 2.316 · 4023 op/s · total p50 1.934</sub> | 0.714<br><sub>context: p90 0.836 · p95 0.869 · p99 1.004 · 5966 op/s · total p50 1.303</sub> | -51.8% (-0.766) | 150% AND 2 ms | 🟢 |
 
 </details>
 
@@ -505,8 +507,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 1.287<br><sub>context: p90 1.393 · p95 1.416 · p99 1.501 · 772 op/s</sub> | 0.939<br><sub>context: p90 0.977 · p95 0.990 · p99 1.018 · 1061 op/s</sub> | -27.0% (-0.348) | 150% AND 2 ms | 🟢 |
-| 8 | 1.622<br><sub>context: p90 1.989 · p95 2.083 · p99 2.415 · 4760 op/s</sub> | 1.094<br><sub>context: p90 1.219 · p95 1.261 · p99 1.377 · 7258 op/s</sub> | -32.5% (-0.528) | 150% AND 2 ms | 🟢 |
+| 1 | 1.161<br><sub>context: p90 1.247 · p95 1.267 · p99 1.320 · 686 op/s · total p50 1.448</sub> | 0.614<br><sub>context: p90 0.649 · p95 0.663 · p99 0.677 · 925 op/s · total p50 1.080</sub> | -47.1% (-0.547) | 150% AND 2 ms | 🟢 |
+| 8 | 1.511<br><sub>context: p90 1.863 · p95 1.984 · p99 2.303 · 4531 op/s · total p50 1.720</sub> | 0.719<br><sub>context: p90 0.844 · p95 0.876 · p99 0.967 · 7445 op/s · total p50 1.052</sub> | -52.5% (-0.793) | 150% AND 2 ms | 🟢 |
 
 </details>
 
@@ -516,8 +518,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.340<br><sub>context: p90 0.389 · p95 0.403 · p99 0.440 · 2878 op/s</sub> | 0.252<br><sub>context: p90 0.310 · p95 0.342 · p99 0.363 · 3835 op/s</sub> | -26.1% (-0.089) | 150% AND 2 ms | 🟢 |
-| 8 | 0.468<br><sub>context: p90 0.571 · p95 0.601 · p99 0.664 · 16440 op/s</sub> | 0.381<br><sub>context: p90 0.484 · p95 0.515 · p99 0.585 · 20044 op/s</sub> | -18.7% (-0.088) | 150% AND 2 ms | 🟢 |
+| 1 | 0.262<br><sub>context: p90 0.286 · p95 0.292 · p99 0.307 · 1732 op/s · total p50 0.570</sub> | 0.080<br><sub>context: p90 0.108 · p95 0.117 · p99 0.130 · 2221 op/s · total p50 0.450</sub> | -69.5% (-0.182) | 150% AND 2 ms | 🟢 |
+| 8 | 0.292<br><sub>context: p90 0.368 · p95 0.398 · p99 0.456 · 15044 op/s · total p50 0.505</sub> | 0.073<br><sub>context: p90 0.105 · p95 0.114 · p99 0.130 · 20421 op/s · total p50 0.376</sub> | -74.8% (-0.218) | 150% AND 2 ms | 🟢 |
 
 </details>
 
@@ -527,8 +529,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.457<br><sub>context: p90 0.530 · p95 0.543 · p99 0.589 · 2163 op/s</sub> | 0.386<br><sub>context: p90 0.479 · p95 0.506 · p99 0.562 · 2515 op/s</sub> | -15.5% (-0.071) | 150% AND 2 ms | 🟢 |
-| 8 | 0.575<br><sub>context: p90 0.688 · p95 0.733 · p99 0.812 · 13523 op/s</sub> | 0.486<br><sub>context: p90 0.612 · p95 0.647 · p99 0.722 · 15953 op/s</sub> | -15.5% (-0.089) | 150% AND 2 ms | 🟢 |
+| 1 | 0.380<br><sub>context: p90 0.448 · p95 0.476 · p99 0.506 · 1457 op/s · total p50 0.665</sub> | 0.177<br><sub>context: p90 0.246 · p95 0.278 · p99 0.298 · 1876 op/s · total p50 0.519</sub> | -53.4% (-0.203) | 150% AND 2 ms | 🟢 |
+| 8 | 0.483<br><sub>context: p90 0.648 · p95 0.710 · p99 0.811 · 10557 op/s · total p50 0.719</sub> | 0.196<br><sub>context: p90 0.295 · p95 0.328 · p99 0.377 · 15868 op/s · total p50 0.494</sub> | -59.3% (-0.286) | 150% AND 2 ms | 🟢 |
 
 </details>
 
@@ -538,8 +540,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.287<br><sub>context: p90 0.343 · p95 0.359 · p99 0.378 · 3389 op/s</sub> | 0.180<br><sub>context: p90 0.212 · p95 0.216 · p99 0.224 · 5323 op/s</sub> | -37.2% (-0.107) | 150% AND 2 ms | 🟢 |
-| 8 | 0.405<br><sub>context: p90 0.487 · p95 0.518 · p99 0.577 · 19182 op/s</sub> | 0.320<br><sub>context: p90 0.418 · p95 0.454 · p99 0.513 · 23358 op/s</sub> | -20.9% (-0.085) | 150% AND 2 ms | 🟢 |
+| 1 | 0.215<br><sub>context: p90 0.244 · p95 0.249 · p99 0.264 · 1904 op/s · total p50 0.524</sub> | 0.044<br><sub>context: p90 0.053 · p95 0.055 · p99 0.059 · 3109 op/s · total p50 0.320</sub> | -79.4% (-0.171) | 150% AND 2 ms | 🟢 |
+| 8 | 0.252<br><sub>context: p90 0.324 · p95 0.350 · p99 0.404 · 17014 op/s · total p50 0.449</sub> | 0.030<br><sub>context: p90 0.044 · p95 0.049 · p99 0.058 · 26242 op/s · total p50 0.291</sub> | -88.0% (-0.222) | 150% AND 2 ms | 🟢 |
 
 </details>
 
@@ -549,8 +551,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.234<br><sub>context: p90 0.297 · p95 0.311 · p99 0.342 · 4046 op/s</sub> | 0.169<br><sub>context: p90 0.204 · p95 0.213 · p99 0.252 · 5718 op/s</sub> | -27.7% (-0.065) | 150% AND 2 ms | 🟢 |
-| 8 | 0.296<br><sub>context: p90 0.366 · p95 0.389 · p99 0.437 · 26034 op/s</sub> | 0.303<br><sub>context: p90 0.410 · p95 0.455 · p99 0.529 · 24873 op/s</sub> | +2.1% (+0.006) | 150% AND 2 ms | 🟢 |
+| 1 | 0.153<br><sub>context: p90 0.178 · p95 0.188 · p99 0.203 · 2833 op/s · total p50 0.337</sub> | 0.043<br><sub>context: p90 0.074 · p95 0.076 · p99 0.081 · 3586 op/s · total p50 0.270</sub> | -71.6% (-0.110) | 150% AND 2 ms | 🟢 |
+| 8 | 0.165<br><sub>context: p90 0.215 · p95 0.233 · p99 0.276 · 24442 op/s · total p50 0.312</sub> | 0.041<br><sub>context: p90 0.074 · p95 0.079 · p99 0.086 · 27843 op/s · total p50 0.276</sub> | -75.4% (-0.124) | 150% AND 2 ms | 🟢 |
 
 </details>
 
@@ -560,8 +562,8 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.225<br><sub>context: p90 0.259 · p95 0.265 · p99 0.292 · 4282 op/s</sub> | 0.180<br><sub>context: p90 0.218 · p95 0.232 · p99 0.287 · 5369 op/s</sub> | -19.9% (-0.045) | 150% AND 2 ms | 🟢 |
-| 8 | 0.299<br><sub>context: p90 0.366 · p95 0.391 · p99 0.436 · 25556 op/s</sub> | 0.302<br><sub>context: p90 0.408 · p95 0.440 · p99 0.506 · 24868 op/s</sub> | +1.1% (+0.003) | 150% AND 2 ms | 🟢 |
+| 1 | 0.146<br><sub>context: p90 0.177 · p95 0.183 · p99 0.194 · 3023 op/s · total p50 0.322</sub> | 0.044<br><sub>context: p90 0.074 · p95 0.079 · p99 0.085 · 3282 op/s · total p50 0.292</sub> | -69.7% (-0.102) | 150% AND 2 ms | 🟢 |
+| 8 | 0.163<br><sub>context: p90 0.211 · p95 0.231 · p99 0.281 · 24733 op/s · total p50 0.312</sub> | 0.041<br><sub>context: p90 0.076 · p95 0.080 · p99 0.088 · 27835 op/s · total p50 0.274</sub> | -74.8% (-0.122) | 150% AND 2 ms | 🟢 |
 
 </details>
 
@@ -571,7 +573,7 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.965<br><sub>context: p90 1.028 · p95 1.053 · p99 1.138 · 1021 op/s</sub> | 0.388<br><sub>context: p90 0.462 · p95 0.484 · p99 0.512 · 2464 op/s</sub> | -59.8% (-0.577) | 150% AND 2 ms | 🟢 |
-| 8 | 1.278<br><sub>context: p90 1.627 · p95 1.876 · p99 2.166 · 5930 op/s</sub> | 0.463<br><sub>context: p90 0.536 · p95 0.562 · p99 0.624 · 16856 op/s</sub> | -63.8% (-0.815) | 150% AND 2 ms | 🟢 |
+| 1 | 0.854<br><sub>context: p90 0.912 · p95 0.929 · p99 0.946 · 872 op/s · total p50 1.145</sub> | 0.219<br><sub>context: p90 0.235 · p95 0.240 · p99 0.244 · 1604 op/s · total p50 0.622</sub> | -74.4% (-0.635) | 150% AND 2 ms | 🟢 |
+| 8 | 1.158<br><sub>context: p90 1.665 · p95 1.902 · p99 2.175 · 5535 op/s · total p50 1.352</sub> | 0.253<br><sub>context: p90 0.292 · p95 0.301 · p99 0.322 · 15298 op/s · total p50 0.494</sub> | -78.1% (-0.905) | 150% AND 2 ms | 🟢 |
 
 </details>

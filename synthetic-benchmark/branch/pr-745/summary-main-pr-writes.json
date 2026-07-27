@@ -5,7 +5,7 @@
   "slug": "synthetic-pr-vs-main-3563fbd87df3",
   "budget_profile": "strict",
   "divergence_policy": "gate",
-  "gated_metric": "total_ms.p50",
+  "gated_metric": "server_ms.p50",
   "elapsed_secs": null,
   "overall_verdict": "pass",
   "headline": "no p50 regression beyond budget across 10 comparable cell(s)",
