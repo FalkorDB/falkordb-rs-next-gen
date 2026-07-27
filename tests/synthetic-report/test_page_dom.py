@@ -75,13 +75,13 @@ def test_default_view_is_matrix_all_comparisons(serve_page, page):
 
 
 def test_matrix_cells_show_worst_gated_delta(serve_page, page):
-    """Matrix cells carry the worst Δ% for the selected metric (emoji-only without one)."""
+    """Matrix cells carry the worst Δ% for the selected metric (dot-only without one)."""
     page.goto(serve_page("data.json"))
     wait_ready(page)
     # main-pr aggregate_age: worst gated p50 cell is C=8 uncached, delta_pct ≈ -4.14.
     cell = page.locator('#view tr[data-op="aggregate_age"] td').nth(1)
-    text = cell.inner_text()
-    assert "🟢" in text and "-4.1%" in text
+    assert cell.locator("span.dot.pass").count() == 1
+    assert "-4.1%" in cell.inner_text()
     title = cell.get_attribute("title")
     assert "worst p50 Δ -4.1%" in title
     assert "0.654 ms → 0.627 ms" in title and "C=8" in title and "uncached" in title
@@ -89,9 +89,10 @@ def test_matrix_cells_show_worst_gated_delta(serve_page, page):
     assert cell.locator("span.mraw").inner_text() == "0.654 → 0.627 ms"
     # The gated p50 value carries no neutral marker.
     assert cell.locator("span.mdelta.delta-neu").count() == 0
-    # c-pr distinct_labels is a cell-less diverged op: emoji only, no value, plain title.
+    # c-pr distinct_labels is a cell-less diverged op: dot only, no value, plain title.
     cell = page.locator('#view tr[data-op="distinct_labels"] td').nth(2)
-    assert cell.inner_text().strip() == "⚠"
+    assert cell.locator("span.dot.warn").count() == 1
+    assert cell.inner_text().strip() == ""
     assert "%" not in cell.get_attribute("title")
     # c-pr aggregate_age: advisory divergence makes its cells N/A-gated, but the p50
     # deltas exist and render — same as the comparison table (worst = max(-1.4, -4.3)).
@@ -100,7 +101,7 @@ def test_matrix_cells_show_worst_gated_delta(serve_page, page):
 
 
 def test_matrix_values_follow_metric_selector(serve_page, page):
-    """The matrix value column follows the metric selector; emoji stays the p50 rollup."""
+    """The matrix value column follows the metric selector; the dot stays the p50 rollup."""
     page.goto(serve_page("data.json"))
     wait_ready(page)
     cell = page.locator('#view tr[data-op="aggregate_count_users"] td').nth(1)
@@ -108,7 +109,7 @@ def test_matrix_values_follow_metric_selector(serve_page, page):
     page.click('#metricSeg [data-metric="p90"]')
     cell = page.locator('#view tr[data-op="aggregate_count_users"] td').nth(1)
     assert "+27.4%" in cell.inner_text()  # context p90, worst at C=1
-    assert "🟢" in cell.inner_text()      # emoji unchanged
+    assert cell.locator("span.dot.pass").count() == 1  # dot unchanged
     # Non-p50 values are informational: neutral marker + metric named in the tooltip.
     assert cell.locator("span.mdelta.delta-neu").count() == 1
     assert "worst p90 Δ +27.4%" in cell.get_attribute("title")
@@ -304,17 +305,26 @@ def test_meta_header_renders_run_facts(serve_page, page):
 def test_header_surfaces_tool_warnings(serve_page, page):
     page.goto(serve_page("data.json"))
     wait_ready(page)
+    # Advisories are deduplicated across (comparison, kind) slots and collapsed behind
+    # a count summary — closed by default so they never bury the report.
+    box = page.locator("#warnBox")
+    assert box.is_visible()
+    assert not page.locator("#warnStrip").is_visible()
+    summary = page.locator("#warnBox > summary").inner_text()
+    assert "4 advisories" in summary and "deduplicated from 5" in summary
+    page.click("#warnBox > summary")
     strip = page.locator("#warnStrip")
     assert strip.is_visible()
     text = strip.inner_text()
-    # Real tool-emitted advisory warnings, prefixed with the comparison label.
-    assert "module version" in text or "server image changed" in text
-    assert "PR vs main:" in text
+    # One row per unique warning text, prefixed with EVERY slot that emitted it.
+    assert "PR vs main, PR vs C: a FalkorDB module version" in text
+    assert "server image changed" in text
     # Warning strings render inert as text (data-xss carries hostile warnings).
     page.goto(serve_page("data-xss.json"))
     wait_ready(page)
     assert page.evaluate("window.__pwned") is None
     assert page.locator("#warnStrip script, #warnStrip img").count() == 0
+    page.click("#warnBox > summary")
     assert "onerror=" in page.locator("#warnStrip").inner_text()
 
 
@@ -389,18 +399,19 @@ def test_cellless_and_contextless_ops_render_without_errors(serve_page, page):
 
 
 def test_cells_v2_skipped_ops_render_neutral(serve_page, page):
-    """Phase 6 cells v2: op_outcome "skipped" is its own neutral state — ⏭ in the
-    matrix, excluded from both red and green chip rollups, side-attributed note +
-    ⏭ totals bucket in the comparison view, tier "full" chip rendered as-is."""
+    """Phase 6 cells v2: op_outcome "skipped" is its own neutral state — a hollow dot in
+    the matrix, excluded from both red and green chip rollups, side-attributed note +
+    skipped totals bucket in the comparison view, tier "full" chip rendered as-is."""
     errors = []
     page.on("pageerror", lambda e: errors.append(str(e)))
     page.goto(serve_page("data-v2-skipped.json"))
     wait_ready(page)
 
-    # Matrix: both skipped ops render ⏭ (emoji-only, no value line) in the c-pr column.
+    # Matrix: both skipped ops render a hollow dot (no value line) in the c-pr column.
     for op in ("algo_bfs", "algo_pagerank"):
         cell = page.locator(f'#view tr[data-op="{op}"] td').nth(2)
-        assert cell.inner_text().strip() == "⏭", op
+        assert cell.locator("span.dot.skip").count() == 1, op
+        assert cell.inner_text().strip() == "", op
         assert cell.locator("span.mdelta").count() == 0, op
 
     # Chip rollups: skipped is neither red nor green.
@@ -412,10 +423,10 @@ def test_cells_v2_skipped_ops_render_neutral(serve_page, page):
     assert "algo_bfs" not in ops and "algo_pagerank" not in ops
     page.click('#chips [data-chip="all"]')
 
-    # Comparison view: ⏭ bucket in the totals line, per-op note names the skipped sides.
+    # Comparison view: skipped bucket in the totals line, per-op note names the sides.
     page.click('#cmpSeg button[data-cmp="c-pr"]')
     page.wait_for_selector("#view details")
-    assert "⏭ 2" in page.locator("#view .cmp-sub").first.inner_text()
+    assert "2 skipped" in page.locator("#view .cmp-sub").first.inner_text()
     bfs = page.locator("#view details", has_text="algo_bfs")
     assert bfs.locator("summary .tier").inner_text().lower() == "full"
     bfs.locator("summary").click()
@@ -426,10 +437,10 @@ def test_cells_v2_skipped_ops_render_neutral(serve_page, page):
     pr.locator("summary").click()
     assert "op skipped on candidate —" in pr.locator(".body").inner_text()
 
-    # main-pr carries skipped: 0 — must not surface a ⏭ bucket.
+    # main-pr carries skipped: 0 — must not surface a skipped bucket.
     page.click('#cmpSeg button[data-cmp="main-pr"]')
     page.wait_for_selector("#view details")
-    assert "⏭" not in page.locator("#view .cmp-sub").first.inner_text()
+    assert "skipped" not in page.locator("#view .cmp-sub").first.inner_text()
 
     assert errors == []
 
@@ -442,8 +453,8 @@ def test_kind_chips_filter_matrix_rows(serve_page, page):
     page.goto(serve_page("data.json"))
     wait_ready(page)
     chips = page.locator('#chips button[data-kind]')
-    assert [chips.nth(i).inner_text() for i in range(chips.count())] == [
-        "all kinds", "reads", "writes"]
+    labels = [chips.nth(i).inner_text() for i in range(chips.count())]
+    assert [t.split("(")[0].strip() for t in labels] == ["all kinds", "reads", "writes"]
     total = page.locator("#view tr[data-op]").count()
     reads = page.locator('#view tr[data-op][data-kind="reads"]').count()
     writes = page.locator('#view tr[data-op][data-kind="writes"]').count()
@@ -484,7 +495,8 @@ def test_matrix_write_rows_mark_unavailable_and_absent_slots(serve_page, page):
     row = page.locator('#view tr[data-op="single_edge_update"]')
     # main-pr column: real regressed cell with the write op's Δ%.
     main_pr = row.locator("td").nth(1)
-    assert "🔴" in main_pr.inner_text() and "+35.7%" in main_pr.inner_text()
+    assert main_pr.locator("span.dot.bad").count() == 1
+    assert "+35.7%" in main_pr.inner_text()
     assert "19.842 ms → 26.917 ms" in main_pr.get_attribute("title")
     # c-pr column: writes slot unavailable — em-dash + kind-scoped reason.
     c_pr = row.locator("td").nth(2)
@@ -556,9 +568,181 @@ def test_unavailable_writes_kind_renders_banner_card(serve_page, page):
 
 
 def test_writes_warning_prefixed_in_header_strip(serve_page, page):
-    """Warnings from a writes analysis carry the '(writes)' prefix in the strip."""
+    """Warnings from a writes analysis carry the '(writes)' slot prefix in the strip."""
     page.goto(serve_page("data.json"))
     wait_ready(page)
+    page.click("#warnBox > summary")
     text = page.locator("#warnStrip").inner_text()
-    assert "PR vs main: (writes)" in text
+    assert "PR vs main (writes):" in text
     assert "latency-only" in text
+
+
+# --- P0-P2 UI: verdict strip, sticky matrix, sort, counts, hash, bulk open --
+
+
+def test_verdict_strip_pills_summarize_and_navigate(serve_page, page):
+    """One pill per (comparison, kind) slot carrying the tool verdict; clicking one
+    jumps to that comparison + kind and the state lands in the URL hash."""
+    page.goto(serve_page("data.json"))
+    wait_ready(page)
+    pills = page.locator("#verdictStrip .vpill")
+    assert pills.count() == 5  # main-pr reads+writes, c-pr reads+writes, c-main reads
+    assert "pass" in page.locator('#verdictStrip [data-vp="main-pr/reads"]').inner_text()
+    main_writes = page.locator('#verdictStrip [data-vp="main-pr/writes"]')
+    assert "regressed" in main_writes.inner_text()
+    unavail = page.locator('#verdictStrip [data-vp="c-pr/writes"]')
+    assert "unavailable" in unavail.inner_text()
+    assert "C writes leg failed" in unavail.get_attribute("title")
+    main_writes.click()
+    assert "on" in page.locator(
+        '#cmpSeg button[data-cmp="main-pr"]').get_attribute("class").split()
+    assert "on" in page.locator(
+        '#chips button[data-kind="writes"]').get_attribute("class").split()
+    cards = page.locator("#view .cmp-card")
+    assert cards.count() == 1 and cards.first.get_attribute("data-kind") == "writes"
+    hash_ = page.evaluate("location.hash")
+    assert "view=main-pr" in hash_ and "kind=writes" in hash_
+
+
+def test_matrix_header_and_op_column_are_sticky(serve_page, page):
+    """The matrix scrolls inside a viewport-capped wrap with a sticky header row and
+    a sticky op column, both on opaque backgrounds (no rows bleeding through)."""
+    page.goto(serve_page("data.json"))
+    wait_ready(page)
+    th = page.locator("#view table.matrix thead th").first
+    assert th.evaluate("el => getComputedStyle(el).position") == "sticky"
+    op_td = page.locator("#view tr[data-op] td").first
+    assert op_td.evaluate("el => getComputedStyle(el).position") == "sticky"
+    wrap = page.locator("#view .matrix-wrap")
+    assert wrap.evaluate("el => getComputedStyle(el).overflowY") == "auto"
+    assert wrap.evaluate("el => getComputedStyle(el).maxHeight") != "none"
+    for loc in (th, op_td):
+        bg = loc.evaluate("el => getComputedStyle(el).backgroundColor")
+        assert bg not in ("rgba(0, 0, 0, 0)", "transparent")
+
+
+def test_matrix_write_ops_carry_kind_tag(serve_page, page):
+    """Write-op rows get a visible tag in multi-kind runs; reads-only runs stay bare."""
+    page.goto(serve_page("data.json"))
+    wait_ready(page)
+    row = page.locator('#view tr[data-op="single_edge_update"]')
+    assert row.locator("td .ktag").inner_text() == "write"
+    assert page.locator('#view tr[data-op="aggregate_age"] td .ktag').count() == 0
+    page.goto(serve_page("data-v2-skipped.json"))
+    wait_ready(page)
+    assert page.locator("#view .ktag").count() == 0
+
+
+def test_sort_worst_first_orders_by_severity_then_delta(serve_page, page):
+    """worst-first: regressed > diverged (cell-less last within rank) > pass, then the
+    worst displayed Δ% descending; the same control reorders the comparison view."""
+    page.goto(serve_page("data.json"))
+    wait_ready(page)
+    first_by_name = page.locator("#view tr[data-op]").first.get_attribute("data-op")
+    page.click('#sortSeg [data-sort="worst"]')
+    rows = page.locator("#view tr[data-op]")
+    got = [rows.nth(i).get_attribute("data-op") for i in range(4)]
+    assert got == [
+        "single_edge_update",     # regressed (rank 3)
+        "aggregate_age",          # diverged with cells (rank 2, Δ -1.4)
+        "distinct_labels",        # diverged, cell-less (rank 2, no Δ)
+        "aggregate_count_users",  # worst pass (max Δ +33.5 in c-pr)
+    ]
+    page.click('#sortSeg [data-sort="name"]')
+    assert page.locator("#view tr[data-op]").first.get_attribute(
+        "data-op") == first_by_name
+    # Comparison view: worst-first orders the details list too (scoped to main-pr).
+    page.click('#cmpSeg button[data-cmp="main-pr"]')
+    page.wait_for_selector("#view details[data-op]")
+    page.click('#sortSeg [data-sort="worst"]')
+    assert page.locator("#view details[data-op]").first.get_attribute(
+        "data-op") == "aggregate_count_users"
+
+
+def test_chip_counts_are_live(serve_page, page):
+    """Filter chips carry live match counts that respect the other active filters."""
+    page.goto(serve_page("data.json"))
+    wait_ready(page)
+    total = page.locator("#view tr[data-op]").count()
+    assert page.locator('#chips [data-chip="all"] .cnt').inner_text() == f"({total})"
+    assert page.locator('#chips [data-chip="any-red"] .cnt').inner_text() == "(1)"
+    assert page.locator('#chips button[data-kind="writes"] .cnt').inner_text() == "(2)"
+    page.fill("#opFilter", "aggregate")
+    assert page.locator('#chips button[data-kind="writes"] .cnt').inner_text() == "(0)"
+    assert page.locator('#chips [data-chip="any-red"] .cnt').inner_text() == "(0)"
+
+
+def test_url_hash_restores_and_tracks_state(serve_page, page):
+    """State round-trips through the URL hash: deep links restore every selector, and
+    interactions rewrite the hash in place; junk values are ignored."""
+    url = serve_page("data.json")
+    page.goto(url + "#view=c-pr&metric=p90&sort=worst&kind=reads&q=aggregate")
+    wait_ready(page)
+    page.wait_for_selector("#view .cmp-card")
+    for sel in ('#cmpSeg button[data-cmp="c-pr"]', '#metricSeg [data-metric="p90"]',
+                '#sortSeg [data-sort="worst"]', '#chips button[data-kind="reads"]'):
+        assert "on" in page.locator(sel).get_attribute("class").split(), sel
+    assert page.locator("#opFilter").input_value() == "aggregate"
+    # Interacting rewrites the hash (replaceState — no history spam).
+    page.click('#cmpSeg button[data-cmp="matrix"]')
+    hash_ = page.evaluate("location.hash")
+    assert "view=" not in hash_ and "metric=p90" in hash_
+    # Junk values are ignored and the hash normalized away (fresh server = full load).
+    page.goto(serve_page("data.json") + "#view=nope&metric=zzz")
+    wait_ready(page)
+    assert "on" in page.locator(
+        '#cmpSeg button[data-cmp="matrix"]').get_attribute("class").split()
+    assert page.evaluate("location.hash") == ""
+
+
+def test_expand_and_collapse_all_details(serve_page, page):
+    page.goto(serve_page("data.json"))
+    wait_ready(page)
+    page.click('#cmpSeg button[data-cmp="main-pr"]')
+    page.wait_for_selector("#view details[data-op]")
+    total = page.locator("#view details[data-op]").count()
+    assert page.locator("#view details[data-op][open]").count() == 0
+    # Two kind groups -> one tools row per card.
+    expand = page.locator('#view button[data-act="expand"]')
+    assert expand.count() == 2
+    for i in range(expand.count()):
+        expand.nth(i).click()
+    assert page.locator("#view details[data-op][open]").count() == total
+    collapse = page.locator('#view button[data-act="collapse"]')
+    for i in range(collapse.count()):
+        collapse.nth(i).click()
+    assert page.locator("#view details[data-op][open]").count() == 0
+
+
+def test_summary_rows_show_inline_worst_delta(serve_page, page):
+    """Each op summary row carries the worst Δ% for the current metric/cache so the
+    list scans without opening details; the count-note sits above the list."""
+    page.goto(serve_page("data.json"))
+    wait_ready(page)
+    page.click('#cmpSeg button[data-cmp="main-pr"]')
+    page.wait_for_selector("#view details[data-op]")
+    wd = page.locator('#view details[data-op="single_edge_update"] summary .wd')
+    text = wd.inner_text()
+    assert "worst Δ +35.7%" in text and "@C=1" in text
+    assert "d-bad" in wd.get_attribute("class").split()
+    wd2 = page.locator('#view details[data-op="aggregate_age"] summary .wd')
+    assert "worst Δ" in wd2.inner_text()
+    assert "d-bad" not in wd2.get_attribute("class").split()
+    tools = page.locator("#view .list-tools").first
+    assert "op(s) shown" in tools.locator(".count-note").inner_text()
+
+
+def test_matrix_delta_severity_classes(serve_page, page):
+    """Δ% values are severity-colored: red echoes a gated regression, amber marks
+    notable-but-within-budget slowdowns, green marks improvements, noise stays plain."""
+    page.goto(serve_page("data.json"))
+    wait_ready(page)
+    cell = page.locator('#view tr[data-op="single_edge_update"] td').nth(1)
+    assert cell.locator("span.mdelta.d-bad").count() == 1
+    cell = page.locator('#view tr[data-op="aggregate_count_users"] td').nth(1)
+    assert cell.locator("span.mdelta.d-warn").count() == 1
+    cell = page.locator('#view tr[data-op="count_users_plain"] td').nth(1)
+    assert cell.locator("span.mdelta.d-good").count() == 1  # -7.6%
+    cell = page.locator('#view tr[data-op="aggregate_age"] td').nth(1)
+    classes = cell.locator("span.mdelta").get_attribute("class").split()
+    assert not {"d-bad", "d-warn", "d-good"} & set(classes)  # -4.1% = noise band
