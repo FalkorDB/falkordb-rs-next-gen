@@ -59,13 +59,6 @@ impl<T: Dup<T> + Clone> Cow<T> {
         }
     }
 
-    /// True when the inner value is still shared with the previous version,
-    /// so the next `deref_mut` would deep-copy it.
-    #[must_use]
-    pub const fn is_shared(&self) -> bool {
-        self.dup
-    }
-
     /// Replace the inner value outright, skipping the copy-on-write dup.
     /// For when the new content is computed from scratch (e.g. a delta fold
     /// building the merged base into a fresh matrix), where deep-copying the
