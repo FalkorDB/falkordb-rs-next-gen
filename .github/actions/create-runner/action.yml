@@ -55,7 +55,7 @@ runs:
     - name: Create runner (attempt 1)
       id: a1
       continue-on-error: true
-      uses: FalkorDB/gce-github-runner@16e246d8c7013102b01868cc9c67599b42981c49
+      uses: FalkorDB/gce-github-runner@ef56e4c9a1abfc80c300b33e3e1e9a3065b5905a
       with:
         token: ${{ inputs.token }}
         project_id: ${{ inputs.project_id }}
@@ -78,7 +78,7 @@ runs:
       id: a2
       if: steps.a1.outcome == 'failure'
       continue-on-error: true
-      uses: FalkorDB/gce-github-runner@16e246d8c7013102b01868cc9c67599b42981c49
+      uses: FalkorDB/gce-github-runner@ef56e4c9a1abfc80c300b33e3e1e9a3065b5905a
       with:
         token: ${{ inputs.token }}
         project_id: ${{ inputs.project_id }}
@@ -99,7 +99,7 @@ runs:
 
     - name: Create runner (attempt 3)
       if: steps.a1.outcome == 'failure' && steps.a2.outcome == 'failure'
-      uses: FalkorDB/gce-github-runner@16e246d8c7013102b01868cc9c67599b42981c49
+      uses: FalkorDB/gce-github-runner@ef56e4c9a1abfc80c300b33e3e1e9a3065b5905a
       with:
         token: ${{ inputs.token }}
         project_id: ${{ inputs.project_id }}

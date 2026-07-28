@@ -54,10 +54,10 @@
 # `docker run` (not as a job container) and is best-effort: a failure there
 # annotates the run and still lets the perf comparison be reported.
 #
-# ## Hardware counters: not available here, and why
+# ## Hardware counters
 #
-# instr/cycles are left EMPTY on this runner and the comment ranks by allocated
-# bytes instead. That is not an oversight — it is where three attempts landed:
+# Getting instruction counts out of a GCE VM took three steps, recorded here so
+# nobody repeats them:
 #
 #   1. `perf` present, `kernel.perf_event_paranoid=-1` set, counters still
 #      `<not supported>`: the GCE virtual PMU must be enabled at instance
@@ -71,11 +71,10 @@
 #      action creates instances with `gcloud compute instances create`, i.e. v1.
 #      No machine family fixes that.
 #
-# So enabling it needs `gcloud beta compute instances create` in the runner
-# action, not a different machine type. The plumbing here is left in place and
-# inert: set `vars.BENCHMARK_PMU` to `architectural` once the action creates via
-# beta, and the harness will pick counters up automatically — it probes rather
-# than trusts, so nothing else needs changing.
+#   3. The runner action now creates via `gcloud beta` when the vPMU is
+#      requested (and via v1 otherwise, so no other caller is affected), and
+#      this workflow requests `architectural` again. Whether counters actually
+#      read is still decided by the harness's probe, not by this flag.
 #
 # Cheaper alternative if that stalls: a GitHub-hosted macOS runner. There the
 # harness reads instructions from `proc_pid_rusage` with no privileges, no PMU
@@ -225,10 +224,11 @@ jobs:
           machine_type: ${{ vars.BENCHMARK_COV_MACHINE_TYPE || vars.BENCHMARK_MACHINE_TYPE || 'n4-highcpu-16' }}
           network: gh-runner
           runner_label: benchcov-${{ github.run_id }}-${{ github.run_number }}
-          # Inert unless `vars.BENCHMARK_PMU` is set — see the header: the
-          # vPMU is a beta-API field and this action creates via v1, so any
-          # value is rejected today regardless of machine family.
-          performance_monitoring_unit: ${{ vars.BENCHMARK_PMU }}
+          # Enables the vPMU so `perf` can read real counters in the VM.
+          # Settable only at instance creation, hence here. The action now
+          # creates via `gcloud beta` when this is set, because the field does
+          # not exist on v1. Set `vars.BENCHMARK_PMU` to "" to drop it.
+          performance_monitoring_unit: ${{ vars.BENCHMARK_PMU || 'architectural' }}
 
   benchmark-cov:
     needs: create-runner
