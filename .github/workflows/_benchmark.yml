@@ -112,7 +112,7 @@ env:
   # Separate, independently-pinned ref for the SYNTHETIC per-op regression check (the `synthetic-*`
   # jobs below). Kept apart from BENCHMARK_REF so the legacy ab-compare vendor mode above is never
   # perturbed. Bump deliberately (with a `# <what>` note) to move it.
-  SYNTHETIC_BENCHMARK_REF: b5f2d2a09864abc98e571bcd19d8dce12d60f5fe # v2.6 — pipelined reads + client thread cap (benchmark#276)
+  SYNTHETIC_BENCHMARK_REF: b472df9e9469d7367115370c6e73b687702c0782 # v2.7 — per-cell n/σ/CV + per-op example queries (benchmark#277)
 
 jobs:
   # Expand (size × variant) into a flat combo list the matrices below fan out
