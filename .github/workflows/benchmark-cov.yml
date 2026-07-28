@@ -71,10 +71,26 @@
 #      action creates instances with `gcloud compute instances create`, i.e. v1.
 #      No machine family fixes that.
 #
-#   3. The runner action now creates via `gcloud beta` when the vPMU is
-#      requested (and via v1 otherwise, so no other caller is affected), and
-#      this workflow requests `architectural` again. Whether counters actually
-#      read is still decided by the harness's probe, not by this flag.
+#   3. Action switched to `gcloud beta` when the vPMU is requested (v1
+#      otherwise, so no other caller is touched). That fixed the surface — the
+#      error changed — and revealed the next one:
+#        `Invalid value for field
+#         'resource.advancedMachineFeatures.performanceMonitoringUnit':
+#         'ARCHITECTURAL'. Invalid performance monitoring unit.`
+#      Beta accepts the field and rejects the value. Either the enum spelling
+#      differs from gcloud's client-side choices, or this machine family
+#      supports only `standard`/`enhanced`.
+#
+# Stopped there. Four rounds of trial-and-error against an API whose accepted
+# (value, machine-family) pairs are not visible from here is not a good use of
+# CI cycles, and each round costs a VM. The request is left INERT: set
+# `vars.BENCHMARK_PMU` to a value that GCE accepts and it starts working, since
+# the harness probes for working counters rather than trusting the flag.
+#
+# The cheaper route, and the recommended one: a GitHub-hosted macOS runner.
+# There `proc_pid_rusage` yields instructions and cycles with no privileges, no
+# PMU, no sysctl and no beta APIs, and `_build-artifacts-macos.yml` already
+# produces a validated `libfalkordb.dylib` to measure. Zero upstream changes.
 #
 # Cheaper alternative if that stalls: a GitHub-hosted macOS runner. There the
 # harness reads instructions from `proc_pid_rusage` with no privileges, no PMU
@@ -228,7 +244,7 @@ jobs:
           # Settable only at instance creation, hence here. The action now
           # creates via `gcloud beta` when this is set, because the field does
           # not exist on v1. Set `vars.BENCHMARK_PMU` to "" to drop it.
-          performance_monitoring_unit: ${{ vars.BENCHMARK_PMU || 'architectural' }}
+          performance_monitoring_unit: ${{ vars.BENCHMARK_PMU }}
 
   benchmark-cov:
     needs: create-runner
