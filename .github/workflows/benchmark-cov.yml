@@ -575,6 +575,11 @@ jobs:
           apt-get update -qq
           apt-get install -y -qq --no-install-recommends valgrind redis-server redis-tools python3
           valgrind --version
+          # The toolchain image ships rustup without a default toolchain, so a
+          # bare `cargo` fails with "could not choose a version of cargo to
+          # run". Every other job in this repo that builds in this container
+          # does the same (rust-pr.yml:156, :201, :339).
+          rustup default stable
 
       - name: Build both modules
         run: |
