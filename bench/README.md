@@ -50,7 +50,7 @@ both failure counts.
 
 | file | purpose |
 |---|---|
-| `queries.py` | canonical 60-query set + graph SETUP (10k Person ring, 10k KNOWS, index on id) |
+| `queries.py` | canonical 317-query set + graph SETUP (10k Person ring, 10k KNOWS, index on id) |
 | `run_bench.py` | start server, build graph, measure, write CSV (`--once` for coverage) |
 | `compare.py` | ratio table + regression gate on every metric (cycles/instr/branches/alloc/dealloc +10%, br_miss/l1d_miss/ms +25%); `--threshold` overrides all, `--metrics` restricts the set |
 | `flow_bench.py` | per-flow-test-file server instr/cycles/peak-mem, C vs Rust compare |

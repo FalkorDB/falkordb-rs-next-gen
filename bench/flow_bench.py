@@ -27,6 +27,16 @@ SUMMARY_RE = re.compile(r"Total Tests Run:\s*(\d+), Total Tests Failed:\s*(\d+)"
 FIELDS = ["file", "wall_s", "instr", "cycles", "peak_mem_mb", "servers",
           "tests_run", "tests_failed"]
 
+# This tool measures per-process instructions via macOS `proc_pid_rusage`, which
+# has no Linux equivalent. Fail with a clear message instead of an opaque ctypes
+# load error. (`run_bench.py` does have a Linux backend; this one does not yet.)
+if sys.platform != "darwin":
+    sys.exit(
+        "flow_bench.py needs macOS: per-process instruction counters come from "
+        "proc_pid_rusage, which Linux does not provide. Use bench/run_bench.py, "
+        "which has a perf-based Linux backend."
+    )
+
 libproc = ctypes.CDLL("/usr/lib/libproc.dylib")
 RUSAGE_INFO_V4 = 4
 
@@ -89,8 +99,9 @@ def run_one(test, env):
 
 
 def compare(current, baseline):
-    cur = {r["file"]: r for r in csv.DictReader(open(current))}
-    base = {r["file"]: r for r in csv.DictReader(open(baseline))}
+    with open(current, newline="") as cur_f, open(baseline, newline="") as base_f:
+        cur = {r["file"]: r for r in csv.DictReader(cur_f)}
+        base = {r["file"]: r for r in csv.DictReader(base_f)}
 
     def ratio(b, c, key):
         bv, cv = float(b.get(key, 0) or 0), float(c.get(key, 0) or 0)
@@ -164,7 +175,8 @@ def main():
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
     merged = {}
     if os.path.exists(args.out):
-        merged = {r["file"]: r for r in csv.DictReader(open(args.out))}
+        with open(args.out, newline="") as f:
+            merged = {r["file"]: r for r in csv.DictReader(f)}
     for r in rows:
         merged[r["file"]] = {k: str(v) for k, v in r.items()}
     with open(args.out, "w", newline="") as f:

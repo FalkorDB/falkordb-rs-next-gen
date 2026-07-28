@@ -163,6 +163,30 @@ int main(int argc, char **argv) {
 
     pid_t pid = fork();
     if (pid == 0) {
+        /* Drop privileges before exec'ing the caller's command.
+         *
+         * This binary is deployed setuid-root so it can program the PMU. The
+         * child then runs an arbitrary caller-named command (redis-benchmark,
+         * sleep, ...) resolved through $PATH. Exec'ing that while still
+         * euid 0 is a local privilege escalation: anyone who can run the tool
+         * gets root by putting their own `redis-benchmark` earlier in $PATH.
+         *
+         * The counters are already programmed and are read by the *parent*, so
+         * the child needs no privileges at all. setgid before setuid, and
+         * refuse to continue if either fails — silently running as root would
+         * be the whole bug. */
+        if (setgid(getgid()) != 0) {
+            perror("setgid");
+            _exit(126);
+        }
+        if (setuid(getuid()) != 0) {
+            perror("setuid");
+            _exit(126);
+        }
+        if (geteuid() == 0 && getuid() != 0) {
+            fprintf(stderr, "pmc_tool: failed to drop privileges; refusing to exec\n");
+            _exit(126);
+        }
         execvp(argv[2], &argv[2]);
         perror("execvp");
         _exit(127);

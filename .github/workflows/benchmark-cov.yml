@@ -2,8 +2,8 @@
 #
 # Complements `benchmark.yml` without overlapping it: that one runs a macro
 # throughput/latency A/B/C against published images. This one runs `bench/` —
-# the per-query harness (316 queries) — building both `main` and the PR head
-# from source, and reports per-query deltas plus how much of the `graph` crate
+# the per-query harness (317 queries) — and reports per-query deltas plus how
+# much of the `graph` crate
 # the query set covers.
 #
 # Trigger: add the `benchmark-cov` label to a PR. Only on the `labeled` event,
@@ -187,28 +187,40 @@ jobs:
           echo "::error::$PR_IMAGE never appeared. Is the Rust PR workflow green for this head SHA?"
           exit 1
 
-      - name: Extract both modules
-        run: |
-          set -x
-          docker pull -q "$MAIN_IMAGE"
-          for side in pr main; do
-            case $side in
-              pr)   img="$PR_IMAGE" ;;
-              main) img="$MAIN_IMAGE" ;;
-            esac
-            cid=$(docker create "$img")
-            docker cp "$cid:$MODULE_IN_IMAGE" "/tmp/falkordb-$side.so"
-            docker rm -f "$cid" >/dev/null
-          done
-          ls -l /tmp/falkordb-pr.so /tmp/falkordb-main.so
-
-      # Sequentially, never in parallel: both bind a redis port and contend for
-      # the same CPUs. Overlapping them yields numbers that are not measurements.
+      # The module cannot simply be copied out and loaded into a distro
+      # redis-server: it needs the image's environment (RediSearch, libgomp for
+      # GraphBLAS), and doing that is what made the first attempt fail with
+      # "server did not start". Run each image as its own server instead —
+      # the same approach .github/scripts/benchmark/profile.sh takes — and point
+      # the harness at it with --reuse.
+      #
+      # --pid passes the *host* pid: INFO server reports the pid inside the
+      # container's namespace, which perf on the host cannot attach to.
       - name: Measure main
-        run: python3 bench/run_bench.py --module /tmp/falkordb-main.so --out /tmp/main.csv
+        run: |
+          docker rm -f bench-main >/dev/null 2>&1 || true
+          docker run -d --name bench-main -p 6399:6379 "$MAIN_IMAGE" >/dev/null
+          for i in $(seq 1 60); do
+            redis-cli -p 6399 PING 2>/dev/null | grep -q PONG && break
+            sleep 1
+          done
+          redis-cli -p 6399 PING | grep -q PONG || { docker logs bench-main | tail -50; exit 1; }
+          HOSTPID=$(docker inspect -f '{{.State.Pid}}' bench-main)
+          python3 bench/run_bench.py --reuse --port 6399 --pid "$HOSTPID" --out /tmp/main.csv
+          docker rm -f bench-main >/dev/null
 
       - name: Measure PR
-        run: python3 bench/run_bench.py --module /tmp/falkordb-pr.so --out /tmp/pr.csv
+        run: |
+          docker rm -f bench-pr >/dev/null 2>&1 || true
+          docker run -d --name bench-pr -p 6399:6379 "$PR_IMAGE" >/dev/null
+          for i in $(seq 1 60); do
+            redis-cli -p 6399 PING 2>/dev/null | grep -q PONG && break
+            sleep 1
+          done
+          redis-cli -p 6399 PING | grep -q PONG || { docker logs bench-pr | tail -50; exit 1; }
+          HOSTPID=$(docker inspect -f '{{.State.Pid}}' bench-pr)
+          python3 bench/run_bench.py --reuse --port 6399 --pid "$HOSTPID" --out /tmp/pr.csv
+          docker rm -f bench-pr >/dev/null
 
       - name: Compare PR vs main
         run: |
@@ -260,7 +272,15 @@ jobs:
           have_instr = any(num(r, "instr") is not None for r in pr.values())
           metric = "instr" if have_instr else "alloc_bytes"
 
-          rows = []
+          # Ranking by allocated bytes needs a magnitude floor. Most rows
+          # allocate only a couple of KB, and a ratio over a ~2 KB denominator
+          # is noise dressed as signal — that is where the absurd ratios in
+          # earlier local runs came from (13,000x on a row whose baseline was a
+          # few hundred bytes), not from the jemalloc column itself. Rows below
+          # the floor are still measured and still in the attached CSV output;
+          # they are just not ranked.
+          FLOOR = 0 if metric == "instr" else 65536
+          rows, skipped = [], 0
           for q, p in pr.items():
               m = main.get(q)
               if not m:
@@ -268,13 +288,16 @@ jobs:
               a, b = num(m, metric), num(p, metric)
               if a is None or b is None or a <= 0:
                   continue
+              if max(a, b) < FLOOR:
+                  skipped += 1
+                  continue
               rows.append((b / a, q, a, b))
           rows.sort()
 
           print("## Benchmark + coverage")
           print()
-          print("316-query harness; both sides built from source in this run on a "
-                "dedicated ephemeral GCE VM.")
+          print("317-query harness, both sides taken from their published server images, "
+                "measured on a dedicated ephemeral GCE VM.")
           print()
           if have_instr:
               print(f"Ranked by **instructions** (deterministic). Cycles are also "
@@ -320,7 +343,9 @@ jobs:
               for r, *_ in rows:
                   geo *= r
               geo **= 1.0 / len(rows)
-              print(f"**{len(rows)} rows compared, {metric} geomean {geo:.3f}.**")
+              print(f"**{len(rows)} rows compared, {metric} geomean {geo:.3f}.**"
+                    + (f" {skipped} rows below the {FLOOR//1024} KB "
+                       f"{metric} floor were measured but not ranked." if skipped else ""))
               print()
               print("Micro-queries near the fixed per-query floor need 3 reps per build "
                     "before a small delta means anything — re-measure a flagged row in "
@@ -357,6 +382,16 @@ jobs:
           else
             gh api -X POST "repos/$REPO/issues/$PR/comments" -F body=@/tmp/comment.md
           fi
+
+      # Report first, then fail: a coverage/query-validation failure means the
+      # query set no longer runs clean, which must not be reported as success.
+      # compare_exit is deliberately NOT fatal — this job reports deltas, and
+      # gating on them belongs to whoever reads the comment.
+      - name: Fail if coverage did not run clean
+        if: ${{ env.coverage_exit != '0' }}
+        run: |
+          echo "::error::bench/coverage.sh exited ${{ env.coverage_exit }} — see the comment's coverage section."
+          exit 1
 
   # The create-runner action's 6h auto-delete is the backstop; this no-ops on a
   # missing VM. `always()` so a failed or cancelled benchmark still tears down.

@@ -144,20 +144,40 @@ def pmc_run(pmc, cmd):
     return ev, elapsed
 
 
-def cli(port, *args):
-    return subprocess.run(["redis-cli", "-p", str(port)] + list(args),
-                          capture_output=True, text=True).stdout
+def cli(port, *args, check=True):
+    """Run redis-cli and return stdout.
+
+    Failures were silent — the caller got an empty string and blew up later in a
+    parse, far from the cause (redis-cli missing, connection refused, bad
+    command). `check=False` is for probes where a failure is a legitimate
+    answer.
+    """
+    out = subprocess.run(["redis-cli", "-p", str(port)] + [str(a) for a in args],
+                         capture_output=True, text=True)
+    if check and out.returncode != 0:
+        raise RuntimeError(
+            f"redis-cli {' '.join(str(a) for a in args)} failed "
+            f"(exit {out.returncode}): {out.stderr.strip()[:200]}"
+        )
+    return out.stdout
 
 
 def jemalloc_totals(port):
     """Cumulative allocated/deallocated bytes from jemalloc's merged-arenas
     stats: sum size*nmalloc / size*ndalloc over the bins: and large: size-class
     tables. Returns (None, None) if the server isn't jemalloc-built."""
-    out = cli(port, "memory", "malloc-stats")
+    out = cli(port, "memory", "malloc-stats", check=False)
     if "Merged arenas stats:" not in out:
         return None, None
     alloc = dealloc = 0
     in_merged = in_table = False
+    # Column positions are read from each table's own header rather than
+    # hardcoded. They were hardcoded, and the dealloc index was wrong: jemalloc
+    # 5.x emits `size ind allocated nmalloc ndalloc nrequests ...`, so index 5
+    # is *nrequests*, not ndalloc. That inflated deallocated bytes and made the
+    # per-query deltas meaningless (absurd ratios, negative values). Reading the
+    # header also survives column changes between jemalloc versions.
+    i_nmalloc = i_ndalloc = None
     for line in out.splitlines():
         if line.startswith("Merged arenas stats:"):
             in_merged = True
@@ -169,12 +189,21 @@ def jemalloc_totals(port):
                 continue
             if s[0] in ("bins:", "large:") and "size" in s:
                 in_table = True
+                # Header tokens include the leading "bins:"/"large:" label,
+                # which data rows do not, hence the -1.
+                try:
+                    i_nmalloc = s.index("nmalloc") - 1
+                    i_ndalloc = s.index("ndalloc") - 1
+                except ValueError:
+                    i_nmalloc = i_ndalloc = None
             elif s[0] == "extents:":
                 in_table = False
-            elif in_table and s[0].isdigit():
+            elif in_table and s[0].isdigit() and i_nmalloc is not None:
+                if len(s) <= max(i_nmalloc, i_ndalloc):
+                    continue
                 size = int(s[0])
-                alloc += size * int(s[3])
-                dealloc += size * int(s[5])
+                alloc += size * int(s[i_nmalloc])
+                dealloc += size * int(s[i_ndalloc])
     return alloc, dealloc
 
 
@@ -190,6 +219,22 @@ def main():
     ap.add_argument("--once", action="store_true")
     ap.add_argument("--keep-server", action="store_true")
     ap.add_argument("--reuse", action="store_true")
+    ap.add_argument(
+        "--setup",
+        action="store_true",
+        help="build the benchmark graph even with --reuse. Needed when the server "
+        "is already running but empty (e.g. a container started from a published "
+        "image in CI); without it the harness would measure an empty graph.",
+    )
+    ap.add_argument(
+        "--pid",
+        type=int,
+        default=None,
+        help="host pid of the redis-server to attach counters to. Needed with "
+        "--reuse when the server runs in a container: INFO server reports a "
+        "namespaced pid that perf on the host cannot see "
+        "(docker inspect -f '{{.State.Pid}}' <container>).",
+    )
     ap.add_argument("--c-compat", action="store_true")
     ap.add_argument("names", nargs="*")
     args = ap.parse_args()
@@ -204,7 +249,9 @@ def main():
 
     server = None
     if not args.reuse:
-        if cli(args.port, "ping").strip() == "PONG":
+        # check=False: "connection refused" is the answer we want here — it
+        # means the port is free.
+        if cli(args.port, "ping", check=False).strip() == "PONG":
             sys.exit(f"port {args.port} already in use; use --reuse or another --port")
         os.makedirs(IMPORT_DIR, exist_ok=True)
         for fname, content in CSV_FILES.items():
@@ -229,11 +276,18 @@ def main():
             server_args,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         for _ in range(100):
-            if cli(args.port, "ping").strip() == "PONG":
+            # check=False: connection refused is the expected answer while
+            # the server is still coming up.
+            if cli(args.port, "ping", check=False).strip() == "PONG":
                 break
             time.sleep(0.1)
         else:
             sys.exit("server did not start")
+    # Graph setup is separate from server lifecycle. `--reuse` means "do not
+    # start a server"; it must NOT silently skip building the graph, or the
+    # harness benchmarks an empty database and reports numbers that look real.
+    # CI reuses a server from a published image and so needs --setup.
+    if not args.reuse or args.setup:
         print(f"server up on :{args.port}, building graph...", flush=True)
         for stmt in SETUP:
             out = cli(args.port, "GRAPH.QUERY", "bench", stmt)
@@ -281,7 +335,9 @@ def main():
                 sys.exit(1)
             return
 
-        pid = int(cli(args.port, "info", "server").split("process_id:")[1].split()[0])
+        pid = args.pid or int(
+            cli(args.port, "info", "server").split("process_id:")[1].split()[0]
+        )
         pmc = os.path.join(HERE, "pmc_tool")
         pmc_ok = os.path.exists(pmc) and pmc_run(pmc, ["true"])[0] is not None
         if not pmc_ok:
@@ -332,28 +388,42 @@ def main():
                 # Empty, not 0: compare.py treats a non-numeric cell as
                 # "absent" and skips the metric, whereas 0 would read as a
                 # real measurement and flag every row as an infinite change.
-                "instr": (q_i - idle_ips * dt) / n if have_counters else "",
-                "cycles": (q_c - idle_cps * dt) / n if have_counters else "",
+                # Clamped at 0: subtracting the idle rate can overshoot on a
+                # short/cheap query, and a negative value made compare.py skip
+                # the metric (it needs a positive baseline), silently disabling
+                # the gate for that row — see the negative branches/br_miss/
+                # l1d_miss columns in earlier baselines.
+                "instr": max(0.0, (q_i - idle_ips * dt) / n) if have_counters else "",
+                "cycles": max(0.0, (q_c - idle_cps * dt) / n) if have_counters else "",
                 "branches": "", "br_miss": "", "l1d_miss": "",
                 "alloc_bytes": (m1a - m0a) / n if m0a is not None else "",
                 "dealloc_bytes": (m1d - m0d) / n if m0d is not None else "",
                 "ms": dt / n * 1000,
             }
             if pmc_ok:
-                adj = {k: (v - idle_rate[k] * dt) / n for k, v in ev.items()}
+                # Same clamp as instr/cycles: a negative adjusted counter
+                # makes compare.py skip the metric and stop gating it.
+                adj = {k: max(0.0, (v - idle_rate[k] * dt) / n) for k, v in ev.items()}
                 row["branches"] = adj["INST_BRANCH"]
                 row["br_miss"] = adj["BRANCH_MISPRED_NONSPEC"]
                 row["l1d_miss"] = adj["L1D_CACHE_MISS_LD"] + adj["L1D_CACHE_MISS_ST"]
             rows.append(row)
-            print(f"{name:<20} {row['instr']:>13,.0f} instr {row['cycles']:>12,.0f} cyc "
-                  f"{row['ms']:>8.3f} ms"
+            # instr/cycles are "" when no counter backend is available; a
+            # ",.0f" on an empty string raises ValueError and would abort the
+            # whole run partway through (exactly what happens on Linux CI).
+            def _n(v, w):
+                return f"{v:>{w},.0f}" if v != "" else f"{'-':>{w}}"
+
+            print(f"{name:<20} {_n(row['instr'], 13)} instr {_n(row['cycles'], 12)} cyc "
+                  + f"{row['ms']:>8.3f} ms"
                   + (f" {row['alloc_bytes']:>12,.0f} B alloc" if row['alloc_bytes'] != "" else ""),
                   flush=True)
 
         os.makedirs(os.path.dirname(args.out), exist_ok=True)
         merged = {}
         if os.path.exists(args.out):
-            merged = {r["query"]: r for r in csv.DictReader(open(args.out))}
+            with open(args.out, newline="") as f:
+                merged = {r["query"]: r for r in csv.DictReader(f)}
         for r in rows:
             merged[r["query"]] = {k: str(v) for k, v in r.items()}
         fields = ["query", "instr", "cycles", "branches", "br_miss", "l1d_miss",

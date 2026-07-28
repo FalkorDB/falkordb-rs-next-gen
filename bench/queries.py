@@ -514,7 +514,7 @@ QUERIES = [
     # Runtime-bound index range: b's scan range depends on a row value.
     ("runtime-bound index range", False, "MATCH (a:Person {id: 9990}) WITH a MATCH (b:Person) WHERE b.id > a.id RETURN count(b)"),
     # Distance index scan over the Geo point index (IndexQuery::Point).
-    ("distance index scan",  False, "MATCH (g:Geo) WHERE distance(g.loc, point({latitude: 0.0, longitude: 0.0})) < 10000 RETURN count(g)"),
+    ("distance index scan geo", False, "MATCH (g:Geo) WHERE distance(g.loc, point({latitude: 0.0, longitude: 0.0})) < 10000 RETURN count(g)"),
 
     # ---- sized writes ------------------------------------------------------
     # Kept LAST: they inflate node capacity / matrix dimension to max(N),

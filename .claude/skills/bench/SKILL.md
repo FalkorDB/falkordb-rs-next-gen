@@ -9,7 +9,7 @@ live in `bench/` (see `bench/README.md` for findings and details).
 # 1. build the release module
 cargo build --release
 
-# 2. measure all 77 queries -> bench/results/current.csv (~10 min)
+# 2. measure all 317 queries -> bench/results/current.csv (~10 min)
 python3 bench/run_bench.py
 
 # 3. regression gate vs baseline — every metric (cycles/instr/branches/alloc_bytes/

@@ -46,8 +46,9 @@ if args.metrics:
         sys.exit(f"unknown metric(s): {', '.join(unknown)}")
 thresholds = {m: (args.threshold if args.threshold is not None else METRICS[m]) for m in metrics}
 
-cur = {r["query"]: r for r in csv.DictReader(open(args.current))}
-base = {r["query"]: r for r in csv.DictReader(open(args.baseline))}
+with open(args.current, newline="") as cur_f, open(args.baseline, newline="") as base_f:
+    cur = {r["query"]: r for r in csv.DictReader(cur_f)}
+    base = {r["query"]: r for r in csv.DictReader(base_f)}
 
 def val(row, key):
     v = row.get(key, "")
