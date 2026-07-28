@@ -12,6 +12,19 @@
 # remove and re-add the label. Fork PRs are skipped: their GITHUB_TOKEN is
 # read-only and could not comment.
 #
+# ## A red herring in the create-runner log
+#
+# `create-runner` routinely prints
+# `ERROR: (gcloud.compute.instances.create) Could not fetch resource ...
+# ZONE_RESOURCE_POOL_EXHAUSTED_WITH_DETAILS` followed by
+# `Zone us-central1-a is exhausted. Trying next configured zone ...`.
+#
+# That is not a failure. n4-highcpu-16 is frequently stocked out in the first
+# configured zone; the action walks `machine_zones` and the next zone succeeds
+# (`Created [.../zones/us-central1-b/instances/...]` a few lines later). The
+# ERROR text comes from gcloud inside the third-party action, so it cannot be
+# suppressed here — check the job's conclusion, not that line.
+#
 # ## Why a self-hosted VM rather than ubuntu-latest
 #
 # Instruction counts are the only stable signal at this granularity — cycles and
