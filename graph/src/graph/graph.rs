@@ -1347,7 +1347,7 @@ impl Graph {
         self.resize();
 
         self.all_nodes_matrix
-            .set_all(nodes.iter().map(|id| (id, id)));
+            .set_all_new(nodes.iter().map(|id| (id, id)));
     }
 
     #[must_use]
@@ -1544,11 +1544,17 @@ impl Graph {
     }
 
     /// Bulk set node labels using parallel row/col slices (2 FFI calls per matrix).
+    ///
+    /// `all_new` asserts every `(node, label)` pair is fresh — the node was
+    /// created in this transaction — allowing the unchecked delta insert.
+    /// `SET n:Label` on pre-existing nodes may re-add a committed pair, which
+    /// must go through the checked path to keep `dp ∩ m = ∅`.
     pub fn set_nodes_labels_bulk(
         &mut self,
         label_rows: &[u64],
         label_cols: &[u64],
         index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
+        all_new: bool,
     ) {
         self.resize();
 
@@ -1565,12 +1571,21 @@ impl Graph {
             }
         }
 
-        self.node_labels_matrix
-            .set_all(label_rows.iter().copied().zip(label_cols.iter().copied()));
+        let pairs = label_rows.iter().copied().zip(label_cols.iter().copied());
+        if all_new {
+            self.node_labels_matrix.set_all_new(pairs);
+        } else {
+            self.node_labels_matrix.set_all(pairs);
+        }
 
         for (lid, ids) in by_label.into_iter().enumerate() {
             if !ids.is_empty() {
-                self.labels_matices[lid].set_all(ids.iter().map(|&id| (id, id)));
+                let diag = ids.iter().map(|&id| (id, id));
+                if all_new {
+                    self.labels_matices[lid].set_all_new(diag);
+                } else {
+                    self.labels_matices[lid].set_all(diag);
+                }
             }
         }
     }
@@ -1999,7 +2014,7 @@ impl Graph {
         let type_id = type_idx as u64;
         let type_ids: Vec<u64> = vec![type_id; rel_ids.len()];
         self.relationship_type_matrix
-            .set_all(rel_ids.iter().copied().zip(type_ids.iter().copied()));
+            .set_all_new(rel_ids.iter().copied().zip(type_ids.iter().copied()));
     }
 
     /// Fold oversized delta-plus into the base for all shared matrices at

@@ -88,17 +88,24 @@ use crate::graph::{
 /// small batches fold early (keeping their per-query delta tax low), bulk
 /// loads keep deltas large (avoiding quadratic base rewrites).
 ///
-/// The sqrt term is floored at a flat 10,000 entries (the C implementation's
-/// `DELTA_MAX_PENDING_CHANGES`): under MVCC the base is shared with the
-/// committed snapshot, so every fold is a full `O(base_cost)` rebuild — not
-/// C's in-place masked assign — and write-only streaks never materialize the
-/// delta between folds, so folding at the sqrt point alone rebuilt the base
-/// ~3x more often than the delta tax justified (measured −33% instructions
-/// on repeated 100-node creates with the floor). Reads do pay for a
-/// lingering delta (one materialization plus merged iteration on every
-/// access), so [`should_fold_read`] — the policy for `wait`, which only runs
-/// when something reads the matrix — keeps the unfloored sqrt rule, folding
-/// promptly once a workload turns read-heavy.
+/// The sqrt point is scaled by `WRITE_FOLD_SCALE_SQ`: under MVCC the base
+/// is shared with the committed snapshot, so every fold is a full
+/// `O(base_cost)` rebuild — not C's in-place masked assign — and folding
+/// at the raw sqrt point rebuilt the base ~3x more often than the delta
+/// tax justified (measured −33% instructions on repeated 100-node creates
+/// with a flat 10k floor, C's `DELTA_MAX_PENDING_CHANGES`). A flat floor,
+/// though, lets single-entity writes accumulate a 10k-entry delta and pay
+/// an `O(|delta|)` COW dup on every write (measured `create node` climbing
+/// 435k→517k instructions as the delta grew). Scaling the sqrt point by a
+/// constant keeps the optimal `sqrt(base_cost · tx_added)` shape — the
+/// scale models `sqrt(2 · fold_cost_per_entry / dup_cost_per_entry)` — so
+/// small transactions fold early enough to bound their dup tax while
+/// batched writes keep the floor-era cadence (tx_added = 100 on a 10k
+/// graph puts the scaled point at ~11k, right where the floor was). Reads
+/// do pay for a lingering delta (one materialization plus merged iteration
+/// on every access), so [`should_fold_read`] — the policy for `wait`,
+/// which only runs when something reads the matrix — keeps the unscaled
+/// sqrt rule, folding promptly once a workload turns read-heavy.
 ///
 /// A delta comparable to the fold cost always folds (`2·|delta| ≥
 /// base_cost`): the fold then costs the same order as one delta touch, and
@@ -117,11 +124,17 @@ pub(super) fn should_fold(
     tx_added: u64,
     base_cost: u64,
 ) -> bool {
+    /// Squared scale on the write-path sqrt rule: fold once
+    /// `delta² ≥ SCALE² · base_cost · tx_added`, i.e. at
+    /// `sqrt(SCALE²) = 8` times the raw sqrt balance point.
+    const WRITE_FOLD_SCALE_SQ: u64 = 64;
     tx_added > 0
         && delta_nvals >= 256
         && (delta_nvals.saturating_mul(2) >= base_cost
-            || (delta_nvals >= 10_000
-                && delta_nvals.saturating_mul(delta_nvals) >= base_cost.saturating_mul(tx_added)))
+            || delta_nvals.saturating_mul(delta_nvals)
+                >= base_cost
+                    .saturating_mul(tx_added)
+                    .saturating_mul(WRITE_FOLD_SCALE_SQ))
 }
 
 /// Read-path fold policy: the unfloored sqrt rule (see [`should_fold`] for
@@ -553,16 +566,56 @@ impl VersionedMatrix<bool> {
 
     /// Set multiple entries, checking dm emptiness once upfront.
     ///
-    /// If dm is empty, uses the fast path (1 FFI call per entry).
-    /// Otherwise falls back to the full `set` path (2+ FFI calls per entry).
+    /// If dm is empty, uses a batched path that skips per-entry dm handling;
+    /// otherwise falls back to the full `set` path. Both paths keep the
+    /// invariant `dp ∩ m = ∅`: an entry already committed in `m` must not be
+    /// re-added to `dp` (a fold or grow-resize may have moved it there since
+    /// the caller last saw it), or a later `remove` finds it in both and the
+    /// `nvals`/iter arithmetic double-counts it.
     pub fn set_all(
         &mut self,
         entries: impl Iterator<Item = (u64, u64)>,
     ) {
         self.flush();
+        // The nvals below reads the shared dm raw; nvals on a pending matrix
+        // merges its pending tuples internally (a mutation), racing
+        // concurrent readers on the committed snapshot. Materialize through
+        // the mutex-guarded wait first — an atomic load when already synced.
+        self.dm.wait();
         if self.dm.nvals() == 0 {
             let mut n = 0u64;
             for (i, j) in entries {
+                if self.m.get(i, j).is_none() {
+                    self.dp.set(i, j, true);
+                    n += 1;
+                }
+            }
+            *self.dp_count.get_mut() += n;
+        } else {
+            for (i, j) in entries {
+                self.set(i, j, true);
+            }
+        }
+    }
+
+    /// [`Self::set_all`] for entries the caller guarantees are new — never
+    /// live in the committed base (fresh entity ids: a reclaimed id's stale
+    /// base entry always has a `dm` tombstone, which routes to the safe
+    /// per-entry path here). Skips the per-entry base lookup the general
+    /// path needs to keep `dp ∩ m = ∅`; entries with committed pairs (e.g.
+    /// the adjacency matrix, where two edges share one pair) must use
+    /// [`Self::set_all`] instead.
+    pub fn set_all_new(
+        &mut self,
+        entries: impl Iterator<Item = (u64, u64)>,
+    ) {
+        self.flush();
+        // See `set_all`: the nvals below reads the shared dm raw.
+        self.dm.wait();
+        if self.dm.nvals() == 0 {
+            let mut n = 0u64;
+            for (i, j) in entries {
+                debug_assert!(self.m.get(i, j).is_none());
                 self.dp.set(i, j, true);
                 n += 1;
             }

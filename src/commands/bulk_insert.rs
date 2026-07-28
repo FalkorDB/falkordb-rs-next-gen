@@ -259,7 +259,7 @@ fn process_node_token(
     unsafe { maybe_yield(raw_ctx) };
 
     let mut index_add_docs: FxHashMap<u64, RoaringTreemap> = FxHashMap::default();
-    g.set_nodes_labels_bulk(&label_rows, &label_cols, &mut index_add_docs);
+    g.set_nodes_labels_bulk(&label_rows, &label_cols, &mut index_add_docs, true);
     unsafe { maybe_yield(raw_ctx) };
 
     if !resolved_attrs.is_empty() {
