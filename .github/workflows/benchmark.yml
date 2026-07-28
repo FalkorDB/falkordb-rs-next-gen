@@ -356,12 +356,13 @@ jobs:
   cleanup-branch-view:
     if: github.event_name == 'pull_request' && github.event.action == 'closed'
     runs-on: ubuntu-latest
-    # Shares the per-PR pages group with BOTH arch synthetic-publish jobs (_benchmark.yml): a
-    # publisher that queued before this PR closed must not run concurrently with (or after)
-    # the cleanup and resurrect a wiped synthetic-benchmark/branch/pr-<N>* leaf. FIFO via
-    # `queue: max`; never cancel an in-flight writer (different leaves, safe order).
+    # Shares the per-PR pages group with EVERY gh-pages writer for this PR (both arch
+    # synthetic-publish jobs AND the classic `merge` publisher in _benchmark.yml): a publisher
+    # that queued before this PR closed must not run concurrently with (or after) the cleanup
+    # and resurrect a wiped benchmark/branch/pr-<N>* or synthetic-benchmark/branch/pr-<N>*
+    # leaf. FIFO via `queue: max`; never cancel an in-flight writer (different leaves, safe order).
     concurrency:
-      group: synthetic-pages-pr-${{ github.event.pull_request.number }}
+      group: pages-pr-${{ github.event.pull_request.number }}
       cancel-in-progress: false
       queue: max
     permissions:

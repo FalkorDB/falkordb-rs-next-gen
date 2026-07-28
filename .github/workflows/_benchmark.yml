@@ -367,6 +367,15 @@ jobs:
     needs: [setup, benchmark]
     if: ${{ !cancelled() && needs.setup.result == 'success' }}
     runs-on: ubuntu-latest
+    # Serialize with every other writer of this PR's gh-pages leaves (synthetic publishers and
+    # benchmark.yml's cleanup-branch-view share this group), so a queued publisher can never run
+    # after the close-time cleanup and resurrect a deleted benchmark/branch/pr-<N> view. Non-PR
+    # runs (main trend: pr_number is empty) fall back to a per-run group — unique, so unchanged
+    # behavior there. FIFO via `queue: max`; never cancel an in-flight writer.
+    concurrency:
+      group: pages-pr-${{ inputs.pr_number || github.run_id }}
+      cancel-in-progress: false
+      queue: max
     permissions:
       contents: write
       pull-requests: write
@@ -607,11 +616,13 @@ jobs:
           CONFIG_DIR: ${{ github.workspace }}
           IMAGE_PR: ${{ inputs.image_c }}
           IMAGE_MAIN: ${{ inputs.image_b }}
-          # The production C engine — the third leg. synthetic-run.sh defaults to exactly this ref;
-          # set here explicitly so the workflow documents/controls what gets measured. The C leg is
-          # failure-isolated (synthetic-c-leg.sh): if it breaks, main-pr still publishes and the
-          # c-pr/c-main comparisons degrade to honest "unavailable" stubs.
-          IMAGE_CENGINE: docker.io/falkordb/falkordb:edge
+          # The production C engine — the third leg. Follows the A/B/C benchmark's C-engine
+          # baseline (image_a, pinnable via the image_a_tag dispatch input) so both benchmarks
+          # measure the same C image; when unset, synthetic-run.sh falls back to its default
+          # (docker.io/falkordb/falkordb:edge). The C leg is failure-isolated
+          # (synthetic-c-leg.sh): if it breaks, main-pr still publishes and the c-pr/c-main
+          # comparisons degrade to honest "unavailable" stubs.
+          IMAGE_CENGINE: ${{ inputs.image_a }}
           ARCH: ${{ inputs.arch }}
           PR_NUMBER: ${{ inputs.pr_number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -657,13 +668,13 @@ jobs:
     # the PR. This is a LEAF job (nothing `needs` it), so continue-on-error can't mask a gate. (Copilot)
     continue-on-error: true
     runs-on: ubuntu-latest
-    # Serialize every writer of this PR's synthetic-benchmark/branch/pr-<N>* leaves (x86 + arm
-    # publishers AND benchmark.yml's cleanup-branch-view share this group). cancel-in-progress
-    # stays false (an arm publisher must not cancel a queued x86 one — different leaves) and
-    # `queue: max` keeps ALL queued writers in FIFO order instead of the classic latest-wins
-    # collapse, so a cleanup queued behind a publisher always runs last.
+    # Serialize every writer of this PR's gh-pages leaves (x86 + arm synthetic publishers, the
+    # classic `merge` publisher above AND benchmark.yml's cleanup-branch-view share this group).
+    # cancel-in-progress stays false (an arm publisher must not cancel a queued x86 one —
+    # different leaves) and `queue: max` keeps ALL queued writers in FIFO order instead of the
+    # classic latest-wins collapse, so a cleanup queued behind a publisher always runs last.
     concurrency:
-      group: synthetic-pages-pr-${{ inputs.pr_number }}
+      group: pages-pr-${{ inputs.pr_number }}
       cancel-in-progress: false
       queue: max
     permissions:
