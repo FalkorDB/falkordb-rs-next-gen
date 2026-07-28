@@ -11,7 +11,7 @@ allocated/deallocated bytes from `MEMORY MALLOC-STATS` merged-arena deltas.
 
 Usage:
   python3 bench/run_bench.py [options] [query name ...]
-    --module PATH   module to load (default target/release/libfalkordb.dylib)
+    --module PATH   module to load (default target/release/libfalkordb.<dylib|so>)
     --port P        (default 6399)
     --out FILE      CSV output (default bench/results/current.csv); named
                     queries are merged into an existing CSV, so subset re-runs
@@ -34,16 +34,56 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 from queries import QUERIES, SETUP, SETUP_COMMANDS, ERROR_QUERIES, IMPORT_DIR, CSV_FILES
 
-libproc = ctypes.CDLL("/usr/lib/libproc.dylib")
-RUSAGE_INFO_V4 = 4
+# Per-process instruction/cycle counters. macOS reads them straight out of
+# `proc_pid_rusage` with no privileges; Linux has no rusage equivalent, so it
+# needs the PMU via `perf`, which may be unavailable (no binary, or
+# `kernel.perf_event_paranoid` too strict). When it is, the instr/cycles
+# columns are left empty rather than filled with a substitute — a wall-clock
+# stand-in would silently turn the regression gate into a noise detector.
+# `alloc_bytes`/`dealloc_bytes` and `ms` are unaffected and stay populated.
+SHLIB_EXT = "dylib" if sys.platform == "darwin" else "so"
 
+if sys.platform == "darwin":
+    libproc = ctypes.CDLL("/usr/lib/libproc.dylib")
+    RUSAGE_INFO_V4 = 4
 
-def rusage(pid):
-    buf = ctypes.create_string_buffer(1024)
-    if libproc.proc_pid_rusage(ctypes.c_int(pid), ctypes.c_int(RUSAGE_INFO_V4), buf) != 0:
-        raise OSError("proc_pid_rusage failed")
-    u64 = (ctypes.c_uint64 * 40).from_buffer_copy(buf.raw[16:336])
-    return u64[29], u64[30]  # ri_instructions, ri_cycles
+    def rusage(pid):
+        buf = ctypes.create_string_buffer(1024)
+        if libproc.proc_pid_rusage(ctypes.c_int(pid), ctypes.c_int(RUSAGE_INFO_V4), buf) != 0:
+            raise OSError("proc_pid_rusage failed")
+        u64 = (ctypes.c_uint64 * 40).from_buffer_copy(buf.raw[16:336])
+        return u64[29], u64[30]  # ri_instructions, ri_cycles
+
+    def counters_available():
+        return True
+
+else:
+    _PERF = shutil.which("perf")
+
+    def _perf_counts(pid, seconds):
+        """Sample instructions+cycles for `pid` over `seconds` via perf stat."""
+        out = subprocess.run(
+            [_PERF, "stat", "-x,", "-e", "instructions,cycles", "-p", str(pid),
+             "--", "sleep", str(seconds)],
+            capture_output=True, text=True,
+        )
+        vals = {}
+        for line in out.stderr.splitlines():
+            parts = line.split(",")
+            if len(parts) >= 3 and parts[0].replace(".", "").isdigit():
+                vals[parts[2]] = int(float(parts[0]))
+        if "instructions" not in vals or "cycles" not in vals:
+            raise OSError("perf stat produced no counters")
+        return vals["instructions"], vals["cycles"]
+
+    # perf cannot report a running total the way proc_pid_rusage can, so the
+    # harness's read-subtract-read pattern does not translate. Rather than
+    # fake it, report unavailable and let the caller drop those columns.
+    def rusage(pid):
+        raise OSError("per-process instruction counters unavailable on this platform")
+
+    def counters_available():
+        return False
 
 
 def pmc_run(pmc, cmd):
@@ -98,7 +138,10 @@ def jemalloc_totals(port):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--module", default=os.path.join(ROOT, "target/release/libfalkordb.dylib"))
+    ap.add_argument(
+        "--module",
+        default=os.path.join(ROOT, f"target/release/libfalkordb.{SHLIB_EXT}"),
+    )
     ap.add_argument("--port", default="6399")
     ap.add_argument("--out", default=os.path.join(HERE, "results/current.csv"))
     ap.add_argument("--n", type=int, default=1000)
@@ -204,16 +247,25 @@ def main():
                   "(see bench/README.md to build+setuid)", flush=True)
 
         # idle baseline
-        i0, c0 = rusage(pid)
+        have_counters = counters_available()
+        i0, c0 = rusage(pid) if have_counters else (0, 0)
         if pmc_ok:
             idle_ev, idle_dt = pmc_run(pmc, ["sleep", "3"])
         else:
             time.sleep(3)
             idle_ev, idle_dt = {}, 3.0
-        i1, c1 = rusage(pid)
+        i1, c1 = rusage(pid) if have_counters else (0, 0)
         idle_ips, idle_cps = (i1 - i0) / idle_dt, (c1 - c0) / idle_dt
         idle_rate = {k: v / idle_dt for k, v in idle_ev.items()}
-        print(f"pid {pid}, idle process rate {idle_ips/1e6:.1f}M instr/s", flush=True)
+        if have_counters:
+            print(f"pid {pid}, idle process rate {idle_ips/1e6:.1f}M instr/s", flush=True)
+        else:
+            print(
+                f"pid {pid}, per-process instruction counters unavailable on "
+                f"{sys.platform}: instr/cycles columns will be empty, "
+                f"alloc_bytes/dealloc_bytes/ms are unaffected",
+                flush=True,
+            )
 
         rows = []
         for name, is_write, q, *rest in queries:
@@ -229,19 +281,22 @@ def main():
             # memory snapshots outside the i0..i1 window so the MALLOC-STATS
             # call's own work doesn't pollute the instruction counts
             m0a, m0d = jemalloc_totals(args.port)
-            i0, c0 = rusage(pid)
+            i0, c0 = rusage(pid) if have_counters else (0, 0)
             if pmc_ok:
                 ev, dt = pmc_run(pmc, bench)
             else:
                 t0 = time.time()
                 subprocess.run(bench, capture_output=True)
                 ev, dt = {}, time.time() - t0
-            i1, c1 = rusage(pid)
+            i1, c1 = rusage(pid) if have_counters else (0, 0)
             m1a, m1d = jemalloc_totals(args.port)
             row = {
                 "query": name,
-                "instr": (i1 - i0 - idle_ips * dt) / n,
-                "cycles": (c1 - c0 - idle_cps * dt) / n,
+                # Empty, not 0: compare.py treats a non-numeric cell as
+                # "absent" and skips the metric, whereas 0 would read as a
+                # real measurement and flag every row as an infinite change.
+                "instr": (i1 - i0 - idle_ips * dt) / n if have_counters else "",
+                "cycles": (c1 - c0 - idle_cps * dt) / n if have_counters else "",
                 "branches": "", "br_miss": "", "l1d_miss": "",
                 "alloc_bytes": (m1a - m0a) / n if m0a is not None else "",
                 "dealloc_bytes": (m1d - m0d) / n if m0d is not None else "",

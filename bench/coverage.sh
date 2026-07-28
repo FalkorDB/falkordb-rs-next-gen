@@ -5,6 +5,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# macOS builds a .dylib, Linux a .so.
+EXT=$([ "$(uname -s)" = Darwin ] && echo dylib || echo so)
+
 COVDIR=bench/results/cov
 rm -rf "$COVDIR" && mkdir -p "$COVDIR"
 
@@ -14,13 +17,13 @@ RUSTFLAGS="-C instrument-coverage" cargo build
 echo "== running query set once each =="
 LLVM_PROFILE_FILE="$PWD/$COVDIR/cov-%p.profraw" \
   python3 bench/run_bench.py --once --port 6401 \
-  --module "$PWD/target/debug/libfalkordb.dylib"
+  --module "$PWD/target/debug/libfalkordb.$EXT"
 
 TOOLS=$(dirname "$(find ~/.rustup/toolchains -name llvm-profdata | head -1)")
 "$TOOLS/llvm-profdata" merge --sparse "$COVDIR"/*.profraw -o "$COVDIR/cov.profdata"
 
 "$TOOLS/llvm-cov" report --instr-profile "$COVDIR/cov.profdata" \
-  target/debug/libfalkordb.dylib \
+  "target/debug/libfalkordb.$EXT" \
   --ignore-filename-regex='(GraphBLAS\.rs|\.cargo|rustc)' \
   > "$COVDIR/report.txt"
 

@@ -1,0 +1,251 @@
+# Per-query benchmark + query-set coverage, on demand.
+#
+# Complements `benchmark.yml`, which does NOT overlap with this: that one runs a
+# macro throughput/latency A/B/C on ephemeral GCE VMs against published images.
+# This one runs `bench/` — the per-query harness (316 queries) — building both
+# `main` and the PR head from source in the toolchain container, and reports the
+# PR's per-query deltas plus how much of the `graph` crate the query set covers.
+#
+# Trigger: add the `benchmark-cov` label to a PR. Like benchmark.yml, it runs
+# only when the label is *added* (the `labeled` event), never on subsequent
+# pushes while the label happens to sit there — it builds the module twice and
+# runs the whole query set, so it must be an explicit request. To re-run, remove
+# and re-add the label.
+#
+# Fork PRs are skipped: their GITHUB_TOKEN is read-only and could not comment.
+#
+# ## What is actually measured, and what is not
+#
+# `instructions` and `cycles` are per-process counters. On macOS the harness
+# reads them from `proc_pid_rusage` with no privileges. Linux has no rusage
+# equivalent and needs the PMU via `perf`, which is usually unavailable in a
+# container (`kernel.perf_event_paranoid`, missing CAP_PERFMON). When they are
+# unavailable the harness leaves those columns EMPTY rather than substituting
+# wall-clock, and `compare.py` then skips them — a wall-clock stand-in would
+# quietly turn the regression gate into a noise detector.
+#
+# What remains on Linux is still worth having, and is the point of this job:
+#   * `alloc_bytes` / `dealloc_bytes` — jemalloc merged-arena deltas, which are
+#     deterministic and have repeatedly been the clearest signal (e.g. a CASE
+#     row moving 8,722 -> 1,989 B/query when its per-row branch list was
+#     removed).
+#   * the coverage report — LLVM source-based instrumentation, entirely
+#     portable.
+# `ms` is reported but is shared-runner wall-clock: treat it as advisory only.
+name: Benchmark + coverage
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: benchmark-cov-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  benchmark-cov:
+    if: >-
+      github.event.label.name == 'benchmark-cov' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/falkordb/falkordb-build:latest
+    timeout-minutes: 90
+    steps:
+      - name: Acknowledge the request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          gh api -X POST "repos/$REPO/issues/$PR/reactions" -f content="eyes" || true
+
+      # Two checkouts so both builds keep their own target/ dir: rebuilding the
+      # same directory across refs would serialise on cargo's lock and thrash
+      # the incremental cache for no benefit.
+      - name: Checkout PR head
+        uses: actions/checkout@v4
+        with:
+          path: pr
+          fetch-depth: 0
+
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: base
+          fetch-depth: 0
+
+      - name: Install harness deps
+        run: |
+          python3 -m pip install --quiet --break-system-packages redis || \
+            python3 -m pip install --quiet redis
+          command -v redis-server
+          command -v redis-benchmark
+
+      - name: Build PR module
+        working-directory: pr
+        run: CXX=clang++ cargo build --release
+
+      - name: Build main module
+        working-directory: base
+        run: CXX=clang++ cargo build --release
+
+      # Sequentially, never in parallel: both runs bind a redis port and
+      # contend for the same CPUs. Overlapping them produces numbers that look
+      # like measurements but are not.
+      - name: Measure main
+        working-directory: pr
+        run: |
+          python3 bench/run_bench.py \
+            --module "$GITHUB_WORKSPACE/base/target/release/libfalkordb.so" \
+            --out /tmp/main.csv
+
+      - name: Measure PR
+        working-directory: pr
+        run: |
+          python3 bench/run_bench.py \
+            --module "$GITHUB_WORKSPACE/pr/target/release/libfalkordb.so" \
+            --out /tmp/pr.csv
+
+      - name: Compare PR vs main
+        working-directory: pr
+        run: |
+          # compare.py exits non-zero when a metric regresses. This job reports
+          # rather than gates, so capture the status instead of failing the run.
+          set +e
+          python3 bench/compare.py /tmp/pr.csv /tmp/main.csv > /tmp/compare.txt 2>&1
+          echo "compare_exit=$?" >> "$GITHUB_ENV"
+          set -e
+          tail -40 /tmp/compare.txt
+
+      - name: Coverage of the query set
+        working-directory: pr
+        run: |
+          set +e
+          bash bench/coverage.sh > /tmp/coverage.txt 2>&1
+          echo "coverage_exit=$?" >> "$GITHUB_ENV"
+          set -e
+          tail -30 /tmp/coverage.txt
+
+      - name: Build the comment
+        working-directory: pr
+        run: |
+          python3 - <<'PY' > /tmp/comment.md
+          import csv, os, re
+
+          def read(path):
+              try:
+                  with open(path) as f:
+                      return {r["query"]: r for r in csv.DictReader(f)}
+              except OSError:
+                  return {}
+
+          pr, main = read("/tmp/pr.csv"), read("/tmp/main.csv")
+
+          def num(row, key):
+              try:
+                  return float(row[key])
+              except (KeyError, TypeError, ValueError):
+                  return None
+
+          # Pick the metric to rank by: instructions when the PMU was available
+          # (deterministic), otherwise allocated bytes (also deterministic).
+          # Never wall-clock — on a shared runner it ranks noise.
+          metric = "instr" if any(num(r, "instr") is not None for r in pr.values()) else "alloc_bytes"
+
+          rows = []
+          for q, p in pr.items():
+              m = main.get(q)
+              if not m:
+                  continue
+              a, b = num(m, metric), num(p, metric)
+              if a is None or b is None or a <= 0:
+                  continue
+              rows.append((b / a, q, a, b))
+          rows.sort()
+
+          print("## Benchmark + coverage")
+          print()
+          print(f"316-query harness, both sides built from source in this run. "
+                f"Ranked by **{metric}** (deterministic); wall-clock `ms` is "
+                f"advisory only on a shared runner.")
+          print()
+          if metric == "alloc_bytes":
+              print("> Per-process instruction/cycle counters were unavailable on this "
+                    "runner (Linux needs PMU access via `perf`), so those columns are "
+                    "empty and were skipped rather than substituted. Allocated bytes "
+                    "are deterministic and are used instead.")
+              print()
+
+          if not rows:
+              print("No comparable rows — see the workflow log.")
+          else:
+              def table(title, subset):
+                  print(f"### {title}")
+                  print()
+                  print(f"| query | main | PR | ratio |")
+                  print("|---|---|---|---|")
+                  for r, q, a, b in subset:
+                      print(f"| {q} | {a:,.0f} | {b:,.0f} | {r:.2f}x |")
+                  print()
+
+              improved = [r for r in rows if r[0] < 0.95][:15]
+              regressed = [r for r in reversed(rows) if r[0] > 1.05][:15]
+              if improved:
+                  table(f"Improved ({len(improved)} shown)", improved)
+              if regressed:
+                  table(f"Regressed ({len(regressed)} shown)", regressed)
+              if not improved and not regressed:
+                  print("No row moved more than 5% either way.")
+                  print()
+              geo = 1.0
+              for r, *_ in rows:
+                  geo *= r
+              geo **= 1.0 / len(rows)
+              print(f"**{len(rows)} rows compared, {metric} geomean {geo:.3f}.**")
+              print()
+              print("Micro-queries near the fixed per-query floor need 3 reps per build "
+                    "before a small delta means anything — re-measure a flagged row in "
+                    "isolation before acting on it.")
+              print()
+
+          print("<details><summary>Full compare.py output</summary>")
+          print()
+          print("```")
+          print(open("/tmp/compare.txt").read()[-6000:] if os.path.exists("/tmp/compare.txt") else "(missing)")
+          print("```")
+          print()
+          print("</details>")
+          print()
+          print("<details><summary>Query-set coverage of the graph crate</summary>")
+          print()
+          print("```")
+          print(open("/tmp/coverage.txt").read()[-6000:] if os.path.exists("/tmp/coverage.txt") else "(missing)")
+          print("```")
+          print()
+          print("</details>")
+          PY
+          cat /tmp/comment.md
+
+      # Upsert, so re-running replaces the previous report instead of burying
+      # the PR in near-identical comments.
+      - name: Post or update the PR comment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          MARKER="<!-- benchmark-cov-report -->"
+          printf '%s\n' "$MARKER" >> /tmp/comment.md
+          ID=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+                 --jq "map(select(.body | contains(\"$MARKER\"))) | .[-1].id // empty")
+          if [ -n "$ID" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$ID" -F body=@/tmp/comment.md
+          else
+            gh api -X POST "repos/$REPO/issues/$PR/comments" -F body=@/tmp/comment.md
+          fi
