@@ -555,8 +555,11 @@ jobs:
           else:
               print("### vs the C engine")
               print()
-              print("The C measurement did not produce output — see the workflow log. "
-                    "(That step is non-fatal so the PR-vs-main comparison still reports.)")
+              print("Not measured on this runner: the C engine ships as a Linux image "
+                    "and there is no macOS build to load, while this job runs on macOS "
+                    "so that per-process instruction counts work at all (see the "
+                    "workflow header). For a vs-C reading, use the recipe in "
+                    "`.claude/skills/bench/SKILL.md`.")
               print()
 
           for title, path in (("Full compare.py output", "/tmp/compare.txt"),
