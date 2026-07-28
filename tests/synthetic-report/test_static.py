@@ -116,6 +116,11 @@ def _assert_analysis_shape(analysis):
         for key in ("skipped_baseline", "skipped_candidate"):
             if key in entry:
                 assert isinstance(entry[key], bool), f"{op} {key}"
+        # Optional per-op example query (benchmark ≥ v2.7) — a non-empty string when present.
+        if "example_query" in entry:
+            assert isinstance(entry["example_query"], str) and entry["example_query"], (
+                f"{op} example_query must be a non-empty string"
+            )
         # cells may be EMPTY: a cell-less diverged op is legal (it still counts in totals).
         assert isinstance(entry["cells"], list), op
         for cell in entry["cells"]:
@@ -134,6 +139,20 @@ def _assert_analysis_shape(analysis):
             for side in ("baseline", "candidate"):
                 if side in cell["context"]:
                     assert isinstance(cell["context"][side], dict), f"{op} context.{side}"
+                    # Optional within-run dispersion stats (benchmark ≥ v2.7): sample
+                    # counts are non-negative ints, σ/CV are numbers — when present.
+                    stats = cell["context"][side]
+                    for key in ("n", "n_server"):
+                        if key in stats:
+                            assert isinstance(stats[key], int) and stats[key] >= 0, (
+                                f"{op} context.{side}.{key}"
+                            )
+                    for key in ("server_stddev_ms", "server_cv_pct",
+                                "total_stddev_ms", "total_cv_pct"):
+                        if key in stats:
+                            assert isinstance(stats[key], (int, float)), (
+                                f"{op} context.{side}.{key}"
+                            )
 
 
 def _assert_data_shape(data):
@@ -235,11 +254,59 @@ def test_main_fixture_covers_all_statuses():
         and cell["perf_verdict"] == "not_applicable"
         for cell in all_cells
     ), "fixture must include a one-sided cell with omitted p50/delta fields"
+    # Within-run dispersion + example-query enrichment (benchmark ≥ v2.7) must stay
+    # covered ALONGSIDE unenriched ops in the same document, so the page's
+    # feature-detection keeps both paths exercised in one render pass.
+    both_sided_stats = [
+        cell for entry in ok_ops for cell in entry["cells"]
+        if all(
+            "n" in cell["context"].get(side, {})
+            and "server_stddev_ms" in cell["context"].get(side, {})
+            and "server_cv_pct" in cell["context"].get(side, {})
+            for side in ("baseline", "candidate")
+        )
+    ]
+    assert both_sided_stats, "fixture must include a cell with two-sided n/σ/CV stats"
+    assert any(
+        "example_query" in entry for entry in ok_ops
+    ), "fixture must include an op with an example_query"
+    assert any(
+        "example_query" not in entry
+        and all("n" not in cell["context"].get(side, {})
+                for cell in entry["cells"] for side in ("baseline", "candidate"))
+        for entry in ok_ops
+    ), "fixture must keep an op without any v2.7 enrichment (degradation coverage)"
+    # The n_server shortfall shape (fewer server-timed samples than measured samples).
+    all_read_sides = [
+        cell["context"][side]
+        for c in data["comparisons"].values()
+        for k, slot in c.items()
+        if k == "reads" and slot["status"] == "ok"
+        for entry in slot["analysis"]["ops"].values()
+        for cell in entry["cells"]
+        for side in ("baseline", "candidate")
+        if side in cell["context"]
+    ]
+    assert any(
+        "n_server" in s and s["n_server"] != s.get("n") for s in all_read_sides
+    ), "fixture must include an n_server != n side"
 
 
 def test_xss_fixture_has_script_shaped_labels():
     raw = json.dumps(load_fixture("data-xss.json"))
     assert "<script>" in raw and "onerror=" in raw
+    # The example query itself must carry hostile markup so the page's
+    # example-query block stays covered by the inertness tests.
+    data = load_fixture("data-xss.json")
+    examples = [
+        entry["example_query"]
+        for c in data["comparisons"].values()
+        for slot in c.values()
+        if slot["status"] == "ok"
+        for entry in slot["analysis"]["ops"].values()
+        if "example_query" in entry
+    ]
+    assert any("<script>" in q and "onerror=" in q for q in examples)
 
 
 # --- 3. assembler CLI behavior ----------------------------------------------

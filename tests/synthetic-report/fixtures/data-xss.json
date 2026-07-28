@@ -157,7 +157,8 @@
           }
          }
         }
-       ]
+       ],
+       "example_query": "MATCH (n) WHERE n.name = '<script>window.__pwned=4</script>' RETURN n // <img src=x onerror=\"window.__pwned=5\">"
       },
       "<img src=x onerror=\"window.__pwned=2\">": {
        "tier": null,
@@ -450,7 +451,8 @@
           }
          }
         }
-       ]
+       ],
+       "example_query": "MATCH (n) WHERE n.name = '<script>window.__pwned=4</script>' RETURN n // <img src=x onerror=\"window.__pwned=5\">"
       }
      }
     }
