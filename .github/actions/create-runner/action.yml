@@ -34,28 +34,13 @@ inputs:
     description: "Project the image_family resolves against (e.g. ubuntu-os-cloud). Empty → gce-github-runner default."
     required: false
     default: ""
-  performance_monitoring_unit:
-    description: >
-      Enable the GCE virtual PMU (architectural | standard | enhanced —
-      gcloud rejects the uppercase spelling GCP's docs use).
-      Required for per-process hardware counters inside the VM: without it
-      `perf` runs but reports "<not supported>" for every event, and the
-      setting can only be applied at instance creation.
-
-      Empty by default, so the flag is omitted and nothing changes for callers
-      that do not ask for it. Only set it on a machine family that supports the
-      vPMU — GCE rejects the flag elsewhere, which fails instance creation
-      outright (the stockout retry will not help, since every attempt fails the
-      same way).
-    required: false
-    default: ""
 runs:
   using: composite
   steps:
     - name: Create runner (attempt 1)
       id: a1
       continue-on-error: true
-      uses: FalkorDB/gce-github-runner@ef56e4c9a1abfc80c300b33e3e1e9a3065b5905a
+      uses: FalkorDB/gce-github-runner@0caf8406cd6353630fcd0b2eade420d3da124e01
       with:
         token: ${{ inputs.token }}
         project_id: ${{ inputs.project_id }}
@@ -67,7 +52,6 @@ runs:
         arm: ${{ inputs.arm }}
         image_family: ${{ inputs.image_family }}
         image_project: ${{ inputs.image_project }}
-        performance_monitoring_unit: ${{ inputs.performance_monitoring_unit }}
 
     - name: Backoff before attempt 2
       if: steps.a1.outcome == 'failure'
@@ -78,7 +62,7 @@ runs:
       id: a2
       if: steps.a1.outcome == 'failure'
       continue-on-error: true
-      uses: FalkorDB/gce-github-runner@ef56e4c9a1abfc80c300b33e3e1e9a3065b5905a
+      uses: FalkorDB/gce-github-runner@0caf8406cd6353630fcd0b2eade420d3da124e01
       with:
         token: ${{ inputs.token }}
         project_id: ${{ inputs.project_id }}
@@ -90,7 +74,6 @@ runs:
         arm: ${{ inputs.arm }}
         image_family: ${{ inputs.image_family }}
         image_project: ${{ inputs.image_project }}
-        performance_monitoring_unit: ${{ inputs.performance_monitoring_unit }}
 
     - name: Backoff before attempt 3
       if: steps.a1.outcome == 'failure' && steps.a2.outcome == 'failure'
@@ -99,7 +82,7 @@ runs:
 
     - name: Create runner (attempt 3)
       if: steps.a1.outcome == 'failure' && steps.a2.outcome == 'failure'
-      uses: FalkorDB/gce-github-runner@ef56e4c9a1abfc80c300b33e3e1e9a3065b5905a
+      uses: FalkorDB/gce-github-runner@0caf8406cd6353630fcd0b2eade420d3da124e01
       with:
         token: ${{ inputs.token }}
         project_id: ${{ inputs.project_id }}
@@ -111,4 +94,3 @@ runs:
         arm: ${{ inputs.arm }}
         image_family: ${{ inputs.image_family }}
         image_project: ${{ inputs.image_project }}
-        performance_monitoring_unit: ${{ inputs.performance_monitoring_unit }}

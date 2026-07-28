@@ -363,6 +363,29 @@ jobs:
           ln -sfn "$PWD/pr/redisearch/RediSearch/bin" base/redisearch/RediSearch/bin
           ls -l base/lagraph_lib base/redisearch/RediSearch/bin >/dev/null
 
+      # macos-14 is Apple silicon, so pmc_tool compiles here, and sudo is
+      # passwordless on GitHub runners — so it can be installed setuid-root as
+      # the harness expects. That fills the branches/br_miss/l1d_miss columns,
+      # which are otherwise empty ("pmc_tool unavailable" in the log).
+      #
+      # Best-effort: kperf may not be reachable inside a virtualised runner. If
+      # it is not, pmc_run returns no events and the harness leaves those three
+      # columns empty, exactly as it does today — instructions and cycles come
+      # from proc_pid_rusage and are unaffected either way.
+      - name: Build pmc_tool (PMU counters)
+        continue-on-error: true
+        working-directory: pr
+        run: |
+          set -x
+          clang -O2 -o bench/pmc_tool bench/pmc_tool.c \
+            -F /System/Library/PrivateFrameworks -framework kperf -framework kperfdata
+          sudo chown root:wheel bench/pmc_tool
+          sudo chmod u+s bench/pmc_tool
+          ls -l bench/pmc_tool
+          # Probe it the same way the harness does, so the log says up front
+          # whether the extra columns will be populated.
+          ./bench/pmc_tool runcmd true 2>&1 | head -5 || true
+
       - name: Build PR module
         working-directory: pr
         run: cargo build --release
