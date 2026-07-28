@@ -284,6 +284,19 @@ impl<T> VersionedMatrix<T> {
         // runs before the next transaction's first mutation instead.
     }
 
+    /// Materialize only the committed base `m`.
+    ///
+    /// Read paths access `m` raw (no lock, no wait): `m()` hands the base to
+    /// structural consumers, and [`Self::wait`] reads `m.nvals()` directly.
+    /// A GrB call on a pending matrix finishes that work internally — a
+    /// mutation — so a published snapshot whose base is pending lets two
+    /// lock-free readers corrupt GrB state. dp/dm don't need this: every
+    /// read of them goes through the mutex-guarded [`Matrix::wait`] first.
+    /// Called at MVCC commit; a no-op (one atomic load) when `m` is synced.
+    pub fn wait_base(&self) {
+        self.m.wait();
+    }
+
     /// Wait on all three internal matrices (m, dp, dm).
     /// Used for fork safety — ensures no GrB internal locks are held.
     pub fn wait_all(&self) {
@@ -361,13 +374,87 @@ impl VersionedMatrix<bool> {
         nrows: u64,
         ncols: u64,
     ) {
-        self.flush();
-        // GrB_Matrix_resize waits internally, so `m` holds no real pending
-        // work afterwards — waiting here would rebuild the freed hyper hash
-        // on every capacity grow (measured 1.4-5.7x write regressions).
-        self.m.resize(nrows, ncols);
-        self.dp.resize(nrows, ncols);
-        self.dm.resize(nrows, ncols);
+        if nrows < self.m.nrows() || ncols < self.m.ncols() {
+            // Shrinking can drop entries; keep the straightforward path.
+            self.flush();
+            // GrB_Matrix_resize waits internally, so `m` holds no real
+            // pending work afterwards — waiting here would rebuild the freed
+            // hyper hash on every capacity change (measured 1.4-5.7x write
+            // regressions).
+            self.m.resize(nrows, ncols);
+            self.dp.resize(nrows, ncols);
+            self.dm.resize(nrows, ncols);
+            return;
+        }
+        // Growing: the base is COW-shared with the committed snapshot, so an
+        // in-place resize deep-copies the whole matrix first, and any
+        // lingering delta later pays another O(|m|) fold pass (measured
+        // 2.4-9.8 ms spikes per capacity grow on bulk creates). Instead
+        // rebuild the base at the target dims in one pass, folding both
+        // deltas in: extract the tuple streams (row-major sorted) and merge
+        // (m \ dm) ∪ dp into a fresh matrix.
+        //
+        // The layers may still be shared with the committed snapshot AND
+        // carry pending GraphBLAS work (commit does not wait). extractTuples
+        // materializes pending work — a mutation — so it must go through the
+        // lock-coordinated wait() first or it races concurrent readers
+        // (observed as GrB_INVALID_OBJECT / heap corruption under stress).
+        self.wait_all();
+        let (mi, mj) = self.m.extract_tuples();
+        let (pi, pj) = self.dp.extract_tuples();
+        let (qi, qj) = self.dm.extract_tuples();
+        let n = mi.len() + pi.len();
+        let mut new_m = Matrix::<bool>::new(nrows, ncols);
+        if qi.is_empty() && pi.is_empty() {
+            new_m.build(&mi, &mj);
+        } else if qi.is_empty()
+            && (mi.is_empty() || (mi[mi.len() - 1], mj[mi.len() - 1]) < (pi[0], pj[0]))
+        {
+            // Pure append (monotonically growing ids): concat, no merge.
+            let mut ri = Vec::with_capacity(n);
+            let mut rj = Vec::with_capacity(n);
+            ri.extend_from_slice(&mi);
+            ri.extend_from_slice(&pi);
+            rj.extend_from_slice(&mj);
+            rj.extend_from_slice(&pj);
+            new_m.build(&ri, &rj);
+        } else {
+            let mut ri = Vec::with_capacity(n);
+            let mut rj = Vec::with_capacity(n);
+            let (mut b, mut c) = (0usize, 0usize);
+            for a in 0..mi.len() {
+                let key = (mi[a], mj[a]);
+                while b < pi.len() && (pi[b], pj[b]) < key {
+                    ri.push(pi[b]);
+                    rj.push(pj[b]);
+                    b += 1;
+                }
+                if c < qi.len() && (qi[c], qj[c]) == key {
+                    c += 1;
+                    continue;
+                }
+                ri.push(key.0);
+                rj.push(key.1);
+            }
+            ri.extend_from_slice(&pi[b..]);
+            rj.extend_from_slice(&pj[b..]);
+            new_m.build(&ri, &rj);
+        }
+        new_m.wait();
+        self.m.replace(new_m);
+        // Deltas are folded in; swap in fresh empty ones at the new dims
+        // (resizing through the Cow would deep-copy a still-shared delta).
+        self.dp
+            .replace(Matrix::<bool>::new(nrows, ncols).into_hyper());
+        self.dm
+            .replace(Matrix::<bool>::new(nrows, ncols).into_hyper());
+        *self.dp_count.get_mut() = 0;
+        *self.dm_count.get_mut() = 0;
+        self.dp_tx_nvals = 0;
+        self.dm_tx_nvals = 0;
+        self.fold_dp.store(false, Ordering::Relaxed);
+        self.fold_dm.store(false, Ordering::Relaxed);
+        self.needs_flush.store(false, Ordering::Relaxed);
     }
 
     pub fn remove(
@@ -376,6 +463,11 @@ impl VersionedMatrix<bool> {
         j: u64,
     ) {
         self.flush();
+        // See `set`: the debug_assert reads dp raw; only wait while shared.
+        #[cfg(debug_assertions)]
+        if self.dp.is_shared() {
+            self.dp.wait();
+        }
         if self.m.get(i, j).is_some() {
             debug_assert!(self.dp.get(i, j).is_none());
             self.dm.set(i, j, true);
@@ -398,6 +490,10 @@ impl VersionedMatrix<bool> {
         mask: &Matrix<bool>,
     ) {
         self.flush();
+        // eWiseMult below reads `m`, which may be shared with the committed
+        // snapshot and carry pending work; reading materializes it, so wait
+        // first under the readers' lock.
+        self.m.wait();
         // dm<mask> = mask ∩ m: mark deleted every committed entry that `mask`
         // selects. eWiseMult computes over the pattern intersection, so the
         // cost scales with the smaller operand (the mask), not with |m|.
@@ -439,6 +535,22 @@ impl VersionedMatrix<bool> {
         value: bool,
     ) {
         self.flush();
+        // The debug_asserts below read the deltas raw; a get on a pending
+        // matrix finishes that work internally (a mutation), racing
+        // concurrent readers when the layer is still shared with the
+        // committed snapshot. Only wait while shared — once dup'd the layer
+        // is writer-local and raw gets are single-threaded, and waiting
+        // unconditionally re-merges pending tuples per element (quadratic
+        // bulk mutation in debug builds).
+        #[cfg(debug_assertions)]
+        {
+            if self.dp.is_shared() {
+                self.dp.wait();
+            }
+            if self.dm.is_shared() {
+                self.dm.wait();
+            }
+        }
         if self.m.get(i, j).is_some() {
             debug_assert!(self.dp.get(i, j).is_none());
             self.dm.remove(i, j);
@@ -498,6 +610,10 @@ impl VersionedMatrix<bool> {
 
     pub fn flush(&mut self) {
         if self.needs_flush.load(Ordering::Relaxed) {
+            // The layers may be shared with the committed snapshot and carry
+            // pending work; nvals/eWiseAdd/select below materialize it (a
+            // mutation), so wait first under the readers' lock.
+            self.wait_all();
             let fold_dp = self.fold_dp.swap(false, Ordering::Relaxed) && self.dp.nvals() > 0;
             let fold_dm = self.fold_dm.swap(false, Ordering::Relaxed) && self.dm.nvals() > 0;
             if fold_dp || fold_dm {

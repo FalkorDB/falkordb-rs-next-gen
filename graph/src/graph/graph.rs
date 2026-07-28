@@ -2036,6 +2036,25 @@ impl Graph {
         }
     }
 
+    /// Materialize only the committed base (`m`) layer of every versioned
+    /// matrix and tensor. Called at MVCC commit before publishing: readers
+    /// reach bases lock-free (dp/dm reads go through the mutex-guarded
+    /// `Matrix::wait`), so a pending base in a visible snapshot lets
+    /// concurrent readers corrupt GrB state. No-op per matrix when synced.
+    pub fn wait_bases(&self) {
+        self.zero_matrix.wait_base();
+        self.adjacancy_matrix.wait_base();
+        self.node_labels_matrix.wait_base();
+        self.relationship_type_matrix.wait_base();
+        self.all_nodes_matrix.wait_base();
+        for m in &self.labels_matices {
+            m.wait_base();
+        }
+        for t in &self.relationship_matrices {
+            t.wait_base();
+        }
+    }
+
     /// Materialize all pending GraphBLAS operations on every matrix.
     /// Called from pthread_atfork prepare handler to ensure no internal
     /// GraphBLAS locks are held at fork time.
@@ -2397,6 +2416,10 @@ impl Graph {
             .next()
             .map_or_else(|| self.adjacancy_matrix.extract(), |t| t.extract());
         for relationship_matrix in iter {
+            // The raw fwd layers may hold pending work; set_pattern's GrB ops
+            // would finish it internally, racing other readers on the shared
+            // handles. No-op when already synced.
+            relationship_matrix.wait_fwd();
             m.set_pattern(
                 Some(relationship_matrix.fwd_dm()),
                 relationship_matrix.fwd_m(),

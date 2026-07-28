@@ -272,7 +272,7 @@ impl Tensor {
     /// is never waited here (same invariant as `VersionedMatrix::wait`). Note
     /// `GxB_WILL_WAIT` can still report true on `m` after a grow-resize — the
     /// hyper hash was freed — but GraphBLAS rebuilds it on demand.
-    fn wait_fwd(&self) {
+    pub(crate) fn wait_fwd(&self) {
         // nvals only changes through ops that mark the matrix pending, so the
         // flag can only be stale when there is pending work — skip the nvals
         // FFI calls on the hot read path otherwise.
@@ -593,13 +593,55 @@ impl Tensor {
         nrows: u64,
         ncols: u64,
     ) {
-        self.flush();
-        // GrB_Matrix_resize waits internally, so `m` holds no real pending
-        // work afterwards — waiting here would rebuild the freed hyper hash
-        // on every capacity grow (measured 1.4-5.7x write regressions).
-        self.m.resize(nrows, ncols);
-        self.dp.resize(nrows, ncols);
-        self.dm.resize(nrows, ncols);
+        if nrows < self.m.nrows() || ncols < self.m.ncols() {
+            // Shrinking can drop entries; keep the straightforward path.
+            self.flush();
+            // GrB_Matrix_resize waits internally, so `m` holds no real pending
+            // work afterwards — waiting here would rebuild the freed hyper hash
+            // on every capacity grow (measured 1.4-5.7x write regressions).
+            self.m.resize(nrows, ncols);
+            self.dp.resize(nrows, ncols);
+            self.dm.resize(nrows, ncols);
+            self.mt.resize(ncols, nrows);
+            return;
+        }
+        // Growing: the base is always COW-shared with the committed snapshot,
+        // so resizing through the Cow would deep-copy the full matrix first.
+        // Instead rebuild each layer at the target dims from its tuples and
+        // swap it in; contents (and therefore all delta invariants, counters
+        // and fold latches) are unchanged.
+        //
+        // The layers may be shared with the committed snapshot AND carry
+        // pending work (commit does not wait). extractTuples/nvals
+        // materialize it — a mutation — so wait first under the readers'
+        // lock or this races concurrent readers (GrB_INVALID_OBJECT / heap
+        // corruption under stress).
+        self.m.wait();
+        self.dp.wait();
+        self.dm.wait();
+        let (mi, mj, mv) = self.m.extract_tuples();
+        let mut new_m = Matrix::<u64>::new(nrows, ncols);
+        new_m.build(&mi, &mj, &mv);
+        new_m.wait();
+        self.m.replace(new_m);
+        if self.dp.nvals() > 0 {
+            let (pi, pj, pv) = self.dp.extract_tuples();
+            let mut new_dp = Matrix::<u64>::new(nrows, ncols);
+            new_dp.build(&pi, &pj, &pv);
+            self.dp.replace(new_dp.into_hyper());
+        } else {
+            self.dp
+                .replace(Matrix::<u64>::new(nrows, ncols).into_hyper());
+        }
+        if self.dm.nvals() > 0 {
+            let (qi, qj) = self.dm.extract_tuples();
+            let mut new_dm = Matrix::<bool>::new(nrows, ncols);
+            new_dm.build(&qi, &qj);
+            self.dm.replace(new_dm.into_hyper());
+        } else {
+            self.dm
+                .replace(Matrix::<bool>::new(nrows, ncols).into_hyper());
+        }
         self.mt.resize(ncols, nrows);
     }
 
@@ -616,6 +658,12 @@ impl Tensor {
     /// every write is a single atomic load in the common case.
     pub fn flush(&mut self) {
         if self.needs_flush.load(Ordering::Relaxed) {
+            // The layers may be shared with the committed snapshot and carry
+            // pending work; nvals/eWiseAdd/select below materialize it (a
+            // mutation), so wait first under the readers' lock.
+            self.m.wait();
+            self.dp.wait();
+            self.dm.wait();
             let fold_dp = self.fold_dp.swap(false, Ordering::Relaxed) && self.dp.nvals() > 0;
             let fold_dm = self.fold_dm.swap(false, Ordering::Relaxed) && self.dm.nvals() > 0;
             if fold_dp || fold_dm {
@@ -860,6 +908,15 @@ impl Tensor {
         self.wait_fwd();
         self.mt.wait();
         self.me.wait();
+    }
+
+    /// Materialize only the committed base layers (`m`, `mt.m`, `me.m`).
+    /// See [`VersionedMatrix::wait_base`] for why bases must be synced at
+    /// MVCC commit while dp/dm may stay lazy.
+    pub fn wait_base(&self) {
+        self.m.wait();
+        self.mt.wait_base();
+        self.me.wait_base();
     }
 
     /// Wait on all matrices for fork safety (takes &self, not &mut self).

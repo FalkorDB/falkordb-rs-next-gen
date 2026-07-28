@@ -86,19 +86,20 @@ use super::{
     GrB_Matrix_apply, GrB_Matrix_build_BOOL, GrB_Matrix_build_UINT64, GrB_Matrix_clear,
     GrB_Matrix_dup, GrB_Matrix_eWiseAdd_BinaryOp, GrB_Matrix_eWiseAdd_Semiring,
     GrB_Matrix_eWiseMult_Semiring, GrB_Matrix_extractElement_BOOL,
-    GrB_Matrix_extractElement_UINT64, GrB_Matrix_free, GrB_Matrix_get_INT32, GrB_Matrix_ncols,
+    GrB_Matrix_extractElement_UINT64, GrB_Matrix_extractTuples_BOOL,
+    GrB_Matrix_extractTuples_UINT64, GrB_Matrix_free, GrB_Matrix_get_INT32, GrB_Matrix_ncols,
     GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals, GrB_Matrix_removeElement,
     GrB_Matrix_resize, GrB_Matrix_set_INT32, GrB_Matrix_setElement_BOOL,
     GrB_Matrix_setElement_UINT64, GrB_Matrix_wait, GrB_Mode, GrB_Orientation, GrB_SECOND_UINT64,
-    GrB_Type, GrB_UINT64, GrB_WaitMode, GrB_finalize, GrB_mxm, GrB_transpose, GxB_ANY_BOOL,
-    GxB_ANY_PAIR_BOOL, GxB_ANY_UINT64, GxB_Container_free, GxB_Container_new,
-    GxB_Global_Option_set_INT32, GxB_HYPERSPARSE, GxB_Iterator, GxB_Iterator_free,
-    GxB_Iterator_get_UINT64, GxB_Iterator_new, GxB_JIT_Control, GxB_Matrix_fprint,
-    GxB_Matrix_isStoredElement, GxB_Matrix_memoryUsage, GxB_Matrix_type, GxB_NTHREADS,
-    GxB_ONE_BOOL, GxB_Option_Field, GxB_Print_Level, GxB_SPARSE, GxB_init,
-    GxB_load_Matrix_from_Container, GxB_rowIterator_attach, GxB_rowIterator_getColIndex,
-    GxB_rowIterator_getRowIndex, GxB_rowIterator_nextCol, GxB_rowIterator_nextRow,
-    GxB_rowIterator_seekRow, GxB_unload_Matrix_into_Container,
+    GrB_Scalar, GrB_Scalar_free, GrB_Scalar_new, GrB_Scalar_setElement_BOOL, GrB_Type, GrB_UINT64,
+    GrB_WaitMode, GrB_finalize, GrB_mxm, GrB_transpose, GxB_ANY_BOOL, GxB_ANY_PAIR_BOOL,
+    GxB_ANY_UINT64, GxB_Container_free, GxB_Container_new, GxB_Global_Option_set_INT32,
+    GxB_HYPERSPARSE, GxB_Iterator, GxB_Iterator_free, GxB_Iterator_get_UINT64, GxB_Iterator_new,
+    GxB_JIT_Control, GxB_Matrix_build_Scalar, GxB_Matrix_fprint, GxB_Matrix_isStoredElement,
+    GxB_Matrix_memoryUsage, GxB_Matrix_type, GxB_NTHREADS, GxB_ONE_BOOL, GxB_Option_Field,
+    GxB_Print_Level, GxB_SPARSE, GxB_init, GxB_load_Matrix_from_Container, GxB_rowIterator_attach,
+    GxB_rowIterator_getColIndex, GxB_rowIterator_getRowIndex, GxB_rowIterator_nextCol,
+    GxB_rowIterator_nextRow, GxB_rowIterator_seekRow, GxB_unload_Matrix_into_Container,
 };
 
 /// Initializes the GraphBLAS library in non-blocking mode.
@@ -1046,6 +1047,31 @@ impl Matrix<u64> {
         }
         self.has_pending.store(true, Ordering::Relaxed);
     }
+
+    /// Extract all (row, col, value) triples in the matrix's natural storage
+    /// order (row-major for CSR).
+    #[must_use]
+    pub fn extract_tuples(&self) -> (Vec<u64>, Vec<u64>, Vec<u64>) {
+        let n = self.nvals() as usize;
+        let mut rows: Vec<u64> = Vec::with_capacity(n);
+        let mut cols: Vec<u64> = Vec::with_capacity(n);
+        let mut vals: Vec<u64> = Vec::with_capacity(n);
+        unsafe {
+            let mut nvals = n as u64;
+            let info = GrB_Matrix_extractTuples_UINT64(
+                rows.as_mut_ptr(),
+                cols.as_mut_ptr(),
+                vals.as_mut_ptr(),
+                &raw mut nvals,
+                *self.m,
+            );
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            rows.set_len(nvals as usize);
+            cols.set_len(nvals as usize);
+            vals.set_len(nvals as usize);
+        }
+        (rows, cols, vals)
+    }
 }
 
 impl Matrix<bool> {
@@ -1113,7 +1139,9 @@ impl Matrix<bool> {
     }
 
     /// Bulk-insert entries from (row, col) arrays. Matrix must be empty.
-    /// Uses a single GraphBLAS FFI call instead of N individual setElement calls.
+    /// Uses a single GraphBLAS FFI call instead of N individual setElement
+    /// calls; the scalar variant needs no values array and produces an iso
+    /// matrix (pattern only, one shared value).
     pub fn build(
         &mut self,
         rows: &[u64],
@@ -1124,19 +1152,41 @@ impl Matrix<bool> {
             return;
         }
         let nvals = rows.len() as u64;
-        let vals = vec![true; rows.len()];
         unsafe {
-            let info = GrB_Matrix_build_BOOL(
-                *self.m,
-                rows.as_ptr(),
-                cols.as_ptr(),
-                vals.as_ptr(),
-                nvals,
-                GxB_ANY_BOOL,
-            );
+            let mut scalar: GrB_Scalar = null_mut();
+            let mut info = GrB_Scalar_new(&raw mut scalar, GrB_BOOL);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            info = GrB_Scalar_setElement_BOOL(scalar, true);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            info = GxB_Matrix_build_Scalar(*self.m, rows.as_ptr(), cols.as_ptr(), scalar, nvals);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            info = GrB_Scalar_free(&raw mut scalar);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
         self.has_pending.store(true, Ordering::Relaxed);
+    }
+
+    /// Extract all (row, col) coordinates in the matrix's natural storage
+    /// order (row-major for CSR). Values are skipped (X = NULL).
+    #[must_use]
+    pub fn extract_tuples(&self) -> (Vec<u64>, Vec<u64>) {
+        let n = self.nvals() as usize;
+        let mut rows: Vec<u64> = Vec::with_capacity(n);
+        let mut cols: Vec<u64> = Vec::with_capacity(n);
+        unsafe {
+            let mut nvals = n as u64;
+            let info = GrB_Matrix_extractTuples_BOOL(
+                rows.as_mut_ptr(),
+                cols.as_mut_ptr(),
+                null_mut(),
+                &raw mut nvals,
+                *self.m,
+            );
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            rows.set_len(nvals as usize);
+            cols.set_len(nvals as usize);
+        }
+        (rows, cols)
     }
 
     /// Delta-aware matrix-multiply: `self = self * (m, dp, dm)` operating
@@ -1157,6 +1207,13 @@ impl Matrix<bool> {
         dp: &Matrix<TV>,
         dm: &Matrix<bool>,
     ) {
+        // The delta layers arrive raw from a shared snapshot and may hold
+        // pending work; a GrB op would finish it internally (a mutation),
+        // racing other readers on the same handles. Materialize through the
+        // mutex-guarded wait first — a no-op (one atomic load) when synced.
+        // `m` needs no wait: committed bases are synced at MVCC commit.
+        dp.wait();
+        dm.wait();
         let dp_nvals = dp.nvals();
         let dm_nvals = dm.nvals();
 
