@@ -325,34 +325,20 @@ jobs:
           workspaces: pr -> target
           shared-key: "benchmark-cov-macos"
 
-      # Same cache key shape as _build-artifacts-macos.yml, so the native deps
-      # are built at most once per (script, llvm) combination.
-      - name: Restore GraphBLAS + RediSearch native builds
-        id: native-cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
-        with:
-          path: |
-            pr/.deps/graphblas
-            pr/lagraph_lib
-            pr/redisearch/RediSearch/bin
-          key: benchcov-native-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pr/graphblas.sh', 'pr/redisearch.sh', 'pr/build/graphblas/**') }}-llvm${{ env.BREW_LLVM_VERSION }}
-
+      # Deliberately NOT cached. The first attempt cached
+      # `.deps/graphblas`, `lagraph_lib` and `redisearch/RediSearch/bin` (the
+      # key shape _build-artifacts-macos.yml uses) and skipped the build on a
+      # hit — but graphblas.sh also installs a static library outside those
+      # paths, so the hit produced
+      # `could not find native static library 'graphblas'`. A cache that makes
+      # the job fail only on the second run is worse than no cache; correctness
+      # first, and revisit with the full set of installed paths if the ~10
+      # minutes matters.
       - name: Build GraphBLAS + RediSearch
-        if: steps.native-cache.outputs.cache-hit != 'true'
         working-directory: pr
         run: |
           ./graphblas.sh
           ./redisearch.sh
-
-      - name: Save GraphBLAS + RediSearch native builds
-        if: steps.native-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
-        with:
-          path: |
-            pr/.deps/graphblas
-            pr/lagraph_lib
-            pr/redisearch/RediSearch/bin
-          key: ${{ steps.native-cache.outputs.cache-primary-key }}
 
       # Share the native deps with the main checkout instead of building them
       # twice: build.rs resolves them relative to the repo root, so symlinks are
@@ -366,28 +352,11 @@ jobs:
           ln -sfn "$PWD/pr/redisearch/RediSearch/bin" base/redisearch/RediSearch/bin
           ls -l base/lagraph_lib base/redisearch/RediSearch/bin >/dev/null
 
-      # macos-14 is Apple silicon, so pmc_tool compiles here, and sudo is
-      # passwordless on GitHub runners — so it can be installed setuid-root as
-      # the harness expects. That fills the branches/br_miss/l1d_miss columns,
-      # which are otherwise empty ("pmc_tool unavailable" in the log).
-      #
-      # Best-effort: kperf may not be reachable inside a virtualised runner. If
-      # it is not, pmc_run returns no events and the harness leaves those three
-      # columns empty, exactly as it does today — instructions and cycles come
-      # from proc_pid_rusage and are unaffected either way.
-      - name: Build pmc_tool (PMU counters)
-        continue-on-error: true
-        working-directory: pr
-        run: |
-          set -x
-          clang -O2 -o bench/pmc_tool bench/pmc_tool.c \
-            -F /System/Library/PrivateFrameworks -framework kperf -framework kperfdata
-          sudo chown root:wheel bench/pmc_tool
-          sudo chmod u+s bench/pmc_tool
-          ls -l bench/pmc_tool
-          # Probe it the same way the harness does, so the log says up front
-          # whether the extra columns will be populated.
-          ./bench/pmc_tool runcmd true 2>&1 | head -5 || true
+      # pmc_tool is NOT built here. It compiles on macos-14 (Apple silicon) and
+      # sudo is passwordless, but kperf does not work inside the runner VM:
+      # `kpep_db_create failed: 7`. So branches/br_miss/l1d_miss stay empty on
+      # any hosted runner, the same way instr/cycles do — see the header. The
+      # harness already handles their absence.
 
       - name: Build PR module
         working-directory: pr
