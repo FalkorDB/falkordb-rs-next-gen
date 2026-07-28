@@ -63,12 +63,16 @@
 # lowercase (`architectural` | `standard` | `enhanced`) and it rejects the
 # uppercase spelling used in GCP's own docs.
 #
-# If VM creation starts failing with an unsupported-flag error, the machine
-# family does not support the vPMU. Two levers, no code change needed for
-# either: set `vars.BENCHMARK_PMU` to "" to drop the request, or set
-# `vars.BENCHMARK_MACHINE_TYPE` to a family that supports it. The stockout
-# retry in create-runner will not paper over this — a rejected flag fails every
-# attempt identically.
+# Machine family matters and gcloud will not tell you: it validates the flag's
+# *spelling* client-side, then the API rejects the value if the family has no
+# vPMU (`Invalid value for field
+# 'resource.advancedMachineFeatures.performanceMonitoringUnit'`). n4-highcpu-16
+# is such a family, so this job does not use `vars.BENCHMARK_MACHINE_TYPE`
+# (shared with the A/B benchmark, which is on n4) and defaults to c3-highcpu-8
+# instead, overridable via `vars.BENCHMARK_COV_MACHINE_TYPE`.
+#
+# To drop the request entirely, set `vars.BENCHMARK_PMU` to "". The stockout
+# retry will not paper over a rejected flag — every attempt fails identically.
 #
 # The harness probes rather than trusts any of the above: it runs one
 # `perf stat -e instructions,cycles -- true` at startup and only selects the
@@ -178,7 +182,12 @@ jobs:
           project_id: ${{ secrets.GCP_PROJECT_ID }}
           service_account_key: ${{ secrets.GCP_SA_KEY }}
           machine_zones: ${{ vars.GCP_ZONES }}
-          machine_type: ${{ vars.BENCHMARK_MACHINE_TYPE || 'n4-highcpu-16' }}
+          # NOT vars.BENCHMARK_MACHINE_TYPE: that is shared with the A/B
+          # benchmark and is n4-highcpu-16, which does not support the vPMU —
+          # GCE answers `Invalid value for field
+          # 'resource.advancedMachineFeatures.performanceMonitoringUnit'`. This
+          # job needs a family that does, so it has its own override.
+          machine_type: ${{ vars.BENCHMARK_COV_MACHINE_TYPE || 'c3-highcpu-8' }}
           network: gh-runner
           runner_label: benchcov-${{ github.run_id }}-${{ github.run_number }}
           # Enables the vPMU so `perf` can read real counters inside the VM.
