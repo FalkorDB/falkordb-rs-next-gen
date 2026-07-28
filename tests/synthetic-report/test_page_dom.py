@@ -359,7 +359,7 @@ def test_cellless_and_contextless_ops_render_without_errors(serve_page, page):
     page.click('#cmpSeg button[data-cmp="c-pr"]')
     page.wait_for_selector("#view details")
     details = page.locator('#view details', has_text="distinct_labels")
-    details.locator("summary").click()
+    details.locator("summary").first.click()
     body = details.locator(".body").inner_text()
     assert "correctness-only" in body
 
@@ -746,3 +746,146 @@ def test_matrix_delta_severity_classes(serve_page, page):
     cell = page.locator('#view tr[data-op="aggregate_age"] td').nth(1)
     classes = cell.locator("span.mdelta").get_attribute("class").split()
     assert not {"d-bad", "d-warn", "d-good"} & set(classes)  # -4.1% = noise band
+
+
+# --- v2.7 enrichment: per-cell n/σ/CV stats + per-op example queries ---------
+
+
+def test_cell_stats_render_when_present(serve_page, page):
+    """Cells whose context sides carry n/σ/CV render a faint per-side stats line under
+    the value; unenriched ops in the SAME document render exactly as before."""
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(serve_page("data.json"))
+    wait_ready(page)
+    page.click('#cmpSeg button[data-cmp="main-pr"]')
+    page.wait_for_selector("#view details[data-op]")
+    acu = page.locator('#view details[data-op="aggregate_count_users"]')
+    acu.locator("summary").first.click()
+    rows = acu.locator("tbody tr")
+    # C=1: both sides enriched — baseline td then candidate td carry .mstats lines.
+    base = rows.nth(0).locator("td").nth(1)
+    cand = rows.nth(0).locator("td").nth(2)
+    assert base.locator(".mstats").inner_text() == "n 300 · σ 0.031 · CV 9.8%"
+    assert cand.locator(".mstats").inner_text() == "n 300 · σ 0.029 · CV 7.3%"
+    # The tooltip explains the semantics (within-run, n−1) and carries the
+    # JSON-only total-clock dispersion when present.
+    title = base.locator(".mstats").get_attribute("title")
+    assert "within-run" in title and "n−1" in title
+    assert "total-clock σ 0.045 ms / CV 8.9%" in title
+    # C=8 sides have no total-clock stats — the tooltip stays server-only.
+    c8_title = rows.nth(1).locator("td").nth(1).locator(".mstats").get_attribute("title")
+    assert "total-clock" not in c8_title
+    # Unenriched op: no stats line anywhere.
+    agg = page.locator('#view details[data-op="aggregate_age"]')
+    agg.locator("summary").first.click()
+    assert agg.locator(".mstats").count() == 0
+    # Stats describe the server_ms sample vector behind every latency percentile,
+    # so they stay on p90 view but drop off throughput view.
+    page.click('#metricSeg [data-metric="p90"]')
+    acu = page.locator('#view details[data-op="aggregate_count_users"]')
+    acu.locator("summary").first.click()
+    assert acu.locator(".mstats").count() > 0
+    page.click('#metricSeg [data-metric="throughput"]')
+    acu = page.locator('#view details[data-op="aggregate_count_users"]')
+    acu.locator("summary").first.click()
+    assert acu.locator(".mstats").count() == 0
+    assert errors == []
+
+
+def test_cell_stats_degrade_per_field(serve_page, page):
+    """n_server != n renders the shortfall; a side with n but no σ/CV renders em-dashes
+    for just those; sides without n render no stats line at all."""
+    page.goto(serve_page("data.json"))
+    wait_ready(page)
+    # c-pr aggregate_count_users C=1 baseline carries n_server 297 of n 300.
+    page.click('#cmpSeg button[data-cmp="c-pr"]')
+    page.wait_for_selector("#view details[data-op]")
+    acu = page.locator('#view details[data-op="aggregate_count_users"]')
+    acu.locator("summary").first.click()
+    base = acu.locator("tbody tr").nth(0).locator("td").nth(1)
+    assert base.locator(".mstats").inner_text() == "n 300 (server 297) · σ 0.050 · CV 12.0%"
+    cand = acu.locator("tbody tr").nth(0).locator("td").nth(2)
+    assert "(server" not in cand.locator(".mstats").inner_text()
+    # main-pr single_vertex_write candidate has n only: σ/CV degrade to em-dashes,
+    # and the n-less baseline side renders no stats line.
+    page.click('#cmpSeg button[data-cmp="main-pr"]')
+    page.wait_for_selector("#view details[data-op]")
+    svw = page.locator('#view details[data-op="single_vertex_write"]')
+    svw.locator("summary").first.click()
+    row = svw.locator("tbody tr").nth(0)
+    assert row.locator("td").nth(1).locator(".mstats").count() == 0
+    assert row.locator("td").nth(2).locator(".mstats").inner_text() == "n 150 · σ — · CV —"
+
+
+def test_example_query_renders_collapsed_and_only_when_present(serve_page, page):
+    """Ops with example_query get a collapsed details block whose text is the exact
+    query; ops without it (old data) get none — including cell-less ops."""
+    page.goto(serve_page("data.json"))
+    wait_ready(page)
+    page.click('#cmpSeg button[data-cmp="main-pr"]')
+    page.wait_for_selector("#view details[data-op]")
+    acu = page.locator('#view details[data-op="aggregate_count_users"]')
+    acu.locator("summary").first.click()
+    exq = acu.locator("details.exq")
+    assert exq.count() == 1
+    assert exq.first.get_attribute("open") is None  # collapsed by default
+    assert exq.locator("summary").inner_text() == "example query"
+    exq.locator("summary").click()
+    assert exq.locator("pre").inner_text() == "MATCH (u:User) RETURN count(u) AS c"
+    # The write op's example keeps the canonical scratch label verbatim.
+    svw = page.locator('#view details[data-op="single_vertex_write"]')
+    svw.locator("summary").first.click()
+    svw.locator("details.exq summary").click()
+    assert "BenchScratch_RUN" in svw.locator("details.exq pre").inner_text()
+    # Unenriched op: no example block.
+    agg = page.locator('#view details[data-op="aggregate_age"]')
+    agg.locator("summary").first.click()
+    assert agg.locator("details.exq").count() == 0
+    # A cell-less diverged op still shows its example alongside the
+    # correctness-only note.
+    page.click('#cmpSeg button[data-cmp="c-pr"]')
+    page.wait_for_selector("#view details[data-op]")
+    dl = page.locator('#view details[data-op="distinct_labels"]')
+    dl.locator("summary").first.click()
+    assert dl.locator("details.exq").count() == 1
+    dl.locator("details.exq summary").click()
+    assert dl.locator("details.exq pre").inner_text() == "MATCH (n) RETURN DISTINCT labels(n)"
+
+
+def test_example_query_with_hostile_markup_renders_inert(serve_page, page):
+    """A script/img-shaped example query renders as inert TEXT inside the pre."""
+    page.goto(serve_page("data-xss.json"))
+    wait_ready(page)
+    page.click('#cmpSeg button[data-cmp="main-pr"]')
+    page.wait_for_selector("#view details[data-op]")
+    op = page.locator("#view details[data-op]", has_text="window.__pwned=1")
+    op.locator("summary").first.click()
+    exq = op.locator("details.exq")
+    assert exq.count() == 1
+    exq.locator("summary").click()
+    text = exq.locator("pre").inner_text()
+    assert "<script>window.__pwned=4</script>" in text
+    assert 'onerror="window.__pwned=5"' in text
+    assert page.evaluate("window.__pwned") is None
+    assert page.locator("#view script").count() == 0
+    assert page.locator("#view img").count() == 0
+
+
+def test_old_data_json_without_enrichment_renders_unchanged(serve_page, page):
+    """A pre-v2.7 data.json (no n/σ/CV, no example_query anywhere) must render with
+    zero traces of the new UI: no stats lines, no example blocks, no page errors."""
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(serve_page("data-cache-modes.json"))
+    wait_ready(page)
+    page.click('#cmpSeg button[data-cmp="main-pr"]')
+    page.wait_for_selector("#view details[data-op]")
+    for i in range(page.locator("#view details[data-op]").count()):
+        page.locator("#view details[data-op]").nth(i).locator("summary").first.click()
+    assert page.locator("#view .mstats").count() == 0
+    assert page.locator("#view details.exq").count() == 0
+    body = page.locator("#view").inner_text()
+    assert "example query" not in body
+    assert "undefined" not in body and "NaN" not in body
+    assert errors == []

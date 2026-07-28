@@ -112,8 +112,8 @@
       "kind": "comparable"
      },
      "warnings": [
-      "a FalkorDB module version is the dev placeholder — use tagged release images for a meaningful version comparison",
-      "server image changed: test/main@sha256:eeee → test/pr@sha256:eeee"
+      "a FalkorDB module version is the dev placeholder \u2014 use tagged release images for a meaningful version comparison",
+      "server image changed: test/main@sha256:eeee \u2192 test/pr@sha256:eeee"
      ],
      "elapsed_secs": null,
      "verdict": "pass",
@@ -212,13 +212,23 @@
            "p90_ms": 0.33787530000000005,
            "p95_ms": 0.34673335000000005,
            "p99_ms": 0.35028027,
-           "throughput_ops_per_sec": 3194.250349371132
+           "throughput_ops_per_sec": 3194.250349371132,
+           "n": 300,
+           "server_stddev_ms": 0.0312,
+           "server_cv_pct": 9.84,
+           "total_stddev_ms": 0.0451,
+           "total_cv_pct": 8.9
           },
           "candidate": {
            "p90_ms": 0.4303836,
            "p95_ms": 0.4326205500000001,
            "p99_ms": 0.43699131,
-           "throughput_ops_per_sec": 2574.319974071449
+           "throughput_ops_per_sec": 2574.319974071449,
+           "n": 300,
+           "server_stddev_ms": 0.0287,
+           "server_cv_pct": 7.32,
+           "total_stddev_ms": 0.0512,
+           "total_cv_pct": 9.6
           }
          }
         },
@@ -240,17 +250,24 @@
            "p90_ms": 0.7893041000000001,
            "p95_ms": 0.8619461499999997,
            "p99_ms": 0.97430553,
-           "throughput_ops_per_sec": 12374.562539878962
+           "throughput_ops_per_sec": 12374.562539878962,
+           "n": 2400,
+           "server_stddev_ms": 0.1124,
+           "server_cv_pct": 18.21
           },
           "candidate": {
            "p90_ms": 0.829875,
            "p95_ms": 0.890083,
            "p99_ms": 0.9601255,
-           "throughput_ops_per_sec": 12613.985093738464
+           "throughput_ops_per_sec": 12613.985093738464,
+           "n": 2400,
+           "server_stddev_ms": 0.1041,
+           "server_cv_pct": 16.93
           }
          }
         }
-       ]
+       ],
+       "example_query": "MATCH (u:User) RETURN count(u) AS c"
       },
       "aggregate_expansion_1": {
        "tier": "core",
@@ -997,7 +1014,7 @@
       "kind": "comparable"
      },
      "warnings": [
-      "write ops are latency-only — correctness is not gated by design"
+      "write ops are latency-only \u2014 correctness is not gated by design"
      ],
      "elapsed_secs": null,
      "verdict": "regressed",
@@ -1027,9 +1044,14 @@
           "floor_ms": 0.5
          },
          "perf_verdict": "pass",
-         "context": {}
+         "context": {
+          "candidate": {
+           "n": 150
+          }
+         }
         }
-       ]
+       ],
+       "example_query": "CYPHER uid = 42 CREATE (:BenchScratch_RUN {uid: $uid, k: 0})"
       },
       "single_edge_update": {
        "tier": "full",
@@ -1103,8 +1125,8 @@
       "kind": "comparable"
      },
      "warnings": [
-      "a FalkorDB module version is the dev placeholder — use tagged release images for a meaningful version comparison",
-      "server image changed: test/c-engine@sha256:eeee → test/pr@sha256:eeee"
+      "a FalkorDB module version is the dev placeholder \u2014 use tagged release images for a meaningful version comparison",
+      "server image changed: test/c-engine@sha256:eeee \u2192 test/pr@sha256:eeee"
      ],
      "elapsed_secs": null,
      "verdict": "advisory",
@@ -1203,13 +1225,20 @@
            "p90_ms": 0.31816690000000003,
            "p95_ms": 0.32628270000000004,
            "p99_ms": 0.32995654,
-           "throughput_ops_per_sec": 3437.0408865228296
+           "throughput_ops_per_sec": 3437.0408865228296,
+           "n": 300,
+           "n_server": 297,
+           "server_stddev_ms": 0.05,
+           "server_cv_pct": 12.04
           },
           "candidate": {
            "p90_ms": 0.4303836,
            "p95_ms": 0.4326205500000001,
            "p99_ms": 0.43699131,
-           "throughput_ops_per_sec": 2574.319974071449
+           "throughput_ops_per_sec": 2574.319974071449,
+           "n": 300,
+           "server_stddev_ms": 0.0463,
+           "server_cv_pct": 11.2
           }
          }
         },
@@ -1940,7 +1969,8 @@
        "tier": "read",
        "correctness": "diverged",
        "op_outcome": "diverged_advisory",
-       "cells": []
+       "cells": [],
+       "example_query": "MATCH (n) RETURN DISTINCT labels(n)"
       }
      }
     }
