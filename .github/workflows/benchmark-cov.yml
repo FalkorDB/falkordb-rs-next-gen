@@ -54,6 +54,57 @@
 # `docker run` (not as a job container) and is best-effort: a failure there
 # annotates the run and still lets the perf comparison be reported.
 #
+# ## Hardware counters: not available here, and why
+#
+# instr/cycles are left EMPTY on this runner and the comment ranks by allocated
+# bytes instead. That is not an oversight — it is where three attempts landed:
+#
+#   1. `perf` present, `kernel.perf_event_paranoid=-1` set, counters still
+#      `<not supported>`: the GCE virtual PMU must be enabled at instance
+#      creation, and the runner action had no input for it.
+#   2. Input added upstream (FalkorDB/gce-github-runner) and requested as
+#      `architectural`. GCE then answered:
+#        `PerformanceMonitoringUnit is not supported for <machine-type> on API
+#         version v1`
+#      — tried on n4-highcpu-16 and c3-highcpu-8, same answer. The clause that
+#      matters is **API version v1**: the vPMU is a beta-API field, and the
+#      action creates instances with `gcloud compute instances create`, i.e. v1.
+#      No machine family fixes that.
+#
+# So enabling it needs `gcloud beta compute instances create` in the runner
+# action, not a different machine type. The plumbing here is left in place and
+# inert: set `vars.BENCHMARK_PMU` to `architectural` once the action creates via
+# beta, and the harness will pick counters up automatically — it probes rather
+# than trusts, so nothing else needs changing.
+#
+# Cheaper alternative if that stalls: a GitHub-hosted macOS runner. There the
+# harness reads instructions from `proc_pid_rusage` with no privileges, no PMU
+# and no sysctl, and `_build-artifacts-macos.yml` already produces a validated
+# `libfalkordb.dylib` to measure.
+#
+# What is NOT done, deliberately: substituting wall-clock for instructions. It
+# would turn the gate into a noise detector while still looking like a
+# measurement.
+#
+# ## Why no job `container:`
+#
+# The first run of this workflow died in "Initialize containers" on the GCE VM.
+# No other self-hosted job in this repo uses a job container — `_benchmark.yml`
+# and `profile.yml` both run directly on the VM and install what they need — so
+# this follows that proven pattern instead of fighting it.
+#
+# That also removes the need to compile: both modules are extracted from the
+# already-published server images with `docker cp`, exactly as
+# `.github/scripts/benchmark/profile.sh` does (module path
+# `/var/lib/falkordb/bin/falkordb.so`). The PR side is `rc-pr-<N>`, built early
+# by rust-pr.yml; the main side is `edge-rs`. The harness then runs against each
+# with its own redis-server, so `perf` attaches to a plain host pid.
+#
+# Coverage is the exception — it needs an *instrumented* build, which no
+# published image carries. That step runs the toolchain image explicitly via
+# `docker run` (not as a job container) and is best-effort: a failure there
+# annotates the run and still lets the perf comparison be reported.
+#
 # ## Hardware counters
 #
 # Instruction counts need the GCE virtual PMU, which can only be set at
@@ -62,17 +113,6 @@
 # forwards it; this workflow requests `architectural`. gcloud's choices are
 # lowercase (`architectural` | `standard` | `enhanced`) and it rejects the
 # uppercase spelling used in GCP's own docs.
-#
-# Machine family matters and gcloud will not tell you: it validates the flag's
-# *spelling* client-side, then the API rejects the value if the family has no
-# vPMU (`Invalid value for field
-# 'resource.advancedMachineFeatures.performanceMonitoringUnit'`). n4-highcpu-16
-# is such a family, so this job does not use `vars.BENCHMARK_MACHINE_TYPE`
-# (shared with the A/B benchmark, which is on n4) and defaults to c3-highcpu-8
-# instead, overridable via `vars.BENCHMARK_COV_MACHINE_TYPE`.
-#
-# To drop the request entirely, set `vars.BENCHMARK_PMU` to "". The stockout
-# retry will not paper over a rejected flag — every attempt fails identically.
 #
 # The harness probes rather than trusts any of the above: it runs one
 # `perf stat -e instructions,cycles -- true` at startup and only selects the
@@ -182,19 +222,13 @@ jobs:
           project_id: ${{ secrets.GCP_PROJECT_ID }}
           service_account_key: ${{ secrets.GCP_SA_KEY }}
           machine_zones: ${{ vars.GCP_ZONES }}
-          # NOT vars.BENCHMARK_MACHINE_TYPE: that is shared with the A/B
-          # benchmark and is n4-highcpu-16, which does not support the vPMU —
-          # GCE answers `Invalid value for field
-          # 'resource.advancedMachineFeatures.performanceMonitoringUnit'`. This
-          # job needs a family that does, so it has its own override.
-          machine_type: ${{ vars.BENCHMARK_COV_MACHINE_TYPE || 'c3-highcpu-8' }}
+          machine_type: ${{ vars.BENCHMARK_COV_MACHINE_TYPE || vars.BENCHMARK_MACHINE_TYPE || 'n4-highcpu-16' }}
           network: gh-runner
           runner_label: benchcov-${{ github.run_id }}-${{ github.run_number }}
-          # Enables the vPMU so `perf` can read real counters inside the VM.
-          # Settable only at instance creation, hence here rather than in the
-          # job. Override `vars.BENCHMARK_PMU` to "" to turn it off without a
-          # code change — see the header for when you would need to.
-          performance_monitoring_unit: ${{ vars.BENCHMARK_PMU || 'architectural' }}
+          # Inert unless `vars.BENCHMARK_PMU` is set — see the header: the
+          # vPMU is a beta-API field and this action creates via v1, so any
+          # value is rejected today regardless of machine family.
+          performance_monitoring_unit: ${{ vars.BENCHMARK_PMU }}
 
   benchmark-cov:
     needs: create-runner
