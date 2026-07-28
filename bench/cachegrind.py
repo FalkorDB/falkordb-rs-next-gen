@@ -67,6 +67,14 @@ with "no run-to-run noise to threshold against". That was wrong, and the
 validation above is what caught it: at the default hz=10 and with a fresh
 connection per execution, two (n1, n2) pairs disagreed by 44%.
 
+End-to-end confirmation from CI, comparing a branch that changes no Rust at
+all against main — so every ratio should read 1.0000x:
+
+    two-hop      3,492,183 -> 3,491,397   0.9998x
+    reduce       4,787,089 -> 4,787,235   1.0000x
+    CASE         2,161,954 -> 2,163,617   1.0008x
+    arithmetic   1,463,580 -> 1,467,917   1.0030x
+
 ## Not comparable to run_bench.py
 
 `CG_SETUP` builds a 1,000-node graph, not the 10,000-node one in queries.py,
@@ -124,17 +132,20 @@ GRAPH_CMD = ("GRAPH.QUERY", "bench")
 
 # One representative per family that has shown movement in this work.
 #
-# Deliberately short: each query costs two instrumented server lifecycles, and
-# every lifecycle pays CG_SETUP again. Instrumented setup cost has not been
-# measured yet (valgrind cannot run the module on arm64, so this could not be
-# timed locally), so the subset starts small and the script prints per-query
-# wall time — widen it once CI shows what a run actually costs. Extra queries
-# can be passed as positional arguments without editing this list.
+# Each query costs two instrumented server lifecycles and each lifecycle pays
+# CG_SETUP again, which sounded expensive enough to keep this list to five —
+# but CI measured ~10s per query (a run is ~236M instructions, a few seconds
+# under valgrind), so the whole set costs well under two minutes per build.
+# Widen it freely. Extra queries can also be passed as positional arguments
+# without editing this list.
 DEFAULT_SUBSET = [
     "RETURN 1",              # fixed per-query floor; the control
     "arithmetic",            # scalar expression evaluation
     "CASE",                  # branchy expression + property access
+    "list comprehension",    # scoped iteration
     "reduce",                # accumulator loop
+    "create node",           # small write path
+    "delete node",           # small delete path
     "two-hop",               # matrix traversal
 ]
 
@@ -290,6 +301,17 @@ def main():
     outdir = os.path.join(HERE, "results/callgrind")
     span = args.n2 - args.n1
     rows = []
+
+    # Warm-up, discarded. GraphBLAS compiles kernels on first use and caches
+    # them on disk, so the first server lifecycle in a job pays for that and no
+    # later one does. Measured: the first run came in ~30M instructions above
+    # its pair, which made T(n2) < T(n1) and cost the `RETURN 1` control row —
+    # the skip guard caught it rather than reporting a negative cost.
+    print("warm-up run (populates the GraphBLAS kernel cache)...", flush=True)
+    try:
+        run_total(args.module, args.port, outdir, "RETURN 1", 1)
+    except (RuntimeError, subprocess.TimeoutExpired) as e:
+        sys.exit(f"warm-up run failed, so nothing else will work: {e}")
 
     for name, _is_write, q, *_rest in queries:
         t0 = time.time()
