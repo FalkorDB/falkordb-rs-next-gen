@@ -63,6 +63,9 @@ wait_for_redis() {
 # Start the image, prep it, replay the recorded bundle against it, stop the container.
 # Write bundles carry a recorded per-op budget that pins C=1 (and samples/warmup), overriding
 # the global SWEEP/SAMPLES/WARMUP flags — so ONE flag set serves both bundle kinds verbatim.
+# Measured replays run with --client-threads 3 --pipeline-depth 4 (benchmark v2.6): reads keep
+# 4 commands in flight per connection so the server self-paces (concurrency stays C; writes
+# ignore depth and stay closed-loop) — A/A-validated to cut C=8 server_ms run-to-run noise.
 measure_recording() {
   local rec="$1" label="$2" digest="$3" out="$4"
   shift 4
@@ -86,6 +89,7 @@ measure_recording() {
     --endpoint "falkor://127.0.0.1:${DB_PORT}" \
     --label "$label" --server-image "$digest" \
     --concurrency "$SWEEP" --cache "$CACHE" --samples "$SAMPLES" --warmup "$WARMUP" \
+    --client-threads 3 --pipeline-depth 4 \
     --out "$out"
   docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
   echo "::endgroup::"
