@@ -20,6 +20,13 @@ LLVM_PROFILE_FILE="$PWD/$COVDIR/cov-%p.profraw" \
   --module "$PWD/target/debug/libfalkordb.$EXT"
 
 TOOLS=$(dirname "$(find ~/.rustup/toolchains -name llvm-profdata | head -1)")
+# llvm-profdata ships in the llvm-tools component, which is not installed by
+# default. Without this check TOOLS becomes "." and the next line fails with a
+# confusing "./llvm-profdata: No such file or directory".
+if [ ! -x "$TOOLS/llvm-profdata" ]; then
+  echo "llvm-profdata not found. Install it with: rustup component add llvm-tools-preview" >&2
+  exit 1
+fi
 "$TOOLS/llvm-profdata" merge --sparse "$COVDIR"/*.profraw -o "$COVDIR/cov.profdata"
 
 "$TOOLS/llvm-cov" report --instr-profile "$COVDIR/cov.profdata" \

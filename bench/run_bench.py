@@ -380,6 +380,19 @@ def main():
         # so background work (cron/serverCron, bgsave) is not attributed to the
         # query being measured.
         idle_i, idle_c, idle_dt, idle_ev = run_and_count(pid, ["sleep", "3"], pmc, pmc_ok)
+        # A backend can exist and still return nothing: `proc_pid_rusage` reports
+        # ri_instructions = 0 inside a virtualised macOS runner, and selecting
+        # the backend without checking made the harness emit a column of zeros
+        # that looked like measurements. A live redis process cannot execute
+        # zero instructions in three seconds, so zero here means "no counters".
+        if have_counters and idle_i <= 0:
+            have_counters = False
+            print(
+                f"pid {pid}, {COUNTER_BACKEND} backend returned 0 instructions "
+                f"over {idle_dt:.0f}s — no usable hardware counters (typical "
+                f"inside a VM). instr/cycles will be empty rather than zero.",
+                flush=True,
+            )
         idle_ips = (idle_i / idle_dt) if have_counters else 0.0
         idle_cps = (idle_c / idle_dt) if have_counters else 0.0
         idle_rate = {k: v / idle_dt for k, v in idle_ev.items()}
@@ -392,11 +405,10 @@ def main():
         else:
             print(
                 f"pid {pid}, per-process instruction counters unavailable on "
-                f"{sys.platform}: perf is missing, or present but reporting "
-                f"'<not supported>' because the host exposes no PMU (GCE without "
-                f"vPMU) or perf_event_paranoid is too strict. instr/cycles "
-                f"columns will be empty; alloc_bytes/dealloc_bytes/ms are "
-                f"unaffected",
+                f"{sys.platform}. Usually a virtualised host with no PMU exposed: "
+                f"on Linux perf reports '<not supported>', on macOS "
+                f"proc_pid_rusage reports 0. instr/cycles columns will be empty "
+                f"rather than zero; alloc_bytes/dealloc_bytes/ms are unaffected",
                 flush=True,
             )
 

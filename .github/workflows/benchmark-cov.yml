@@ -315,7 +315,10 @@ jobs:
           echo "BREW_LLVM_VERSION=$(brew list --versions llvm | awk '{print $2}')" >> "$GITHUB_ENV"
 
       - name: Install Rust stable
-        run: rustup default stable
+        run: |
+          rustup default stable
+          # llvm-profdata/llvm-cov for bench/coverage.sh; not installed by default.
+          rustup component add llvm-tools-preview
 
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
@@ -441,7 +444,7 @@ jobs:
               except OSError:
                   return {}
 
-          pr, main, cengine = read("/tmp/pr.csv"), read("/tmp/main.csv"), read("/tmp/c.csv")
+          pr, main = read("/tmp/pr.csv"), read("/tmp/main.csv")
 
           def num(row, key):
               try:
@@ -479,9 +482,8 @@ jobs:
 
           print("## Benchmark + coverage")
           print()
-          print("317-query harness. main, this PR and the C engine are each measured "
-                "from their published server images, in sequence, on a dedicated "
-                "ephemeral GCE VM.")
+          print("317-query harness, main and this PR each built from source and "
+                "measured in sequence on a macOS runner.")
           print()
           if have_instr:
               print(f"Ranked by **instructions** (deterministic). Cycles are also "
@@ -536,57 +538,7 @@ jobs:
                     "isolation before acting on it.")
               print()
 
-          # Against the C engine: a different question from "did this PR
-          # regress", and the one that says whether a row still needs work.
-          if cengine:
-              crows = []
-              for q, p in pr.items():
-                  c = cengine.get(q)
-                  if not c:
-                      continue
-                  a, b = num(c, metric), num(p, metric)
-                  if a is None or b is None or a <= 0 or max(a, b) < FLOOR:
-                      continue
-                  crows.append((b / a, q, a, b))
-              crows.sort()
-              print("### vs the C engine")
-              print()
-              if not crows:
-                  print(f"No rows above the {FLOOR//1024} KB floor were comparable.")
-              else:
-                  cgeo = 1.0
-                  for r, *_ in crows:
-                      cgeo *= r
-                  cgeo **= 1.0 / len(crows)
-                  ahead = [r for r in crows if r[0] < 1.0]
-                  print(f"**{len(crows)} rows compared, {metric} geomean {cgeo:.3f}** "
-                        f"({len(ahead)} rows faster than C, {len(crows)-len(ahead)} slower).")
-                  print()
-                  worst = [r for r in reversed(crows)][:12]
-                  print(f"Furthest behind C ({metric}):")
-                  print()
-                  print("| query | C | PR | ratio |")
-                  print("|---|---|---|---|")
-                  for r, q, a, b in worst:
-                      print(f"| {q} | {a:,.0f} | {b:,.0f} | {r:.2f}x |")
-                  print()
-                  print("Rows where C's counts are tiny are rows the C engine errors on "
-                        "(regex, week/ordinal dates, LOAD CSV, toJSON scalars) — ignore "
-                        "those ratios. `--c-compat` already skips the ones whose warmup "
-                        "reply errors.")
-                  print()
-          else:
-              print("### vs the C engine")
-              print()
-              print("Not measured on this runner: the C engine ships as a Linux image "
-                    "and there is no macOS build to load, while this job runs on macOS "
-                    "so that per-process instruction counts work at all (see the "
-                    "workflow header). For a vs-C reading, use the recipe in "
-                    "`.claude/skills/bench/SKILL.md`.")
-              print()
-
           for title, path in (("Full compare.py output", "/tmp/compare.txt"),
-                              ("Full compare.py output (vs C)", "/tmp/compare_c.txt"),
                               ("Query-set coverage of the graph crate", "/tmp/coverage.txt")):
               print(f"<details><summary>{title}</summary>")
               print()
