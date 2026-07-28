@@ -9,7 +9,7 @@ redis-debug.log
 .idea
 *.iml
 myenv
-coverage.sh
+/coverage.sh
 codecov.txt*
 temp-*
 /coverage
