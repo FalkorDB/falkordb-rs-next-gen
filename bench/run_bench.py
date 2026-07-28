@@ -63,7 +63,37 @@ if sys.platform == "darwin":
 
 else:
     _PERF = shutil.which("perf")
-    COUNTER_BACKEND = "perf" if _PERF else "none"
+
+    def _perf_counters_work():
+        """True only if perf actually returns counter values.
+
+        The binary being on PATH is not enough: without PMU access (GCE without
+        vPMU, or a strict `kernel.perf_event_paranoid`) perf runs fine and
+        reports `<not supported>` for every event. Selecting the backend on
+        `which perf` alone made `counters_available()` lie, so the
+        graceful-degradation path never engaged and the run died on the first
+        measurement instead of reporting instr/cycles as absent.
+        """
+        if not _PERF:
+            return False
+        try:
+            out = subprocess.run(
+                [_PERF, "stat", "-x,", "-e", "instructions,cycles", "--", "true"],
+                capture_output=True, text=True, timeout=30,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+        for line in out.stderr.splitlines():
+            parts = line.split(",")
+            if len(parts) >= 3:
+                try:
+                    float(parts[0])
+                    return True
+                except ValueError:
+                    continue  # "<not supported>" / "<not counted>"
+        return False
+
+    COUNTER_BACKEND = "perf" if _perf_counters_work() else "none"
 
     def perf_window(pid, cmd):
         """instructions, cycles for `pid` while `cmd` runs, plus elapsed seconds.
@@ -362,8 +392,11 @@ def main():
         else:
             print(
                 f"pid {pid}, per-process instruction counters unavailable on "
-                f"{sys.platform} (no perf on PATH): instr/cycles columns will be "
-                f"empty, alloc_bytes/dealloc_bytes/ms are unaffected",
+                f"{sys.platform}: perf is missing, or present but reporting "
+                f"'<not supported>' because the host exposes no PMU (GCE without "
+                f"vPMU) or perf_event_paranoid is too strict. instr/cycles "
+                f"columns will be empty; alloc_bytes/dealloc_bytes/ms are "
+                f"unaffected",
                 flush=True,
             )
 
