@@ -595,14 +595,20 @@ jobs:
         working-directory: pr
         run: python3 bench/cachegrind.py --module "$GITHUB_WORKSPACE/pr/target/release/libfalkordb.so" --out /tmp/cg-pr.csv
 
+      # The toolchain image has no `gh` (the first attempt died with
+      # `gh: not found`), so this talks to the API with urllib. python3 is
+      # already required by the harness, and installing gh into the container
+      # would add an apt keyring dance for one HTTP call.
       - name: Comment the deterministic deltas
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
         run: |
-          python3 - <<'PY' > /tmp/cg.md
-          import csv, os
+          python3 - <<'PY'
+          import csv, json, os, urllib.request
+
+          MARKER = "<!-- cachegrind-report -->"
 
           def read(p):
               try:
@@ -612,37 +618,64 @@ jobs:
                   return {}
 
           pr, main = read("/tmp/cg-pr.csv"), read("/tmp/cg-main.csv")
-          print("## Deterministic instruction counts (callgrind)")
-          print()
+          out = ["## Instruction counts (callgrind)", ""]
           if not pr or not main:
-              print("No output — see the workflow log.")
+              out.append("No output — see the workflow log.")
           else:
-              print("Counted in software, so these are **exact and reproducible**: the "
-                    "same build and query give the same number every run. No hosted "
-                    "runner exposes a PMU, so this is the only trustworthy instruction "
-                    "signal in CI — and unlike sampled counters it needs no noise "
-                    "threshold. Curated subset; ~50x slowdown makes the full 317 "
-                    "impractical.")
-              print()
-              print("| query | main | PR | ratio |")
-              print("|---|---|---|---|")
+              out += [
+                  "Counted in software, so no PMU is needed — and no hosted runner has "
+                  "one. Each number is the per-execution cost isolated by differencing "
+                  "two complete runs at different repeat counts, so server startup, "
+                  "graph setup and plan compilation cancel out.",
+                  "",
+                  "Reproducible to ~0.015% of the run total; the residual works out to "
+                  "roughly 20-35 instructions per execution, so **treat sub-1% "
+                  "differences as noise**. Curated subset on a smaller graph than "
+                  "`run_bench.py`, so these absolute numbers are not comparable to its "
+                  "rows — only the main-vs-PR ratio is meaningful.",
+                  "",
+                  "| query | main | PR | ratio |",
+                  "|---|---|---|---|",
+              ]
               for q in sorted(set(pr) & set(main), key=lambda q: pr[q] / main[q] if main[q] else 1):
                   a, b = main[q], pr[q]
-                  r = f"{b / a:.4f}x" if a else "—"
-                  print(f"| {q} | {a:,.0f} | {b:,.0f} | {r} |")
-              print()
-              print("`RETURN 1` is the fixed per-query floor — it should read 1.0000x, and "
-                    "if it does not, something changed in the request path rather than in "
-                    "the query being measured.")
-          print()
-          print("<!-- cachegrind-report -->")
+                  out.append(f"| {q} | {a:,.0f} | {b:,.0f} | {f'{b / a:.4f}x' if a else '—'} |")
+              out += [
+                  "",
+                  "`RETURN 1` is the fixed per-query floor — it should read ~1.00x, and "
+                  "if it does not, something changed in the request path rather than in "
+                  "the query being measured.",
+              ]
+          out += ["", MARKER]
+          body = "\n".join(out)
+          print(body)
+
+          repo, num, token = os.environ["REPO"], os.environ["PR"], os.environ["GH_TOKEN"]
+          api = f"https://api.github.com/repos/{repo}"
+          hdrs = {
+              "Authorization": f"Bearer {token}",
+              "Accept": "application/vnd.github+json",
+              "User-Agent": "benchmark-cov",
+          }
+
+          def call(url, data=None, method="GET"):
+              req = urllib.request.Request(
+                  url,
+                  data=json.dumps(data).encode() if data else None,
+                  headers=hdrs,
+                  method=method,
+              )
+              with urllib.request.urlopen(req) as r:
+                  return json.loads(r.read() or "null")
+
+          existing = next(
+              (c["id"] for c in reversed(call(f"{api}/issues/{num}/comments?per_page=100"))
+               if MARKER in (c.get("body") or "")),
+              None,
+          )
+          if existing:
+              call(f"{api}/issues/comments/{existing}", {"body": body}, "PATCH")
+          else:
+              call(f"{api}/issues/{num}/comments", {"body": body}, "POST")
+          print(f"comment {'updated' if existing else 'created'}")
           PY
-          cat /tmp/cg.md
-          MARKER="<!-- cachegrind-report -->"
-          ID=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
-                 --jq "map(select(.body | contains(\"$MARKER\"))) | .[-1].id // empty")
-          if [ -n "$ID" ]; then
-            gh api -X PATCH "repos/$REPO/issues/comments/$ID" -F body=@/tmp/cg.md
-          else
-            gh api -X POST "repos/$REPO/issues/$PR/comments" -F body=@/tmp/cg.md
-          fi
