@@ -34,6 +34,21 @@ inputs:
     description: "Project the image_family resolves against (e.g. ubuntu-os-cloud). Empty → gce-github-runner default."
     required: false
     default: ""
+  performance_monitoring_unit:
+    description: >
+      Enable the GCE virtual PMU on the instance (ARCHITECTURAL | STANDARD |
+      ENHANCED). Required for per-process instruction counts via `perf` — GCE
+      exposes no hardware counters without it, and it can only be set at
+      instance creation. Empty → not requested.
+
+      NOTE: this is forwarded to FalkorDB/gce-github-runner. If that pinned
+      action does not (yet) accept the input, Actions logs an "Unexpected
+      input" warning and ignores it; the VM still comes up, just without
+      counters. `benchmark-cov.yml` probes for the PMU and degrades to
+      deterministic allocated-bytes reporting in that case, so nothing breaks
+      either way.
+    required: false
+    default: ""
 runs:
   using: composite
   steps:
@@ -52,6 +67,7 @@ runs:
         arm: ${{ inputs.arm }}
         image_family: ${{ inputs.image_family }}
         image_project: ${{ inputs.image_project }}
+        performance_monitoring_unit: ${{ inputs.performance_monitoring_unit }}
 
     - name: Backoff before attempt 2
       if: steps.a1.outcome == 'failure'
@@ -74,6 +90,7 @@ runs:
         arm: ${{ inputs.arm }}
         image_family: ${{ inputs.image_family }}
         image_project: ${{ inputs.image_project }}
+        performance_monitoring_unit: ${{ inputs.performance_monitoring_unit }}
 
     - name: Backoff before attempt 3
       if: steps.a1.outcome == 'failure' && steps.a2.outcome == 'failure'
@@ -94,3 +111,4 @@ runs:
         arm: ${{ inputs.arm }}
         image_family: ${{ inputs.image_family }}
         image_project: ${{ inputs.image_project }}
+        performance_monitoring_unit: ${{ inputs.performance_monitoring_unit }}

@@ -1,37 +1,45 @@
-# Per-query benchmark + query-set coverage, on demand.
+# Per-query benchmark + query-set coverage, on demand, on a dedicated VM.
 #
-# Complements `benchmark.yml`, which does NOT overlap with this: that one runs a
-# macro throughput/latency A/B/C on ephemeral GCE VMs against published images.
-# This one runs `bench/` — the per-query harness (316 queries) — building both
-# `main` and the PR head from source in the toolchain container, and reports the
-# PR's per-query deltas plus how much of the `graph` crate the query set covers.
+# Complements `benchmark.yml` without overlapping it: that one runs a macro
+# throughput/latency A/B/C against published images. This one runs `bench/` —
+# the per-query harness (316 queries) — building both `main` and the PR head
+# from source, and reports per-query deltas plus how much of the `graph` crate
+# the query set covers.
 #
-# Trigger: add the `benchmark-cov` label to a PR. Like benchmark.yml, it runs
-# only when the label is *added* (the `labeled` event), never on subsequent
-# pushes while the label happens to sit there — it builds the module twice and
-# runs the whole query set, so it must be an explicit request. To re-run, remove
-# and re-add the label.
+# Trigger: add the `benchmark-cov` label to a PR. Only on the `labeled` event,
+# never on later pushes while the label happens to sit there — this creates a
+# VM and builds the module twice, so it must be an explicit request. To re-run,
+# remove and re-add the label. Fork PRs are skipped: their GITHUB_TOKEN is
+# read-only and could not comment.
 #
-# Fork PRs are skipped: their GITHUB_TOKEN is read-only and could not comment.
+# ## Why a self-hosted VM rather than ubuntu-latest
 #
-# ## What is actually measured, and what is not
+# Instruction counts are the only stable signal at this granularity — cycles and
+# wall-clock on a shared runner move 10-60% with co-tenancy, enough to invent
+# regressions that do not exist. Per-process instruction counts need the PMU,
+# which needs (a) `kernel.perf_event_paranoid <= 0` and (b) a host that actually
+# exposes counters. A GitHub-hosted runner gives neither. An ephemeral GCE VM
+# runs as root, so this job sets the sysctl itself and runs the toolchain image
+# `--privileged`.
 #
-# `instructions` and `cycles` are per-process counters. On macOS the harness
-# reads them from `proc_pid_rusage` with no privileges. Linux has no rusage
-# equivalent and needs the PMU via `perf`, which is usually unavailable in a
-# container (`kernel.perf_event_paranoid`, missing CAP_PERFMON). When they are
-# unavailable the harness leaves those columns EMPTY rather than substituting
-# wall-clock, and `compare.py` then skips them — a wall-clock stand-in would
-# quietly turn the regression gate into a noise detector.
+# ## The one prerequisite outside this workflow
 #
-# What remains on Linux is still worth having, and is the point of this job:
-#   * `alloc_bytes` / `dealloc_bytes` — jemalloc merged-arena deltas, which are
-#     deterministic and have repeatedly been the clearest signal (e.g. a CASE
-#     row moving 8,722 -> 1,989 B/query when its per-row branch list was
-#     removed).
-#   * the coverage report — LLVM source-based instrumentation, entirely
-#     portable.
-# `ms` is reported but is shared-runner wall-clock: treat it as advisory only.
+# GCE exposes hardware counters only when the instance is created with
+# `--performance-monitoring-unit` — an instance-creation flag that cannot be
+# changed on a running VM. This workflow requests `ARCHITECTURAL`, and
+# `.github/actions/create-runner` now forwards it to the SHA-pinned
+# `FalkorDB/gce-github-runner` it wraps.
+#
+# If that pinned action does not accept the input yet, Actions logs an
+# "Unexpected input" warning, ignores it, and the VM comes up without counters.
+# That is why the `Preflight — PMU availability` step probes rather than
+# assumes: it loosens `kernel.perf_event_paranoid`, installs `perf`, checks
+# whether counters actually read, and annotates the run if not. The job then
+# continues and reports what it can trust.
+#
+# It never substitutes wall-clock for instructions. A time-based stand-in would
+# turn the gate into a noise detector while still looking like a measurement,
+# which is worse than reporting the metric as absent.
 name: Benchmark + coverage
 
 on:
@@ -46,58 +54,116 @@ concurrency:
   group: benchmark-cov-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
+env:
+  RUNNER_LABEL: benchcov-${{ github.run_id }}-${{ github.run_number }}
+
 jobs:
-  benchmark-cov:
+  create-runner:
     if: >-
       github.event.label.name == 'benchmark-cov' &&
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/falkordb/falkordb-build:latest
-    timeout-minutes: 90
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - name: Acknowledge the request
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
-        run: |
-          gh api -X POST "repos/$REPO/issues/$PR/reactions" -f content="eyes" || true
+        run: gh api -X POST "repos/$REPO/issues/$PR/reactions" -f content="eyes" || true
 
-      # Two checkouts so both builds keep their own target/ dir: rebuilding the
-      # same directory across refs would serialise on cargo's lock and thrash
-      # the incremental cache for no benefit.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Create GCE runner
+        uses: ./.github/actions/create-runner # gce-github-runner + retry on stockout
+        with:
+          token: ${{ secrets.GH_SA_TOKEN }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          machine_zones: ${{ vars.GCP_ZONES }}
+          machine_type: ${{ vars.BENCHMARK_MACHINE_TYPE || 'n4-highcpu-16' }}
+          network: gh-runner
+          runner_label: benchcov-${{ github.run_id }}-${{ github.run_number }}
+          # Instruction counts need the GCE virtual PMU, which is settable only
+          # at instance creation. Forwarded to the pinned gce-github-runner
+          # fork; if that action does not accept the input yet, Actions warns
+          # and ignores it and the job degrades to allocated-bytes reporting.
+          performance_monitoring_unit: ARCHITECTURAL
+
+  benchmark-cov:
+    needs: create-runner
+    runs-on: benchcov-${{ github.run_id }}-${{ github.run_number }}
+    timeout-minutes: 180
+    # The toolchain image already carries GraphBLAS/RediSearch, so both sides
+    # build in minutes instead of compiling native deps from scratch.
+    # --privileged so the PMU and /proc/sys are reachable; the VM is ephemeral
+    # and single-tenant, so this is contained.
+    container:
+      image: ghcr.io/falkordb/falkordb-build:latest
+      options: --privileged
+    steps:
+      - name: Preflight — PMU availability
+        id: pmu
+        run: |
+          set -x
+          # Loosen the sysctl first: on a root-owned ephemeral VM this is ours
+          # to set, and it is the usual reason perf reports nothing.
+          sysctl -w kernel.perf_event_paranoid=-1 || \
+            echo "could not set perf_event_paranoid (continuing; may already be permissive)"
+          cat /proc/sys/kernel/perf_event_paranoid || true
+
+          command -v perf || {
+            apt-get update -qq
+            # linux-perf matches Debian; fall back to the generic tools package.
+            apt-get install -y -qq linux-perf || apt-get install -y -qq linux-tools-generic || true
+          }
+
+          if perf stat -x, -e instructions,cycles -- true 2>&1 | grep -qE '^[0-9]+,+(instructions|cycles)'; then
+            echo "pmu=yes" >> "$GITHUB_OUTPUT"
+            echo "PMU counters available — instructions/cycles will be measured."
+          else
+            echo "pmu=no" >> "$GITHUB_OUTPUT"
+            echo "::warning::PMU counters unavailable on this VM. The run requested --performance-monitoring-unit=ARCHITECTURAL via .github/actions/create-runner; check the create-runner step log for an 'Unexpected input' warning, which means the pinned FalkorDB/gce-github-runner does not accept it yet. The run continues and reports allocated bytes (deterministic) plus coverage; instructions/cycles are left empty rather than substituted."
+          fi
+
+      # Two checkouts so each build keeps its own target/ dir — rebuilding one
+      # directory across refs serialises on cargo's lock for no benefit.
       - name: Checkout PR head
-        uses: actions/checkout@v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           path: pr
-          fetch-depth: 0
+          persist-credentials: false
 
       - name: Checkout main
-        uses: actions/checkout@v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: main
           path: base
-          fetch-depth: 0
+          persist-credentials: false
 
       - name: Install harness deps
         run: |
-          python3 -m pip install --quiet --break-system-packages redis || \
-            python3 -m pip install --quiet redis
-          command -v redis-server
+          python3 -m pip install --quiet --break-system-packages redis \
+            || python3 -m pip install --quiet redis
+          command -v redis-server || { apt-get update -qq && apt-get install -y -qq redis-server redis-tools; }
           command -v redis-benchmark
-
-      - name: Build PR module
-        working-directory: pr
-        run: CXX=clang++ cargo build --release
+          redis-server --version
 
       - name: Build main module
         working-directory: base
         run: CXX=clang++ cargo build --release
 
-      # Sequentially, never in parallel: both runs bind a redis port and
-      # contend for the same CPUs. Overlapping them produces numbers that look
-      # like measurements but are not.
+      - name: Build PR module
+        working-directory: pr
+        run: CXX=clang++ cargo build --release
+
+      # Sequentially, never in parallel: both bind a redis port and contend for
+      # the same CPUs. Overlapping them yields numbers that look like
+      # measurements but are not.
       - name: Measure main
         working-directory: pr
         run: |
@@ -115,8 +181,8 @@ jobs:
       - name: Compare PR vs main
         working-directory: pr
         run: |
-          # compare.py exits non-zero when a metric regresses. This job reports
-          # rather than gates, so capture the status instead of failing the run.
+          # compare.py exits non-zero on a regression. This job reports rather
+          # than gates, so record the status instead of failing the run.
           set +e
           python3 bench/compare.py /tmp/pr.csv /tmp/main.csv > /tmp/compare.txt 2>&1
           echo "compare_exit=$?" >> "$GITHUB_ENV"
@@ -134,9 +200,11 @@ jobs:
 
       - name: Build the comment
         working-directory: pr
+        env:
+          PMU: ${{ steps.pmu.outputs.pmu }}
         run: |
           python3 - <<'PY' > /tmp/comment.md
-          import csv, os, re
+          import csv, os
 
           def read(path):
               try:
@@ -153,10 +221,11 @@ jobs:
               except (KeyError, TypeError, ValueError):
                   return None
 
-          # Pick the metric to rank by: instructions when the PMU was available
-          # (deterministic), otherwise allocated bytes (also deterministic).
-          # Never wall-clock — on a shared runner it ranks noise.
-          metric = "instr" if any(num(r, "instr") is not None for r in pr.values()) else "alloc_bytes"
+          # Rank by instructions when the PMU delivered them (deterministic),
+          # else by allocated bytes (also deterministic). Never by wall-clock:
+          # on any shared or virtualised host that ranks noise.
+          have_instr = any(num(r, "instr") is not None for r in pr.values())
+          metric = "instr" if have_instr else "alloc_bytes"
 
           rows = []
           for q, p in pr.items():
@@ -171,16 +240,26 @@ jobs:
 
           print("## Benchmark + coverage")
           print()
-          print(f"316-query harness, both sides built from source in this run. "
-                f"Ranked by **{metric}** (deterministic); wall-clock `ms` is "
-                f"advisory only on a shared runner.")
+          print("316-query harness; both sides built from source in this run on a "
+                "dedicated ephemeral GCE VM.")
           print()
-          if metric == "alloc_bytes":
-              print("> Per-process instruction/cycle counters were unavailable on this "
-                    "runner (Linux needs PMU access via `perf`), so those columns are "
-                    "empty and were skipped rather than substituted. Allocated bytes "
-                    "are deterministic and are used instead.")
-              print()
+          if have_instr:
+              print(f"Ranked by **instructions** (deterministic). Cycles are also "
+                    f"recorded but move with the host; wall-clock `ms` is advisory only.")
+          else:
+              print("> **Instructions and cycles are unavailable on this VM.** GCE exposes "
+                    "the PMU only when the instance is created with "
+                    "`--performance-monitoring-unit=ARCHITECTURAL`, and "
+                    "`.github/actions/create-runner` pins a third-party action whose "
+                    "inputs do not pass that through. Those columns are left **empty** "
+                    "rather than filled with a wall-clock substitute, which would turn "
+                    "the gate into a noise detector.")
+              print(">")
+              print("> Ranked by **allocated bytes** instead — jemalloc merged-arena "
+                    "deltas, which are deterministic and have repeatedly been the "
+                    "clearest signal here (a CASE row moving 8,722 → 1,989 B/query when "
+                    "its per-row branch list was removed).")
+          print()
 
           if not rows:
               print("No comparable rows — see the workflow log.")
@@ -188,7 +267,7 @@ jobs:
               def table(title, subset):
                   print(f"### {title}")
                   print()
-                  print(f"| query | main | PR | ratio |")
+                  print("| query | main | PR | ratio |")
                   print("|---|---|---|---|")
                   for r, q, a, b in subset:
                       print(f"| {q} | {a:,.0f} | {b:,.0f} | {r:.2f}x |")
@@ -203,6 +282,7 @@ jobs:
               if not improved and not regressed:
                   print("No row moved more than 5% either way.")
                   print()
+
               geo = 1.0
               for r, *_ in rows:
                   geo *= r
@@ -214,21 +294,16 @@ jobs:
                     "isolation before acting on it.")
               print()
 
-          print("<details><summary>Full compare.py output</summary>")
-          print()
-          print("```")
-          print(open("/tmp/compare.txt").read()[-6000:] if os.path.exists("/tmp/compare.txt") else "(missing)")
-          print("```")
-          print()
-          print("</details>")
-          print()
-          print("<details><summary>Query-set coverage of the graph crate</summary>")
-          print()
-          print("```")
-          print(open("/tmp/coverage.txt").read()[-6000:] if os.path.exists("/tmp/coverage.txt") else "(missing)")
-          print("```")
-          print()
-          print("</details>")
+          for title, path in (("Full compare.py output", "/tmp/compare.txt"),
+                              ("Query-set coverage of the graph crate", "/tmp/coverage.txt")):
+              print(f"<details><summary>{title}</summary>")
+              print()
+              print("```")
+              print(open(path).read()[-6000:] if os.path.exists(path) else "(missing)")
+              print("```")
+              print()
+              print("</details>")
+              print()
           PY
           cat /tmp/comment.md
 
@@ -249,3 +324,21 @@ jobs:
           else
             gh api -X POST "repos/$REPO/issues/$PR/comments" -F body=@/tmp/comment.md
           fi
+
+  # The create-runner action's 6h auto-delete is the backstop; this no-ops on a
+  # missing VM. `always()` so a failed or cancelled benchmark still tears down.
+  cleanup-runner:
+    needs: [create-runner, benchmark-cov]
+    if: ${{ always() && needs.create-runner.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/cleanup-runner
+        with:
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          instance_label: benchcov-${{ github.run_id }}-${{ github.run_number }}
