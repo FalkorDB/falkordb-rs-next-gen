@@ -61,8 +61,15 @@ DEFAULT_SUBSET = [
     "reduce",                # accumulator loop
     "create node",           # small write path
     "delete node",           # small delete path
-    "traverse 2 hops",       # matrix traversal
+    "two-hop",               # matrix traversal
 ]
+
+
+# Names must exist in queries.py. Checked at import rather than after a
+# 2-minute build and a container spin-up, which is how `traverse 2 hops` — a
+# name I assumed rather than looked up — reached CI.
+_UNKNOWN = sorted(set(DEFAULT_SUBSET) - {q[0] for q in QUERIES})
+assert not _UNKNOWN, f"DEFAULT_SUBSET names not in queries.py: {_UNKNOWN}"
 
 
 def parse_summary(path):
