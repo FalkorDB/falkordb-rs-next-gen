@@ -49,11 +49,27 @@
 # `.github/actions/create-runner` now forwards it to the SHA-pinned
 # `FalkorDB/gce-github-runner` it wraps.
 #
-# The first run confirmed the pinned action does NOT accept it — Actions logged
-# `Unexpected input(s) 'performance_monitoring_unit'` and listed its valid
-# inputs, none of which forwards arbitrary gcloud flags. So the request is
-# currently a no-op and counters will be unavailable until
-# FalkorDB/gce-github-runner gains the input (or a `gcloud_args` pass-through).
+# This workflow does NOT request it, because it cannot: the pinned
+# FalkorDB/gce-github-runner rejects the input. Its valid list is token,
+# project_id, service_account_key, runner_ver, machine_zone, machine_zones,
+# machine_type, disk_size, network, subnet, accelerator,
+# runner_service_account, image_project, image, image_family, preemptible,
+# ephemeral, no_external_address, scopes, shutdown_timeout,
+# actions_preinstalled, runner_label, arm, maintenance_policy_terminate,
+# boot_disk_type — no PMU input and no pass-through for arbitrary gcloud flags.
+#
+# Passing it anyway only produced an `Unexpected input(s)` warning on every
+# run, which is noise that cannot be acted on from this repo, so it was
+# removed. The `Preflight — PMU availability` step reports the consequence
+# where it actually matters instead.
+#
+# To enable instruction counts later: add a `performance_monitoring_unit`
+# input to FalkorDB/gce-github-runner (forwarding
+# `--performance-monitoring-unit` to `gcloud compute instances create`), bump
+# the pin in `.github/actions/create-runner`, then pass `ARCHITECTURAL` from
+# the create-runner step here. Nothing else in this workflow needs to change —
+# the preflight will start reporting `pmu=yes` and the comment will rank by
+# instructions automatically.
 # That is why the `Preflight — PMU availability` step probes rather than
 # assumes: it loosens `kernel.perf_event_paranoid`, installs `perf`, checks
 # whether counters actually read, and annotates the run if not. The job then
@@ -110,11 +126,6 @@ jobs:
           machine_type: ${{ vars.BENCHMARK_MACHINE_TYPE || 'n4-highcpu-16' }}
           network: gh-runner
           runner_label: benchcov-${{ github.run_id }}-${{ github.run_number }}
-          # Instruction counts need the GCE virtual PMU, which is settable only
-          # at instance creation. Forwarded to the pinned gce-github-runner
-          # fork; if that action does not accept the input yet, Actions warns
-          # and ignores it and the job degrades to allocated-bytes reporting.
-          performance_monitoring_unit: ARCHITECTURAL
 
   benchmark-cov:
     needs: create-runner
@@ -153,7 +164,7 @@ jobs:
             echo "PMU counters available — instructions/cycles will be measured."
           else
             echo "pmu=no" >> "$GITHUB_OUTPUT"
-            echo "::warning::PMU counters unavailable. GCE exposes them only when the instance is created with --performance-monitoring-unit, and the pinned FalkorDB/gce-github-runner does not accept that input (the create-runner step logs 'Unexpected input'). Reporting deterministic allocated bytes plus coverage instead; instructions/cycles are left empty, never substituted with wall-clock."
+            echo "::warning::PMU counters unavailable, as expected on GCE today: hardware counters need --performance-monitoring-unit at instance creation, and the pinned FalkorDB/gce-github-runner has no input for it (see this workflow's header for the one-line change that enables it). Reporting deterministic allocated bytes plus coverage instead; instructions/cycles are left empty, never substituted with wall-clock."
           fi
 
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
