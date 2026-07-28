@@ -61,6 +61,7 @@
 //! submodule contains the FFI bindings (auto-generated).
 
 pub mod attribute_store;
+pub mod bulk_validate;
 pub mod constraint;
 pub mod cow;
 pub mod graph;

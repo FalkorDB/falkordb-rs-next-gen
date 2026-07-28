@@ -42,7 +42,7 @@ use std::{
 
 use crate::graph::graphblas::{GrB_UINT64, GrB_Vector_clear, GrB_Vector_setElement_UINT64};
 
-use super::serialization::{Decode, Encode, Reader, Writer};
+use super::serialization::{Decode, DecodeError, Encode, Reader, Writer};
 use super::{
     GrB_BOOL, GrB_Info, GrB_Type, GrB_Type_get_String, GrB_Vector, GrB_Vector_free, GrB_Vector_new,
     GrB_Vector_removeElement, GrB_Vector_resize, GrB_Vector_setElement_BOOL, GrB_Vector_size,
@@ -181,11 +181,16 @@ impl Decode<19> for Vector<u64> {
                 blob.len() as u64,
                 null_mut(),
             );
-            assert_eq!(
-                info,
-                GrB_Info::GrB_SUCCESS,
-                "GxB_Vector_deserialize failed: {info:?}"
-            );
+            // The blob is attacker-controlled via `GRAPH.RESTORE`; a panic here
+            // would crash the whole server (the panic hook calls `process::exit`),
+            // so surface a decode failure as an error instead of asserting.
+            if info != GrB_Info::GrB_SUCCESS {
+                return Err(DecodeError::GraphBlasFailure {
+                    call: "GxB_Vector_deserialize",
+                    info,
+                }
+                .into());
+            }
             Ok(Self::from(v.assume_init()))
         }
     }
@@ -278,10 +283,21 @@ impl Decode<19> for Vector<bool> {
         // `copy_nonoverlapping` below would read past the end of `arr_data`
         // (heap over-read / crash), so reject any mismatch.
         if n_bytes as usize != arr_data.len() {
-            return Err(format!(
-                "Vector decode: declared byte length {n_bytes} does not match buffer length {}",
-                arr_data.len()
-            ));
+            return Err(DecodeError::ByteLengthMismatch {
+                declared: n_bytes,
+                actual: arr_data.len(),
+            }
+            .into());
+        }
+        // `n_entries` is decoded independently of `n_bytes`. Every GraphBLAS
+        // serialization format stores at least one byte per logical entry
+        // (the value array element size is >= 1, plus any index/bitmap bytes),
+        // so a valid payload always has `n_entries <= n_bytes`. Rejecting the
+        // inverse closes the integer-overflow bypass where a huge `n_entries`
+        // combined with a small, length-matched `n_bytes` drives an
+        // out-of-bounds read inside `GxB_Vector_load`.
+        if n_entries > n_bytes {
+            return Err(DecodeError::EntryCountExceedsBytes { n_entries, n_bytes }.into());
         }
         // `GxB_Type_from_name` reads `type_name` as a NUL-terminated C string.
         // The encoder always writes the type name followed by exactly one
@@ -290,25 +306,29 @@ impl Decode<19> for Vector<bool> {
         // both matches the encoder and guarantees the C-string read stays in
         // bounds.
         if type_name.last() != Some(&0) || type_name[..type_name.len() - 1].contains(&0) {
-            return Err(String::from(
-                "Vector decode: type name is not NUL-terminated",
-            ));
+            return Err(DecodeError::TypeNameNotNulTerminated.into());
         }
 
         unsafe {
             let mut type_: MaybeUninit<GrB_Type> = MaybeUninit::uninit();
             let info = GxB_Type_from_name(type_.as_mut_ptr(), type_name.as_ptr().cast());
             if info != GrB_Info::GrB_SUCCESS {
-                return Err(format!(
-                    "Vector decode: GxB_Type_from_name failed: {info:?}"
-                ));
+                return Err(DecodeError::GraphBlasFailure {
+                    call: "GxB_Type_from_name",
+                    info,
+                }
+                .into());
             }
             let type_ = type_.assume_init();
 
             let mut v: MaybeUninit<GrB_Vector> = MaybeUninit::uninit();
             let info = GrB_Vector_new(v.as_mut_ptr(), type_, 0);
             if info != GrB_Info::GrB_SUCCESS {
-                return Err(format!("Vector decode: GrB_Vector_new failed: {info:?}"));
+                return Err(DecodeError::GraphBlasFailure {
+                    call: "GrB_Vector_new",
+                    info,
+                }
+                .into());
             }
             let mut v = v.assume_init();
 
@@ -322,7 +342,7 @@ impl Decode<19> for Vector<bool> {
                     Ok(layout) => Some(layout),
                     Err(e) => {
                         GrB_Vector_free(addr_of_mut!(v));
-                        return Err(format!("Vector decode: invalid buffer layout: {e}"));
+                        return Err(DecodeError::InvalidLayout(e.to_string()).into());
                     }
                 }
             } else {
@@ -333,7 +353,7 @@ impl Decode<19> for Vector<bool> {
                 let ptr = std::alloc::alloc(layout);
                 if ptr.is_null() {
                     GrB_Vector_free(addr_of_mut!(v));
-                    return Err(String::from("Vector decode: buffer allocation failed"));
+                    return Err(DecodeError::AllocationFailed.into());
                 }
                 std::ptr::copy_nonoverlapping(arr_data.as_ptr(), ptr, n_bytes as usize);
                 ptr.cast()
@@ -361,7 +381,11 @@ impl Decode<19> for Vector<bool> {
                     std::alloc::dealloc(arr_ptr.cast(), layout);
                 }
                 GrB_Vector_free(addr_of_mut!(v));
-                return Err(format!("Vector decode: GxB_Vector_load failed: {info:?}"));
+                return Err(DecodeError::GraphBlasFailure {
+                    call: "GxB_Vector_load",
+                    info,
+                }
+                .into());
             }
 
             Ok(Self::from(v))
@@ -553,38 +577,8 @@ impl Iterator for Iter<u64> {
 #[cfg(test)]
 mod decode_tests {
     use super::*;
+    use crate::graph::graphblas::serialization::test_io::{MockReader, MockWriter};
     use std::collections::VecDeque;
-
-    /// Minimal in-memory [`Reader`] that replays scripted values in call order.
-    /// It drives `Vector::<bool>::decode`'s input-validation paths without a live
-    /// GraphBLAS context: every rejection path returns before any FFI call.
-    #[derive(Default)]
-    struct MockReader {
-        buffers: VecDeque<Vec<u8>>,
-        unsigned: VecDeque<u64>,
-        signed: VecDeque<i64>,
-    }
-
-    impl Reader for MockReader {
-        fn read_unsigned(&mut self) -> Result<u64, String> {
-            self.unsigned
-                .pop_front()
-                .ok_or_else(|| "mock: no more unsigned values".to_string())
-        }
-        fn read_signed(&mut self) -> Result<i64, String> {
-            self.signed
-                .pop_front()
-                .ok_or_else(|| "mock: no more signed values".to_string())
-        }
-        fn read_double(&mut self) -> Result<f64, String> {
-            Err("mock: read_double unused".to_string())
-        }
-        fn read_buffer(&mut self) -> Result<Vec<u8>, String> {
-            self.buffers
-                .pop_front()
-                .ok_or_else(|| "mock: no more buffers".to_string())
-        }
-    }
 
     // `decode` reads, in order: arr_data, type_name (buffers); n_entries,
     // n_bytes (unsigned); handling (signed).
@@ -627,6 +621,22 @@ mod decode_tests {
     }
 
     #[test]
+    fn decode_rejects_entry_count_exceeding_byte_length() {
+        // A dense GraphBLAS vector always satisfies
+        // `n_bytes >= n_entries * sizeof(type) >= n_entries`, so a payload
+        // declaring more entries than bytes is malformed; accepting it would
+        // let `GxB_Vector_load` read out of bounds.
+        let mut r = reader(vec![0; 8], b"bool\0".to_vec(), 16, 8, 0);
+        match <Vector<bool> as Decode<19>>::decode(&mut r) {
+            Err(err) => assert!(
+                err.contains("exceeds byte length"),
+                "unexpected error: {err}"
+            ),
+            Ok(_) => panic!("expected decode to reject n_entries > n_bytes"),
+        }
+    }
+
+    #[test]
     fn decode_rejects_type_name_with_only_interior_nul() {
         // NUL present but not the final byte: rejected so the buffer matches what
         // the encoder writes (name followed by a single trailing NUL).
@@ -634,6 +644,46 @@ mod decode_tests {
         match <Vector<bool> as Decode<19>>::decode(&mut r) {
             Err(err) => assert!(err.contains("NUL-terminated"), "unexpected error: {err}"),
             Ok(_) => panic!("expected decode to reject a type name with an interior-only NUL"),
+        }
+    }
+
+    #[test]
+    fn bool_vector_roundtrips_through_encode_decode() {
+        // The encoder only ever goes through `GxB_Vector_unload`, which
+        // requires a fully-dense vector and therefore guarantees
+        // `n_entries <= n_bytes`; confirm the decode-side validation accepts
+        // everything the encoder can produce.
+        crate::graph::graphblas::test_init::ensure_init();
+        let mut v = Vector::<bool>::new(8);
+        for i in 0..8 {
+            v.set(i, true);
+        }
+        v.wait();
+
+        let mut w = MockWriter::default();
+        v.encode(&mut w);
+
+        let mut r = w.into_reader();
+        if let Err(err) = <Vector<bool> as Decode<19>>::decode(&mut r) {
+            panic!("round-trip decode failed: {err}");
+        }
+    }
+
+    #[test]
+    fn u64_decode_rejects_garbage_blob() {
+        // `GxB_Vector_deserialize` failures on an attacker-controlled blob
+        // must surface as a clean `Err`, not an assert/panic.
+        crate::graph::graphblas::test_init::ensure_init();
+        let mut r = MockReader {
+            buffers: VecDeque::from(vec![vec![0xAB; 64]]),
+            ..Default::default()
+        };
+        match <Vector<u64> as Decode<19>>::decode(&mut r) {
+            Err(err) => assert!(
+                err.contains("GxB_Vector_deserialize failed"),
+                "unexpected error: {err}"
+            ),
+            Ok(_) => panic!("expected decode to reject a garbage serialization blob"),
         }
     }
 }

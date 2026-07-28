@@ -30,6 +30,7 @@ use crate::parser::ast::{
     QueryRelationship, RawQueryIR, ReduceVars, RegexFn, RegexFnKind, SetItem, SupportAggregation,
     Variable,
 };
+use crate::parser::cypher::{ExpressionTooDeepError, MAX_EXPRESSION_DEPTH};
 use crate::runtime::functions::{FnArguments, FnType, Type};
 use crate::runtime::orderset::OrderSet;
 use crate::runtime::value::{Value, ValueTypeOf};
@@ -37,6 +38,7 @@ use crate::tree;
 use orx_tree::{Dfs, Dyn, DynNode, DynTree, NodeRef};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 /// The binder performs semantic analysis on parsed Cypher queries.
 ///
@@ -61,6 +63,14 @@ pub struct Binder {
     /// property access like `r.prop` is allowed (per-edge predicate)
     /// whereas it is rejected on named-path Path variables.
     varlen_rel_var_ids: std::collections::HashSet<(u32, u32)>,
+    /// Current expression-recursion depth while binding, used to reject
+    /// pathologically nested expressions before they overflow the call stack.
+    bind_depth: usize,
+    /// Maximum expression nesting depth accepted by this binder, captured
+    /// from [`MAX_EXPRESSION_DEPTH`] at construction time. Mirrors the
+    /// parser's guard; a deeply nested AST would otherwise recurse through
+    /// `bind_expr_node` until the thread stack overflows.
+    max_bind_depth: usize,
 }
 
 impl Default for Binder {
@@ -72,6 +82,8 @@ impl Default for Binder {
             copy_from_parent: HashMap::new(),
             node_labels: HashMap::new(),
             varlen_rel_var_ids: std::collections::HashSet::new(),
+            bind_depth: 0,
+            max_bind_depth: MAX_EXPRESSION_DEPTH.load(Ordering::Relaxed),
         }
     }
 }
@@ -660,8 +672,22 @@ impl Binder {
         let saved_env = self.current_env().clone();
         let saved_env_stack_len = self.env_stack.len();
 
-        // 2. Bind the inner body with scope isolation (also validates import WITH)
-        let mut bound_body = self.bind_call_body(body, &saved_env)?;
+        // 2. Bind the inner body with scope isolation (also validates import
+        // WITH). `bind_call_body` recurses back into `bind_ir` for nested
+        // `CALL { ... }` blocks, so mirror the parser's guard with the shared
+        // depth counter: a deeply nested subquery AST would otherwise
+        // overflow the native stack.
+        self.bind_depth += 1;
+        if self.bind_depth > self.max_bind_depth {
+            self.bind_depth -= 1;
+            return Err(ExpressionTooDeepError {
+                max: self.max_bind_depth,
+            }
+            .into());
+        }
+        let body_result = self.bind_call_body(body, &saved_env);
+        self.bind_depth -= 1;
+        let mut bound_body = body_result?;
 
         // 2b. Apply node labels to the inner body NOW, before the inner
         // scopes are popped.  This prevents scope_id reuse in the outer
@@ -806,6 +832,12 @@ impl Binder {
                         copy_from_parent: HashMap::new(),
                         node_labels: HashMap::new(),
                         varlen_rel_var_ids: std::collections::HashSet::new(),
+                        // Carry the current depth: this fresh binder runs at
+                        // the same native stack depth as `self`, so resetting
+                        // to 0 would let nested CALL/UNION bodies bypass the
+                        // recursion guard.
+                        bind_depth: self.bind_depth,
+                        max_bind_depth: self.max_bind_depth,
                     };
 
                     // Build bound clauses: explicit import WITH + remaining
@@ -1631,6 +1663,25 @@ impl Binder {
         clippy::needless_pass_by_value
     )]
     fn bind_expr_node(
+        &mut self,
+        expr: &DynTree<ExprIR<Arc<String>>>,
+        node_ref: &DynNode<ExprIR<Arc<String>>>,
+        locals: &mut Vec<HashMap<Arc<String>, Variable>>,
+    ) -> Result<DynTree<ExprIR<Variable>>, String> {
+        self.bind_depth += 1;
+        if self.bind_depth > self.max_bind_depth {
+            self.bind_depth -= 1;
+            return Err(ExpressionTooDeepError {
+                max: self.max_bind_depth,
+            }
+            .into());
+        }
+        let result = self.bind_expr_node_inner(expr, node_ref, locals);
+        self.bind_depth -= 1;
+        result
+    }
+
+    fn bind_expr_node_inner(
         &mut self,
         expr: &DynTree<ExprIR<Arc<String>>>,
         node_ref: &DynNode<ExprIR<Arc<String>>>,
@@ -2516,4 +2567,74 @@ fn raw_exprs_structurally_equal(
     }
 
     nodes_eq(a, a.root().idx(), b, b.root().idx())
+}
+
+#[cfg(test)]
+mod recursion_guard_tests {
+    use super::*;
+    use crate::parser::cypher::Parser;
+
+    /// Bind a query, returning the result of `Binder::bind`.
+    fn parse_and_bind(query: &str) -> Result<(), String> {
+        let raw_ir = Parser::new(query).parse()?;
+        Binder::default().bind(raw_ir).map(|_| ())
+    }
+
+    #[test]
+    fn rejects_deeply_nested_ast() {
+        // Alternating `+`/`-` nests one AST level per operator pair while the
+        // parser itself stays iterative (its own depth guard never fires), so
+        // this exercises the binder's `bind_expr_node` recursion guard: without
+        // it the deeply nested AST would overflow the native stack (and, via
+        // the process-exiting panic hook, crash the whole server).
+        let depth = MAX_EXPRESSION_DEPTH.load(Ordering::Relaxed) + 100;
+        let expr = "1+1-".repeat(depth);
+        let query = format!("RETURN {expr}1");
+        let result = parse_and_bind(&query);
+        assert!(
+            result.is_err_and(|e| e.contains("expression nesting exceeds the maximum depth")),
+            "deeply nested AST should be rejected by the binder"
+        );
+    }
+
+    #[test]
+    fn accepts_moderately_nested_ast() {
+        let result = parse_and_bind("RETURN 1+2-3+4-5*6, [[1, [2, {a: {b: 3}}]]]");
+        assert!(result.is_ok(), "moderate nesting should bind: {result:?}");
+    }
+
+    #[test]
+    fn rejects_deeply_nested_call_subquery_ast() {
+        // The parser shares the same limit and would reject a deeply nested
+        // `CALL { ... }` string first, so build the nested AST directly to
+        // exercise the binder's own guard (defense in depth): without it,
+        // `bind_call_subquery` → `bind_call_body` → `bind_ir` recursion would
+        // overflow the native stack.
+        let depth = MAX_EXPRESSION_DEPTH.load(Ordering::Relaxed) + 100;
+        let mut ir = Parser::new("RETURN 1 AS a").parse().unwrap();
+        for _ in 0..depth {
+            ir = crate::parser::ast::QueryIR::Query {
+                clauses: vec![crate::parser::ast::QueryIR::CallSubquery {
+                    body: Box::new(ir),
+                    is_returning: true,
+                    remap: vec![],
+                }],
+                write: false,
+            };
+        }
+        let result = Binder::default().bind(ir).map(|_| ());
+        assert!(
+            result.is_err_and(|e| e.contains("expression nesting exceeds the maximum depth")),
+            "deeply nested CALL subquery AST should be rejected by the binder"
+        );
+    }
+
+    #[test]
+    fn accepts_moderately_nested_call_subqueries() {
+        let result = parse_and_bind("CALL { CALL { RETURN 1 AS a } RETURN a AS b } RETURN b");
+        assert!(
+            result.is_ok(),
+            "moderate CALL nesting should bind: {result:?}"
+        );
+    }
 }

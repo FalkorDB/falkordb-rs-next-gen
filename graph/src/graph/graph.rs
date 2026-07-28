@@ -255,6 +255,40 @@ pub struct MemoryUsageReport {
 /// reachable in practice, since the tensor compound key caps node ids at u32.
 const EDGE_NO_ENDPOINT: u64 = u64::MAX;
 
+/// Upper bound accepted for node/relationship ids on the untrusted-input
+/// entry points (`create_nodes`, `create_relationships_bulk`, fed by
+/// `GRAPH.EFFECT`/`GRAPH.RESTORE`/`GRAPH.BULK`).
+///
+/// `graphblas::tensor::compound_key` already requires node ids to fit in a
+/// `u32` (it hard-`assert!`s otherwise), so this is not a new restriction —
+/// it turns that existing invariant into a clean, bounded `Err` instead of a
+/// panic when violated by attacker-controlled input. It also protects
+/// `relationship_cap`/`edge_endpoints`, whose growth is driven by the same
+/// ids: empirically, resizing the GraphBLAS relationship matrices to a
+/// dimension near `u32::MAX` already takes tens of seconds and multiple GB,
+/// and materially larger ids can exhaust memory outright, so a single
+/// attacker-chosen id must never be allowed to drive that growth unchecked.
+const MAX_UNTRUSTED_ENTITY_ID: u64 = u32::MAX as u64;
+
+/// Rejection of an out-of-range entity id on an untrusted-input entry point
+/// (`create_nodes` / `create_relationships_bulk`).
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum EntityIdError {
+    /// A node/relationship id exceeded [`MAX_UNTRUSTED_ENTITY_ID`].
+    #[error("id {id} exceeds the maximum supported entity id ({MAX_UNTRUSTED_ENTITY_ID})")]
+    ExceedsMaximum { id: u64 },
+    /// The edge endpoint reverse index could not be grown to cover `id`
+    /// (allocation failure / capacity overflow).
+    #[error("relationship id {id} does not fit in the edge endpoint index")]
+    EdgeEndpointIndexOverflow { id: u64 },
+}
+
+impl From<EntityIdError> for String {
+    fn from(err: EntityIdError) -> Self {
+        err.to_string()
+    }
+}
+
 pub struct Graph {
     /// Graph name (Redis key name)
     name: String,
@@ -1326,16 +1360,32 @@ impl Graph {
         ids
     }
 
+    /// # Errors
+    /// Returns [`EntityIdError::ExceedsMaximum`] — before mutating any graph
+    /// state — if `nodes` contains an id exceeding
+    /// [`MAX_UNTRUSTED_ENTITY_ID`]. `nodes` may be
+    /// attacker-controlled (via `GRAPH.EFFECT`/`GRAPH.RESTORE`); an oversized
+    /// id would otherwise be accepted here and later panic in
+    /// `graphblas::tensor::compound_key` (which requires node ids to fit in
+    /// a `u32`) or drive an unbounded/very slow GraphBLAS matrix resize.
     pub fn create_nodes(
         &mut self,
         nodes: &RoaringTreemap,
-    ) {
+    ) -> Result<(), EntityIdError> {
+        if let Some(id) = nodes.max().filter(|&id| id > MAX_UNTRUSTED_ENTITY_ID) {
+            return Err(EntityIdError::ExceedsMaximum { id });
+        }
+
         self.node_count += nodes.len();
         self.reserved_node_count -= nodes.len();
         self.deleted_nodes -= nodes;
 
         // Ensure capacity covers the highest node ID (effects replay may
         // insert IDs above the current count when applied one-by-one).
+        // The bounds check above ensures a single attacker-chosen id can't
+        // drive `resize_node_matrices` to a huge (slow or OOM-inducing)
+        // dimension, keeps `max_id + 1` from overflowing, and keeps `needed`
+        // small enough that `grow_cap` cannot overflow.
         if let Some(max_id) = nodes.max() {
             let needed = max_id + 1;
             if needed > self.node_cap {
@@ -1348,6 +1398,8 @@ impl Graph {
 
         self.all_nodes_matrix
             .set_all(nodes.iter().map(|id| (id, id)));
+
+        Ok(())
     }
 
     #[must_use]
@@ -1941,13 +1993,39 @@ impl Graph {
 
     /// Create relationships of a single type using flat arrays.
     /// Avoids HashMap overhead while using individual GraphBLAS set calls.
+    ///
+    /// # Errors
+    /// Returns [`EntityIdError::ExceedsMaximum`] — before mutating any graph
+    /// state — if any of `srcs`, `dsts`, or `rel_ids` exceeds
+    /// [`MAX_UNTRUSTED_ENTITY_ID`]. These values may be attacker-controlled
+    /// (via `GRAPH.EFFECT`/`GRAPH.RESTORE`), and an oversized id would
+    /// otherwise panic downstream — either directly (`compound_key`'s
+    /// `assert!`, or the `edge_endpoints` capacity-overflow path) or
+    /// indirectly by driving a multi-gigabyte/unbounded GraphBLAS matrix
+    /// resize.
+    ///
+    /// Returns [`EntityIdError::EdgeEndpointIndexOverflow`] if growing
+    /// `edge_endpoints` fails (defense in depth; unreachable while the
+    /// upfront bound holds). Unlike `ExceedsMaximum`, this fallback can fire
+    /// *after* counters/matrix state have been touched — callers must treat
+    /// any `Err` as fatal for the surrounding MVCC transaction and roll it
+    /// back (as `effect.rs` and `bulk_insert.rs` do).
     pub fn create_relationships_bulk(
         &mut self,
         type_name: &Arc<String>,
         srcs: &[u64],
         dsts: &[u64],
         rel_ids: &[u64],
-    ) {
+    ) -> Result<(), EntityIdError> {
+        if let Some(&id) = srcs
+            .iter()
+            .chain(dsts.iter())
+            .chain(rel_ids.iter())
+            .find(|&&id| id > MAX_UNTRUSTED_ENTITY_ID)
+        {
+            return Err(EntityIdError::ExceedsMaximum { id });
+        }
+
         let count = srcs.len() as u64;
         self.relationship_count += count;
         self.reserved_relationship_count -= count;
@@ -1960,6 +2038,7 @@ impl Graph {
         }
 
         if let Some(&max_id) = rel_ids.iter().max() {
+            // The upfront bounds check makes `max_id + 1` overflow-free.
             let needed = max_id + 1;
             if needed > self.relationship_cap {
                 self.relationship_cap = grow_cap(self.relationship_cap, needed);
@@ -1980,17 +2059,33 @@ impl Graph {
 
         // Maintain the graph-wide reverse index alongside the tensor edges.
         // Reserve exactly: MVCC clones reset capacity to `len`, so amortized
-        // doubling here would only leave ~2x slack behind, never save reallocs.
+        // doubling would only leave ~2x slack behind, never saving reallocs.
+        // `try_reserve_exact` also reports a capacity overflow / allocation
+        // failure as a clean error instead of panicking or aborting the
+        // process; the upfront `MAX_UNTRUSTED_ENTITY_ID` check already bounds
+        // `needed`, but this stays as defense in depth against untrusted input.
         if let Some(&max_id) = rel_ids.iter().max() {
             let needed = max_id as usize + 1;
             if needed > self.edge_endpoints.len() {
-                self.edge_endpoints
-                    .reserve_exact(needed - self.edge_endpoints.len());
+                if self
+                    .edge_endpoints
+                    .try_reserve_exact(needed - self.edge_endpoints.len())
+                    .is_err()
+                {
+                    return Err(EntityIdError::EdgeEndpointIndexOverflow { id: max_id });
+                }
                 self.edge_endpoints.resize(needed, EDGE_NO_ENDPOINT);
             }
         }
         for ((&src, &dst), &id) in srcs.iter().zip(dsts.iter()).zip(rel_ids.iter()) {
-            self.edge_endpoints[id as usize] = compound_key(src, dst);
+            // Defense in depth: even though the reserve above should make
+            // every `id` in-bounds, never index blindly into a Vec sized
+            // from untrusted input.
+            let slot = self
+                .edge_endpoints
+                .get_mut(id as usize)
+                .ok_or(EntityIdError::EdgeEndpointIndexOverflow { id })?;
+            *slot = compound_key(src, dst);
         }
 
         self.adjacancy_matrix
@@ -2000,6 +2095,8 @@ impl Graph {
         let type_ids: Vec<u64> = vec![type_id; rel_ids.len()];
         self.relationship_type_matrix
             .set_all(rel_ids.iter().copied().zip(type_ids.iter().copied()));
+
+        Ok(())
     }
 
     /// Flush delta-plus into base for all shared matrices.
@@ -3991,5 +4088,122 @@ impl Graph {
             }
         }
         attrs
+    }
+}
+
+#[cfg(test)]
+mod untrusted_id_bounds_tests {
+    use super::*;
+    use crate::graph::graphblas::test_init::ensure_init as init_graphblas_once;
+
+    #[test]
+    fn rejects_relationship_id_too_large_for_edge_endpoints_index() {
+        init_graphblas_once();
+        let mut g = Graph::new(16, 16, 0, 0, "test");
+        let type_name = Arc::new("REL".to_string());
+        g.inc_reserved_relationship_count();
+
+        // A crafted/attacker-controlled effects buffer (GRAPH.EFFECT) can carry
+        // an arbitrary u64 relationship id. Growing the dense `edge_endpoints`
+        // reverse index to cover it must fail cleanly (Err) rather than
+        // panicking on allocation-capacity overflow or aborting the process
+        // on OOM.
+        let result = g.create_relationships_bulk(&type_name, &[0], &[1], &[u64::MAX]);
+        assert!(
+            result.is_err(),
+            "expected an oversized relationship id to be rejected, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_relationship_id_just_above_the_bound() {
+        init_graphblas_once();
+        let mut g = Graph::new(16, 16, 0, 0, "test");
+        let type_name = Arc::new("REL".to_string());
+        g.inc_reserved_relationship_count();
+
+        let result =
+            g.create_relationships_bulk(&type_name, &[0], &[1], &[MAX_UNTRUSTED_ENTITY_ID + 1]);
+        assert!(
+            result.is_err(),
+            "expected id one past the bound to be rejected, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_src_or_dst_node_id_too_large_for_compound_key() {
+        init_graphblas_once();
+        let mut g = Graph::new(16, 16, 0, 0, "test");
+        let type_name = Arc::new("REL".to_string());
+        g.inc_reserved_relationship_count();
+
+        // `compound_key` hard-asserts that src/dst fit in a u32; without the
+        // upfront bounds check, a crafted `GRAPH.EFFECT` edge with a huge dst
+        // node id would panic (and crash the process) inside
+        // `set_all_from_slices`/`compound_key` rather than returning Err.
+        let result = g.create_relationships_bulk(&type_name, &[0], &[u64::MAX], &[0]);
+        assert!(
+            result.is_err(),
+            "expected an oversized dst node id to be rejected, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn accepts_reasonable_relationship_ids() {
+        init_graphblas_once();
+        let mut g = Graph::new(16, 16, 0, 0, "test");
+        let type_name = Arc::new("REL".to_string());
+        g.inc_reserved_relationship_count();
+        g.inc_reserved_relationship_count();
+
+        let result = g.create_relationships_bulk(&type_name, &[0, 1], &[1, 2], &[0, 1]);
+        assert!(
+            result.is_ok(),
+            "expected small relationship ids to succeed: {result:?}"
+        );
+        assert_eq!(
+            g.get_relationship_endpoints(RelationshipId(0)),
+            (NodeId(0), NodeId(1))
+        );
+        assert_eq!(
+            g.get_relationship_endpoints(RelationshipId(1)),
+            (NodeId(1), NodeId(2))
+        );
+    }
+
+    #[test]
+    fn rejects_node_id_too_large() {
+        init_graphblas_once();
+        let mut g = Graph::new(16, 16, 0, 0, "test");
+        let mut nodes = RoaringTreemap::new();
+        nodes.insert(u64::MAX);
+
+        // Same hardening as `create_relationships_bulk`: an attacker-controlled
+        // `GRAPH.EFFECT`/`GRAPH.RESTORE` node id must be rejected cleanly
+        // instead of driving an unbounded/very slow `resize_node_matrices`
+        // call or later panicking in `compound_key` once used as an edge
+        // endpoint.
+        let result = g.create_nodes(&nodes);
+        assert!(
+            result.is_err(),
+            "expected an oversized node id to be rejected, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn accepts_reasonable_node_ids() {
+        init_graphblas_once();
+        let mut g = Graph::new(16, 16, 0, 0, "test");
+        g.inc_reserved_node_count();
+        g.inc_reserved_node_count();
+        let mut nodes = RoaringTreemap::new();
+        nodes.insert(0);
+        nodes.insert(1);
+
+        let result = g.create_nodes(&nodes);
+        assert!(
+            result.is_ok(),
+            "expected small node ids to succeed: {result:?}"
+        );
     }
 }

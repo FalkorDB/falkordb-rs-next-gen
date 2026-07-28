@@ -5,6 +5,7 @@ use crate::{
     redis_type::GRAPH_TYPE,
 };
 use graph::{
+    graph::bulk_validate::validate_declared_counts,
     graph::graph::{Graph, NodeId, RelationshipId},
     runtime::value::Value,
     threadpool::spawn,
@@ -179,8 +180,13 @@ fn parse_header(
     // Read property count (4 bytes)
     let prop_count = read_u32_ne(data, idx)? as usize;
 
-    // Read property names
-    let mut prop_names = Vec::with_capacity(prop_count);
+    // Read property names. Cap the pre-allocation to the bytes that remain:
+    // every property name is a NUL-terminated C string consuming at least one
+    // byte from `data`, so a `prop_count` larger than the remaining input is
+    // malformed and must not drive a huge up-front allocation
+    // (memory-exhaustion DoS). The loop below still errors on truncated data
+    // via `read_cstring`.
+    let mut prop_names = Vec::with_capacity(prop_count.min(data.len().saturating_sub(*idx)));
     for _ in 0..prop_count {
         let name = read_cstring(data, idx)?;
         prop_names.push(Arc::new(name.to_string()));
@@ -255,7 +261,7 @@ fn process_node_token(
         return Ok(());
     }
 
-    g.create_nodes(&nodes_bitmap);
+    g.create_nodes(&nodes_bitmap)?;
     unsafe { maybe_yield(raw_ctx) };
 
     let mut index_add_docs: FxHashMap<u64, RoaringTreemap> = FxHashMap::default();
@@ -332,7 +338,7 @@ fn process_edge_token(
         return Ok(());
     }
 
-    g.create_relationships_bulk(&type_name, &srcs, &dsts, &edge_ids);
+    g.create_relationships_bulk(&type_name, &srcs, &dsts, &edge_ids)?;
     unsafe { maybe_yield(raw_ctx) };
 
     if !resolved_rel_attrs.is_empty() {
@@ -471,6 +477,30 @@ pub fn graph_bulk_insert(
             "Bulk insert format error, token count mismatch.",
         ));
     }
+
+    // Guard against malicious counts: `node_count`/`edge_count` drive up-front
+    // ID reservations (and a `Vec` of that many IDs). Each created entity needs
+    // at least one byte in its token payload, so a declared count can never
+    // legitimately exceed the total payload size. Rejecting the inverse caps the
+    // reservation to the input size and prevents a capacity-overflow / OOM panic.
+    let node_payload_bytes: usize = token_strings
+        .iter()
+        .take(node_token_count)
+        .map(|t| t.as_slice().len())
+        .sum();
+    let edge_payload_bytes: usize = token_strings
+        .iter()
+        .skip(node_token_count)
+        .take(rel_token_count)
+        .map(|t| t.as_slice().len())
+        .sum();
+    validate_declared_counts(
+        node_count,
+        edge_count,
+        node_payload_bytes,
+        edge_payload_bytes,
+    )
+    .map_err(|e| redis_module::RedisError::String(e.to_string()))?;
 
     // Inside MULTI/EXEC: blocking commands are not allowed, run synchronously
     // with RM_Yield to let Redis process PING between operations.
