@@ -34,6 +34,10 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 from queries import QUERIES, SETUP, SETUP_COMMANDS, ERROR_QUERIES, IMPORT_DIR, CSV_FILES
 
+# Path to the server log, set when this harness starts the server. Stays None
+# with --reuse, where the server is someone else's and its log is not ours.
+SERVER_LOG = None
+
 # Per-process instruction/cycle counters, by platform.
 #
 #   macOS  "rusage" — `proc_pid_rusage` gives a running total for any pid with
@@ -174,6 +178,26 @@ def pmc_run(pmc, cmd):
     return ev, elapsed
 
 
+def server_death_details():
+    """Panic/crash lines from the server log, for when a command fails because
+    the server is gone. Returns "" when there is nothing to add."""
+    if not SERVER_LOG or not os.path.exists(SERVER_LOG):
+        return ""
+    try:
+        with open(SERVER_LOG, errors="replace") as f:
+            lines = f.readlines()
+    except OSError:
+        return ""
+    marked = [
+        line.rstrip()
+        for line in lines
+        if any(m in line for m in ("panicked at", "FalkorDB panic", "Redis crashed",
+                                   "signal:", "=== REDIS BUG REPORT"))
+    ]
+    tail = marked[:6] or [line.rstrip() for line in lines[-6:]]
+    return "\n  server log: " + "\n              ".join(tail)
+
+
 def cli(port, *args, check=True):
     """Run redis-cli and return stdout.
 
@@ -188,6 +212,7 @@ def cli(port, *args, check=True):
         raise RuntimeError(
             f"redis-cli {' '.join(str(a) for a in args)} failed "
             f"(exit {out.returncode}): {out.stderr.strip()[:200]}"
+            f"{server_death_details()}"
         )
     return out.stdout
 
@@ -302,9 +327,17 @@ def main():
             # AOF makes the module emit replication effects on every write
             # (Pending::build_effects_buffer), covering those paths.
             server_args += ["--appendonly", "yes", "--appendfsync", "no"]
+        # Keep the server's log instead of discarding it. When the module
+        # panics, redis prints the panic and backtrace here and then dies, and
+        # every client command afterwards fails with the useless "Server closed
+        # the connection". With DEVNULL that was all CI ever reported, and
+        # diagnosing one such failure took an instrumented local rebuild to
+        # recover a message the server had already printed.
+        global SERVER_LOG
+        SERVER_LOG = os.path.join(work_dir, "server.log")
         server = subprocess.Popen(
             server_args,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            stdout=open(SERVER_LOG, "w"), stderr=subprocess.STDOUT)
         for _ in range(100):
             # check=False: connection refused is the expected answer while
             # the server is still coming up.
