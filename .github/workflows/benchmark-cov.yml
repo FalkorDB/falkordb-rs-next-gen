@@ -22,6 +22,25 @@
 # runs as root, so this job sets the sysctl itself and runs the toolchain image
 # `--privileged`.
 #
+# ## Why no job `container:`
+#
+# The first run of this workflow died in "Initialize containers" on the GCE VM.
+# No other self-hosted job in this repo uses a job container — `_benchmark.yml`
+# and `profile.yml` both run directly on the VM and install what they need — so
+# this follows that proven pattern instead of fighting it.
+#
+# That also removes the need to compile: both modules are extracted from the
+# already-published server images with `docker cp`, exactly as
+# `.github/scripts/benchmark/profile.sh` does (module path
+# `/var/lib/falkordb/bin/falkordb.so`). The PR side is `rc-pr-<N>`, built early
+# by rust-pr.yml; the main side is `edge-rs`. The harness then runs against each
+# with its own redis-server, so `perf` attaches to a plain host pid.
+#
+# Coverage is the exception — it needs an *instrumented* build, which no
+# published image carries. That step runs the toolchain image explicitly via
+# `docker run` (not as a job container) and is best-effort: a failure there
+# annotates the run and still lets the perf comparison be reported.
+#
 # ## The one prerequisite outside this workflow
 #
 # GCE exposes hardware counters only when the instance is created with
@@ -30,8 +49,11 @@
 # `.github/actions/create-runner` now forwards it to the SHA-pinned
 # `FalkorDB/gce-github-runner` it wraps.
 #
-# If that pinned action does not accept the input yet, Actions logs an
-# "Unexpected input" warning, ignores it, and the VM comes up without counters.
+# The first run confirmed the pinned action does NOT accept it — Actions logged
+# `Unexpected input(s) 'performance_monitoring_unit'` and listed its valid
+# inputs, none of which forwards arbitrary gcloud flags. So the request is
+# currently a no-op and counters will be unavailable until
+# FalkorDB/gce-github-runner gains the input (or a `gcloud_args` pass-through).
 # That is why the `Preflight — PMU availability` step probes rather than
 # assumes: it loosens `kernel.perf_event_paranoid`, installs `perf`, checks
 # whether counters actually read, and annotates the run if not. The job then
@@ -97,91 +119,89 @@ jobs:
   benchmark-cov:
     needs: create-runner
     runs-on: benchcov-${{ github.run_id }}-${{ github.run_number }}
-    timeout-minutes: 180
-    # The toolchain image already carries GraphBLAS/RediSearch, so both sides
-    # build in minutes instead of compiling native deps from scratch.
-    # --privileged so the PMU and /proc/sys are reachable; the VM is ephemeral
-    # and single-tenant, so this is contained.
-    container:
-      image: ghcr.io/falkordb/falkordb-build:latest
-      options: --privileged
+    timeout-minutes: 120
+    env:
+      # Module path inside the server image, same as profile.sh relies on.
+      MODULE_IN_IMAGE: /var/lib/falkordb/bin/falkordb.so
+      PR_IMAGE: ghcr.io/falkordb/falkordb-server:rc-pr-${{ github.event.pull_request.number }}
+      MAIN_IMAGE: ghcr.io/falkordb/falkordb-server:edge-rs
+      TOOLCHAIN: ghcr.io/falkordb/falkordb-build:latest
     steps:
+      # The VM has docker but not git/rust/redis/perf. Runs as root, no sudo.
+      - name: Install host deps
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends \
+            git ca-certificates curl python3 python3-pip redis-server redis-tools
+          # perf package name depends on the GCE image's kernel — take the
+          # first that resolves, mirroring profile.yml.
+          apt-get install -y -qq --no-install-recommends linux-perf 2>/dev/null \
+            || apt-get install -y -qq --no-install-recommends "linux-tools-$(uname -r)" 2>/dev/null \
+            || apt-get install -y -qq --no-install-recommends linux-tools-generic 2>/dev/null || true
+          python3 -m pip install --quiet --break-system-packages redis \
+            || python3 -m pip install --quiet redis
+          redis-server --version
+
       - name: Preflight — PMU availability
         id: pmu
         run: |
-          set -x
-          # Loosen the sysctl first: on a root-owned ephemeral VM this is ours
-          # to set, and it is the usual reason perf reports nothing.
-          sysctl -w kernel.perf_event_paranoid=-1 || \
-            echo "could not set perf_event_paranoid (continuing; may already be permissive)"
-          cat /proc/sys/kernel/perf_event_paranoid || true
-
-          command -v perf || {
-            apt-get update -qq
-            # linux-perf matches Debian; fall back to the generic tools package.
-            apt-get install -y -qq linux-perf || apt-get install -y -qq linux-tools-generic || true
-          }
-
-          if perf stat -x, -e instructions,cycles -- true 2>&1 | grep -qE '^[0-9]+,+(instructions|cycles)'; then
+          sysctl -w kernel.perf_event_paranoid=-1 || true
+          echo "paranoid=$(cat /proc/sys/kernel/perf_event_paranoid 2>/dev/null || echo '?')"
+          if command -v perf >/dev/null && \
+             perf stat -x, -e instructions,cycles -- true 2>&1 | grep -qE '^[0-9]+,+(instructions|cycles)'; then
             echo "pmu=yes" >> "$GITHUB_OUTPUT"
             echo "PMU counters available — instructions/cycles will be measured."
           else
             echo "pmu=no" >> "$GITHUB_OUTPUT"
-            echo "::warning::PMU counters unavailable on this VM. The run requested --performance-monitoring-unit=ARCHITECTURAL via .github/actions/create-runner; check the create-runner step log for an 'Unexpected input' warning, which means the pinned FalkorDB/gce-github-runner does not accept it yet. The run continues and reports allocated bytes (deterministic) plus coverage; instructions/cycles are left empty rather than substituted."
+            echo "::warning::PMU counters unavailable. GCE exposes them only when the instance is created with --performance-monitoring-unit, and the pinned FalkorDB/gce-github-runner does not accept that input (the create-runner step logs 'Unexpected input'). Reporting deterministic allocated bytes plus coverage instead; instructions/cycles are left empty, never substituted with wall-clock."
           fi
 
-      # Two checkouts so each build keeps its own target/ dir — rebuilding one
-      # directory across refs serialises on cargo's lock for no benefit.
-      - name: Checkout PR head
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          path: pr
           persist-credentials: false
 
-      - name: Checkout main
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          ref: main
-          path: base
-          persist-credentials: false
+      - name: Log in to ghcr
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-      - name: Install harness deps
+      # rust-pr.yml publishes rc-pr-<N> early, before its slower jobs finish,
+      # but the label can still be applied before that. Poll rather than assume.
+      - name: Wait for the PR image
         run: |
-          python3 -m pip install --quiet --break-system-packages redis \
-            || python3 -m pip install --quiet redis
-          command -v redis-server || { apt-get update -qq && apt-get install -y -qq redis-server redis-tools; }
-          command -v redis-benchmark
-          redis-server --version
+          for i in $(seq 1 60); do
+            if docker pull -q "$PR_IMAGE" >/dev/null 2>&1; then
+              echo "pulled $PR_IMAGE"; exit 0
+            fi
+            echo "waiting for $PR_IMAGE ($i/60)"; sleep 30
+          done
+          echo "::error::$PR_IMAGE never appeared. Is the Rust PR workflow green for this head SHA?"
+          exit 1
 
-      - name: Build main module
-        working-directory: base
-        run: CXX=clang++ cargo build --release
-
-      - name: Build PR module
-        working-directory: pr
-        run: CXX=clang++ cargo build --release
+      - name: Extract both modules
+        run: |
+          set -x
+          docker pull -q "$MAIN_IMAGE"
+          for side in pr main; do
+            case $side in
+              pr)   img="$PR_IMAGE" ;;
+              main) img="$MAIN_IMAGE" ;;
+            esac
+            cid=$(docker create "$img")
+            docker cp "$cid:$MODULE_IN_IMAGE" "/tmp/falkordb-$side.so"
+            docker rm -f "$cid" >/dev/null
+          done
+          ls -l /tmp/falkordb-pr.so /tmp/falkordb-main.so
 
       # Sequentially, never in parallel: both bind a redis port and contend for
-      # the same CPUs. Overlapping them yields numbers that look like
-      # measurements but are not.
+      # the same CPUs. Overlapping them yields numbers that are not measurements.
       - name: Measure main
-        working-directory: pr
-        run: |
-          python3 bench/run_bench.py \
-            --module "$GITHUB_WORKSPACE/base/target/release/libfalkordb.so" \
-            --out /tmp/main.csv
+        run: python3 bench/run_bench.py --module /tmp/falkordb-main.so --out /tmp/main.csv
 
       - name: Measure PR
-        working-directory: pr
-        run: |
-          python3 bench/run_bench.py \
-            --module "$GITHUB_WORKSPACE/pr/target/release/libfalkordb.so" \
-            --out /tmp/pr.csv
+        run: python3 bench/run_bench.py --module /tmp/falkordb-pr.so --out /tmp/pr.csv
 
       - name: Compare PR vs main
-        working-directory: pr
         run: |
-          # compare.py exits non-zero on a regression. This job reports rather
+          # compare.py exits non-zero on a regression; this job reports rather
           # than gates, so record the status instead of failing the run.
           set +e
           python3 bench/compare.py /tmp/pr.csv /tmp/main.csv > /tmp/compare.txt 2>&1
@@ -189,17 +209,19 @@ jobs:
           set -e
           tail -40 /tmp/compare.txt
 
+      # Coverage needs an instrumented build, which no published image carries.
+      # Run the toolchain image explicitly (NOT as a job container — see header)
+      # and keep it best-effort so a failure here still lets the perf
+      # comparison be reported.
       - name: Coverage of the query set
-        working-directory: pr
+        continue-on-error: true
         run: |
-          set +e
-          bash bench/coverage.sh > /tmp/coverage.txt 2>&1
-          echo "coverage_exit=$?" >> "$GITHUB_ENV"
-          set -e
+          docker pull -q "$TOOLCHAIN"
+          docker run --rm -v "$PWD":/w -w /w "$TOOLCHAIN" \
+            bash -lc 'bash bench/coverage.sh' > /tmp/coverage.txt 2>&1 || true
           tail -30 /tmp/coverage.txt
 
       - name: Build the comment
-        working-directory: pr
         env:
           PMU: ${{ steps.pmu.outputs.pmu }}
         run: |
