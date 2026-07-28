@@ -26,7 +26,7 @@ _⚠ 1 op(s) with differing results (perf N/A): temporal_spatial_roundtrip_
 
 > ⚠ server image changed: falkordb/falkordb-server@sha256:7a40d2ef964c51fcdb069d7b06d2b3b8c62d54cca9721c1118d036614988d369 → ghcr.io/falkordb/falkordb-server@sha256:311a2361cd17511cdb2811d161733cbf9db13a1877be706f1c591e809db51c43
 
-🟢 = faster or within budget · 🔴 = slower than budget · ⚠ = results differ (advisory — the engines did different work, so perf is N/A) · N/A = no perf verdict. Only **p50** of `server_ms` (server-reported execution time) is gated — the `context:` line (p90/p95/p99 · throughput · client-observed total p50) and `Δms` are informational, never part of the verdict. Non-blocking.
+🟢 = faster or within budget · 🔴 = slower than budget · ⚠ = results differ (advisory — the engines did different work, so perf is N/A) · N/A = no perf verdict. Only **p50** of `server_ms` (server-reported execution time) is gated — the `context:` line (p90/p95/p99 · throughput · within-run n/σ/CV of `server_ms` · client-observed total p50) and `Δms` are informational, never part of the verdict. n = samples retained after severe-outlier removal (pooled across the C workers; `n (server m)` when only `m` carry a server time); σ = their **sample** standard deviation (n−1) of `server_ms` **within this run** — not run-to-run noise; CV = 100·σ/mean. Non-blocking.
 
 <details><summary>🟢 <code>aggregate_age</code></summary>
 
@@ -34,8 +34,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 1.088<br><sub>context: p90 1.202 · p95 1.236 · p99 1.277 · 870 op/s · total p50 4.601</sub> | 0.539<br><sub>context: p90 0.569 · p95 0.577 · p99 0.586 · 1613 op/s · total p50 2.486</sub> | -50.4% (-0.548) | 150% AND 2 ms | 🟢 |
-| 8 | 1.293<br><sub>context: p90 1.914 · p95 2.198 · p99 2.476 · 5220 op/s · total p50 5.855</sub> | 0.596<br><sub>context: p90 0.659 · p95 0.682 · p99 0.729 · 9697 op/s · total p50 3.157</sub> | -53.9% (-0.697) | 150% AND 2 ms | 🟢 |
+| 1 | 1.241<br><sub>context: p90 1.289 · p95 1.310 · p99 1.335 · 750 op/s · n/σ/CV 196/0.038/3.0% · total p50 5.321</sub> | 0.602<br><sub>context: p90 0.626 · p95 0.634 · p99 0.644 · 1329 op/s · n/σ/CV 198/0.018/3.0% · total p50 2.998</sub> | -51.5% (-0.639) | 150% AND 2 ms | 🟢 |
+| 8 | 1.316<br><sub>context: p90 1.681 · p95 1.929 · p99 2.087 · 4294 op/s · n/σ/CV 1419/0.204/14.7% · total p50 6.884</sub> | 0.615<br><sub>context: p90 0.668 · p95 0.691 · p99 0.733 · 9084 op/s · n/σ/CV 1554/0.034/5.5% · total p50 3.482</sub> | -53.3% (-0.701) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER  MATCH (n:User) RETURN avg(n.age) AS avg_age
+```
+
+</details>
 
 </details>
 
@@ -45,8 +53,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 1.650<br><sub>context: p90 1.770 · p95 1.794 · p99 1.854 · 584 op/s · total p50 6.813</sub> | 0.563<br><sub>context: p90 0.595 · p95 0.604 · p99 0.624 · 1543 op/s · total p50 2.588</sub> | -65.9% (-1.087) | 150% AND 2 ms | 🟢 |
-| 8 | 1.846<br><sub>context: p90 2.307 · p95 2.528 · p99 2.836 · 3880 op/s · total p50 7.930</sub> | 0.598<br><sub>context: p90 0.643 · p95 0.661 · p99 0.708 · 9790 op/s · total p50 3.144</sub> | -67.6% (-1.248) | 150% AND 2 ms | 🟢 |
+| 1 | 1.930<br><sub>context: p90 2.001 · p95 2.023 · p99 2.047 · 487 op/s · n/σ/CV 192/0.042/2.1% · total p50 8.191</sub> | 0.629<br><sub>context: p90 0.650 · p95 0.660 · p99 0.675 · 1297 op/s · n/σ/CV 198/0.017/2.8% · total p50 3.064</sub> | -67.4% (-1.302) | 150% AND 2 ms | 🟢 |
+| 8 | 2.040<br><sub>context: p90 2.458 · p95 2.675 · p99 3.021 · 3470 op/s · n/σ/CV 1524/0.255/12.0% · total p50 8.710</sub> | 0.653<br><sub>context: p90 0.700 · p95 0.723 · p99 0.771 · 8705 op/s · n/σ/CV 1570/0.034/5.2% · total p50 3.621</sub> | -68.0% (-1.387) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER  MATCH (n:User) RETURN count(DISTINCT n.age) AS distinct_ages
+```
+
+</details>
 
 </details>
 
@@ -56,8 +72,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 1.650<br><sub>context: p90 1.758 · p95 1.778 · p99 1.844 · 583 op/s · total p50 6.856</sub> | 1.022<br><sub>context: p90 1.068 · p95 1.080 · p99 1.102 · 873 op/s · total p50 4.605</sub> | -38.0% (-0.628) | 150% AND 2 ms | 🟢 |
-| 8 | 1.918<br><sub>context: p90 2.645 · p95 2.949 · p99 3.362 · 3682 op/s · total p50 8.330</sub> | 1.625<br><sub>context: p90 2.339 · p95 2.503 · p99 2.820 · 4121 op/s · total p50 7.580</sub> | -15.3% (-0.293) | 150% AND 2 ms | 🟢 |
+| 1 | 1.867<br><sub>context: p90 1.925 · p95 1.941 · p99 1.968 · 507 op/s · n/σ/CV 196/0.044/2.3% · total p50 7.864</sub> | 1.098<br><sub>context: p90 1.123 · p95 1.130 · p99 1.152 · 786 op/s · n/σ/CV 197/0.019/1.8% · total p50 5.071</sub> | -41.2% (-0.769) | 150% AND 2 ms | 🟢 |
+| 8 | 2.030<br><sub>context: p90 2.692 · p95 2.934 · p99 3.298 · 3443 op/s · n/σ/CV 1555/0.357/16.6% · total p50 8.837</sub> | 1.740<br><sub>context: p90 2.436 · p95 2.616 · p99 2.810 · 3768 op/s · n/σ/CV 1592/0.458/25.4% · total p50 8.366</sub> | -14.3% (-0.290) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER  MATCH (n:User) WHERE n.age >= 18 RETURN avg(n.age) AS avg_age
+```
+
+</details>
 
 </details>
 
@@ -67,8 +91,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 2.232<br><sub>context: p90 2.369 · p95 2.410 · p99 2.478 · 435 op/s · total p50 9.140</sub> | 1.065<br><sub>context: p90 1.129 · p95 1.153 · p99 1.181 · 866 op/s · total p50 4.636</sub> | -52.3% (-1.166) | 150% AND 2 ms | 🟢 |
-| 8 | 2.514<br><sub>context: p90 3.317 · p95 3.638 · p99 4.386 · 2793 op/s · total p50 10.811</sub> | 1.137<br><sub>context: p90 1.287 · p95 1.328 · p99 1.409 · 6045 op/s · total p50 5.215</sub> | -54.8% (-1.377) | 150% AND 2 ms | 🟢 |
+| 1 | 2.489<br><sub>context: p90 2.549 · p95 2.590 · p99 2.636 · 386 op/s · n/σ/CV 197/0.053/2.1% · total p50 10.349</sub> | 1.194<br><sub>context: p90 1.220 · p95 1.225 · p99 1.239 · 724 op/s · n/σ/CV 196/0.020/1.7% · total p50 5.515</sub> | -52.0% (-1.295) | 150% AND 2 ms | 🟢 |
+| 8 | 2.752<br><sub>context: p90 3.618 · p95 3.920 · p99 4.589 · 2576 op/s · n/σ/CV 1557/0.495/16.9% · total p50 11.912</sub> | 1.217<br><sub>context: p90 1.347 · p95 1.395 · p99 1.467 · 5105 op/s · n/σ/CV 1552/0.071/5.8% · total p50 6.074</sub> | -55.8% (-1.536) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER  MATCH (n:User) RETURN min(n.age) AS min_age, max(n.age) AS max_age, avg(n.age) AS avg_age
+```
+
+</details>
 
 </details>
 
@@ -78,8 +110,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.063<br><sub>context: p90 0.081 · p95 0.102 · p99 0.115 · 10374 op/s · total p50 0.373</sub> | 0.013<br><sub>context: p90 0.015 · p95 0.016 · p99 0.022 · 15797 op/s · total p50 0.249</sub> | -79.2% (-0.050) | 150% AND 2 ms | 🟢 |
-| 8 | 0.160<br><sub>context: p90 0.279 · p95 0.324 · p99 0.408 · 36348 op/s · total p50 0.821</sub> | 0.015<br><sub>context: p90 0.022 · p95 0.024 · p99 0.029 · 61782 op/s · total p50 0.393</sub> | -90.7% (-0.145) | 150% AND 2 ms | 🟢 |
+| 1 | 0.069<br><sub>context: p90 0.101 · p95 0.118 · p99 0.125 · 8625 op/s · n/σ/CV 198/0.018/25.6% · total p50 0.442</sub> | 0.017<br><sub>context: p90 0.026 · p95 0.029 · p99 0.038 · 10668 op/s · n/σ/CV 179/0.005/29.7% · total p50 0.327</sub> | -75.4% (-0.052) | 150% AND 2 ms | 🟢 |
+| 8 | 0.167<br><sub>context: p90 0.286 · p95 0.342 · p99 0.441 · 35143 op/s · n/σ/CV 1588/0.080/44.9% · total p50 0.849</sub> | 0.016<br><sub>context: p90 0.023 · p95 0.025 · p99 0.032 · 53159 op/s · n/σ/CV 1431/0.005/26.3% · total p50 0.431</sub> | -90.5% (-0.151) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER  CALL db.meta.stats() YIELD nodeCount RETURN nodeCount AS cnt
+```
+
+</details>
 
 </details>
 
@@ -89,8 +129,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.162<br><sub>context: p90 0.200 · p95 0.214 · p99 0.226 · 4863 op/s · total p50 0.816</sub> | 0.043<br><sub>context: p90 0.068 · p95 0.072 · p99 0.082 · 7683 op/s · total p50 0.513</sub> | -73.8% (-0.120) | 150% AND 2 ms | 🟢 |
-| 8 | 0.269<br><sub>context: p90 0.399 · p95 0.471 · p99 0.579 · 21590 op/s · total p50 1.426</sub> | 0.052<br><sub>context: p90 0.085 · p95 0.089 · p99 0.096 · 38411 op/s · total p50 0.796</sub> | -80.7% (-0.217) | 150% AND 2 ms | 🟢 |
+| 1 | 0.214<br><sub>context: p90 0.270 · p95 0.278 · p99 0.292 · 3698 op/s · n/σ/CV 199/0.037/17.2% · total p50 1.078</sub> | 0.074<br><sub>context: p90 0.103 · p95 0.110 · p99 0.143 · 3375 op/s · n/σ/CV 195/0.021/27.7% · total p50 1.122</sub> | -65.6% (-0.141) | 150% AND 2 ms | 🟢 |
+| 8 | 0.308<br><sub>context: p90 0.454 · p95 0.516 · p99 0.622 · 18639 op/s · n/σ/CV 1592/0.092/28.0% · total p50 1.651</sub> | 0.056<br><sub>context: p90 0.091 · p95 0.099 · p99 0.124 · 32476 op/s · n/σ/CV 1570/0.021/34.3% · total p50 0.894</sub> | -81.8% (-0.252) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER id = 4275 MATCH (s:User {id: $id})-->(n:User) RETURN n.id
+```
+
+</details>
 
 </details>
 
@@ -100,8 +148,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.174<br><sub>context: p90 0.218 · p95 0.231 · p99 0.242 · 4497 op/s · total p50 0.880</sub> | 0.043<br><sub>context: p90 0.069 · p95 0.072 · p99 0.077 · 6977 op/s · total p50 0.567</sub> | -75.3% (-0.131) | 150% AND 2 ms | 🟢 |
-| 8 | 0.309<br><sub>context: p90 0.442 · p95 0.507 · p99 0.636 · 19455 op/s · total p50 1.584</sub> | 0.052<br><sub>context: p90 0.083 · p95 0.087 · p99 0.098 · 36952 op/s · total p50 0.806</sub> | -83.2% (-0.257) | 150% AND 2 ms | 🟢 |
+| 1 | 0.251<br><sub>context: p90 0.295 · p95 0.302 · p99 0.315 · 3230 op/s · n/σ/CV 199/0.033/13.2% · total p50 1.223</sub> | 0.065<br><sub>context: p90 0.094 · p95 0.098 · p99 0.109 · 4567 op/s · n/σ/CV 200/0.017/26.1% · total p50 0.859</sub> | -74.2% (-0.187) | 150% AND 2 ms | 🟢 |
+| 8 | 0.335<br><sub>context: p90 0.487 · p95 0.538 · p99 0.640 · 17292 op/s · n/σ/CV 1581/0.095/26.7% · total p50 1.762</sub> | 0.059<br><sub>context: p90 0.092 · p95 0.098 · p99 0.143 · 32395 op/s · n/σ/CV 1584/0.021/32.7% · total p50 0.905</sub> | -82.6% (-0.277) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER id = 6967 MATCH (s:User {id: $id})-->(n:User)  WHERE n.age >= 18  RETURN n.id
+```
+
+</details>
 
 </details>
 
@@ -111,8 +167,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.186<br><sub>context: p90 0.253 · p95 0.274 · p99 0.298 · 4195 op/s · total p50 0.942</sub> | 0.079<br><sub>context: p90 0.105 · p95 0.117 · p99 0.134 · 5262 op/s · total p50 0.745</sub> | -57.5% (-0.107) | 150% AND 2 ms | 🟢 |
-| 8 | 0.340<br><sub>context: p90 0.504 · p95 0.570 · p99 0.690 · 16938 op/s · total p50 1.810</sub> | 0.097<br><sub>context: p90 0.129 · p95 0.137 · p99 0.152 · 29588 op/s · total p50 1.006</sub> | -71.4% (-0.243) | 150% AND 2 ms | 🟢 |
+| 1 | 0.262<br><sub>context: p90 0.311 · p95 0.323 · p99 0.342 · 3064 op/s · n/σ/CV 199/0.035/13.2% · total p50 1.292</sub> | 0.130<br><sub>context: p90 0.157 · p95 0.163 · p99 0.173 · 3006 op/s · n/σ/CV 200/0.020/15.7% · total p50 1.318</sub> | -50.6% (-0.133) | 150% AND 2 ms | 🟢 |
+| 8 | 0.361<br><sub>context: p90 0.538 · p95 0.616 · p99 0.757 · 15979 op/s · n/σ/CV 1589/0.110/28.2% · total p50 1.931</sub> | 0.103<br><sub>context: p90 0.136 · p95 0.143 · p99 0.158 · 27313 op/s · n/σ/CV 1581/0.020/19.4% · total p50 1.069</sub> | -71.4% (-0.257) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER id = 7714 MATCH (s:User {id: $id})-->()-->(n:User) RETURN DISTINCT n.id
+```
+
+</details>
 
 </details>
 
@@ -122,8 +186,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.239<br><sub>context: p90 0.300 · p95 0.320 · p99 0.348 · 3379 op/s · total p50 1.193</sub> | 0.093<br><sub>context: p90 0.122 · p95 0.128 · p99 0.144 · 4443 op/s · total p50 0.900</sub> | -61.1% (-0.146) | 150% AND 2 ms | 🟢 |
-| 8 | 0.361<br><sub>context: p90 0.510 · p95 0.568 · p99 0.692 · 16265 op/s · total p50 1.902</sub> | 0.104<br><sub>context: p90 0.138 · p95 0.147 · p99 0.164 · 25496 op/s · total p50 1.115</sub> | -71.3% (-0.257) | 150% AND 2 ms | 🟢 |
+| 1 | 0.318<br><sub>context: p90 0.361 · p95 0.368 · p99 0.390 · 2567 op/s · n/σ/CV 199/0.039/12.6% · total p50 1.545</sub> | 0.124<br><sub>context: p90 0.154 · p95 0.161 · p99 0.182 · 3167 op/s · n/σ/CV 199/0.024/19.4% · total p50 1.260</sub> | -61.0% (-0.194) | 150% AND 2 ms | 🟢 |
+| 8 | 0.407<br><sub>context: p90 0.616 · p95 0.703 · p99 0.870 · 14182 op/s · n/σ/CV 1577/0.126/28.8% · total p50 2.160</sub> | 0.110<br><sub>context: p90 0.147 · p95 0.156 · p99 0.181 · 25053 op/s · n/σ/CV 1588/0.025/21.6% · total p50 1.173</sub> | -72.9% (-0.297) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER id = 5665 MATCH (s:User {id: $id})-->()-->(n:User)  WHERE n.age >= 18  RETURN DISTINCT n.id
+```
+
+</details>
 
 </details>
 
@@ -133,8 +205,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.279<br><sub>context: p90 0.345 · p95 0.368 · p99 0.387 · 2914 op/s · total p50 1.366</sub> | 0.112<br><sub>context: p90 0.149 · p95 0.158 · p99 0.181 · 4126 op/s · total p50 0.954</sub> | -59.8% (-0.167) | 150% AND 2 ms | 🟢 |
-| 8 | 0.407<br><sub>context: p90 0.573 · p95 0.657 · p99 0.823 · 13025 op/s · total p50 2.328</sub> | 0.137<br><sub>context: p90 0.187 · p95 0.201 · p99 0.224 · 16049 op/s · total p50 1.875</sub> | -66.3% (-0.270) | 150% AND 2 ms | 🟢 |
+| 1 | 0.345<br><sub>context: p90 0.412 · p95 0.425 · p99 0.449 · 2305 op/s · n/σ/CV 195/0.045/13.0% · total p50 1.672</sub> | 0.139<br><sub>context: p90 0.179 · p95 0.189 · p99 0.212 · 3181 op/s · n/σ/CV 200/0.029/20.2% · total p50 1.252</sub> | -59.8% (-0.206) | 150% AND 2 ms | 🟢 |
+| 8 | 0.460<br><sub>context: p90 0.656 · p95 0.744 · p99 0.910 · 11649 op/s · n/σ/CV 1549/0.130/26.8% · total p50 2.542</sub> | 0.151<br><sub>context: p90 0.199 · p95 0.214 · p99 0.244 · 15376 op/s · n/σ/CV 1600/0.034/22.4% · total p50 1.961</sub> | -67.2% (-0.309) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER id = 1612 MATCH (s:User {id: $id})-->()-->()-->(n:User) RETURN DISTINCT n.id
+```
+
+</details>
 
 </details>
 
@@ -144,8 +224,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.301<br><sub>context: p90 0.378 · p95 0.392 · p99 0.443 · 2736 op/s · total p50 1.450</sub> | 0.129<br><sub>context: p90 0.172 · p95 0.179 · p99 0.205 · 3485 op/s · total p50 1.133</sub> | -57.0% (-0.171) | 150% AND 2 ms | 🟢 |
-| 8 | 0.469<br><sub>context: p90 0.636 · p95 0.703 · p99 0.870 · 12234 op/s · total p50 2.474</sub> | 0.150<br><sub>context: p90 0.205 · p95 0.221 · p99 0.246 · 14456 op/s · total p50 2.090</sub> | -68.1% (-0.319) | 150% AND 2 ms | 🟢 |
+| 1 | 0.399<br><sub>context: p90 0.466 · p95 0.497 · p99 0.551 · 2044 op/s · n/σ/CV 199/0.054/13.3% · total p50 1.916</sub> | 0.164<br><sub>context: p90 0.204 · p95 0.214 · p99 0.235 · 2652 op/s · n/σ/CV 199/0.028/17.2% · total p50 1.503</sub> | -59.0% (-0.235) | 150% AND 2 ms | 🟢 |
+| 8 | 0.528<br><sub>context: p90 0.744 · p95 0.835 · p99 1.020 · 10885 op/s · n/σ/CV 1579/0.144/26.0% · total p50 2.827</sub> | 0.161<br><sub>context: p90 0.216 · p95 0.231 · p99 0.256 · 14297 op/s · n/σ/CV 1600/0.038/23.2% · total p50 2.138</sub> | -69.5% (-0.367) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER id = 460 MATCH (s:User {id: $id})-->()-->()-->(n:User)  WHERE n.age >= 18  RETURN DISTINCT n.id
+```
+
+</details>
 
 </details>
 
@@ -155,8 +243,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.484<br><sub>context: p90 0.643 · p95 0.686 · p99 0.774 · 1694 op/s · total p50 2.324</sub> | 0.226<br><sub>context: p90 0.301 · p95 0.323 · p99 0.351 · 2037 op/s · total p50 1.836</sub> | -53.4% (-0.259) | 150% AND 2 ms | 🟢 |
-| 8 | 0.548<br><sub>context: p90 0.787 · p95 0.870 · p99 1.015 · 4284 op/s · total p50 6.973</sub> | 0.255<br><sub>context: p90 0.349 · p95 0.384 · p99 0.425 · 4138 op/s · total p50 7.360</sub> | -53.5% (-0.293) | 150% AND 2 ms | 🟢 |
+| 1 | 0.603<br><sub>context: p90 0.763 · p95 0.794 · p99 0.913 · 1367 op/s · n/σ/CV 200/0.118/19.7% · total p50 2.877</sub> | 0.287<br><sub>context: p90 0.377 · p95 0.392 · p99 0.427 · 1651 op/s · n/σ/CV 198/0.062/21.2% · total p50 2.217</sub> | -52.4% (-0.316) | 150% AND 2 ms | 🟢 |
+| 8 | 0.645<br><sub>context: p90 0.858 · p95 0.926 · p99 1.117 · 3691 op/s · n/σ/CV 1597/0.154/23.4% · total p50 8.123</sub> | 0.281<br><sub>context: p90 0.376 · p95 0.410 · p99 0.461 · 3934 op/s · n/σ/CV 1600/0.068/23.7% · total p50 7.733</sub> | -56.5% (-0.364) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER id = 2820 MATCH (s:User {id: $id})-->()-->()-->()-->(n:User) RETURN DISTINCT n.id
+```
+
+</details>
 
 </details>
 
@@ -166,8 +262,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.553<br><sub>context: p90 0.705 · p95 0.732 · p99 0.830 · 1524 op/s · total p50 2.570</sub> | 0.240<br><sub>context: p90 0.321 · p95 0.367 · p99 0.433 · 2050 op/s · total p50 1.833</sub> | -56.6% (-0.313) | 150% AND 2 ms | 🟢 |
-| 8 | 0.639<br><sub>context: p90 0.894 · p95 0.961 · p99 1.103 · 4050 op/s · total p50 7.421</sub> | 0.280<br><sub>context: p90 0.375 · p95 0.405 · p99 0.463 · 3867 op/s · total p50 8.002</sub> | -56.3% (-0.360) | 150% AND 2 ms | 🟢 |
+| 1 | 0.620<br><sub>context: p90 0.768 · p95 0.834 · p99 0.899 · 1336 op/s · n/σ/CV 200/0.112/17.8% · total p50 2.968</sub> | 0.299<br><sub>context: p90 0.379 · p95 0.399 · p99 0.457 · 1737 op/s · n/σ/CV 200/0.062/20.6% · total p50 2.242</sub> | -51.8% (-0.321) | 150% AND 2 ms | 🟢 |
+| 8 | 0.709<br><sub>context: p90 0.971 · p95 1.051 · p99 1.199 · 3649 op/s · n/σ/CV 1599/0.175/24.0% · total p50 8.499</sub> | 0.298<br><sub>context: p90 0.390 · p95 0.420 · p99 0.463 · 3573 op/s · n/σ/CV 1600/0.066/21.8% · total p50 8.666</sub> | -58.0% (-0.412) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER id = 5473 MATCH (s:User {id: $id})-->()-->()-->()-->(n:User)  WHERE n.age >= 18 RETURN DISTINCT n.id
+```
+
+</details>
 
 </details>
 
@@ -177,8 +281,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.400<br><sub>context: p90 0.487 · p95 0.517 · p99 0.559 · 2203 op/s · total p50 1.799</sub> | 0.307<br><sub>context: p90 0.467 · p95 0.499 · p99 0.575 · 2235 op/s · total p50 1.780</sub> | -23.3% (-0.093) | 150% AND 2 ms | 🟢 |
-| 8 | 0.563<br><sub>context: p90 0.737 · p95 0.793 · p99 0.947 · 10790 op/s · total p50 2.852</sub> | 0.375<br><sub>context: p90 0.580 · p95 0.659 · p99 0.767 · 13050 op/s · total p50 2.276</sub> | -33.4% (-0.188) | 150% AND 2 ms | 🟢 |
+| 1 | 0.498<br><sub>context: p90 0.585 · p95 0.626 · p99 0.691 · 1718 op/s · n/σ/CV 198/0.069/13.8% · total p50 2.324</sub> | 0.334<br><sub>context: p90 0.516 · p95 0.553 · p99 0.630 · 1980 op/s · n/σ/CV 199/0.132/38.4% · total p50 1.993</sub> | -32.9% (-0.164) | 150% AND 2 ms | 🟢 |
+| 8 | 0.584<br><sub>context: p90 0.770 · p95 0.838 · p99 1.005 · 10385 op/s · n/σ/CV 1584/0.126/20.9% · total p50 3.007</sub> | 0.419<br><sub>context: p90 0.647 · p95 0.715 · p99 0.886 · 11694 op/s · n/σ/CV 1599/0.171/40.3% · total p50 2.659</sub> | -28.2% (-0.165) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER from = 326 to = 140 MATCH (s:User {id: $from}), (t:User {id: $to}) WITH s, t MATCH p = allShortestPaths((s)-[:Friend*1..4]->(t)) RETURN length(p)
+```
+
+</details>
 
 </details>
 
@@ -188,8 +300,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.216<br><sub>context: p90 0.270 · p95 0.281 · p99 0.318 · 3783 op/s · total p50 1.043</sub> | 0.063<br><sub>context: p90 0.089 · p95 0.100 · p99 0.105 · 5786 op/s · total p50 0.679</sub> | -70.6% (-0.152) | 150% AND 2 ms | 🟢 |
-| 8 | 0.378<br><sub>context: p90 0.547 · p95 0.626 · p99 0.743 · 15928 op/s · total p50 1.918</sub> | 0.077<br><sub>context: p90 0.109 · p95 0.116 · p99 0.134 · 32904 op/s · total p50 0.930</sub> | -79.6% (-0.301) | 150% AND 2 ms | 🟢 |
+| 1 | 0.321<br><sub>context: p90 0.361 · p95 0.372 · p99 0.393 · 2624 op/s · n/σ/CV 199/0.043/13.7% · total p50 1.539</sub> | 0.086<br><sub>context: p90 0.113 · p95 0.125 · p99 0.138 · 4614 op/s · n/σ/CV 200/0.021/24.3% · total p50 0.841</sub> | -73.2% (-0.235) | 150% AND 2 ms | 🟢 |
+| 8 | 0.413<br><sub>context: p90 0.610 · p95 0.686 · p99 0.847 · 14522 op/s · n/σ/CV 1575/0.122/27.7% · total p50 2.102</sub> | 0.086<br><sub>context: p90 0.119 · p95 0.126 · p99 0.145 · 29403 op/s · n/σ/CV 1587/0.021/23.1% · total p50 1.041</sub> | -79.1% (-0.326) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER id = 1670 MATCH (a:User {id: $id}) CALL { WITH a MATCH (a)-->(b:User) RETURN b.id AS bid } RETURN bid
+```
+
+</details>
 
 </details>
 
@@ -199,8 +319,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.106<br><sub>context: p90 0.140 · p95 0.155 · p99 0.176 · 6817 op/s · total p50 0.570</sub> | 0.001<br><sub>context: p90 0.002 · p95 0.002 · p99 0.002 · 14063 op/s · total p50 0.279</sub> | -98.6% (-0.105) | 150% AND 2 ms | 🟢 |
-| 8 | 0.225<br><sub>context: p90 0.361 · p95 0.421 · p99 0.516 · 26969 op/s · total p50 1.133</sub> | 0.002<br><sub>context: p90 0.003 · p95 0.003 · p99 0.004 · 60949 op/s · total p50 0.383</sub> | -99.1% (-0.223) | 150% AND 2 ms | 🟢 |
+| 1 | 0.164<br><sub>context: p90 0.200 · p95 0.204 · p99 0.222 · 4625 op/s · n/σ/CV 200/0.031/19.2% · total p50 0.846</sub> | 0.002<br><sub>context: p90 0.003 · p95 0.003 · p99 0.003 · 12681 op/s · n/σ/CV 190/0.000/19.5% · total p50 0.299</sub> | -98.7% (-0.162) | 150% AND 2 ms | 🟢 |
+| 8 | 0.242<br><sub>context: p90 0.399 · p95 0.479 · p99 0.596 · 24786 op/s · n/σ/CV 1588/0.101/37.9% · total p50 1.220</sub> | 0.002<br><sub>context: p90 0.003 · p95 0.003 · p99 0.004 · 55349 op/s · n/σ/CV 1444/0.001/26.3% · total p50 0.431</sub> | -99.1% (-0.240) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER  MATCH ()-[r:Friend]->() RETURN count(r) AS cnt
+```
+
+</details>
 
 </details>
 
@@ -210,8 +338,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.083<br><sub>context: p90 0.118 · p95 0.132 · p99 0.140 · 7645 op/s · total p50 0.514</sub> | 0.002<br><sub>context: p90 0.002 · p95 0.002 · p99 0.003 · 18780 op/s · total p50 0.209</sub> | -98.2% (-0.082) | 150% AND 2 ms | 🟢 |
-| 8 | 0.179<br><sub>context: p90 0.286 · p95 0.342 · p99 0.432 · 33672 op/s · total p50 0.897</sub> | 0.002<br><sub>context: p90 0.003 · p95 0.003 · p99 0.004 · 61614 op/s · total p50 0.370</sub> | -98.8% (-0.177) | 150% AND 2 ms | 🟢 |
+| 1 | 0.099<br><sub>context: p90 0.141 · p95 0.151 · p99 0.172 · 6663 op/s · n/σ/CV 200/0.026/24.6% · total p50 0.574</sub> | 0.002<br><sub>context: p90 0.002 · p95 0.002 · p99 0.003 · 17157 op/s · n/σ/CV 185/0.000/21.1% · total p50 0.221</sub> | -98.4% (-0.098) | 150% AND 2 ms | 🟢 |
+| 8 | 0.193<br><sub>context: p90 0.307 · p95 0.371 · p99 0.452 · 31294 op/s · n/σ/CV 1590/0.079/38.7% · total p50 0.952</sub> | 0.002<br><sub>context: p90 0.003 · p95 0.003 · p99 0.004 · 52547 op/s · n/σ/CV 1363/0.001/28.1% · total p50 0.401</sub> | -98.8% (-0.190) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER  MATCH (u:User) RETURN count(u) AS cnt
+```
+
+</details>
 
 </details>
 
@@ -221,8 +357,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.278<br><sub>context: p90 0.351 · p95 0.368 · p99 0.412 · 2927 op/s · total p50 1.358</sub> | 0.065<br><sub>context: p90 0.093 · p95 0.097 · p99 0.111 · 4557 op/s · total p50 0.862</sub> | -76.7% (-0.213) | 150% AND 2 ms | 🟢 |
-| 8 | 0.451<br><sub>context: p90 0.623 · p95 0.708 · p99 0.854 · 13601 op/s · total p50 2.225</sub> | 0.076<br><sub>context: p90 0.105 · p95 0.114 · p99 0.129 · 25103 op/s · total p50 1.206</sub> | -83.1% (-0.375) | 150% AND 2 ms | 🟢 |
+| 1 | 0.397<br><sub>context: p90 0.448 · p95 0.458 · p99 0.474 · 2092 op/s · n/σ/CV 199/0.039/10.0% · total p50 1.882</sub> | 0.072<br><sub>context: p90 0.100 · p95 0.113 · p99 0.121 · 3821 op/s · n/σ/CV 200/0.019/24.6% · total p50 1.022</sub> | -81.9% (-0.325) | 150% AND 2 ms | 🟢 |
+| 8 | 0.500<br><sub>context: p90 0.769 · p95 0.907 · p99 1.088 · 12054 op/s · n/σ/CV 1582/0.164/30.0% · total p50 2.547</sub> | 0.078<br><sub>context: p90 0.108 · p95 0.117 · p99 0.129 · 24679 op/s · n/σ/CV 1595/0.019/24.0% · total p50 1.193</sub> | -84.4% (-0.422) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER id = 643 MATCH p=(a:User {id: $id})-[r:Friend]->(b:User) RETURN labels(a), type(r), properties(a), nodes(p), relationships(p), length(p) LIMIT 1
+```
+
+</details>
 
 </details>
 
@@ -232,8 +376,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.567<br><sub>context: p90 0.727 · p95 0.766 · p99 0.853 · 1664 op/s · total p50 2.380</sub> | 1.003<br><sub>context: p90 1.421 · p95 1.501 · p99 1.665 · 860 op/s · total p50 4.651</sub> | +76.8% (+0.436) | 150% AND 2 ms | 🟢 |
-| 8 | 0.705<br><sub>context: p90 0.999 · p95 1.095 · p99 1.366 · 8003 op/s · total p50 3.814</sub> | 1.585<br><sub>context: p90 2.376 · p95 2.542 · p99 2.883 · 4083 op/s · total p50 7.328</sub> | +124.8% (+0.880) | 150% AND 2 ms | 🟢 |
+| 1 | 0.694<br><sub>context: p90 0.890 · p95 0.936 · p99 0.972 · 1269 op/s · n/σ/CV 199/0.144/20.8% · total p50 3.155</sub> | 1.118<br><sub>context: p90 1.540 · p95 1.628 · p99 1.799 · 763 op/s · n/σ/CV 200/0.329/29.8% · total p50 5.217</sub> | +61.2% (+0.425) | 150% AND 2 ms | 🟢 |
+| 8 | 0.780<br><sub>context: p90 1.080 · p95 1.195 · p99 1.495 · 7249 op/s · n/σ/CV 1593/0.221/27.5% · total p50 4.087</sub> | 1.829<br><sub>context: p90 2.752 · p95 2.971 · p99 3.434 · 3594 op/s · n/σ/CV 1600/0.655/35.2% · total p50 8.349</sub> | +134.4% (+1.049) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER id = 7839 MATCH (s:User {id: $id})-[:Friend*5..5]->(t:User) RETURN count(t) AS cnt
+```
+
+</details>
 
 </details>
 
@@ -243,8 +395,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 1.994<br><sub>context: p90 3.489 · p95 3.721 · p99 3.935 · 444 op/s · total p50 8.931</sub> | 4.264<br><sub>context: p90 6.675 · p95 7.163 · p99 7.537 · 216 op/s · total p50 18.028</sub> | +113.9% (+2.270) | 150% AND 2 ms | 🟢 |
-| 8 | 2.150<br><sub>context: p90 3.728 · p95 4.135 · p99 5.224 · 3147 op/s · total p50 9.611</sub> | 6.600<br><sub>context: p90 10.311 · p95 11.026 · p99 12.317 · 1098 op/s · total p50 28.550</sub> | +207.0% (+4.450) | 150% AND 2 ms | 🔴 |
+| 1 | 2.285<br><sub>context: p90 3.826 · p95 4.152 · p99 4.331 · 388 op/s · n/σ/CV 200/0.969/39.2% · total p50 10.017</sub> | 4.551<br><sub>context: p90 7.387 · p95 7.845 · p99 8.034 · 197 op/s · n/σ/CV 200/1.834/38.0% · total p50 20.118</sub> | +99.2% (+2.266) | 150% AND 2 ms | 🟢 |
+| 8 | 2.469<br><sub>context: p90 4.094 · p95 4.534 · p99 5.923 · 2835 op/s · n/σ/CV 1598/1.104/41.6% · total p50 10.742</sub> | 7.791<br><sub>context: p90 12.282 · p95 13.015 · p99 14.035 · 932 op/s · n/σ/CV 1600/2.858/35.0% · total p50 33.688</sub> | +215.5% (+5.322) | 150% AND 2 ms | 🔴 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER id = 1982 MATCH (s:User {id: $id})-[:Friend*6..6]->(t:User) RETURN count(t) AS cnt
+```
+
+</details>
 
 </details>
 
@@ -254,8 +414,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.092<br><sub>context: p90 0.134 · p95 0.155 · p99 0.174 · 6879 op/s · total p50 0.559</sub> | 0.014<br><sub>context: p90 0.021 · p95 0.022 · p99 0.028 · 11012 op/s · total p50 0.350</sub> | -84.7% (-0.078) | 150% AND 2 ms | 🟢 |
-| 8 | 0.216<br><sub>context: p90 0.342 · p95 0.396 · p99 0.490 · 26695 op/s · total p50 1.153</sub> | 0.018<br><sub>context: p90 0.023 · p95 0.025 · p99 0.029 · 45166 op/s · total p50 0.633</sub> | -91.6% (-0.198) | 150% AND 2 ms | 🟢 |
+| 1 | 0.176<br><sub>context: p90 0.220 · p95 0.229 · p99 0.263 · 4209 op/s · n/σ/CV 200/0.039/23.0% · total p50 0.944</sub> | 0.018<br><sub>context: p90 0.036 · p95 0.038 · p99 0.042 · 8891 op/s · n/σ/CV 199/0.008/36.4% · total p50 0.395</sub> | -89.6% (-0.157) | 150% AND 2 ms | 🟢 |
+| 8 | 0.247<br><sub>context: p90 0.388 · p95 0.463 · p99 0.569 · 22081 op/s · n/σ/CV 1566/0.093/34.7% · total p50 1.352</sub> | 0.019<br><sub>context: p90 0.024 · p95 0.027 · p99 0.033 · 41962 op/s · n/σ/CV 1530/0.004/21.0% · total p50 0.614</sub> | -92.4% (-0.228) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER  CALL db.idx.fulltext.queryNodes('User', 'fixture_alice') YIELD node, score RETURN id(node), score LIMIT 10
+```
+
+</details>
 
 </details>
 
@@ -265,8 +433,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.113<br><sub>context: p90 0.140 · p95 0.151 · p99 0.158 · 6685 op/s · total p50 0.598</sub> | 0.012<br><sub>context: p90 0.020 · p95 0.021 · p99 0.024 · 10785 op/s · total p50 0.366</sub> | -89.3% (-0.101) | 150% AND 2 ms | 🟢 |
-| 8 | 0.219<br><sub>context: p90 0.351 · p95 0.413 · p99 0.533 · 25709 op/s · total p50 1.190</sub> | 0.017<br><sub>context: p90 0.023 · p95 0.025 · p99 0.031 · 45999 op/s · total p50 0.579</sub> | -92.0% (-0.201) | 150% AND 2 ms | 🟢 |
+| 1 | 0.165<br><sub>context: p90 0.202 · p95 0.218 · p99 0.235 · 4476 op/s · n/σ/CV 200/0.032/19.5% · total p50 0.874</sub> | 0.033<br><sub>context: p90 0.042 · p95 0.043 · p99 0.048 · 5912 op/s · n/σ/CV 198/0.009/27.6% · total p50 0.666</sub> | -80.0% (-0.132) | 150% AND 2 ms | 🟢 |
+| 8 | 0.242<br><sub>context: p90 0.405 · p95 0.478 · p99 0.613 · 22846 op/s · n/σ/CV 1594/0.101/37.6% · total p50 1.348</sub> | 0.018<br><sub>context: p90 0.024 · p95 0.026 · p99 0.031 · 44822 op/s · n/σ/CV 1568/0.004/20.6% · total p50 0.590</sub> | -92.5% (-0.224) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER  CALL db.idx.fulltext.queryRelationships('Friend', 'fixture_blue') YIELD relationship, score RETURN id(relationship), score LIMIT 10
+```
+
+</details>
 
 </details>
 
@@ -276,8 +452,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.106<br><sub>context: p90 0.121 · p95 0.132 · p99 0.145 · 6234 op/s · total p50 0.616</sub> | 0.008<br><sub>context: p90 0.011 · p95 0.012 · p99 0.014 · 10486 op/s · total p50 0.376</sub> | -92.9% (-0.099) | 150% AND 2 ms | 🟢 |
-| 8 | 0.177<br><sub>context: p90 0.235 · p95 0.255 · p99 0.312 · 17228 op/s · total p50 1.774</sub> | 0.010<br><sub>context: p90 0.013 · p95 0.014 · p99 0.017 · 18010 op/s · total p50 1.697</sub> | -94.5% (-0.167) | 150% AND 2 ms | 🟢 |
+| 1 | 0.184<br><sub>context: p90 0.214 · p95 0.221 · p99 0.237 · 3959 op/s · n/σ/CV 199/0.029/16.3% · total p50 0.995</sub> | 0.011<br><sub>context: p90 0.016 · p95 0.017 · p99 0.019 · 7947 op/s · n/σ/CV 195/0.003/24.7% · total p50 0.477</sub> | -94.0% (-0.173) | 150% AND 2 ms | 🟢 |
+| 8 | 0.198<br><sub>context: p90 0.260 · p95 0.285 · p99 0.359 · 16628 op/s · n/σ/CV 1589/0.048/24.1% · total p50 1.834</sub> | 0.011<br><sub>context: p90 0.014 · p95 0.017 · p99 0.021 · 17812 op/s · n/σ/CV 1596/0.003/27.0% · total p50 1.696</sub> | -94.6% (-0.187) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER end = 2049 start = 1949 MATCH (n) WHERE id(n) >= $start AND id(n) < $end RETURN n.id
+```
+
+</details>
 
 </details>
 
@@ -287,8 +471,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.080<br><sub>context: p90 0.110 · p95 0.114 · p99 0.135 · 8663 op/s · total p50 0.456</sub> | 0.004<br><sub>context: p90 0.005 · p95 0.006 · p99 0.006 · 13093 op/s · total p50 0.302</sub> | -94.4% (-0.075) | 150% AND 2 ms | 🟢 |
-| 8 | 0.178<br><sub>context: p90 0.296 · p95 0.341 · p99 0.410 · 32699 op/s · total p50 0.936</sub> | 0.005<br><sub>context: p90 0.007 · p95 0.008 · p99 0.010 · 60066 op/s · total p50 0.406</sub> | -97.0% (-0.173) | 150% AND 2 ms | 🟢 |
+| 1 | 0.111<br><sub>context: p90 0.145 · p95 0.161 · p99 0.171 · 6609 op/s · n/σ/CV 199/0.025/22.5% · total p50 0.585</sub> | 0.006<br><sub>context: p90 0.012 · p95 0.013 · p99 0.014 · 9861 op/s · n/σ/CV 196/0.003/36.6% · total p50 0.389</sub> | -94.5% (-0.105) | 150% AND 2 ms | 🟢 |
+| 8 | 0.204<br><sub>context: p90 0.356 · p95 0.426 · p99 0.537 · 27472 op/s · n/σ/CV 1587/0.092/40.3% · total p50 1.094</sub> | 0.005<br><sub>context: p90 0.008 · p95 0.008 · p99 0.011 · 61569 op/s · n/σ/CV 1484/0.002/28.4% · total p50 0.418</sub> | -97.3% (-0.198) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER id = 2122 MATCH (n) WHERE id(n) = $id RETURN n.id
+```
+
+</details>
 
 </details>
 
@@ -298,8 +490,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.197<br><sub>context: p90 0.232 · p95 0.240 · p99 0.271 · 4242 op/s · total p50 0.922</sub> | 0.130<br><sub>context: p90 0.164 · p95 0.174 · p99 0.200 · 4518 op/s · total p50 0.858</sub> | -34.3% (-0.068) | 150% AND 2 ms | 🟢 |
-| 8 | 0.292<br><sub>context: p90 0.406 · p95 0.460 · p99 0.540 · 19478 op/s · total p50 1.586</sub> | 0.139<br><sub>context: p90 0.181 · p95 0.193 · p99 0.221 · 29148 op/s · total p50 1.031</sub> | -52.2% (-0.152) | 150% AND 2 ms | 🟢 |
+| 1 | 0.268<br><sub>context: p90 0.309 · p95 0.322 · p99 0.353 · 3097 op/s · n/σ/CV 199/0.038/14.3% · total p50 1.278</sub> | 0.141<br><sub>context: p90 0.180 · p95 0.187 · p99 0.216 · 3700 op/s · n/σ/CV 199/0.030/21.1% · total p50 1.040</sub> | -47.5% (-0.127) | 150% AND 2 ms | 🟢 |
+| 8 | 0.323<br><sub>context: p90 0.478 · p95 0.542 · p99 0.672 · 17085 op/s · n/σ/CV 1557/0.094/27.2% · total p50 1.751</sub> | 0.150<br><sub>context: p90 0.195 · p95 0.205 · p99 0.234 · 26753 op/s · n/σ/CV 1587/0.034/22.9% · total p50 1.140</sub> | -53.7% (-0.173) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER id1 = 5885 id2 = 9218 id3 = 9441 id4 = 2621 MATCH (u:User) WHERE u.id IN [$id1, $id2, $id3, $id4] RETURN u.id
+```
+
+</details>
 
 </details>
 
@@ -309,8 +509,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.144<br><sub>context: p90 0.176 · p95 0.185 · p99 0.197 · 5597 op/s · total p50 0.706</sub> | 0.059<br><sub>context: p90 0.087 · p95 0.095 · p99 0.104 · 7003 op/s · total p50 0.559</sub> | -58.9% (-0.085) | 150% AND 2 ms | 🟢 |
-| 8 | 0.234<br><sub>context: p90 0.355 · p95 0.407 · p99 0.494 · 24564 op/s · total p50 1.234</sub> | 0.070<br><sub>context: p90 0.102 · p95 0.110 · p99 0.139 · 40079 op/s · total p50 0.757</sub> | -70.3% (-0.165) | 150% AND 2 ms | 🟢 |
+| 1 | 0.204<br><sub>context: p90 0.236 · p95 0.243 · p99 0.251 · 3904 op/s · n/σ/CV 199/0.031/15.6% · total p50 1.006</sub> | 0.069<br><sub>context: p90 0.096 · p95 0.100 · p99 0.108 · 5751 op/s · n/σ/CV 199/0.019/25.9% · total p50 0.693</sub> | -66.2% (-0.135) | 150% AND 2 ms | 🟢 |
+| 8 | 0.259<br><sub>context: p90 0.398 · p95 0.448 · p99 0.572 · 21757 op/s · n/σ/CV 1591/0.086/30.6% · total p50 1.391</sub> | 0.074<br><sub>context: p90 0.108 · p95 0.117 · p99 0.150 · 36719 op/s · n/σ/CV 1595/0.025/31.7% · total p50 0.819</sub> | -71.4% (-0.185) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER id1 = 5236 id2 = 3248 MATCH (u:User) WHERE u.id = $id1 OR u.id = $id2 RETURN u.id
+```
+
+</details>
 
 </details>
 
@@ -320,8 +528,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.190<br><sub>context: p90 0.258 · p95 0.265 · p99 0.287 · 4076 op/s · total p50 0.966</sub> | 0.070<br><sub>context: p90 0.100 · p95 0.107 · p99 0.117 · 5961 op/s · total p50 0.663</sub> | -63.3% (-0.120) | 150% AND 2 ms | 🟢 |
-| 8 | 0.318<br><sub>context: p90 0.468 · p95 0.523 · p99 0.640 · 18051 op/s · total p50 1.667</sub> | 0.093<br><sub>context: p90 0.126 · p95 0.134 · p99 0.159 · 28460 op/s · total p50 1.063</sub> | -70.9% (-0.225) | 150% AND 2 ms | 🟢 |
+| 1 | 0.276<br><sub>context: p90 0.308 · p95 0.327 · p99 0.335 · 3001 op/s · n/σ/CV 198/0.030/11.1% · total p50 1.330</sub> | 0.126<br><sub>context: p90 0.162 · p95 0.169 · p99 0.189 · 2871 op/s · n/σ/CV 197/0.024/18.5% · total p50 1.365</sub> | -54.5% (-0.151) | 150% AND 2 ms | 🟢 |
+| 8 | 0.360<br><sub>context: p90 0.539 · p95 0.611 · p99 0.731 · 15768 op/s · n/σ/CV 1575/0.107/27.7% · total p50 1.922</sub> | 0.102<br><sub>context: p90 0.136 · p95 0.145 · p99 0.167 · 26295 op/s · n/σ/CV 1583/0.022/21.2% · total p50 1.130</sub> | -71.7% (-0.258) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER id = 692 MATCH (s:User {id: $id})-->()-->(n:User) RETURN n.id
+```
+
+</details>
 
 </details>
 
@@ -331,8 +547,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.185<br><sub>context: p90 0.234 · p95 0.242 · p99 0.258 · 3898 op/s · total p50 1.011</sub> | 0.067<br><sub>context: p90 0.096 · p95 0.103 · p99 0.118 · 5402 op/s · total p50 0.726</sub> | -63.6% (-0.118) | 150% AND 2 ms | 🟢 |
-| 8 | 0.297<br><sub>context: p90 0.417 · p95 0.469 · p99 0.565 · 16291 op/s · total p50 1.856</sub> | 0.096<br><sub>context: p90 0.132 · p95 0.142 · p99 0.160 · 15421 op/s · total p50 1.945</sub> | -67.7% (-0.201) | 150% AND 2 ms | 🟢 |
+| 1 | 0.240<br><sub>context: p90 0.303 · p95 0.318 · p99 0.337 · 3043 op/s · n/σ/CV 194/0.043/17.7% · total p50 1.267</sub> | 0.107<br><sub>context: p90 0.144 · p95 0.153 · p99 0.168 · 3273 op/s · n/σ/CV 200/0.024/22.4% · total p50 1.201</sub> | -55.4% (-0.133) | 150% AND 2 ms | 🟢 |
+| 8 | 0.364<br><sub>context: p90 0.537 · p95 0.606 · p99 0.719 · 14119 op/s · n/σ/CV 1576/0.107/27.5% · total p50 2.170</sub> | 0.104<br><sub>context: p90 0.144 · p95 0.155 · p99 0.175 · 14896 op/s · n/σ/CV 1599/0.026/24.8% · total p50 2.030</sub> | -71.5% (-0.260) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER id = 6334 MATCH (s:User {id: $id})-->()-->(n:User) RETURN n
+```
+
+</details>
 
 </details>
 
@@ -342,8 +566,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.213<br><sub>context: p90 0.274 · p95 0.296 · p99 0.321 · 3556 op/s · total p50 1.103</sub> | 0.094<br><sub>context: p90 0.129 · p95 0.136 · p99 0.154 · 4122 op/s · total p50 0.943</sub> | -55.8% (-0.119) | 150% AND 2 ms | 🟢 |
-| 8 | 0.357<br><sub>context: p90 0.514 · p95 0.575 · p99 0.709 · 15240 op/s · total p50 1.971</sub> | 0.106<br><sub>context: p90 0.144 · p95 0.153 · p99 0.171 · 17311 op/s · total p50 1.734</sub> | -70.3% (-0.251) | 150% AND 2 ms | 🟢 |
+| 1 | 0.268<br><sub>context: p90 0.322 · p95 0.339 · p99 0.367 · 2941 op/s · n/σ/CV 199/0.044/16.4% · total p50 1.355</sub> | 0.117<br><sub>context: p90 0.150 · p95 0.162 · p99 0.169 · 3102 op/s · n/σ/CV 199/0.023/19.8% · total p50 1.274</sub> | -56.4% (-0.151) | 150% AND 2 ms | 🟢 |
+| 8 | 0.378<br><sub>context: p90 0.519 · p95 0.585 · p99 0.680 · 14680 op/s · n/σ/CV 1574/0.094/23.8% · total p50 2.089</sub> | 0.110<br><sub>context: p90 0.149 · p95 0.157 · p99 0.175 · 16929 op/s · n/σ/CV 1600/0.026/23.4% · total p50 1.801</sub> | -71.0% (-0.268) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER id = 9102 MATCH (s:User {id: $id})-->()-->(n:User) WHERE n.age >= 18 RETURN n
+```
+
+</details>
 
 </details>
 
@@ -353,8 +585,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.179<br><sub>context: p90 0.201 · p95 0.212 · p99 0.240 · 4416 op/s · total p50 0.875</sub> | 0.083<br><sub>context: p90 0.111 · p95 0.118 · p99 0.128 · 4631 op/s · total p50 0.843</sub> | -53.7% (-0.096) | 150% AND 2 ms | 🟢 |
-| 8 | 0.345<br><sub>context: p90 0.487 · p95 0.556 · p99 0.669 · 16846 op/s · total p50 1.793</sub> | 0.100<br><sub>context: p90 0.134 · p95 0.144 · p99 0.160 · 25860 op/s · total p50 1.193</sub> | -70.9% (-0.244) | 150% AND 2 ms | 🟢 |
+| 1 | 0.288<br><sub>context: p90 0.330 · p95 0.344 · p99 0.357 · 2795 op/s · n/σ/CV 198/0.031/10.7% · total p50 1.402</sub> | 0.104<br><sub>context: p90 0.137 · p95 0.142 · p99 0.168 · 3609 op/s · n/σ/CV 200/0.023/21.3% · total p50 1.080</sub> | -63.9% (-0.184) | 150% AND 2 ms | 🟢 |
+| 8 | 0.371<br><sub>context: p90 0.517 · p95 0.585 · p99 0.713 · 15877 op/s · n/σ/CV 1569/0.095/24.3% · total p50 1.937</sub> | 0.103<br><sub>context: p90 0.140 · p95 0.150 · p99 0.166 · 26027 op/s · n/σ/CV 1573/0.023/21.7% · total p50 1.127</sub> | -72.2% (-0.268) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER id = 3235 MATCH (s:User {id: $id})-->()-->(n:User) WHERE n.age >= 18 RETURN n.id
+```
+
+</details>
 
 </details>
 
@@ -364,8 +604,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.232<br><sub>context: p90 0.305 · p95 0.315 · p99 0.338 · 3465 op/s · total p50 1.153</sub> | 0.069<br><sub>context: p90 0.089 · p95 0.100 · p99 0.107 · 5748 op/s · total p50 0.686</sub> | -70.2% (-0.163) | 150% AND 2 ms | 🟢 |
-| 8 | 0.359<br><sub>context: p90 0.512 · p95 0.577 · p99 0.703 · 16300 op/s · total p50 1.903</sub> | 0.077<br><sub>context: p90 0.112 · p95 0.120 · p99 0.144 · 32443 op/s · total p50 0.927</sub> | -78.5% (-0.282) | 150% AND 2 ms | 🟢 |
+| 1 | 0.281<br><sub>context: p90 0.327 · p95 0.341 · p99 0.372 · 2955 op/s · n/σ/CV 199/0.041/14.6% · total p50 1.331</sub> | 0.085<br><sub>context: p90 0.113 · p95 0.123 · p99 0.149 · 4659 op/s · n/σ/CV 200/0.023/26.7% · total p50 0.848</sub> | -69.7% (-0.196) | 150% AND 2 ms | 🟢 |
+| 8 | 0.394<br><sub>context: p90 0.560 · p95 0.619 · p99 0.759 · 15216 op/s · n/σ/CV 1586/0.106/25.4% · total p50 2.021</sub> | 0.081<br><sub>context: p90 0.116 · p95 0.124 · p99 0.148 · 32744 op/s · n/σ/CV 1588/0.023/26.4% · total p50 0.910</sub> | -79.5% (-0.313) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER id = 8719 MATCH (a:User {id: $id}) OPTIONAL MATCH (a)-->(b:User) RETURN a.id, b.id
+```
+
+</details>
 
 </details>
 
@@ -375,8 +623,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 5.482<br><sub>context: p90 5.817 · p95 6.204 · p99 6.855 · 71 op/s · total p50 54.327</sub> | 2.546<br><sub>context: p90 2.681 · p95 2.723 · p99 2.753 · 101 op/s · total p50 39.298</sub> | -53.6% (-2.937) | 150% AND 2 ms | 🟢 |
-| 8 | 5.557<br><sub>context: p90 6.361 · p95 7.253 · p99 7.761 · 176 op/s · total p50 173.316</sub> | 2.571<br><sub>context: p90 2.732 · p95 2.885 · p99 3.283 · 168 op/s · total p50 176.270</sub> | -53.7% (-2.985) | 150% AND 2 ms | 🟢 |
+| 1 | 6.134<br><sub>context: p90 6.217 · p95 6.246 · p99 6.304 · 90 op/s · n/σ/CV 167/0.060/1.0% · total p50 42.901</sub> | 2.848<br><sub>context: p90 2.886 · p95 2.902 · p99 2.982 · 92 op/s · n/σ/CV 169/0.031/1.1% · total p50 42.356</sub> | -53.6% (-3.286) | 150% AND 2 ms | 🟢 |
+| 8 | 6.597<br><sub>context: p90 8.526 · p95 8.912 · p99 9.348 · 149 op/s · n/σ/CV 1539/0.848/12.3% · total p50 206.667</sub> | 2.872<br><sub>context: p90 3.918 · p95 3.996 · p99 4.113 · 154 op/s · n/σ/CV 1600/0.444/14.3% · total p50 199.429</sub> | -56.5% (-3.726) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER  MATCH (n:User) RETURN n.id, n.age ORDER BY n.age, n.id
+```
+
+</details>
 
 </details>
 
@@ -386,8 +642,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.285<br><sub>context: p90 0.334 · p95 0.348 · p99 0.372 · 3055 op/s · total p50 1.317</sub> | 0.093<br><sub>context: p90 0.118 · p95 0.129 · p99 0.145 · 4267 op/s · total p50 0.922</sub> | -67.3% (-0.192) | 150% AND 2 ms | 🟢 |
-| 8 | 0.450<br><sub>context: p90 0.629 · p95 0.694 · p99 0.864 · 13263 op/s · total p50 2.325</sub> | 0.103<br><sub>context: p90 0.135 · p95 0.143 · p99 0.163 · 24730 op/s · total p50 1.239</sub> | -77.2% (-0.347) | 150% AND 2 ms | 🟢 |
+| 1 | 0.391<br><sub>context: p90 0.441 · p95 0.449 · p99 0.475 · 2138 op/s · n/σ/CV 198/0.041/10.6% · total p50 1.863</sub> | 0.114<br><sub>context: p90 0.152 · p95 0.159 · p99 0.173 · 3355 op/s · n/σ/CV 200/0.027/23.4% · total p50 1.196</sub> | -70.8% (-0.277) | 150% AND 2 ms | 🟢 |
+| 8 | 0.487<br><sub>context: p90 0.687 · p95 0.757 · p99 0.922 · 12355 op/s · n/σ/CV 1572/0.125/24.2% · total p50 2.478</sub> | 0.107<br><sub>context: p90 0.143 · p95 0.150 · p99 0.168 · 24554 op/s · n/σ/CV 1586/0.025/22.8% · total p50 1.183</sub> | -78.1% (-0.380) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER id = 9234 MATCH (a:User {id: $id})-->(b:User)-->(c:User)-->(a) RETURN a.id, b.id, c.id
+```
+
+</details>
 
 </details>
 
@@ -397,8 +661,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.465<br><sub>context: p90 0.566 · p95 0.628 · p99 0.716 · 1467 op/s · total p50 2.453</sub> | 0.218<br><sub>context: p90 0.291 · p95 0.317 · p99 0.343 · 1325 op/s · total p50 2.862</sub> | -53.0% (-0.246) | 150% AND 2 ms | 🟢 |
-| 8 | 0.491<br><sub>context: p90 0.673 · p95 0.720 · p99 0.825 · 2820 op/s · total p50 10.962</sub> | 0.236<br><sub>context: p90 0.327 · p95 0.355 · p99 0.418 · 2857 op/s · total p50 10.537</sub> | -51.9% (-0.255) | 150% AND 2 ms | 🟢 |
+| 1 | 0.556<br><sub>context: p90 0.672 · p95 0.714 · p99 0.835 · 1261 op/s · n/σ/CV 195/0.093/16.5% · total p50 2.824</sub> | 0.261<br><sub>context: p90 0.341 · p95 0.359 · p99 0.413 · 1085 op/s · n/σ/CV 200/0.054/20.4% · total p50 3.476</sub> | -53.0% (-0.295) | 150% AND 2 ms | 🟢 |
+| 8 | 0.575<br><sub>context: p90 0.741 · p95 0.805 · p99 0.917 · 2480 op/s · n/σ/CV 1598/0.123/21.0% · total p50 12.334</sub> | 0.271<br><sub>context: p90 0.358 · p95 0.396 · p99 0.479 · 2552 op/s · n/σ/CV 1596/0.066/24.1% · total p50 11.618</sub> | -52.9% (-0.304) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER id = 3234 MATCH (a:User {id: $id})-->()-->()-->()-->(b:User) RETURN a.id, b.id
+```
+
+</details>
 
 </details>
 
@@ -408,8 +680,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.194<br><sub>context: p90 0.260 · p95 0.280 · p99 0.301 · 3976 op/s · total p50 0.995</sub> | 0.094<br><sub>context: p90 0.118 · p95 0.125 · p99 0.145 · 4691 op/s · total p50 0.838</sub> | -51.4% (-0.100) | 150% AND 2 ms | 🟢 |
-| 8 | 0.343<br><sub>context: p90 0.496 · p95 0.564 · p99 0.682 · 17101 op/s · total p50 1.789</sub> | 0.103<br><sub>context: p90 0.141 · p95 0.149 · p99 0.168 · 26278 op/s · total p50 1.141</sub> | -69.9% (-0.240) | 150% AND 2 ms | 🟢 |
+| 1 | 0.282<br><sub>context: p90 0.325 · p95 0.332 · p99 0.356 · 2926 op/s · n/σ/CV 197/0.043/15.5% · total p50 1.344</sub> | 0.143<br><sub>context: p90 0.174 · p95 0.185 · p99 0.215 · 2470 op/s · n/σ/CV 199/0.024/16.2% · total p50 1.600</sub> | -49.3% (-0.139) | 150% AND 2 ms | 🟢 |
+| 8 | 0.378<br><sub>context: p90 0.553 · p95 0.625 · p99 0.740 · 15636 op/s · n/σ/CV 1587/0.109/27.0% · total p50 1.952</sub> | 0.113<br><sub>context: p90 0.152 · p95 0.164 · p99 0.195 · 23360 op/s · n/σ/CV 1585/0.028/23.9% · total p50 1.245</sub> | -70.0% (-0.264) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER id = 5820 MATCH (a:User {id: $id})-->()-->(b:User) RETURN a.id, b.id
+```
+
+</details>
 
 </details>
 
@@ -419,8 +699,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 1.828<br><sub>context: p90 2.407 · p95 2.457 · p99 2.553 · 537 op/s · total p50 7.556</sub> | 0.103<br><sub>context: p90 0.140 · p95 0.153 · p99 0.187 · 4649 op/s · total p50 0.855</sub> | -94.4% (-1.725) | 150% AND 2 ms | 🟢 |
-| 8 | 2.030<br><sub>context: p90 2.576 · p95 2.731 · p99 3.711 · 3734 op/s · total p50 8.397</sub> | 0.117<br><sub>context: p90 0.161 · p95 0.182 · p99 0.231 · 27109 op/s · total p50 1.128</sub> | -94.2% (-1.913) | 150% AND 2 ms | 🟢 |
+| 1 | 2.148<br><sub>context: p90 2.706 · p95 2.770 · p99 2.889 · 458 op/s · n/σ/CV 199/0.505/24.3% · total p50 8.835</sub> | 0.118<br><sub>context: p90 0.164 · p95 0.175 · p99 0.222 · 3861 op/s · n/σ/CV 200/0.033/26.6% · total p50 1.030</sub> | -94.5% (-2.030) | 150% AND 2 ms | 🟢 |
+| 8 | 2.211<br><sub>context: p90 2.790 · p95 2.943 · p99 3.931 · 3404 op/s · n/σ/CV 1581/0.549/25.0% · total p50 9.144</sub> | 0.125<br><sub>context: p90 0.173 · p95 0.190 · p99 0.239 · 25823 op/s · n/σ/CV 1594/0.035/26.8% · total p50 1.180</sub> | -94.4% (-2.087) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER from = 1990 to = 6799 MATCH (s:User {id: $from}), (t:User {id: $to}) WITH shortestPath((s)-[*]->(t)) AS p RETURN length(p)
+```
+
+</details>
 
 </details>
 
@@ -430,8 +718,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 1.757<br><sub>context: p90 2.238 · p95 2.370 · p99 2.533 · 560 op/s · total p50 7.137</sub> | 0.103<br><sub>context: p90 0.147 · p95 0.169 · p99 0.182 · 4330 op/s · total p50 0.915</sub> | -94.1% (-1.654) | 150% AND 2 ms | 🟢 |
-| 8 | 1.935<br><sub>context: p90 2.571 · p95 2.728 · p99 3.687 · 3909 op/s · total p50 7.877</sub> | 0.111<br><sub>context: p90 0.160 · p95 0.174 · p99 0.194 · 26366 op/s · total p50 1.075</sub> | -94.3% (-1.824) | 150% AND 2 ms | 🟢 |
+| 1 | 1.998<br><sub>context: p90 2.614 · p95 2.688 · p99 2.799 · 483 op/s · n/σ/CV 199/0.479/24.3% · total p50 8.222</sub> | 0.116<br><sub>context: p90 0.170 · p95 0.186 · p99 0.213 · 3737 op/s · n/σ/CV 199/0.031/25.7% · total p50 1.060</sub> | -94.2% (-1.882) | 150% AND 2 ms | 🟢 |
+| 8 | 2.158<br><sub>context: p90 2.807 · p95 3.034 · p99 4.389 · 3521 op/s · n/σ/CV 1596/0.632/29.5% · total p50 8.692</sub> | 0.121<br><sub>context: p90 0.172 · p95 0.188 · p99 0.213 · 25761 op/s · n/σ/CV 1595/0.032/25.5% · total p50 1.149</sub> | -94.4% (-2.037) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER from = 6363 to = 141 MATCH (s:User {id: $from}), (t:User {id: $to}) WITH shortestPath((s)-[*]->(t)) AS p WHERE length(p) > 0 RETURN length(p)
+```
+
+</details>
 
 </details>
 
@@ -441,8 +737,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.115<br><sub>context: p90 0.133 · p95 0.142 · p99 0.163 · 6728 op/s · total p50 0.580</sub> | 0.032<br><sub>context: p90 0.063 · p95 0.066 · p99 0.068 · 8269 op/s · total p50 0.466</sub> | -71.8% (-0.083) | 150% AND 2 ms | 🟢 |
-| 8 | 0.174<br><sub>context: p90 0.292 · p95 0.329 · p99 0.420 · 32069 op/s · total p50 0.950</sub> | 0.034<br><sub>context: p90 0.065 · p95 0.067 · p99 0.072 · 50617 op/s · total p50 0.516</sub> | -80.4% (-0.140) | 150% AND 2 ms | 🟢 |
+| 1 | 0.159<br><sub>context: p90 0.193 · p95 0.203 · p99 0.225 · 4573 op/s · n/σ/CV 198/0.031/20.0% · total p50 0.871</sub> | 0.039<br><sub>context: p90 0.071 · p95 0.074 · p99 0.079 · 7273 op/s · n/σ/CV 200/0.018/40.4% · total p50 0.525</sub> | -75.2% (-0.119) | 150% AND 2 ms | 🟢 |
+| 8 | 0.189<br><sub>context: p90 0.312 · p95 0.360 · p99 0.459 · 30435 op/s · n/σ/CV 1585/0.074/35.7% · total p50 1.013</sub> | 0.039<br><sub>context: p90 0.072 · p95 0.077 · p99 0.093 · 41198 op/s · n/σ/CV 1583/0.020/44.1% · total p50 0.646</sub> | -79.1% (-0.149) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER id = 988 MATCH (n:User {id : $id}) RETURN n
+```
+
+</details>
 
 </details>
 
@@ -452,8 +756,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.176<br><sub>context: p90 0.206 · p95 0.208 · p99 0.226 · 4741 op/s · total p50 0.837</sub> | 0.003<br><sub>context: p90 0.004 · p95 0.004 · p99 0.005 · 11722 op/s · total p50 0.315</sub> | -98.5% (-0.173) | 150% AND 2 ms | ⚠ N/A |
-| 8 | 0.260<br><sub>context: p90 0.377 · p95 0.430 · p99 0.519 · 22135 op/s · total p50 1.392</sub> | 0.004<br><sub>context: p90 0.005 · p95 0.005 · p99 0.006 · 49315 op/s · total p50 0.481</sub> | -98.6% (-0.257) | 150% AND 2 ms | ⚠ N/A |
+| 1 | 0.210<br><sub>context: p90 0.249 · p95 0.269 · p99 0.289 · 3790 op/s · n/σ/CV 199/0.035/16.5% · total p50 1.046</sub> | 0.004<br><sub>context: p90 0.006 · p95 0.008 · p99 0.009 · 8902 op/s · n/σ/CV 187/0.001/33.0% · total p50 0.418</sub> | -98.2% (-0.207) | 150% AND 2 ms | ⚠ N/A |
+| 8 | 0.277<br><sub>context: p90 0.400 · p95 0.451 · p99 0.548 · 19631 op/s · n/σ/CV 1551/0.075/25.8% · total p50 1.560</sub> | 0.004<br><sub>context: p90 0.005 · p95 0.005 · p99 0.006 · 49130 op/s · n/σ/CV 1541/0.001/21.7% · total p50 0.492</sub> | -98.7% (-0.273) | 150% AND 2 ms | ⚠ N/A |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER  RETURN date('2024-01-01') AS d, localtime('12:30:00') AS t, duration('P2DT3H') AS dur, distance( point({latitude: 32.1, longitude: 34.8}), point({latitude: 32.2, longitude: 34.9}) ) AS dist
+```
+
+</details>
 
 </details>
 
@@ -463,8 +775,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.144<br><sub>context: p90 0.187 · p95 0.197 · p99 0.211 · 5340 op/s · total p50 0.747</sub> | 0.041<br><sub>context: p90 0.063 · p95 0.066 · p99 0.073 · 7255 op/s · total p50 0.536</sub> | -71.2% (-0.103) | 150% AND 2 ms | 🟢 |
-| 8 | 0.305<br><sub>context: p90 0.453 · p95 0.530 · p99 0.664 · 20079 op/s · total p50 1.530</sub> | 0.046<br><sub>context: p90 0.077 · p95 0.081 · p99 0.091 · 38986 op/s · total p50 0.768</sub> | -84.8% (-0.258) | 150% AND 2 ms | 🟢 |
+| 1 | 0.209<br><sub>context: p90 0.265 · p95 0.276 · p99 0.299 · 3652 op/s · n/σ/CV 199/0.037/17.6% · total p50 1.085</sub> | 0.048<br><sub>context: p90 0.077 · p95 0.084 · p99 0.095 · 5943 op/s · n/σ/CV 200/0.017/31.4% · total p50 0.658</sub> | -77.2% (-0.161) | 150% AND 2 ms | 🟢 |
+| 8 | 0.326<br><sub>context: p90 0.493 · p95 0.560 · p99 0.693 · 18569 op/s · n/σ/CV 1572/0.106/30.6% · total p50 1.626</sub> | 0.050<br><sub>context: p90 0.082 · p95 0.084 · p99 0.093 · 36863 op/s · n/σ/CV 1585/0.016/30.3% · total p50 0.830</sub> | -84.8% (-0.276) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER id = 8021 MATCH (u:User {id: $id}) RETURN u.id AS uid UNION ALL MATCH (v:User) WHERE v.id < 10 RETURN v.id AS uid
+```
+
+</details>
 
 </details>
 
@@ -474,8 +794,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.170<br><sub>context: p90 0.202 · p95 0.217 · p99 0.239 · 4874 op/s · total p50 0.805</sub> | 0.060<br><sub>context: p90 0.111 · p95 0.115 · p99 0.131 · 6391 op/s · total p50 0.618</sub> | -64.8% (-0.110) | 150% AND 2 ms | 🟢 |
-| 8 | 0.305<br><sub>context: p90 0.444 · p95 0.513 · p99 0.637 · 20552 op/s · total p50 1.497</sub> | 0.069<br><sub>context: p90 0.130 · p95 0.136 · p99 0.145 · 35779 op/s · total p50 0.832</sub> | -77.5% (-0.237) | 150% AND 2 ms | 🟢 |
+| 1 | 0.207<br><sub>context: p90 0.277 · p95 0.290 · p99 0.298 · 3663 op/s · n/σ/CV 199/0.041/18.7% · total p50 1.074</sub> | 0.069<br><sub>context: p90 0.130 · p95 0.138 · p99 0.157 · 4958 op/s · n/σ/CV 200/0.032/41.1% · total p50 0.791</sub> | -66.5% (-0.137) | 150% AND 2 ms | 🟢 |
+| 8 | 0.350<br><sub>context: p90 0.546 · p95 0.615 · p99 0.779 · 17237 op/s · n/σ/CV 1568/0.122/32.4% · total p50 1.743</sub> | 0.076<br><sub>context: p90 0.142 · p95 0.146 · p99 0.155 · 33510 op/s · n/σ/CV 1587/0.033/39.4% · total p50 0.876</sub> | -78.3% (-0.274) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER id = 1322 MATCH (u:User {id: $id}) RETURN u.id AS uid UNION MATCH (v:User {id: $id}) RETURN v.id AS uid
+```
+
+</details>
 
 </details>
 
@@ -485,8 +813,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.130<br><sub>context: p90 0.172 · p95 0.176 · p99 0.183 · 5711 op/s · total p50 0.689</sub> | 0.032<br><sub>context: p90 0.060 · p95 0.061 · p99 0.070 · 8003 op/s · total p50 0.496</sub> | -75.4% (-0.098) | 150% AND 2 ms | 🟢 |
-| 8 | 0.272<br><sub>context: p90 0.419 · p95 0.475 · p99 0.571 · 22134 op/s · total p50 1.398</sub> | 0.039<br><sub>context: p90 0.070 · p95 0.073 · p99 0.083 · 42173 op/s · total p50 0.722</sub> | -85.5% (-0.233) | 150% AND 2 ms | 🟢 |
+| 1 | 0.205<br><sub>context: p90 0.254 · p95 0.262 · p99 0.291 · 3753 op/s · n/σ/CV 199/0.039/18.9% · total p50 1.047</sub> | 0.039<br><sub>context: p90 0.073 · p95 0.079 · p99 0.087 · 6017 op/s · n/σ/CV 193/0.018/39.1% · total p50 0.633</sub> | -80.9% (-0.166) | 150% AND 2 ms | 🟢 |
+| 8 | 0.286<br><sub>context: p90 0.450 · p95 0.517 · p99 0.640 · 20497 op/s · n/σ/CV 1577/0.101/32.3% · total p50 1.491</sub> | 0.042<br><sub>context: p90 0.075 · p95 0.079 · p99 0.093 · 38977 op/s · n/σ/CV 1597/0.021/42.4% · total p50 0.789</sub> | -85.3% (-0.244) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER id = 4016 MATCH (n:User {id: $id}) UNWIND [n.id, n.id + 1, n.id + 2] AS x RETURN x
+```
+
+</details>
 
 </details>
 
@@ -496,8 +832,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.953<br><sub>context: p90 1.040 · p95 1.059 · p99 1.138 · 988 op/s · total p50 4.040</sub> | 0.509<br><sub>context: p90 0.544 · p95 0.561 · p99 0.571 · 1533 op/s · total p50 2.600</sub> | -46.5% (-0.443) | 150% AND 2 ms | 🟢 |
-| 8 | 1.134<br><sub>context: p90 1.408 · p95 1.597 · p99 1.873 · 6099 op/s · total p50 4.984</sub> | 0.576<br><sub>context: p90 0.709 · p95 0.741 · p99 0.821 · 8502 op/s · total p50 3.611</sub> | -49.2% (-0.558) | 150% AND 2 ms | 🟢 |
+| 1 | 1.115<br><sub>context: p90 1.179 · p95 1.193 · p99 1.230 · 828 op/s · n/σ/CV 197/0.053/4.8% · total p50 4.812</sub> | 0.578<br><sub>context: p90 0.620 · p95 0.629 · p99 0.653 · 1265 op/s · n/σ/CV 198/0.030/5.2% · total p50 3.141</sub> | -48.2% (-0.537) | 150% AND 2 ms | 🟢 |
+| 8 | 1.261<br><sub>context: p90 1.583 · p95 1.822 · p99 2.097 · 4569 op/s · n/σ/CV 1552/0.224/17.0% · total p50 6.680</sub> | 0.618<br><sub>context: p90 0.755 · p95 0.784 · p99 0.841 · 8001 op/s · n/σ/CV 1584/0.078/12.3% · total p50 3.864</sub> | -51.0% (-0.643) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER id = 5610 MATCH (a:User {id: $id}), (b:User) WHERE a.age = b.age RETURN b.id
+```
+
+</details>
 
 </details>
 
@@ -507,8 +851,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.959<br><sub>context: p90 1.051 · p95 1.075 · p99 1.112 · 986 op/s · total p50 4.070</sub> | 0.511<br><sub>context: p90 0.558 · p95 0.570 · p99 0.579 · 1565 op/s · total p50 2.560</sub> | -46.7% (-0.448) | 150% AND 2 ms | 🟢 |
-| 8 | 1.125<br><sub>context: p90 1.399 · p95 1.557 · p99 1.871 · 6355 op/s · total p50 4.846</sub> | 0.553<br><sub>context: p90 0.612 · p95 0.632 · p99 0.675 · 9751 op/s · total p50 3.128</sub> | -50.8% (-0.572) | 150% AND 2 ms | 🟢 |
+| 1 | 1.117<br><sub>context: p90 1.183 · p95 1.203 · p99 1.216 · 840 op/s · n/σ/CV 197/0.058/5.2% · total p50 4.753</sub> | 0.591<br><sub>context: p90 0.635 · p95 0.649 · p99 0.695 · 1220 op/s · n/σ/CV 194/0.034/5.8% · total p50 3.226</sub> | -47.0% (-0.525) | 150% AND 2 ms | 🟢 |
+| 8 | 1.250<br><sub>context: p90 1.619 · p95 1.850 · p99 2.120 · 5525 op/s · n/σ/CV 1543/0.236/18.0% · total p50 5.496</sub> | 0.603<br><sub>context: p90 0.702 · p95 0.736 · p99 0.818 · 8309 op/s · n/σ/CV 1587/0.061/9.8% · total p50 3.678</sub> | -51.7% (-0.647) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER id = 8594 MATCH (a:User {id: $id}), (b:User) WHERE a.age = b.age RETURN count(b)
+```
+
+</details>
 
 </details>
 
@@ -518,8 +870,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.168<br><sub>context: p90 0.208 · p95 0.211 · p99 0.227 · 4627 op/s · total p50 0.825</sub> | 0.052<br><sub>context: p90 0.081 · p95 0.095 · p99 0.102 · 6499 op/s · total p50 0.598</sub> | -68.9% (-0.116) | 150% AND 2 ms | 🟢 |
-| 8 | 0.288<br><sub>context: p90 0.419 · p95 0.469 · p99 0.602 · 20282 op/s · total p50 1.521</sub> | 0.061<br><sub>context: p90 0.095 · p95 0.101 · p99 0.114 · 34903 op/s · total p50 0.825</sub> | -78.7% (-0.227) | 150% AND 2 ms | 🟢 |
+| 1 | 0.214<br><sub>context: p90 0.261 · p95 0.273 · p99 0.284 · 3706 op/s · n/σ/CV 199/0.034/16.0% · total p50 1.077</sub> | 0.062<br><sub>context: p90 0.093 · p95 0.102 · p99 0.116 · 5095 op/s · n/σ/CV 197/0.018/27.4% · total p50 0.762</sub> | -71.0% (-0.152) | 150% AND 2 ms | 🟢 |
+| 8 | 0.303<br><sub>context: p90 0.466 · p95 0.536 · p99 0.620 · 18822 op/s · n/σ/CV 1587/0.093/28.5% · total p50 1.629</sub> | 0.065<br><sub>context: p90 0.099 · p95 0.105 · p99 0.116 · 33349 op/s · n/σ/CV 1584/0.018/26.1% · total p50 0.858</sub> | -78.7% (-0.238) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER id = 9631 MATCH (a:User {id: $id})-[*1..2]->(b:User) RETURN b.id
+```
+
+</details>
 
 </details>
 
@@ -529,8 +889,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.258<br><sub>context: p90 0.324 · p95 0.348 · p99 0.383 · 3286 op/s · total p50 1.182</sub> | 0.125<br><sub>context: p90 0.200 · p95 0.227 · p99 0.249 · 3822 op/s · total p50 1.009</sub> | -51.4% (-0.133) | 150% AND 2 ms | 🟢 |
-| 8 | 0.371<br><sub>context: p90 0.512 · p95 0.583 · p99 0.698 · 15674 op/s · total p50 2.005</sub> | 0.157<br><sub>context: p90 0.240 · p95 0.272 · p99 0.320 · 20970 op/s · total p50 1.472</sub> | -57.7% (-0.214) | 150% AND 2 ms | 🟢 |
+| 1 | 0.327<br><sub>context: p90 0.401 · p95 0.420 · p99 0.444 · 2592 op/s · n/σ/CV 199/0.052/16.0% · total p50 1.506</sub> | 0.151<br><sub>context: p90 0.227 · p95 0.251 · p99 0.281 · 3114 op/s · n/σ/CV 200/0.049/31.2% · total p50 1.267</sub> | -53.7% (-0.175) | 150% AND 2 ms | 🟢 |
+| 8 | 0.426<br><sub>context: p90 0.603 · p95 0.666 · p99 0.791 · 13633 op/s · n/σ/CV 1579/0.113/25.4% · total p50 2.253</sub> | 0.162<br><sub>context: p90 0.255 · p95 0.285 · p99 0.340 · 21843 op/s · n/σ/CV 1597/0.061/36.2% · total p50 1.337</sub> | -62.0% (-0.264) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER id = 5948 min_capacity = 1 MATCH (s:User {id: $id})-[r:Friend*1..3]->(t:User) WHERE r.bench_capacity >= $min_capacity RETURN count(t)
+```
+
+</details>
 
 </details>
 
@@ -540,8 +908,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.138<br><sub>context: p90 0.180 · p95 0.186 · p99 0.241 · 5438 op/s · total p50 0.724</sub> | 0.017<br><sub>context: p90 0.020 · p95 0.021 · p99 0.024 · 9811 op/s · total p50 0.387</sub> | -87.8% (-0.121) | 150% AND 2 ms | 🟢 |
-| 8 | 0.239<br><sub>context: p90 0.368 · p95 0.424 · p99 0.516 · 24133 op/s · total p50 1.270</sub> | 0.024<br><sub>context: p90 0.032 · p95 0.036 · p99 0.044 · 39391 op/s · total p50 0.732</sub> | -90.0% (-0.215) | 150% AND 2 ms | 🟢 |
+| 1 | 0.194<br><sub>context: p90 0.238 · p95 0.250 · p99 0.270 · 3949 op/s · n/σ/CV 198/0.037/19.5% · total p50 1.009</sub> | 0.022<br><sub>context: p90 0.027 · p95 0.029 · p99 0.037 · 8924 op/s · n/σ/CV 197/0.005/22.7% · total p50 0.441</sub> | -88.6% (-0.172) | 150% AND 2 ms | 🟢 |
+| 8 | 0.280<br><sub>context: p90 0.440 · p95 0.513 · p99 0.621 · 19829 op/s · n/σ/CV 1585/0.098/32.4% · total p50 1.513</sub> | 0.025<br><sub>context: p90 0.034 · p95 0.038 · p99 0.045 · 40332 op/s · n/σ/CV 1516/0.006/21.4% · total p50 0.647</sub> | -91.0% (-0.254) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER  CALL db.idx.vector.queryNodes('User', 'embedding', 10, vecf32([0.1, 0.2, 0.3])) YIELD node, score RETURN id(node), score LIMIT 10
+```
+
+</details>
 
 </details>
 
@@ -551,8 +927,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.086<br><sub>context: p90 0.119 · p95 0.123 · p99 0.140 · 8056 op/s · total p50 0.492</sub> | 0.036<br><sub>context: p90 0.068 · p95 0.070 · p99 0.074 · 7726 op/s · total p50 0.502</sub> | -58.0% (-0.050) | 150% AND 2 ms | 🟢 |
-| 8 | 0.169<br><sub>context: p90 0.278 · p95 0.316 · p99 0.407 · 32572 op/s · total p50 0.943</sub> | 0.034<br><sub>context: p90 0.044 · p95 0.063 · p99 0.067 · 50484 op/s · total p50 0.478</sub> | -79.9% (-0.135) | 150% AND 2 ms | 🟢 |
+| 1 | 0.120<br><sub>context: p90 0.147 · p95 0.167 · p99 0.180 · 6147 op/s · n/σ/CV 200/0.023/19.6% · total p50 0.633</sub> | 0.042<br><sub>context: p90 0.071 · p95 0.075 · p99 0.084 · 5835 op/s · n/σ/CV 200/0.015/33.3% · total p50 0.642</sub> | -64.7% (-0.077) | 150% AND 2 ms | 🟢 |
+| 8 | 0.186<br><sub>context: p90 0.301 · p95 0.346 · p99 0.432 · 29579 op/s · n/σ/CV 1582/0.071/34.5% · total p50 1.029</sub> | 0.037<br><sub>context: p90 0.058 · p95 0.070 · p99 0.072 · 44906 op/s · n/σ/CV 1520/0.013/32.8% · total p50 0.563</sub> | -80.1% (-0.149) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER id = 1830 MATCH (n:User {id: $id}) RETURN n
+```
+
+</details>
 
 </details>
 
@@ -562,8 +946,16 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.097<br><sub>context: p90 0.119 · p95 0.124 · p99 0.136 · 7732 op/s · total p50 0.509</sub> | 0.031<br><sub>context: p90 0.058 · p95 0.065 · p99 0.068 · 9797 op/s · total p50 0.400</sub> | -67.9% (-0.066) | 150% AND 2 ms | 🟢 |
-| 8 | 0.168<br><sub>context: p90 0.288 · p95 0.331 · p99 0.418 · 32528 op/s · total p50 0.932</sub> | 0.037<br><sub>context: p90 0.069 · p95 0.071 · p99 0.079 · 48826 op/s · total p50 0.518</sub> | -78.3% (-0.132) | 150% AND 2 ms | 🟢 |
+| 1 | 0.122<br><sub>context: p90 0.165 · p95 0.170 · p99 0.188 · 5517 op/s · n/σ/CV 199/0.026/20.6% · total p50 0.717</sub> | 0.041<br><sub>context: p90 0.073 · p95 0.075 · p99 0.084 · 6787 op/s · n/σ/CV 200/0.018/39.0% · total p50 0.576</sub> | -66.5% (-0.081) | 150% AND 2 ms | 🟢 |
+| 8 | 0.180<br><sub>context: p90 0.304 · p95 0.354 · p99 0.431 · 30015 op/s · n/σ/CV 1581/0.072/35.9% · total p50 1.011</sub> | 0.038<br><sub>context: p90 0.072 · p95 0.074 · p99 0.081 · 44977 op/s · n/σ/CV 1596/0.018/41.9% · total p50 0.577</sub> | -79.0% (-0.142) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER id = 7516 MATCH (n:User {id: $id}) RETURN n
+```
+
+</details>
 
 </details>
 
@@ -573,7 +965,15 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | main p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.708<br><sub>context: p90 0.790 · p95 0.811 · p99 0.831 · 1299 op/s · total p50 3.017</sub> | 0.185<br><sub>context: p90 0.197 · p95 0.199 · p99 0.208 · 3781 op/s · total p50 1.055</sub> | -73.9% (-0.523) | 150% AND 2 ms | 🟢 |
-| 8 | 0.820<br><sub>context: p90 1.388 · p95 1.507 · p99 1.639 · 6610 op/s · total p50 4.553</sub> | 0.220<br><sub>context: p90 0.243 · p95 0.251 · p99 0.290 · 20738 op/s · total p50 1.464</sub> | -73.2% (-0.600) | 150% AND 2 ms | 🟢 |
+| 1 | 0.844<br><sub>context: p90 0.883 · p95 0.893 · p99 0.910 · 1079 op/s · n/σ/CV 195/0.028/3.3% · total p50 3.697</sub> | 0.211<br><sub>context: p90 0.239 · p95 0.244 · p99 0.248 · 2964 op/s · n/σ/CV 199/0.017/7.7% · total p50 1.339</sub> | -75.0% (-0.633) | 150% AND 2 ms | 🟢 |
+| 8 | 0.900<br><sub>context: p90 1.310 · p95 1.527 · p99 1.652 · 6031 op/s · n/σ/CV 1460/0.207/21.3% · total p50 4.992</sub> | 0.232<br><sub>context: p90 0.259 · p95 0.270 · p99 0.318 · 21015 op/s · n/σ/CV 1555/0.025/10.9% · total p50 1.420</sub> | -74.2% (-0.667) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER id = 1473 MATCH (n {id: $id}) RETURN n
+```
+
+</details>
 
 </details>

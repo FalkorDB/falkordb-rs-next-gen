@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "elapsed_secs": 527,
+  "elapsed_secs": 608,
   "arch": "x86",
   "pr_number": "745",
-  "head_sha": "f56e8f873390e9a556c46a1557315888ab267f2c",
+  "head_sha": "1cedc9f4fc39b05eeec058f21023b529c58e3222",
   "images": {
     "pr": {
       "ref": "ghcr.io/falkordb/falkordb-server:rc-pr-745",

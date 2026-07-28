@@ -26,7 +26,7 @@ _Metric `p50`. A cell is 🔴 only when the candidate is **slower** than the bas
 
 > ⚠ server image changed: falkordb/falkordb-server@sha256:7a40d2ef964c51fcdb069d7b06d2b3b8c62d54cca9721c1118d036614988d369 → ghcr.io/falkordb/falkordb-server@sha256:64943502b6ccb1eb99b46e9566a302d9efb5a306bc9ea0af08bfadd60cdcfaad
 
-🟢 = faster or within budget · 🔴 = slower than budget · ⚠ = results differ (advisory — the engines did different work, so perf is N/A) · N/A = no perf verdict. Only **p50** of `server_ms` (server-reported execution time) is gated — the `context:` line (p90/p95/p99 · throughput · client-observed total p50) and `Δms` are informational, never part of the verdict. Non-blocking.
+🟢 = faster or within budget · 🔴 = slower than budget · ⚠ = results differ (advisory — the engines did different work, so perf is N/A) · N/A = no perf verdict. Only **p50** of `server_ms` (server-reported execution time) is gated — the `context:` line (p90/p95/p99 · throughput · within-run n/σ/CV of `server_ms` · client-observed total p50) and `Δms` are informational, never part of the verdict. n = samples retained after severe-outlier removal (pooled across the C workers; `n (server m)` when only `m` carry a server time); σ = their **sample** standard deviation (n−1) of `server_ms` **within this run** — not run-to-run noise; CV = 100·σ/mean. Non-blocking.
 
 <details><summary>🔴 <code>detach_delete_user</code></summary>
 
@@ -34,7 +34,15 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | pr p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.811<br><sub>context: p90 0.881 · p95 0.900 · p99 0.975 · 938 op/s · total p50 0.973</sub> | 4.112<br><sub>context: p90 4.286 · p95 4.326 · p99 4.434 · 223 op/s · total p50 4.481</sub> | +406.8% (+3.300) | 150% AND 2 ms | 🔴 |
+| 1 | 0.952<br><sub>context: p90 1.016 · p95 1.024 · p99 1.050 · 768 op/s · n/σ/CV 88/0.044/4.6% · total p50 1.189</sub> | 4.662<br><sub>context: p90 4.786 · p95 4.860 · p99 4.916 · 191 op/s · n/σ/CV 100/0.100/2.1% · total p50 5.234</sub> | +389.7% (+3.710) | 150% AND 2 ms | 🔴 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER id = 2696 MATCH (u:User {id: $id}) DETACH DELETE u
+```
+
+</details>
 
 </details>
 
@@ -44,7 +52,15 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | pr p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.153<br><sub>context: p90 0.231 · p95 0.246 · p99 0.293 · 2778 op/s · total p50 0.278</sub> | 0.046<br><sub>context: p90 0.070 · p95 0.080 · p99 0.089 · 3213 op/s · total p50 0.246</sub> | -70.1% (-0.107) | 150% AND 2 ms | 🟢 |
+| 1 | 0.213<br><sub>context: p90 0.290 · p95 0.296 · p99 0.326 · 1937 op/s · n/σ/CV 88/0.049/21.7% · total p50 0.436</sub> | 0.065<br><sub>context: p90 0.087 · p95 0.093 · p99 0.111 · 2423 op/s · n/σ/CV 97/0.016/24.2% · total p50 0.370</sub> | -69.7% (-0.148) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER id = 1984 MATCH (u:User {id: $id}) FOREACH (x IN [1,2,3] | SET u.loop_counter = x) RETURN u.loop_counter
+```
+
+</details>
 
 </details>
 
@@ -54,7 +70,15 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | pr p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.440<br><sub>context: p90 0.500 · p95 0.550 · p99 0.586 · 1528 op/s · total p50 0.569</sub> | 0.649<br><sub>context: p90 0.694 · p95 0.706 · p99 0.727 · 919 op/s · total p50 1.072</sub> | +47.4% (+0.209) | 150% AND 2 ms | 🟢 |
+| 1 | 0.553<br><sub>context: p90 0.621 · p95 0.630 · p99 0.654 · 1196 op/s · n/σ/CV 88/0.042/7.4% · total p50 0.769</sub> | 0.708<br><sub>context: p90 0.771 · p95 0.783 · p99 0.799 · 782 op/s · n/σ/CV 100/0.038/5.3% · total p50 1.239</sub> | +28.1% (+0.155) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER from = 5830 to = 4099 MATCH (a:User {id: $from}), (b:User {id: $to}) MERGE (a)-[r:Friend]->(b) ON CREATE SET r.since = date(), r.bench_capacity = 1 + ((a.id * 31 + b.id * 17) % 20) ON MATCH SET r.touch = date(), r.bench_capacity = coalesce(r.bench_capacity, 1 + ((a.id * 31 + b.id * 17) % 20)) RETURN id(r)
+```
+
+</details>
 
 </details>
 
@@ -64,7 +88,15 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | pr p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.376<br><sub>context: p90 0.422 · p95 0.442 · p99 0.478 · 1727 op/s · total p50 0.513</sub> | 0.131<br><sub>context: p90 0.145 · p95 0.151 · p99 0.156 · 2104 op/s · total p50 0.416</sub> | -65.3% (-0.246) | 150% AND 2 ms | 🟢 |
+| 1 | 0.469<br><sub>context: p90 0.518 · p95 0.525 · p99 0.573 · 1343 op/s · n/σ/CV 86/0.039/8.3% · total p50 0.674</sub> | 0.154<br><sub>context: p90 0.175 · p95 0.179 · p99 0.189 · 1799 op/s · n/σ/CV 91/0.021/13.7% · total p50 0.493</sub> | -67.2% (-0.315) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER age = 3943 id = 16814 MERGE (u:User {id: $id}) ON CREATE SET u.created_at = timestamp(), u.age = $age RETURN u.id
+```
+
+</details>
 
 </details>
 
@@ -74,7 +106,15 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | pr p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.149<br><sub>context: p90 0.181 · p95 0.196 · p99 0.215 · 2936 op/s · total p50 0.262</sub> | 0.072<br><sub>context: p90 0.100 · p95 0.105 · p99 0.116 · 2535 op/s · total p50 0.360</sub> | -51.3% (-0.076) | 150% AND 2 ms | 🟢 |
+| 1 | 0.249<br><sub>context: p90 0.312 · p95 0.326 · p99 0.338 · 1831 op/s · n/σ/CV 87/0.040/15.5% · total p50 0.459</sub> | 0.097<br><sub>context: p90 0.130 · p95 0.134 · p99 0.143 · 1738 op/s · n/σ/CV 99/0.019/18.4% · total p50 0.536</sub> | -61.0% (-0.152) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER age = 1142 id = 980 MERGE (u:User {id: $id}) ON CREATE SET u.created_at = timestamp() ON MATCH SET u.age = $age, u.last_seen = timestamp() RETURN u.id
+```
+
+</details>
 
 </details>
 
@@ -84,7 +124,15 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | pr p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.249<br><sub>context: p90 0.272 · p95 0.276 · p99 0.304 · 2067 op/s · total p50 0.404</sub> | 0.152<br><sub>context: p90 0.186 · p95 0.194 · p99 0.200 · 2240 op/s · total p50 0.397</sub> | -39.0% (-0.097) | 150% AND 2 ms | 🟢 |
+| 1 | 0.351<br><sub>context: p90 0.399 · p95 0.408 · p99 0.426 · 1450 op/s · n/σ/CV 88/0.035/9.9% · total p50 0.613</sub> | 0.181<br><sub>context: p90 0.214 · p95 0.217 · p99 0.243 · 1790 op/s · n/σ/CV 89/0.021/11.4% · total p50 0.511</sub> | -48.5% (-0.170) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER id = 4071 MATCH (u:User {id: $id}) REMOVE u.rpc_social_credit, u:TemporaryLabel RETURN u.id
+```
+
+</details>
 
 </details>
 
@@ -94,7 +142,15 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | pr p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 24.161<br><sub>context: p90 25.202 · p95 25.487 · p99 25.733 · 41 op/s · total p50 24.505</sub> | 13.350<br><sub>context: p90 14.328 · p95 14.469 · p99 14.679 · 72 op/s · total p50 13.915</sub> | -44.7% (-10.812) | 150% AND 2 ms | 🟢 |
+| 1 | 26.528<br><sub>context: p90 27.297 · p95 27.402 · p99 27.598 · 37 op/s · n/σ/CV 100/0.395/1.5% · total p50 27.077</sub> | 14.610<br><sub>context: p90 14.804 · p95 15.052 · p99 15.181 · 65 op/s · n/σ/CV 92/0.170/1.2% · total p50 15.385</sub> | -44.9% (-11.919) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER color = 3352 MATCH (n:User)-[e:Friend]->(m:User) WITH n, m, e ORDER BY rand() LIMIT 1 SET e.color = $color, e.bench_capacity = coalesce(e.bench_capacity, 1 + ((n.id * 31 + m.id * 17) % 20)) RETURN e
+```
+
+</details>
 
 </details>
 
@@ -104,7 +160,15 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | pr p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.381<br><sub>context: p90 0.458 · p95 0.501 · p99 0.539 · 1662 op/s · total p50 0.527</sub> | 0.655<br><sub>context: p90 0.710 · p95 0.720 · p99 0.748 · 501 op/s · total p50 1.978</sub> | +71.9% (+0.274) | 150% AND 2 ms | 🟢 |
+| 1 | 0.504<br><sub>context: p90 0.568 · p95 0.586 · p99 0.676 · 1208 op/s · n/σ/CV 88/0.050/9.7% · total p50 0.770</sub> | 0.710<br><sub>context: p90 0.768 · p95 0.783 · p99 0.823 · 442 op/s · n/σ/CV 98/0.037/5.2% · total p50 2.239</sub> | +40.9% (+0.206) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER from = 6709 to = 6984 MATCH (n:User {id: $from}), (m:User {id: $to}) MERGE (n)-[e:Friend]->(m) ON CREATE SET e.bench_capacity = 1 + ((n.id * 31 + m.id * 17) % 20) ON MATCH SET e.bench_capacity = coalesce(e.bench_capacity, 1 + ((n.id * 31 + m.id * 17) % 20)), e.touch = date() RETURN e
+```
+
+</details>
 
 </details>
 
@@ -114,7 +178,15 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | pr p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.123<br><sub>context: p90 0.154 · p95 0.197 · p99 0.211 · 3589 op/s · total p50 0.209</sub> | 0.051<br><sub>context: p90 0.078 · p95 0.080 · p99 0.087 · 3031 op/s · total p50 0.293</sub> | -58.6% (-0.072) | 150% AND 2 ms | 🟢 |
+| 1 | 0.154<br><sub>context: p90 0.236 · p95 0.249 · p99 0.283 · 2443 op/s · n/σ/CV 89/0.047/27.9% · total p50 0.323</sub> | 0.063<br><sub>context: p90 0.091 · p95 0.098 · p99 0.106 · 2342 op/s · n/σ/CV 90/0.018/27.5% · total p50 0.384</sub> | -59.3% (-0.091) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER id = 6307 rpc_social_credit = 9796 MATCH (n:User {id: $id}) SET n.rpc_social_credit = $rpc_social_credit RETURN n
+```
+
+</details>
 
 </details>
 
@@ -124,6 +196,14 @@ _uncached (forced plan-cache miss — execution + compilation)_
 
 | C | c-engine p50 (ms) | pr p50 (ms) | Δp50 (Δms) | p50 guard (>% AND >ms) | verdict |
 |---:|---:|---:|---:|:--:|:--:|
-| 1 | 0.058<br><sub>context: p90 0.080 · p95 0.096 · p99 0.105 · 4654 op/s · total p50 0.143</sub> | 0.070<br><sub>context: p90 0.082 · p95 0.087 · p99 0.093 · 1795 op/s · total p50 0.522</sub> | +19.9% (+0.012) | 150% AND 2 ms | 🟢 |
+| 1 | 0.089<br><sub>context: p90 0.153 · p95 0.165 · p99 0.172 · 2783 op/s · n/σ/CV 90/0.034/34.0% · total p50 0.260</sub> | 0.081<br><sub>context: p90 0.092 · p95 0.095 · p99 0.115 · 1569 op/s · n/σ/CV 92/0.010/12.2% · total p50 0.590</sub> | -9.1% (-0.008) | 150% AND 2 ms | 🟢 |
+
+<details><summary>example query</summary>
+
+```cypher
+CYPHER id = 6280 CREATE (n:User {id : $id}) RETURN n
+```
+
+</details>
 
 </details>
