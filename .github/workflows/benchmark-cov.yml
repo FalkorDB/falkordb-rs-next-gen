@@ -54,6 +54,46 @@
 # `docker run` (not as a job container) and is best-effort: a failure there
 # annotates the run and still lets the perf comparison be reported.
 #
+# ## Hardware counters
+#
+# Instruction counts need the GCE virtual PMU, which can only be set at
+# instance creation. FalkorDB/gce-github-runner#4 added a
+# `performance_monitoring_unit` input for exactly this, and `create-runner` now
+# forwards it; this workflow requests `ARCHITECTURAL`.
+#
+# If VM creation starts failing with an unsupported-flag error, the machine
+# family does not support the vPMU. Two levers, no code change needed for
+# either: set `vars.BENCHMARK_PMU` to "" to drop the request, or set
+# `vars.BENCHMARK_MACHINE_TYPE` to a family that supports it. The stockout
+# retry in create-runner will not paper over this — a rejected flag fails every
+# attempt identically.
+#
+# The harness probes rather than trusts any of the above: it runs one
+# `perf stat -e instructions,cycles -- true` at startup and only selects the
+# perf backend if a real value comes back. If counters are unavailable it
+# reports instr/cycles as EMPTY and ranks by allocated bytes instead. It never
+# substitutes wall-clock, which would turn the gate into a noise detector while
+# still looking like a measurement.
+#
+# ## Why no job `container:`
+#
+# The first run of this workflow died in "Initialize containers" on the GCE VM.
+# No other self-hosted job in this repo uses a job container — `_benchmark.yml`
+# and `profile.yml` both run directly on the VM and install what they need — so
+# this follows that proven pattern instead of fighting it.
+#
+# That also removes the need to compile: both modules are extracted from the
+# already-published server images with `docker cp`, exactly as
+# `.github/scripts/benchmark/profile.sh` does (module path
+# `/var/lib/falkordb/bin/falkordb.so`). The PR side is `rc-pr-<N>`, built early
+# by rust-pr.yml; the main side is `edge-rs`. The harness then runs against each
+# with its own redis-server, so `perf` attaches to a plain host pid.
+#
+# Coverage is the exception — it needs an *instrumented* build, which no
+# published image carries. That step runs the toolchain image explicitly via
+# `docker run` (not as a job container) and is best-effort: a failure there
+# annotates the run and still lets the perf comparison be reported.
+#
 # ## The one prerequisite outside this workflow
 #
 # GCE exposes hardware counters only when the instance is created with
@@ -139,6 +179,11 @@ jobs:
           machine_type: ${{ vars.BENCHMARK_MACHINE_TYPE || 'n4-highcpu-16' }}
           network: gh-runner
           runner_label: benchcov-${{ github.run_id }}-${{ github.run_number }}
+          # Enables the vPMU so `perf` can read real counters inside the VM.
+          # Settable only at instance creation, hence here rather than in the
+          # job. Override `vars.BENCHMARK_PMU` to "" to turn it off without a
+          # code change — see the header for when you would need to.
+          performance_monitoring_unit: ${{ vars.BENCHMARK_PMU || 'ARCHITECTURAL' }}
 
   benchmark-cov:
     needs: create-runner
