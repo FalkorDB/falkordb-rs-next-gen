@@ -768,14 +768,10 @@ def test_cell_stats_render_when_present(serve_page, page):
     cand = rows.nth(0).locator("td").nth(2)
     assert base.locator(".mstats").inner_text() == "n 300 · σ 0.031 · CV 9.8%"
     assert cand.locator(".mstats").inner_text() == "n 300 · σ 0.029 · CV 7.3%"
-    # The tooltip explains the semantics (within-run, n−1) and carries the
-    # JSON-only total-clock dispersion when present.
+    # The tooltip explains the semantics: server_ms samples, within-run, n−1.
     title = base.locator(".mstats").get_attribute("title")
     assert "within-run" in title and "n−1" in title
-    assert "total-clock σ 0.045 ms / CV 8.9%" in title
-    # C=8 sides have no total-clock stats — the tooltip stays server-only.
-    c8_title = rows.nth(1).locator("td").nth(1).locator(".mstats").get_attribute("title")
-    assert "total-clock" not in c8_title
+    assert "server-reported time" in title and "server_ms" in title
     # Unenriched op: no stats line anywhere.
     agg = page.locator('#view details[data-op="aggregate_age"]')
     agg.locator("summary").first.click()
@@ -794,28 +790,30 @@ def test_cell_stats_render_when_present(serve_page, page):
 
 
 def test_cell_stats_degrade_per_field(serve_page, page):
-    """n_server != n renders the shortfall; a side with n but no σ/CV renders em-dashes
-    for just those; sides without n render no stats line at all."""
+    """A side with server_n but no σ/CV renders em-dashes for just those; sides without
+    server_n render no stats line at all — even if stray σ/CV values are present."""
     page.goto(serve_page("data.json"))
     wait_ready(page)
-    # c-pr aggregate_count_users C=1 baseline carries n_server 297 of n 300.
+    # c-pr aggregate_count_users C=1: enriched baseline, but the candidate side carries
+    # σ/CV WITHOUT the server_n gate — the page must ignore the whole line.
     page.click('#cmpSeg button[data-cmp="c-pr"]')
     page.wait_for_selector("#view details[data-op]")
     acu = page.locator('#view details[data-op="aggregate_count_users"]')
     acu.locator("summary").first.click()
     base = acu.locator("tbody tr").nth(0).locator("td").nth(1)
-    assert base.locator(".mstats").inner_text() == "n 300 (server 297) · σ 0.050 · CV 12.0%"
+    assert base.locator(".mstats").inner_text() == "n 297 · σ 0.050 · CV 12.0%"
     cand = acu.locator("tbody tr").nth(0).locator("td").nth(2)
-    assert "(server" not in cand.locator(".mstats").inner_text()
-    # main-pr single_vertex_write candidate has n only: σ/CV degrade to em-dashes,
-    # and the n-less baseline side renders no stats line.
+    assert cand.locator(".mstats").count() == 0
+    # main-pr single_vertex_write candidate has a single server-timed sample: σ/CV are
+    # legitimately undefined and degrade to em-dashes; the stat-less baseline side
+    # renders no line.
     page.click('#cmpSeg button[data-cmp="main-pr"]')
     page.wait_for_selector("#view details[data-op]")
     svw = page.locator('#view details[data-op="single_vertex_write"]')
     svw.locator("summary").first.click()
     row = svw.locator("tbody tr").nth(0)
     assert row.locator("td").nth(1).locator(".mstats").count() == 0
-    assert row.locator("td").nth(2).locator(".mstats").inner_text() == "n 150 · σ — · CV —"
+    assert row.locator("td").nth(2).locator(".mstats").inner_text() == "n 1 · σ — · CV —"
 
 
 def test_example_query_renders_collapsed_and_only_when_present(serve_page, page):

@@ -139,16 +139,15 @@ def _assert_analysis_shape(analysis):
             for side in ("baseline", "candidate"):
                 if side in cell["context"]:
                     assert isinstance(cell["context"][side], dict), f"{op} context.{side}"
-                    # Optional within-run dispersion stats (benchmark ≥ v2.7): sample
-                    # counts are non-negative ints, σ/CV are numbers — when present.
+                    # Optional within-run dispersion stats of server_ms (benchmark ≥
+                    # v2.7): the sample count is a non-negative int, σ/CV are numbers
+                    # — when present.
                     stats = cell["context"][side]
-                    for key in ("n", "n_server"):
-                        if key in stats:
-                            assert isinstance(stats[key], int) and stats[key] >= 0, (
-                                f"{op} context.{side}.{key}"
-                            )
-                    for key in ("server_stddev_ms", "server_cv_pct",
-                                "total_stddev_ms", "total_cv_pct"):
+                    if "server_n" in stats:
+                        assert isinstance(stats["server_n"], int) and stats["server_n"] >= 0, (
+                            f"{op} context.{side}.server_n"
+                        )
+                    for key in ("server_stddev_ms", "server_cv_pct"):
                         if key in stats:
                             assert isinstance(stats[key], (int, float)), (
                                 f"{op} context.{side}.{key}"
@@ -260,7 +259,7 @@ def test_main_fixture_covers_all_statuses():
     both_sided_stats = [
         cell for entry in ok_ops for cell in entry["cells"]
         if all(
-            "n" in cell["context"].get(side, {})
+            "server_n" in cell["context"].get(side, {})
             and "server_stddev_ms" in cell["context"].get(side, {})
             and "server_cv_pct" in cell["context"].get(side, {})
             for side in ("baseline", "candidate")
@@ -272,11 +271,10 @@ def test_main_fixture_covers_all_statuses():
     ), "fixture must include an op with an example_query"
     assert any(
         "example_query" not in entry
-        and all("n" not in cell["context"].get(side, {})
+        and all("server_n" not in cell["context"].get(side, {})
                 for cell in entry["cells"] for side in ("baseline", "candidate"))
         for entry in ok_ops
     ), "fixture must keep an op without any v2.7 enrichment (degradation coverage)"
-    # The n_server shortfall shape (fewer server-timed samples than measured samples).
     all_read_sides = [
         cell["context"][side]
         for c in data["comparisons"].values()
@@ -287,9 +285,10 @@ def test_main_fixture_covers_all_statuses():
         for side in ("baseline", "candidate")
         if side in cell["context"]
     ]
+    # σ/CV without the server_n gate (a hand-broken shape the page must ignore).
     assert any(
-        "n_server" in s and s["n_server"] != s.get("n") for s in all_read_sides
-    ), "fixture must include an n_server != n side"
+        "server_n" not in s and "server_stddev_ms" in s for s in all_read_sides
+    ), "fixture must include a σ/CV-without-server_n side"
 
 
 def test_xss_fixture_has_script_shaped_labels():

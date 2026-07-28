@@ -18,7 +18,8 @@
   computed by the Rust tool and serialized in the cells JSON; the page never derives one.
 
   Benchmark ≥ v2.7 additionally emits per-op example_query and per-side within-run dispersion
-  stats (context.{baseline,candidate}.{n,n_server,server_stddev_ms,server_cv_pct,…}); both are
+  stats of server_ms — the gated distribution
+  (context.{baseline,candidate}.{server_n,server_stddev_ms,server_cv_pct}); both are
   feature-detected, so an older data.json renders exactly as before.
 
   Security: all dynamic content is rendered via document.createElement + textContent — no
@@ -852,35 +853,29 @@
   }
   function sideStats(cell, side) {
     // Within-run dispersion stats for one side of a cell (benchmark ≥ v2.7 emits them;
-    // feature-detected so older data.json files render exactly as before). n counts the
-    // pooled measured samples; σ/CV describe per-sample server_ms and may be absent
-    // independently of n (e.g. an engine that reports no server timings).
+    // feature-detected so older data.json files render exactly as before). All three
+    // describe per-sample server_ms — the gated distribution: server_n counts the retained
+    // samples that actually carried a server time, and σ/CV may still be absent
+    // independently (undefined below 2 samples).
     var ctx = (cell.context && typeof cell.context === 'object') ? cell.context : null;
     var s = ctx && ctx[side] && typeof ctx[side] === 'object' ? ctx[side] : null;
-    if (!s || typeof s.n !== 'number' || !isFinite(s.n) || s.n <= 0) { return null; }
+    if (!s || typeof s.server_n !== 'number' || !isFinite(s.server_n) || s.server_n <= 0) {
+      return null;
+    }
     return s;
   }
   function statsLine(s) {
-    var n = 'n ' + s.n;
-    if (typeof s.n_server === 'number' && isFinite(s.n_server) && s.n_server !== s.n) {
-      n += ' (server ' + s.n_server + ')';
-    }
+    var n = 'n ' + s.server_n;
     var sd = (typeof s.server_stddev_ms === 'number' && isFinite(s.server_stddev_ms))
       ? 'σ ' + s.server_stddev_ms.toFixed(3) : 'σ —';
     var cv = (typeof s.server_cv_pct === 'number' && isFinite(s.server_cv_pct))
       ? 'CV ' + s.server_cv_pct.toFixed(1) + '%' : 'CV —';
     return n + ' · ' + sd + ' · ' + cv;
   }
-  function statsTitle(s) {
-    var t = 'n = measured samples pooled across workers · σ = sample std dev (n−1) of ' +
-      'per-sample server_ms · CV = σ/mean — within-run dispersion, not run-to-run noise';
-    if (typeof s.total_stddev_ms === 'number' && isFinite(s.total_stddev_ms)) {
-      t += ' · total-clock σ ' + s.total_stddev_ms.toFixed(3) + ' ms';
-      if (typeof s.total_cv_pct === 'number' && isFinite(s.total_cv_pct)) {
-        t += ' / CV ' + s.total_cv_pct.toFixed(1) + '%';
-      }
-    }
-    return t;
+  function statsTitle() {
+    return 'n = samples that carried a server-reported time (pooled across workers) · ' +
+      'σ = their sample std dev (n−1) of server_ms · CV = σ/mean — within-run dispersion, ' +
+      'not run-to-run noise';
   }
   function appendStats(td, cell, side) {
     // Latency metrics only: the σ/CV describe the server_ms sample vector behind the
@@ -889,7 +884,7 @@
     var s = sideStats(cell, side);
     if (!s) { return; }
     var span = el('span', 'mstats mono', statsLine(s));
-    span.title = statsTitle(s);
+    span.title = statsTitle();
     td.appendChild(span);
   }
   function exampleQueryBlock(entry) {

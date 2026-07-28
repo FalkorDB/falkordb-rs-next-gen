@@ -213,22 +213,18 @@
            "p95_ms": 0.34673335000000005,
            "p99_ms": 0.35028027,
            "throughput_ops_per_sec": 3194.250349371132,
-           "n": 300,
            "server_stddev_ms": 0.0312,
            "server_cv_pct": 9.84,
-           "total_stddev_ms": 0.0451,
-           "total_cv_pct": 8.9
+           "server_n": 300
           },
           "candidate": {
            "p90_ms": 0.4303836,
            "p95_ms": 0.4326205500000001,
            "p99_ms": 0.43699131,
            "throughput_ops_per_sec": 2574.319974071449,
-           "n": 300,
            "server_stddev_ms": 0.0287,
            "server_cv_pct": 7.32,
-           "total_stddev_ms": 0.0512,
-           "total_cv_pct": 9.6
+           "server_n": 300
           }
          }
         },
@@ -251,18 +247,18 @@
            "p95_ms": 0.8619461499999997,
            "p99_ms": 0.97430553,
            "throughput_ops_per_sec": 12374.562539878962,
-           "n": 2400,
            "server_stddev_ms": 0.1124,
-           "server_cv_pct": 18.21
+           "server_cv_pct": 18.21,
+           "server_n": 2400
           },
           "candidate": {
            "p90_ms": 0.829875,
            "p95_ms": 0.890083,
            "p99_ms": 0.9601255,
            "throughput_ops_per_sec": 12613.985093738464,
-           "n": 2400,
            "server_stddev_ms": 0.1041,
-           "server_cv_pct": 16.93
+           "server_cv_pct": 16.93,
+           "server_n": 2400
           }
          }
         }
@@ -1046,7 +1042,7 @@
          "perf_verdict": "pass",
          "context": {
           "candidate": {
-           "n": 150
+           "server_n": 1
           }
          }
         }
@@ -1226,17 +1222,15 @@
            "p95_ms": 0.32628270000000004,
            "p99_ms": 0.32995654,
            "throughput_ops_per_sec": 3437.0408865228296,
-           "n": 300,
-           "n_server": 297,
            "server_stddev_ms": 0.05,
-           "server_cv_pct": 12.04
+           "server_cv_pct": 12.04,
+           "server_n": 297
           },
           "candidate": {
            "p90_ms": 0.4303836,
            "p95_ms": 0.4326205500000001,
            "p99_ms": 0.43699131,
            "throughput_ops_per_sec": 2574.319974071449,
-           "n": 300,
            "server_stddev_ms": 0.0463,
            "server_cv_pct": 11.2
           }
