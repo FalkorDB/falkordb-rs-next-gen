@@ -548,3 +548,96 @@ jobs:
           echo "::error::bench/coverage.sh exited ${{ env.coverage_exit }} — see the comment's coverage section."
           exit 1
 
+  # Separate job, separate runner: valgrind does not support Apple silicon, so
+  # the deterministic counts have to come from Linux. No PMU needed — that is
+  # the entire point of counting in software.
+  cachegrind:
+    if: >-
+      github.event.label.name == 'benchmark-cov' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/falkordb/falkordb-build:latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          path: pr
+          persist-credentials: false
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: main
+          path: base
+          persist-credentials: false
+
+      - name: Install deps
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends valgrind redis-server redis-tools python3
+          valgrind --version
+
+      - name: Build both modules
+        run: |
+          (cd pr && CXX=clang++ cargo build --release)
+          (cd base && CXX=clang++ cargo build --release)
+
+      # Sequential: each run pins a CPU under valgrind for a long time.
+      - name: Measure main (callgrind)
+        working-directory: pr
+        run: python3 bench/cachegrind.py --module "$GITHUB_WORKSPACE/base/target/release/libfalkordb.so" --out /tmp/cg-main.csv
+
+      - name: Measure PR (callgrind)
+        working-directory: pr
+        run: python3 bench/cachegrind.py --module "$GITHUB_WORKSPACE/pr/target/release/libfalkordb.so" --out /tmp/cg-pr.csv
+
+      - name: Comment the deterministic deltas
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          python3 - <<'PY' > /tmp/cg.md
+          import csv, os
+
+          def read(p):
+              try:
+                  with open(p, newline="") as f:
+                      return {r["query"]: float(r["instr"]) for r in csv.DictReader(f)}
+              except OSError:
+                  return {}
+
+          pr, main = read("/tmp/cg-pr.csv"), read("/tmp/cg-main.csv")
+          print("## Deterministic instruction counts (callgrind)")
+          print()
+          if not pr or not main:
+              print("No output — see the workflow log.")
+          else:
+              print("Counted in software, so these are **exact and reproducible**: the "
+                    "same build and query give the same number every run. No hosted "
+                    "runner exposes a PMU, so this is the only trustworthy instruction "
+                    "signal in CI — and unlike sampled counters it needs no noise "
+                    "threshold. Curated subset; ~50x slowdown makes the full 317 "
+                    "impractical.")
+              print()
+              print("| query | main | PR | ratio |")
+              print("|---|---|---|---|")
+              for q in sorted(set(pr) & set(main), key=lambda q: pr[q] / main[q] if main[q] else 1):
+                  a, b = main[q], pr[q]
+                  r = f"{b / a:.4f}x" if a else "—"
+                  print(f"| {q} | {a:,.0f} | {b:,.0f} | {r} |")
+              print()
+              print("`RETURN 1` is the fixed per-query floor — it should read 1.0000x, and "
+                    "if it does not, something changed in the request path rather than in "
+                    "the query being measured.")
+          print()
+          print("<!-- cachegrind-report -->")
+          PY
+          cat /tmp/cg.md
+          MARKER="<!-- cachegrind-report -->"
+          ID=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+                 --jq "map(select(.body | contains(\"$MARKER\"))) | .[-1].id // empty")
+          if [ -n "$ID" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$ID" -F body=@/tmp/cg.md
+          else
+            gh api -X POST "repos/$REPO/issues/$PR/comments" -F body=@/tmp/cg.md
+          fi
