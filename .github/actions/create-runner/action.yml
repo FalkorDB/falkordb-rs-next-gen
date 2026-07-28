@@ -36,7 +36,8 @@ inputs:
     default: ""
   performance_monitoring_unit:
     description: >
-      Enable the GCE virtual PMU (ARCHITECTURAL | STANDARD | ENHANCED).
+      Enable the GCE virtual PMU (architectural | standard | enhanced —
+      gcloud rejects the uppercase spelling GCP's docs use).
       Required for per-process hardware counters inside the VM: without it
       `perf` runs but reports "<not supported>" for every event, and the
       setting can only be applied at instance creation.

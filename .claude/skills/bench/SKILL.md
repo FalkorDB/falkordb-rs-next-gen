@@ -73,54 +73,41 @@ section lists the hot leaves.
   flag ±15% on cycles; the instruction ratio is the stable signal — trust
   it over a cycles-only flag. Adjust the gate with `--threshold`.
 
-## Current improvement targets
+## Finding the current improvement targets
 
-Baselines are local-only (`bench/baseline/` is git-ignored) — a committed one
-goes stale on the next merge and then reports phantom regressions. Build your
-own from a `main` checkout before comparing, and re-promote it after anything
-lands. CI does not use one: `benchmark-cov.yml` measures main, the PR and the C
-engine in the same run.
+Deliberately not listed here. This section previously carried a ranked
+Rust-vs-C table and it was wrong twice in one day — it still named MERGE bound
+pattern after #777 fixed it, and it predated `arithmetic` and `CASE` overtaking
+C. A hardcoded ranking in a doc is stale the moment anything merges, and a
+stale ranking is worse than none: it sends people to work on rows that are
+already fixed.
 
-**Read this before ranking anything.** The baseline is `main`, which does
-*not* yet include #767 (adaptive fold policy) or #768 (small-delete fast
-paths). Those two own the whole top of the Rust/C table — delete pending
-edge 23.5x, delete returning 22.3x, delete path 19.2x, DETACH DELETE 16.5x,
-write 1 5.6x, create 10k 3.0x. Do not start work on a delete or small-write
-row without checking those PRs first; re-measure after they land.
+Generate it from a live run instead. Either label a PR `benchmark-cov` — CI
+measures `main`, the PR and the C engine in one run and posts the comparison,
+including which rows sit furthest behind C — or locally:
 
-Genuinely open targets, delete/write rows excluded:
+```bash
+python3 bench/run_bench.py --out /tmp/rust.csv                     # this build
+python3 bench/run_bench.py --c-compat --module <c-module> --out /tmp/c.csv
+python3 bench/compare.py /tmp/rust.csv /tmp/c.csv | sort -k4 -rn | head -20
+```
 
-| row | Rust/C cyc |
-|---|---|
-| UDF traverse | 2.78x |
-| reversed chain mid filter | 2.48x |
-| split+trim+replace | 2.46x |
-| order by mixed types | 2.33x |
-| var-length 1..50 | 2.29x |
-| label predicate | 2.22x |
-| correlated hash join | 2.17x |
-| percentileDisc / percentileCont | 1.95x / 1.93x |
-| reversed 2hop chain | 1.82x |
+### Reading the output
 
-The two reversed-chain rows are the chain-reversal ordering bug in
-`planner/optimizer/select_scan_node.rs` — a reversed plan runs the inner
-CondTraverse with neither endpoint bound. #777 did *not* fix it (verified:
-1.00x instr before/after); it is independent.
-
-**Already past C** and worth keeping as regression canaries: `arithmetic`
-0.73x and `CASE` 0.69x (via #781 + #782), stDev/stDevP ~0.66x/0.69x.
-`cross product filter` and `untyped shortestPath` are extreme — C burns
-1.8B and 3.8B instructions there against ~400K in Rust — so a regression in
-those rows would be invisible as a ratio but very visible in absolute terms.
-
-### Baseline caveats
-
-- Rows where the C column is ~500-2500 instr (regex, week/ordinal dates,
-  LOAD CSV*, toJSON scalars) are rows the **C engine errors on** — ignore
-  the ratio.
-- ~34 id-0 rows in `c.csv` are suspect: C's `DEBUG RELOAD` drops id 0 from
-  the range index. The BFS rows were patched; the rest were not. Re-measure
-  on a fresh C server before trusting an id-0 row.
-- Promote a new rust baseline only from a `main` build, never from a
-  feature branch or a combined working tree — a baseline carrying unmerged
-  work makes `compare.py` report phantom regressions for everyone else.
+- **Trust the instructions column.** Cycles and wall-clock move 10-60% with
+  machine load; on a shared or virtualised host they will invent regressions.
+  Always include `RETURN 1` in an isolated batch: it is the fixed per-query
+  floor, so if it moves, the whole run's cycle column is load-inflated and
+  every other cycle flag in it is void.
+- **Micro-queries need 3 reps per build.** Rows near the ~240k instr floor read
+  1.04x on one shot and 1.00x over three.
+- **Ignore rows where C's instruction count is ~500-2500** — those are rows the
+  C engine errors on (regex, week/ordinal dates, `LOAD CSV*`, toJSON scalars),
+  so the ratio is meaningless. `--c-compat` skips the ones whose warmup reply
+  errors.
+- **Watch for near-zero ratios in Rust's favour.** `cross product filter` and
+  `untyped shortestPath` have C burning 1.8B and 3.8B instructions against
+  ~400k — a regression there would be invisible as a ratio and obvious in
+  absolute terms.
+- **id-0 rows against C are suspect**: C's `DEBUG RELOAD` drops id 0 from the
+  range index. Re-measure on a fresh C server before believing one.

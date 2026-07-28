@@ -59,7 +59,9 @@
 # Instruction counts need the GCE virtual PMU, which can only be set at
 # instance creation. FalkorDB/gce-github-runner#4 added a
 # `performance_monitoring_unit` input for exactly this, and `create-runner` now
-# forwards it; this workflow requests `ARCHITECTURAL`.
+# forwards it; this workflow requests `architectural`. gcloud's choices are
+# lowercase (`architectural` | `standard` | `enhanced`) and it rejects the
+# uppercase spelling used in GCP's own docs.
 #
 # If VM creation starts failing with an unsupported-flag error, the machine
 # family does not support the vPMU. Two levers, no code change needed for
@@ -183,7 +185,7 @@ jobs:
           # Settable only at instance creation, hence here rather than in the
           # job. Override `vars.BENCHMARK_PMU` to "" to turn it off without a
           # code change — see the header for when you would need to.
-          performance_monitoring_unit: ${{ vars.BENCHMARK_PMU || 'ARCHITECTURAL' }}
+          performance_monitoring_unit: ${{ vars.BENCHMARK_PMU || 'architectural' }}
 
   benchmark-cov:
     needs: create-runner
