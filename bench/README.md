@@ -18,7 +18,7 @@ python3 bench/compare.py bench/results/current.csv bench/baseline/c.csv   # vs l
 bench/coverage.sh                          # 4. verify query set still covers the code
 bench/profile.sh case "MATCH (p:Person) RETURN sum(CASE WHEN p.id % 3 = 0 THEN 1 ELSE 3 END)"   # 5. drill into a hot query
 # ...optimize, goto 1. After a confirmed improvement:
-cp bench/results/current.csv bench/baseline/rust.csv
+cp bench/results/current.csv bench/baseline/rust.csv   # local only; baseline/ is git-ignored
 ```
 
 `run_bench.py` accepts query names to re-run a subset (rows are merged into
@@ -57,7 +57,7 @@ both failure counts.
 | `coverage.sh` | instrumented build, run set once, report graph-crate line coverage |
 | `profile.sh` | `sample`-based hot-stack profile of one query |
 | `pmc_tool.c` | PMU counter tool (kperf/kperfdata private frameworks) |
-| `baseline/rust.csv`, `baseline/c.csv` | 2026-07-26 baselines (Rust module vs legacy C FalkorDB) |
+| `baseline/` | your own baselines, git-ignored — see below |
 
 ## pmc_tool (optional, for branch/L1D columns)
 

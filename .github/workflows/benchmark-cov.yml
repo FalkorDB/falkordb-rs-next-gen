@@ -149,6 +149,8 @@ jobs:
       MODULE_IN_IMAGE: /var/lib/falkordb/bin/falkordb.so
       PR_IMAGE: ghcr.io/falkordb/falkordb-server:rc-pr-${{ github.event.pull_request.number }}
       MAIN_IMAGE: ghcr.io/falkordb/falkordb-server:edge-rs
+      # Production C engine, same source benchmark.yml uses for variant A.
+      C_IMAGE: docker.io/falkordb/falkordb-server:edge
       TOOLCHAIN: ghcr.io/falkordb/falkordb-build:latest
     steps:
       # The VM has docker but not git/rust/redis/perf. Runs as root, no sudo.
@@ -235,6 +237,28 @@ jobs:
           python3 bench/run_bench.py --reuse --port 6399 --pid "$HOSTPID" --out /tmp/pr.csv
           docker rm -f bench-pr >/dev/null
 
+      # The C engine, for absolute context: "did this PR regress against main"
+      # and "where does it sit against the engine we are replacing" are
+      # different questions, and the second is the one that decides whether a
+      # row still needs work. --c-compat is required — it skips the composite
+      # unique constraint (whose async validation crashes the C server) and
+      # skips queries whose warmup reply errors, since C does not implement all
+      # of them.
+      - name: Measure C engine
+        continue-on-error: true
+        run: |
+          docker rm -f bench-c >/dev/null 2>&1 || true
+          docker run -d --name bench-c -p 6399:6379 "$C_IMAGE" >/dev/null
+          for i in $(seq 1 60); do
+            redis-cli -p 6399 PING 2>/dev/null | grep -q PONG && break
+            sleep 1
+          done
+          redis-cli -p 6399 PING | grep -q PONG || { docker logs bench-c | tail -50; exit 1; }
+          HOSTPID=$(docker inspect -f '{{.State.Pid}}' bench-c)
+          python3 bench/run_bench.py --reuse --setup --c-compat \
+            --port 6399 --pid "$HOSTPID" --out /tmp/c.csv
+          docker rm -f bench-c >/dev/null
+
       - name: Compare PR vs main
         run: |
           # compare.py exits non-zero on a regression; this job reports rather
@@ -242,6 +266,9 @@ jobs:
           set +e
           python3 bench/compare.py /tmp/pr.csv /tmp/main.csv > /tmp/compare.txt 2>&1
           echo "compare_exit=$?" >> "$GITHUB_ENV"
+          if [ -s /tmp/c.csv ]; then
+            python3 bench/compare.py /tmp/pr.csv /tmp/c.csv > /tmp/compare_c.txt 2>&1
+          fi
           set -e
           tail -40 /tmp/compare.txt
 
@@ -271,7 +298,7 @@ jobs:
               except OSError:
                   return {}
 
-          pr, main = read("/tmp/pr.csv"), read("/tmp/main.csv")
+          pr, main, cengine = read("/tmp/pr.csv"), read("/tmp/main.csv"), read("/tmp/c.csv")
 
           def num(row, key):
               try:
@@ -309,8 +336,9 @@ jobs:
 
           print("## Benchmark + coverage")
           print()
-          print("317-query harness, both sides taken from their published server images, "
-                "measured on a dedicated ephemeral GCE VM.")
+          print("317-query harness. main, this PR and the C engine are each measured "
+                "from their published server images, in sequence, on a dedicated "
+                "ephemeral GCE VM.")
           print()
           if have_instr:
               print(f"Ranked by **instructions** (deterministic). Cycles are also "
@@ -365,7 +393,54 @@ jobs:
                     "isolation before acting on it.")
               print()
 
+          # Against the C engine: a different question from "did this PR
+          # regress", and the one that says whether a row still needs work.
+          if cengine:
+              crows = []
+              for q, p in pr.items():
+                  c = cengine.get(q)
+                  if not c:
+                      continue
+                  a, b = num(c, metric), num(p, metric)
+                  if a is None or b is None or a <= 0 or max(a, b) < FLOOR:
+                      continue
+                  crows.append((b / a, q, a, b))
+              crows.sort()
+              print("### vs the C engine")
+              print()
+              if not crows:
+                  print(f"No rows above the {FLOOR//1024} KB floor were comparable.")
+              else:
+                  cgeo = 1.0
+                  for r, *_ in crows:
+                      cgeo *= r
+                  cgeo **= 1.0 / len(crows)
+                  ahead = [r for r in crows if r[0] < 1.0]
+                  print(f"**{len(crows)} rows compared, {metric} geomean {cgeo:.3f}** "
+                        f"({len(ahead)} rows faster than C, {len(crows)-len(ahead)} slower).")
+                  print()
+                  worst = [r for r in reversed(crows)][:12]
+                  print(f"Furthest behind C ({metric}):")
+                  print()
+                  print("| query | C | PR | ratio |")
+                  print("|---|---|---|---|")
+                  for r, q, a, b in worst:
+                      print(f"| {q} | {a:,.0f} | {b:,.0f} | {r:.2f}x |")
+                  print()
+                  print("Rows where C's counts are tiny are rows the C engine errors on "
+                        "(regex, week/ordinal dates, LOAD CSV, toJSON scalars) — ignore "
+                        "those ratios. `--c-compat` already skips the ones whose warmup "
+                        "reply errors.")
+                  print()
+          else:
+              print("### vs the C engine")
+              print()
+              print("The C measurement did not produce output — see the workflow log. "
+                    "(That step is non-fatal so the PR-vs-main comparison still reports.)")
+              print()
+
           for title, path in (("Full compare.py output", "/tmp/compare.txt"),
+                              ("Full compare.py output (vs C)", "/tmp/compare_c.txt"),
                               ("Query-set coverage of the graph crate", "/tmp/coverage.txt")):
               print(f"<details><summary>{title}</summary>")
               print()

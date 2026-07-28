@@ -27,7 +27,7 @@ bash bench/coverage.sh
 After a confirmed improvement, promote the new numbers:
 
 ```bash
-cp bench/results/current.csv bench/baseline/rust.csv
+cp bench/results/current.csv bench/baseline/rust.csv   # local only
 ```
 
 ## Drilling into one query
@@ -75,8 +75,11 @@ section lists the hot leaves.
 
 ## Current improvement targets
 
-Baseline: `bench/baseline/rust.csv` measured on `main` @ 649e9e21;
-`bench/baseline/c.csv` from 2026-07-26.
+Baselines are local-only (`bench/baseline/` is git-ignored) — a committed one
+goes stale on the next merge and then reports phantom regressions. Build your
+own from a `main` checkout before comparing, and re-promote it after anything
+lands. CI does not use one: `benchmark-cov.yml` measures main, the PR and the C
+engine in the same run.
 
 **Read this before ranking anything.** The baseline is `main`, which does
 *not* yet include #767 (adaptive fold policy) or #768 (small-delete fast

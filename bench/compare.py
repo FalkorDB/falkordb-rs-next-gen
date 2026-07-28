@@ -10,7 +10,15 @@ present in both CSVs (instr, cycles, branches, br_miss, l1d_miss, alloc_bytes,
 dealloc_bytes, ms) is compared and gated; noisy counters get a looser default
 threshold (see METRICS). --threshold overrides the threshold for all metrics
 uniformly. Exits 1 if any query/metric exceeds its threshold.
-Pass bench/baseline/c.csv as baseline to see the Rust-vs-C ratio table.
+Baselines are NOT committed (bench/.gitignore ignores baseline/): a checked-in
+baseline goes stale the moment anything lands and then reports phantom
+regressions for everyone. Produce your own from a `main` build:
+
+    git stash && cargo build --release
+    python3 bench/run_bench.py --out bench/baseline/rust.csv
+
+CI does not use a stored baseline at all — benchmark-cov.yml measures main, the
+PR and the C engine in the same run and compares those.
 """
 import argparse, csv, os, sys
 
