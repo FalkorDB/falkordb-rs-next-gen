@@ -169,6 +169,17 @@ CG_SETUP = [
 # plain redis-server by patching this to () and CG_SETUP to [].
 GRAPH_CMD = ("GRAPH.QUERY", "bench")
 
+# Extra `--loadmodule` arguments, set from --module-args.
+#
+# This exists because thread count destroys reproducibility under valgrind. The
+# C engine defaults to a pool sized to the host ("Thread pool created, using 11
+# threads") while this module runs queries inline; valgrind serialises threads
+# but schedules them nondeterministically, and the same C module measured on two
+# consecutive CI runs disagreed by up to 10x on the same query (`reduce`
+# 3,027,301 then 32,263,982). Pinning every engine to one thread is both fairer
+# and the only way these numbers mean anything.
+MODULE_ARGS = []
+
 # One representative per family that has shown movement in this work.
 #
 # Each query costs two instrumented server lifecycles and each lifecycle pays
@@ -244,7 +255,7 @@ def run_total(module, port, outdir, query, reps, also_run=()):
     # module=None runs a bare redis-server. Used only by the arm64 validation
     # described at GRAPH_CMD, where the module cannot run under valgrind.
     if module:
-        cmd += ["--loadmodule", module]
+        cmd += ["--loadmodule", module, *MODULE_ARGS]
 
     server = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
@@ -329,8 +340,16 @@ def main():
         "span divides the per-run drift, so a wider span is more precise: at "
         "span 100 the ~3.5k drift is ~35 instr/exec.",
     )
+    ap.add_argument(
+        "--module-args",
+        nargs="*",
+        default=[],
+        help="extra --loadmodule arguments, e.g. --module-args THREAD_COUNT 1. "
+        "Pin the thread count: see MODULE_ARGS.",
+    )
     ap.add_argument("names", nargs="*", help="queries to measure (default: a curated subset)")
     args = ap.parse_args()
+    MODULE_ARGS[:] = args.module_args
 
     if args.n2 <= args.n1:
         sys.exit(f"--n2 ({args.n2}) must exceed --n1 ({args.n1})")

@@ -605,21 +605,34 @@ jobs:
       # Rust ones are mounted in.
       - name: Measure main, PR and C (callgrind)
         run: |
-          docker run --rm -v "$GITHUB_WORKSPACE:/w" -w /w/pr --entrypoint bash "$C_IMAGE" -c '
+          # OMP_NUM_THREADS=1 plus THREAD_COUNT 1: thread count is what makes
+          # these counts reproducible or not. The C engine otherwise sizes its
+          # pool to the host and sets OpenMP to match, and valgrind schedules
+          # threads nondeterministically — the same C module measured on two
+          # consecutive runs disagreed by up to 10x on one query. Pinning every
+          # engine to one thread is also the fairer comparison.
+          #
+          # `c` is measured twice. Its reproducibility has to be demonstrated
+          # before the PR/C column means anything, and the second pass is what
+          # demonstrates it; the comment suppresses the column if the two
+          # disagree.
+          docker run --rm -e OMP_NUM_THREADS=1 -v "$GITHUB_WORKSPACE:/w" \
+            -w /w/pr --entrypoint bash "$C_IMAGE" -c '
             set -e
             apt-get update -qq
             apt-get install -y -qq --no-install-recommends valgrind python3 >/dev/null
             valgrind --version
             for spec in "main:/w/base/target/release/libfalkordb.so" \
                         "pr:/w/pr/target/release/libfalkordb.so" \
-                        "c:'"$C_MODULE"'"; do
+                        "c:'"$C_MODULE"'" \
+                        "c2:'"$C_MODULE"'"; do
               name="${spec%%:*}"; mod="${spec#*:}"
               echo "::group::measure $name"
               # Best-effort per module: a C-specific failure (an unsupported
               # query in the subset, say) must not cost the main-vs-PR gate,
               # which is the part that gates the PR.
-              python3 bench/cachegrind.py --module "$mod" --out "/w/cg-$name.csv" || \
-                echo "measurement failed for $name"
+              python3 bench/cachegrind.py --module "$mod" --out "/w/cg-$name.csv" \
+                --module-args THREAD_COUNT 1 || echo "measurement failed for $name"
               echo "::endgroup::"
             done'
           ls -la cg-*.csv || true
@@ -693,6 +706,22 @@ jobs:
           pr = read(f"{ws}/cg-pr.csv")
           main = read(f"{ws}/cg-main.csv")
           c = read(f"{ws}/cg-c.csv")
+          c2 = read(f"{ws}/cg-c2.csv")
+
+          # The C engine is measured twice and the column is only published if
+          # the two passes agree. Without this check the table once carried C
+          # numbers that moved by up to 10x between runs while looking
+          # authoritative — thread scheduling under valgrind, since fixed by
+          # pinning every engine to one thread. The check stays: it is the C
+          # column's equivalent of the `RETURN 1` control row.
+          C_TOLERANCE = 0.02
+          c_spread = max(
+              (abs(c2[q] / c[q] - 1) for q in set(c) & set(c2) if c[q]),
+              default=None,
+          )
+          c_ok = bool(c) and c_spread is not None and c_spread <= C_TOLERANCE
+          if not c_ok:
+              c = {}
           out = ["## Instruction counts (callgrind)", ""]
           if not pr or not main:
               out.append("No output — see the workflow log.")
@@ -734,9 +763,25 @@ jobs:
                   "like-for-like rather than a cross-environment guess.",
               ]
               if not c:
+                  if c_spread is not None:
+                      out += [
+                          "",
+                          f"_C column suppressed: the two C passes disagreed by "
+                          f"{c_spread * 100:.1f}% (tolerance "
+                          f"{C_TOLERANCE * 100:.0f}%), so its numbers are not "
+                          f"reproducible enough to compare against. See the "
+                          f"`measure c` / `measure c2` groups in the log._",
+                      ]
+                  else:
+                      out += [
+                          "",
+                          "_No C rows — see the `measure c` group in the workflow log._",
+                      ]
+              elif c_spread is not None:
                   out += [
                       "",
-                      "_No C rows — see the `measure c` group in the workflow log._",
+                      f"_C reproducibility check: the two independent C passes agree to "
+                      f"{c_spread * 100:.2f}%._",
                   ]
           # Full-set vs C: alloc_bytes is the signal worth gating on here
           # (deterministic); wall-clock on a shared runner is not.
