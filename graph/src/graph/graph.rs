@@ -2536,6 +2536,18 @@ impl Graph {
         panic!("relationship {} not found", id.0);
     }
 
+    /// Non-panicking variant of [`Self::get_relationship_endpoints`].
+    /// Returns `None` when the edge no longer exists (e.g., it was deleted
+    /// earlier in the same query and its endpoint slot was tombstoned).
+    #[must_use]
+    pub fn try_get_relationship_endpoints(
+        &self,
+        id: RelationshipId,
+    ) -> Option<(NodeId, NodeId)> {
+        self.endpoints_for_edge(id.0)
+            .map(|(src, dst)| (NodeId(src), NodeId(dst)))
+    }
+
     /// Iterate the relationship type matrix over a range of edge IDs.
     /// Returns `(edge_id, type_index)` pairs.
     #[must_use]

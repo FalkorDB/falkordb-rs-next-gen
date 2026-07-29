@@ -1632,6 +1632,23 @@ impl<'a> Runtime<'a> {
         self.g.borrow().get_relationship_endpoints(id)
     }
 
+    /// Non-panicking variant of [`Self::get_relationship_endpoints`].
+    /// Returns `None` when the relationship no longer exists anywhere —
+    /// e.g., it was cascade-deleted (DETACH DELETE) earlier in the same
+    /// query and no snapshot of it was retained.
+    pub fn try_get_relationship_endpoints(
+        &self,
+        id: RelationshipId,
+    ) -> Option<(NodeId, NodeId)> {
+        if let Some(dr) = self.deleted_relationships.borrow().get(&id) {
+            return Some((dr.src, dr.dst));
+        }
+        if let Some(endpoints) = self.pending.borrow().get_created_relationship_endpoints(id) {
+            return Some(endpoints);
+        }
+        self.g.borrow().try_get_relationship_endpoints(id)
+    }
+
     pub fn get_relationship_type(
         &self,
         id: RelationshipId,

@@ -169,8 +169,12 @@ pub fn register(funcs: &mut Functions) {
         fn start_node(runtime, args) {
             match args.first() {
                 Some(Value::Relationship(rel)) => {
-                    let (src, _dst) = runtime.get_relationship_endpoints(*rel);
-                    Ok(Value::Node(src))
+                    // The relationship may have been deleted earlier in the
+                    // same query (e.g., via DETACH DELETE of its endpoint);
+                    // yield NULL instead of panicking.
+                    Ok(runtime
+                        .try_get_relationship_endpoints(*rel)
+                        .map_or(Value::Null, |(src, _dst)| Value::Node(src)))
                 }
 
                 _ => unreachable!(),
@@ -184,8 +188,10 @@ pub fn register(funcs: &mut Functions) {
         fn end_node(runtime, args) {
             match args.first() {
                 Some(Value::Relationship(rel)) => {
-                    let (_src, dst) = runtime.get_relationship_endpoints(*rel);
-                    Ok(Value::Node(dst))
+                    // See start_node: the relationship may already be deleted.
+                    Ok(runtime
+                        .try_get_relationship_endpoints(*rel)
+                        .map_or(Value::Null, |(_src, dst)| Value::Node(dst)))
                 }
 
                 _ => unreachable!(),
