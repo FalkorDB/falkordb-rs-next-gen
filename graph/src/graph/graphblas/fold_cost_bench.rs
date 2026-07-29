@@ -1,18 +1,37 @@
 //! Measurements behind the fold policy in [`super::versioned_matrix`].
 //!
-//! The policy folds a delta into the base at `|delta| ≈ SCALE·sqrt(base_cost ·
-//! tx_added)`. That shape follows from one assumption: **every write
-//! transaction pays `O(|delta|)`**, because it COW-dups the delta and merges
-//! its pending tuples. These benches measure the three costs the model is
-//! built on, so the constants stop being guesses:
+//! The policy folds a delta at `|delta| ≈ sqrt(2·(F/w)·tx_added)`, which
+//! follows from one assumption: **every write transaction pays `O(|delta|)`**,
+//! because it COW-dups the delta and merges its pending tuples. These benches
+//! measure `F` and `w` so the constants stop being guesses. What they found:
 //!
-//!   1. `dup` of a delta — the per-transaction tax, vs assembled nvals.
-//!   2. `dup` of a delta holding *pending* (unassembled) tuples, plus the
-//!      `wait` that assembles them. The policy assumes both are `O(|delta|)`;
-//!      if `dup` of pending tuples is much cheaper than of assembled entries,
-//!      the tax is smaller than modelled and deltas can run larger.
-//!   3. The fold itself, vs base nvals and nrows — this sets the ceiling on
-//!      how often folding can be afforded.
+//!   1. `dup` of an assembled delta — `w_dup ≈ 0.2 ns/entry`, memcpy speed.
+//!      This is the whole tax on the write path, and it is what
+//!      `WRITE_FOLD_K` is derived from.
+//!   2. `dup` of a delta holding *pending* tuples costs the same as an
+//!      assembled one, so `dup` does not assemble. The `wait` that does
+//!      assemble is `w_merge ≈ 50 ns/entry` — 250x dearer, and it tracks
+//!      `|delta|` rather than what the transaction added. That 250x gap is
+//!      why the read path folds `sqrt(250) ≈ 16x` tighter than the write path.
+//!   3. The fold itself, vs base nvals *and* nrows. It is flat in nrows —
+//!      2.0-2.5 µs for an empty base at nrows = 65k, 1m and 16.7m alike —
+//!      which is what retired the `base_cost = nvals + nrows` term an earlier
+//!      policy carried. Against nvals it is strongly *sub*-linear: ~2 µs
+//!      empty, 707 µs at 16k (43 ns/entry), 2174 µs at 1m (2 ns/entry). Read
+//!      that as two format regimes rather than one line — a delta at 1.5%
+//!      density is hypersparse, one at 95% is sparse/bitmap, and eWiseAdd
+//!      vectorizes only in the latter. Fitting a line across the top gives a
+//!      "~1.7 ms fixed cost", which is an artifact of that curve, not a real
+//!      constant term. What matters for the policy is `F` at the operating
+//!      point, and across 262k -> 1m it moves only 1.2x for 4x the entries —
+//!      flat enough that the balance point does not need to track the base.
+//!
+//! Caveat on absolute numbers: taken on macOS, and `w` is cache-bound, so
+//! expect different values in CI. Re-measure in the toolchain image before
+//! re-tuning. Note the numbers above were taken *with* the vendored PreJIT
+//! kernels compiled in (`GRAPHBLAS_LIB_DIR` pointed at a local
+//! `graphblas.sh` build) — vendoring them did not move the fold's shape, so
+//! the sub-linearity is a property of eWiseAdd, not of kernel fallback.
 //!
 //! Run with:
 //!   cargo test --release -p graph fold_cost -- --ignored --nocapture
@@ -25,14 +44,43 @@ use super::test_init::ensure_init;
 /// Big-graph shape: square, high capacity, so `nrows` dominates `nvals` for
 /// sparse matrices exactly as it does on a real graph's label/adjacency
 /// matrices.
-const CAP: u64 = 1_000_000;
+///
+/// Must stay `>=` the largest sample size below, or [`scatter`] wraps and the
+/// matrix holds fewer entries than the row is labelled with. At the previous
+/// `1_000_000` the `1_048_576` sample produced only 1,000,000 unique pairs:
+/// `rows` wraps at `CAP`, and because `7 * 1_000_000 ≡ 0 (mod 1_000_000)` the
+/// `cols` stride collided on the same period, so `i` and `i + CAP` generated
+/// an identical coordinate pair.
+///
+/// Deliberately the *smallest* power of two that clears the largest sample,
+/// not something roomier: `CAP` sets the density of every matrix under test
+/// (`nvals / CAP`), and density is what GraphBLAS keys its sparse/hypersparse
+/// format choice on. Raising it to `2_097_152` halved the density and moved
+/// `fold_cost_fold_vs_base` by up to 1.9x at the top end while the
+/// capacity-only floor below stayed flat — i.e. it changed what was being
+/// measured, not just the labels. Being a power of two also keeps the `* 7`
+/// column stride coprime with `CAP`, so `cols` is a bijection.
+const CAP: u64 = 1_048_576;
 
 /// Spread entries over distinct rows so the matrix is genuinely sparse rather
 /// than a dense block, which is what a real delta looks like.
+///
+/// `debug_assert`s uniqueness: a silently-deduplicated build would measure a
+/// smaller matrix than the caller asked for and quietly mis-calibrate the
+/// fold policy's constants.
 fn scatter(n: u64) -> (Vec<u64>, Vec<u64>) {
+    assert!(n <= CAP, "sample {n} exceeds CAP {CAP}; scatter would wrap");
     let stride = (CAP / n.max(1)).max(1);
     let rows: Vec<u64> = (0..n).map(|i| (i * stride) % CAP).collect();
     let cols: Vec<u64> = (0..n).map(|i| (i * 7 + 3) % CAP).collect();
+    debug_assert_eq!(
+        rows.iter()
+            .zip(&cols)
+            .collect::<std::collections::HashSet<_>>()
+            .len(),
+        n as usize,
+        "scatter({n}) generated duplicate coordinates"
+    );
     (rows, cols)
 }
 
@@ -164,8 +212,14 @@ fn fold_cost_fold_vs_base() {
 #[ignore = "measurement, not a correctness check"]
 fn fold_cost_empty_matrix_floor() {
     ensure_init();
-    // What does an empty-but-high-capacity matrix cost to dup and fold? This
-    // is the `O(nrows)` term the policy's `base_cost = nvals + nrows` models.
+    // What does an empty-but-high-capacity matrix cost to dup and fold?
+    //
+    // This is the measurement that *refuted* the `O(nrows)` term an earlier
+    // policy carried as `base_cost = nvals + nrows`: dup and fold both come
+    // out flat across nrows = 1k .. 16.7m, so a fold does not pay for the
+    // base's row-pointer structure and `should_fold` keys on nvals alone.
+    // Kept as a regression check on that conclusion — if these columns ever
+    // start scaling with nrows, the policy constants need revisiting.
     println!("\n=== capacity-only cost (nvals = 0) ===");
     println!("{:>12}  {:>10}  {:>10}", "nrows", "dup us", "fold us");
     for &cap in &[1_024u64, 65_536, 1_048_576, 16_777_216] {

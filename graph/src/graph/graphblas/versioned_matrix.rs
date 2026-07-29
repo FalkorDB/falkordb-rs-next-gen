@@ -536,8 +536,15 @@ impl VersionedMatrix<bool> {
             .element_wise_multiply(Some(mask), Some(mask), Some(&*self.m), None);
         // dp &= ~mask: remove entries from dp that exist in mask
         self.dp.remove_all(mask);
-        // Bulk GraphBLAS ops leave both deltas materialized — resync the
-        // approximate counters exactly (nvals is a field read here).
+        // Resync the approximate counters to the exact counts. `nvals` would
+        // report them correctly on its own — `GrB_Matrix_nvals` completes any
+        // pending work internally — but the eWiseMult/remove_all above leave
+        // the wrapper's `has_pending` flag set, so without waiting first the
+        // flag stays a lie: `is_synced()` keeps reporting false and every
+        // later read path pays a redundant `wait()`. Waiting here is a single
+        // early-returning atomic load per layer once already synced.
+        self.dm.wait();
+        self.dp.wait();
         *self.dm_count.get_mut() = self.dm.nvals();
         *self.dp_count.get_mut() = self.dp.nvals();
     }

@@ -104,8 +104,11 @@ export KMP_DUPLICATE_LIB_OK=TRUE
 # parser/string_escape.rs fail to link and Step 4a is reported as a failure
 # even though all 108 unit tests passed. Linux-only: the flag is GNU ld's and
 # breaks macOS ld64.
-if [[ "$(uname -s)" == "Linux" && -z "${RUSTDOCFLAGS:-}" ]]; then
-    export RUSTDOCFLAGS="-C link-arg=-Wl,--allow-multiple-definition"
+# Appends rather than only setting when empty: a caller who exports
+# RUSTDOCFLAGS for an unrelated reason would otherwise silently lose the
+# linker flag and get the doctest failure back.
+if [[ "$(uname -s)" == "Linux" ]]; then
+    export RUSTDOCFLAGS="${RUSTDOCFLAGS:+${RUSTDOCFLAGS} }-C link-arg=-Wl,--allow-multiple-definition"
 fi
 
 if [[ "$(uname -s)" == "Linux" && -f /opt/libomp/lib/libomp.a && ! -e /usr/lib/libomp.a ]]; then
