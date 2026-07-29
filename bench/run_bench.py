@@ -263,6 +263,7 @@ def jemalloc_totals(port):
 
 
 def main():
+    exit_code = 0
     ap = argparse.ArgumentParser()
     ap.add_argument(
         "--module",
@@ -447,13 +448,25 @@ def main():
             )
 
         rows = []
+        failed = []
         for name, is_write, q, *rest in queries:
             n = rest[0] if rest else args.n
             cmd = ["GRAPH.QUERY" if is_write else "GRAPH.RO_QUERY", "bench", q]
             warm = cli(args.port, *cmd)  # warmup / plan cache
-            if args.c_compat and "execution time" not in warm:
+            if "execution time" not in warm:
                 first = warm.strip().splitlines()[0][:100] if warm.strip() else "(empty reply)"
-                print(f"{name:<20} SKIPPED (C error: {first})", flush=True)
+                if args.c_compat:
+                    # Expected: the C engine does not implement everything here
+                    # (UDFs are Rust-only), so skip the row and carry on.
+                    print(f"{name:<20} SKIPPED (C error: {first})", flush=True)
+                else:
+                    # Not expected. Without this the harness would benchmark the
+                    # *error* path and report a plausible, fast row for a query
+                    # that never ran — worse than failing, because the number
+                    # looks real. Collected and reported at the end so one bad
+                    # query does not cost the other 316.
+                    print(f"{name:<20} FAILED ({first})", flush=True)
+                    failed.append((name, first))
                 continue
             bench = ["redis-benchmark", "-p", str(args.port), "-c", "1",
                      "-n", str(n)] + cmd
@@ -512,12 +525,24 @@ def main():
             w.writeheader()
             w.writerows({k: r.get(k, "") for k in fields} for r in merged.values())
         print(f"wrote {args.out}")
+        if failed:
+            # Non-zero exit: a query in QUERIES that does not answer is a real
+            # problem, and the CSV is now missing that row rather than carrying
+            # a wrong one. Reported after the CSV is written so the rest of the
+            # run is still usable.
+            print(f"\n{len(failed)} query(ies) failed and were not measured:", flush=True)
+            for name, why in failed:
+                print(f"  {name}: {why}", flush=True)
+            exit_code = 1
     finally:
         if server and not args.keep_server:
             server.send_signal(signal.SIGTERM)
             server.wait()
         elif server:
             print(f"server left running on :{args.port} (pid {server.pid})")
+
+    if exit_code:
+        sys.exit(exit_code)
 
 
 if __name__ == "__main__":

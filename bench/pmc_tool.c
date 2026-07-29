@@ -13,6 +13,7 @@
 #include <stdbool.h>
 #include <unistd.h>
 #include <sys/wait.h>
+#include <grp.h>       // setgroups
 #include <sys/sysctl.h>
 #include <sys/time.h>
 
@@ -188,9 +189,15 @@ int main(int argc, char **argv) {
          * gets root by putting their own `redis-benchmark` earlier in $PATH.
          *
          * The counters are already programmed and are read by the *parent*, so
-         * the child needs no privileges at all. setgid before setuid, and
-         * refuse to continue if either fails — silently running as root would
-         * be the whole bug. */
+         * the child needs no privileges at all. Clear the supplementary groups
+         * first (dropping uid/gid leaves an inherited root group list in place,
+         * which is still an escalation), then setgid before setuid, and refuse
+         * to continue if any of them fails — silently running as root would be
+         * the whole bug. */
+        if (setgroups(0, NULL) != 0) {
+            perror("setgroups");
+            _exit(126);
+        }
         if (setgid(getgid()) != 0) {
             perror("setgid");
             _exit(126);
