@@ -619,9 +619,14 @@ jobs:
           docker run --rm -e OMP_NUM_THREADS=1 -v "$GITHUB_WORKSPACE:/w" \
             -w /w/pr --entrypoint bash "$C_IMAGE" -c '
             set -e
-            export DEBIAN_FRONTEND=noninteractive  # image has no debconf:
-                                                  # silences a bogus
-                                                  # dpkg-preconfigure error
+            # The image ships /etc/apt/apt.conf.d/70debconf, which hooks
+            # DPkg::Pre-Install-Pkgs to a dpkg-preconfigure binary it does not
+            # contain, so every apt call prints
+            # "/usr/sbin/dpkg-preconfigure: not found" and carries on. Verified
+            # in the image: DEBIAN_FRONTEND does NOT suppress it (it is a hook,
+            # not a frontend — my first attempt at this was wrong); removing the
+            # hook file does.
+            rm -f /etc/apt/apt.conf.d/70debconf
             apt-get update -qq
             apt-get install -y -qq --no-install-recommends valgrind python3 >/dev/null
             valgrind --version
@@ -650,9 +655,14 @@ jobs:
         run: |
           docker run --rm -v "$GITHUB_WORKSPACE:/w" -w /w/pr --entrypoint bash "$C_IMAGE" -c '
             set -e
-            export DEBIAN_FRONTEND=noninteractive  # image has no debconf:
-                                                  # silences a bogus
-                                                  # dpkg-preconfigure error
+            # The image ships /etc/apt/apt.conf.d/70debconf, which hooks
+            # DPkg::Pre-Install-Pkgs to a dpkg-preconfigure binary it does not
+            # contain, so every apt call prints
+            # "/usr/sbin/dpkg-preconfigure: not found" and carries on. Verified
+            # in the image: DEBIAN_FRONTEND does NOT suppress it (it is a hook,
+            # not a frontend — my first attempt at this was wrong); removing the
+            # hook file does.
+            rm -f /etc/apt/apt.conf.d/70debconf
             apt-get update -qq
             apt-get install -y -qq --no-install-recommends python3 >/dev/null
             python3 bench/run_bench.py --module /w/pr/target/release/libfalkordb.so \
