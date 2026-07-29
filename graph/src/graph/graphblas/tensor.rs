@@ -139,6 +139,29 @@ use super::{
 #[allow(non_upper_case_globals)]
 pub const GrB_INDEX_MAX: u64 = (1u64 << 60) - 1;
 
+/// Copy every entry of `src` into `dst` via a row iterator.
+///
+/// Used by the grow path of [`Tensor::resize`] to re-emit a layer at larger
+/// dims. The iterator yields `(row, col, value)` in row-major order, which is
+/// the sorted order [`Matrix::build`] requires, so the vectors are filled once
+/// and handed straight over. `src` must already be waited: iterating a pending
+/// matrix materializes it, which is a mutation on a possibly-shared layer.
+fn rebuild_u64(
+    src: &Matrix<u64>,
+    dst: &mut Matrix<u64>,
+) {
+    let n = src.nvals() as usize;
+    let mut rows = Vec::with_capacity(n);
+    let mut cols = Vec::with_capacity(n);
+    let mut vals = Vec::with_capacity(n);
+    for (r, c, v) in src.iter(0, u64::MAX) {
+        rows.push(r);
+        cols.push(c);
+        vals.push(v);
+    }
+    dst.build(&rows, &cols, &vals);
+}
+
 /// Pack a `(src, dst)` node-id pair into the compound row key used by the
 /// edge-id matrix `me`.
 ///
@@ -619,29 +642,31 @@ impl Tensor {
         self.m.wait();
         self.dp.wait();
         self.dm.wait();
-        let (mi, mj, mv) = self.m.extract_tuples();
+        // Row iterators rather than `extract_tuples`: each layer is copied
+        // straight to the new dims with no merge, so unlike
+        // `VersionedMatrix::resize` this is allocation-neutral — one output
+        // triple either way. It keeps both grow paths on one traversal API and
+        // drops the last `extract_tuples` callers.
         let mut new_m = Matrix::<u64>::new(nrows, ncols);
-        new_m.build(&mi, &mj, &mv);
+        rebuild_u64(&self.m, &mut new_m);
         new_m.wait();
         self.m.replace(new_m);
+        let mut new_dp = Matrix::<u64>::new(nrows, ncols);
         if self.dp.nvals() > 0 {
-            let (pi, pj, pv) = self.dp.extract_tuples();
-            let mut new_dp = Matrix::<u64>::new(nrows, ncols);
-            new_dp.build(&pi, &pj, &pv);
-            self.dp.replace(new_dp.into_hyper());
-        } else {
-            self.dp
-                .replace(Matrix::<u64>::new(nrows, ncols).into_hyper());
+            rebuild_u64(&self.dp, &mut new_dp);
         }
+        self.dp.replace(new_dp.into_hyper());
+        let mut new_dm = Matrix::<bool>::new(nrows, ncols);
         if self.dm.nvals() > 0 {
-            let (qi, qj) = self.dm.extract_tuples();
-            let mut new_dm = Matrix::<bool>::new(nrows, ncols);
+            let mut qi = Vec::with_capacity(self.dm.nvals() as usize);
+            let mut qj = Vec::with_capacity(qi.capacity());
+            for (r, c) in self.dm.iter(0, u64::MAX) {
+                qi.push(r);
+                qj.push(c);
+            }
             new_dm.build(&qi, &qj);
-            self.dm.replace(new_dm.into_hyper());
-        } else {
-            self.dm
-                .replace(Matrix::<bool>::new(nrows, ncols).into_hyper());
         }
+        self.dm.replace(new_dm.into_hyper());
         self.mt.resize(ncols, nrows);
     }
 

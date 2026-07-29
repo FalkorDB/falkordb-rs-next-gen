@@ -86,8 +86,7 @@ use super::{
     GrB_Matrix_apply, GrB_Matrix_build_BOOL, GrB_Matrix_build_UINT64, GrB_Matrix_clear,
     GrB_Matrix_dup, GrB_Matrix_eWiseAdd_BinaryOp, GrB_Matrix_eWiseAdd_Semiring,
     GrB_Matrix_eWiseMult_Semiring, GrB_Matrix_extractElement_BOOL,
-    GrB_Matrix_extractElement_UINT64, GrB_Matrix_extractTuples_BOOL,
-    GrB_Matrix_extractTuples_UINT64, GrB_Matrix_free, GrB_Matrix_get_INT32, GrB_Matrix_ncols,
+    GrB_Matrix_extractElement_UINT64, GrB_Matrix_free, GrB_Matrix_get_INT32, GrB_Matrix_ncols,
     GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals, GrB_Matrix_removeElement,
     GrB_Matrix_resize, GrB_Matrix_set_INT32, GrB_Matrix_setElement_BOOL,
     GrB_Matrix_setElement_UINT64, GrB_Matrix_wait, GrB_Mode, GrB_Orientation, GrB_SECOND_UINT64,
@@ -1047,31 +1046,6 @@ impl Matrix<u64> {
         }
         self.has_pending.store(true, Ordering::Relaxed);
     }
-
-    /// Extract all (row, col, value) triples in the matrix's natural storage
-    /// order (row-major for CSR).
-    #[must_use]
-    pub fn extract_tuples(&self) -> (Vec<u64>, Vec<u64>, Vec<u64>) {
-        let n = self.nvals() as usize;
-        let mut rows: Vec<u64> = Vec::with_capacity(n);
-        let mut cols: Vec<u64> = Vec::with_capacity(n);
-        let mut vals: Vec<u64> = Vec::with_capacity(n);
-        unsafe {
-            let mut nvals = n as u64;
-            let info = GrB_Matrix_extractTuples_UINT64(
-                rows.as_mut_ptr(),
-                cols.as_mut_ptr(),
-                vals.as_mut_ptr(),
-                &raw mut nvals,
-                *self.m,
-            );
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
-            rows.set_len(nvals as usize);
-            cols.set_len(nvals as usize);
-            vals.set_len(nvals as usize);
-        }
-        (rows, cols, vals)
-    }
 }
 
 impl Matrix<bool> {
@@ -1164,29 +1138,6 @@ impl Matrix<bool> {
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
         self.has_pending.store(true, Ordering::Relaxed);
-    }
-
-    /// Extract all (row, col) coordinates in the matrix's natural storage
-    /// order (row-major for CSR). Values are skipped (X = NULL).
-    #[must_use]
-    pub fn extract_tuples(&self) -> (Vec<u64>, Vec<u64>) {
-        let n = self.nvals() as usize;
-        let mut rows: Vec<u64> = Vec::with_capacity(n);
-        let mut cols: Vec<u64> = Vec::with_capacity(n);
-        unsafe {
-            let mut nvals = n as u64;
-            let info = GrB_Matrix_extractTuples_BOOL(
-                rows.as_mut_ptr(),
-                cols.as_mut_ptr(),
-                null_mut(),
-                &raw mut nvals,
-                *self.m,
-            );
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
-            rows.set_len(nvals as usize);
-            cols.set_len(nvals as usize);
-        }
-        (rows, cols)
     }
 
     /// Delta-aware matrix-multiply: `self = self * (m, dp, dm)` operating

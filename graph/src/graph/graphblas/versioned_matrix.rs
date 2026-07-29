@@ -424,55 +424,61 @@ impl VersionedMatrix<bool> {
         // lingering delta later pays another O(|m|) fold pass (measured
         // 2.4-9.8 ms spikes per capacity grow on bulk creates). Instead
         // rebuild the base at the target dims in one pass, folding both
-        // deltas in: extract the tuple streams (row-major sorted) and merge
-        // (m \ dm) ∪ dp into a fresh matrix.
+        // deltas in: merge (m \ dm) ∪ dp into a fresh matrix.
         //
         // The layers may still be shared with the committed snapshot AND
-        // carry pending GraphBLAS work (commit does not wait). extractTuples
+        // carry pending GraphBLAS work (commit does not wait). Iterating
         // materializes pending work — a mutation — so it must go through the
         // lock-coordinated wait() first or it races concurrent readers
         // (observed as GrB_INVALID_OBJECT / heap corruption under stress).
         self.wait_all();
-        let (mi, mj) = self.m.extract_tuples();
-        let (pi, pj) = self.dp.extract_tuples();
-        let (qi, qj) = self.dm.extract_tuples();
-        let n = mi.len() + pi.len();
-        let mut new_m = Matrix::<bool>::new(nrows, ncols);
-        if qi.is_empty() && pi.is_empty() {
-            new_m.build(&mi, &mj);
-        } else if qi.is_empty()
-            && (mi.is_empty() || (mi[mi.len() - 1], mj[mi.len() - 1]) < (pi[0], pj[0]))
-        {
-            // Pure append (monotonically growing ids): concat, no merge.
-            let mut ri = Vec::with_capacity(n);
-            let mut rj = Vec::with_capacity(n);
-            ri.extend_from_slice(&mi);
-            ri.extend_from_slice(&pi);
-            rj.extend_from_slice(&mj);
-            rj.extend_from_slice(&pj);
-            new_m.build(&ri, &rj);
-        } else {
-            let mut ri = Vec::with_capacity(n);
-            let mut rj = Vec::with_capacity(n);
-            let (mut b, mut c) = (0usize, 0usize);
-            for a in 0..mi.len() {
-                let key = (mi[a], mj[a]);
-                while b < pi.len() && (pi[b], pj[b]) < key {
-                    ri.push(pi[b]);
-                    rj.push(pj[b]);
-                    b += 1;
+        // Streamed with row iterators rather than `extract_tuples` per layer:
+        // all three layers yield `(row, col)` in row-major order, which is
+        // already the sorted order `build` wants, so the merge needs no
+        // per-layer tuple arrays at all — only the single output pair. That
+        // takes peak extra memory from `2·(|m| + |dp| + |dm|) + 2·n` u64s down
+        // to `2·n`, roughly halving it on a base-dominated matrix.
+        let n = (self.m.nvals() + self.dp.nvals()) as usize;
+        let mut ri = Vec::with_capacity(n);
+        let mut rj = Vec::with_capacity(n);
+        let mut base = self.m.iter(0, u64::MAX).peekable();
+        let mut adds = self.dp.iter(0, u64::MAX).peekable();
+        let mut tombs = self.dm.iter(0, u64::MAX).peekable();
+        loop {
+            // Next surviving base entry: skip any the tombstone stream covers.
+            // `dm ⊆ m` and both are sorted, so `tombs` only ever advances
+            // toward the current base key and never rewinds.
+            let next_base = loop {
+                let Some(&bk) = base.peek() else { break None };
+                while tombs.peek().is_some_and(|&t| t < bk) {
+                    tombs.next();
                 }
-                if c < qi.len() && (qi[c], qj[c]) == key {
-                    c += 1;
+                if tombs.peek() == Some(&bk) {
+                    tombs.next();
+                    base.next();
                     continue;
                 }
-                ri.push(key.0);
-                rj.push(key.1);
-            }
-            ri.extend_from_slice(&pi[b..]);
-            rj.extend_from_slice(&pj[b..]);
-            new_m.build(&ri, &rj);
+                break Some(bk);
+            };
+            // `dp ∩ m = ∅` for bool layers, so the two streams never collide
+            // on a key and a plain two-way merge emits the union in order.
+            let take_add = match (next_base, adds.peek()) {
+                (None, None) => break,
+                (None, Some(_)) => true,
+                (Some(_), None) => false,
+                (Some(bk), Some(&ak)) => ak < bk,
+            };
+            let (r, c) = if take_add {
+                adds.next().unwrap_or_else(|| unreachable!())
+            } else {
+                base.next().unwrap_or_else(|| unreachable!())
+            };
+            ri.push(r);
+            rj.push(c);
         }
+        drop((base, adds, tombs));
+        let mut new_m = Matrix::<bool>::new(nrows, ncols);
+        new_m.build(&ri, &rj);
         new_m.wait();
         self.m.replace(new_m);
         // Deltas are folded in; swap in fresh empty ones at the new dims
