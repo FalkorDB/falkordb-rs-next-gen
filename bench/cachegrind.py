@@ -215,11 +215,13 @@ def parse_total(path):
     return None
 
 
-def run_total(module, port, outdir, query, reps):
+def run_total(module, port, outdir, query, reps, also_run=()):
     """Run one instrumented server lifecycle; return its total instruction count.
 
     The server runs `query` `reps` times after building CG_SETUP, then exits so
-    callgrind writes its total.
+    callgrind writes its total. `also_run` executes each of those queries once
+    first — used only by the warm-up, to force every kernel the subset needs to
+    be compiled and cached before anything is measured.
     """
     shutil.rmtree(outdir, ignore_errors=True)
     os.makedirs(outdir, exist_ok=True)
@@ -258,6 +260,9 @@ def run_total(module, port, outdir, query, reps):
 
         for stmt in CG_SETUP:
             cli(port, *GRAPH_CMD, stmt)
+
+        for extra in also_run:
+            cli(port, *GRAPH_CMD, extra, check=False)
 
         # One redis-cli with -r, not `reps` of them: a fresh connection per
         # execution would put accept/handshake/teardown into the measurement,
@@ -355,9 +360,25 @@ def main():
     # later one does. Measured: the first run came in ~30M instructions above
     # its pair, which made T(n2) < T(n1) and cost the `RETURN 1` control row —
     # the skip guard caught it rather than reporting a negative cost.
-    print("warm-up run (populates the GraphBLAS kernel cache)...", flush=True)
+    #
+    # The warm-up runs *every* query in the subset once, not just one. GraphBLAS
+    # compiles kernels on first use, and a query whose kernels no earlier query
+    # needed pays that compile inside its own first measured run. Measured on
+    # the C engine with a one-query warm-up: `two-hop` reported
+    # T(n1)=3,384,143,011 against T(n2)=2,546,675,797 — the n1 run cost 838M
+    # *more* while doing 3,000 fewer queries, so the guard skipped the row. Same
+    # for `RETURN 1`, the first row measured. Warming the whole subset removes
+    # the asymmetry.
+    print("warm-up run (compiles every kernel the subset needs)...", flush=True)
     try:
-        run_total(args.module, args.port, outdir, "RETURN 1", 1)
+        run_total(
+            args.module,
+            args.port,
+            outdir,
+            "RETURN 1",
+            1,
+            also_run=[q for _, _, q, *_ in queries],
+        )
     except (RuntimeError, subprocess.TimeoutExpired) as e:
         sys.exit(f"warm-up run failed, so nothing else will work: {e}")
 
