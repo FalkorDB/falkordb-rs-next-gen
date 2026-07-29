@@ -3,7 +3,7 @@ use std::sync::Arc;
 use graph::entity_type::EntityType;
 use graph::graph::attribute_store::AttributeStore;
 use graph::graph::graph::Graph;
-use graph::graph::graphblas::serialization::{Decode, Reader};
+use graph::graph::graphblas::serialization::{Decode, Reader, capacity_hint};
 use graph::graph::graphblas::tensor::Tensor;
 use graph::graph::graphblas::versioned_matrix::VersionedMatrix;
 use graph::index::IndexInfo;
@@ -15,6 +15,57 @@ use super::Header;
 use super::Schema;
 use super::buffered_io::BufferedReader;
 use super::{DECODE_STATE, PendingGraph};
+
+/// Number of entity sections whose totals are cross-checked against the header.
+pub const ENTITY_SECTIONS: usize = 4;
+
+/// Tally the per-section entity counts declared by a payload directory.
+///
+/// Order matches [`validate_entity_counts`]: nodes, deleted nodes, edges,
+/// deleted edges.
+fn tally_entity_counts(payloads: &[(EncodeState, u64)]) -> [u64; ENTITY_SECTIONS] {
+    let mut seen = [0u64; ENTITY_SECTIONS];
+    for (state, count) in payloads {
+        let slot = match *state {
+            EncodeState::Nodes => 0,
+            EncodeState::DeletedNodes => 1,
+            EncodeState::Edges => 2,
+            EncodeState::DeletedEdges => 3,
+            _ => continue,
+        };
+        seen[slot] = seen[slot].saturating_add(*count);
+    }
+    seen
+}
+
+/// Reject payloads whose header counts disagree with their payload directory.
+///
+/// `GRAPH.RESTORE` hands the decoder client-controlled bytes, and the header
+/// counts drive post-load work: `rebuild_derived_matrices` walks
+/// `0..=node_count + deleted_nodes` to repopulate `all_nodes_matrix`. A header
+/// claiming billions of nodes alongside an empty payload directory decodes
+/// without error and then spins that loop until the server is OOM-killed, so
+/// the counts have to agree before any of them is trusted.
+fn validate_entity_counts(
+    hdr: &Header,
+    seen: [u64; ENTITY_SECTIONS],
+) -> Result<(), String> {
+    let declared = [
+        (hdr.node_count, "node"),
+        (hdr.deleted_node_count, "deleted node"),
+        (hdr.edge_count, "edge"),
+        (hdr.deleted_edge_count, "deleted edge"),
+    ];
+    for (i, (declared, label)) in declared.into_iter().enumerate() {
+        if seen[i] != declared {
+            return Err(format!(
+                "{label} count mismatch: header declares {declared}, payload directory has {}",
+                seen[i]
+            ));
+        }
+    }
+    Ok(())
+}
 
 /// Decode a graph key from the RDB stream (v19 format).
 ///
@@ -36,7 +87,7 @@ pub fn rdb_load_graph(
 
     // --- Key Schema (payload directory) ---
     let payload_count = r.read_unsigned()?;
-    let mut payloads = Vec::with_capacity(payload_count as usize);
+    let mut payloads = Vec::with_capacity(capacity_hint(payload_count));
     for _ in 0..payload_count {
         let state = r.read_unsigned()?;
         let count = r.read_unsigned()?;
@@ -64,6 +115,7 @@ pub fn rdb_load_graph(
 
             let pg = PendingGraph {
                 keys_remaining: hdr.key_count - 1, // this key + remaining
+                seen_counts: [0; ENTITY_SECTIONS],
                 cache_size,
                 header: Header {
                     graph_name: hdr.graph_name.clone(),
@@ -111,6 +163,10 @@ pub fn rdb_load_graph(
                         hdr.graph_name
                     )
                 })?;
+            let seen = tally_entity_counts(&payloads);
+            for (slot, count) in pg.seen_counts.iter_mut().zip(seen) {
+                *slot = slot.saturating_add(count);
+            }
             decode_payloads_into_pending(&mut r, &payloads, pg, &hdr)?;
         }
 
@@ -130,6 +186,7 @@ pub fn rdb_load_graph(
             let pg = decode_state.pending.remove(&graph_name).ok_or_else(|| {
                 format!("pending graph {graph_name} not found at multi-key RDB finalization")
             })?;
+            validate_entity_counts(&pg.header, pg.seen_counts)?;
             let graph = finalize_pending_graph(pg);
             // Store the finalized graph in DECODE_STATE for the caller to retrieve.
             decode_state.finalized.insert(graph_name, graph);
@@ -139,6 +196,8 @@ pub fn rdb_load_graph(
     }
 
     // Single-key path (key_count == 1): decode everything in one go.
+    validate_entity_counts(&hdr, tally_entity_counts(&payloads))?;
+
     let mut node_attrs = AttributeStore::new();
     let mut rel_attrs = AttributeStore::new();
 
@@ -394,7 +453,7 @@ fn load_graph_from_reader(
     let schema = Schema::decode(r)?;
 
     let payload_count = r.read_unsigned()?;
-    let mut payloads = Vec::with_capacity(payload_count as usize);
+    let mut payloads = Vec::with_capacity(capacity_hint(payload_count));
     for _ in 0..payload_count {
         let state = r.read_unsigned()?;
         let count = r.read_unsigned()?;
@@ -402,6 +461,8 @@ fn load_graph_from_reader(
             EncodeState::from_u64(state).ok_or_else(|| format!("unknown encode state: {state}"))?;
         payloads.push((state, count));
     }
+
+    validate_entity_counts(&hdr, tally_entity_counts(&payloads))?;
 
     let mut node_attrs = AttributeStore::new();
     let mut rel_attrs = AttributeStore::new();

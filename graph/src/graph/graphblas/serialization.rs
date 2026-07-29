@@ -48,6 +48,21 @@ pub trait Encode<const VERSION: u64> {
     }
 }
 
+/// Capacity hint for a collection whose element count was read from a
+/// serialized payload.
+///
+/// `GRAPH.RESTORE` accepts a client-supplied payload, so any count decoded
+/// from it is untrusted: reserving it outright lets a bogus header abort the
+/// process with a multi-exabyte allocation before a single element is read.
+/// Clamping the reservation makes a bogus count surface as an ordinary decode
+/// error once the reader runs out of data, while a genuine count still only
+/// costs the usual amortized growth.
+#[must_use]
+pub fn capacity_hint(count: u64) -> usize {
+    const MAX_PREALLOC: u64 = 4096;
+    count.min(MAX_PREALLOC) as usize
+}
+
 /// Abstraction over a deserialization source.
 ///
 /// The root crate implements this for `BufferedReader` (v19 buffered IO).
