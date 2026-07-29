@@ -172,3 +172,21 @@ class testUnion(FlowTestsBase):
         self.env.assertEqual(len(result.result_set), 1)
         self.env.assertEqual(result.result_set, [[0]])
         self.env.assertEqual(result.nodes_created, 2)
+
+    def test10_invalid_pattern_predicate(self):
+        query = """MATCH (p)
+                   WHERE EXISTS((p)-->() )
+                   RETURN 1 AS x
+                   UNION
+                   MATCH (p)
+                   WITH p
+                   RETURN 2 AS x"""
+
+        try:
+            self.graph.query(query)
+            assert(False)
+        except redis.ResponseError:
+            pass
+
+        result = self.graph.query("RETURN 1 AS x")
+        self.env.assertEqual(result.result_set, [[1]])

@@ -2462,8 +2462,9 @@ impl Planner {
             // Multi-clause query: plan each clause and stitch together.
             QueryIR::Query { clauses: q, write } => self.plan_query(q, write),
             QueryIR::Union { branches, all } => {
+                let scope_vars = self.scope_vars.clone();
                 let mut res = tree!(IR::Union; branches.into_iter().map(|branch| {
-                    let mut planner = Self::default();
+                    let mut planner = Self::new(scope_vars.clone());
                     planner.plan(branch)
                 }));
                 if !all {
