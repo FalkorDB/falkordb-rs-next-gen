@@ -1,5 +1,5 @@
 //------------------------------------------------------------------------------
-// GB_jit__masker_phase2__fff03941.c
+// GB_jit__masker_phase2__fff03100.c
 //------------------------------------------------------------------------------
 // SuiteSparse:GraphBLAS v10.3.1, Timothy A. Davis, (c) 2017-2026,
 // All Rights Reserved.
@@ -10,8 +10,8 @@
 
 #include "include/GB_jit_kernel.h"
 
-// masker: uint64_t
-#define GB_R_TYPE uint64_t
+// masker: bool
+#define GB_R_TYPE bool
 #define GB_COPY_C_TO_R(Rx,pR,Cx,pC,C_iso,rsize) Rx [pR] = Cx [pC]
 #define GB_COPY_Z_TO_R(Rx,pR,Zx,pZ,Z_iso,rsize) Rx [pR] = Zx [pZ]
 #define GB_COPY_C_TO_R_RANGE(Rx,pR,Cx,pC,C_iso,rsize,cjnz) \
@@ -25,13 +25,13 @@
     memcpy (Rx +(pR), Zx +(pZ), (zjnz)*rsize) ;            \
 }
 
-// R matrix: sparse
-#define GB_R_IS_HYPER  0
-#define GB_R_IS_SPARSE 1
+// R matrix: hypersparse
+#define GB_R_IS_HYPER  1
+#define GB_R_IS_SPARSE 0
 #define GB_R_IS_BITMAP 0
 #define GB_R_IS_FULL   0
 #define GBp_R(Rp,k,vlen) Rp [k]
-#define GBh_R(Rh,k)      (k)
+#define GBh_R(Rh,k)      Rh [k]
 #define GBi_R(Ri,p,vlen) Ri [p]
 #define GBb_R(Rb,p)      1
 #define GB_R_NVALS(e) int64_t e = R->nvals
@@ -93,13 +93,13 @@
 #define GB_Mj_BITS 32
 #define GB_Mi_BITS 32
 
-// Z matrix: sparse
-#define GB_Z_IS_HYPER  0
-#define GB_Z_IS_SPARSE 1
+// Z matrix: hypersparse
+#define GB_Z_IS_HYPER  1
+#define GB_Z_IS_SPARSE 0
 #define GB_Z_IS_BITMAP 0
 #define GB_Z_IS_FULL   0
 #define GBp_Z(Zp,k,vlen) Zp [k]
-#define GBh_Z(Zh,k)      (k)
+#define GBh_Z(Zh,k)      Zh [k]
 #define GBi_Z(Zi,p,vlen) Zi [p]
 #define GBb_Z(Zb,p)      1
 #define GB_Z_NVALS(e) int64_t e = Z->nvals
@@ -116,14 +116,14 @@
 
 #include "include/GB_masker_shared_definitions.h"
 #ifndef GB_JIT_RUNTIME
-#define GB_jit_kernel GB_jit__masker_phase2__fff03941
-#define GB_jit_query  GB_jit__masker_phase2__fff03941_query
+#define GB_jit_kernel GB_jit__masker_phase2__fff03100
+#define GB_jit_query  GB_jit__masker_phase2__fff03100_query
 #endif
 #include "template/GB_jit_kernel_masker_phase2.c"
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query) ;
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query)
 {
-    (*hash) = 0x44659ca3dfb6ffa9 ;
+    (*hash) = 0x1ebe7dd6571cdcc4 ;
     v [0] = 10 ; v [1] = 3 ; v [2] = 1 ;
     defn [0] = NULL ;
     defn [1] = NULL ;
