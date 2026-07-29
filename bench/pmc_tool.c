@@ -6,6 +6,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+// strcasestr is not declared by <string.h> under strict feature sets; it is
+// declared in <strings.h> on macOS and needs _GNU_SOURCE on glibc.
+#include <strings.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <unistd.h>
@@ -69,8 +72,21 @@ static int get_ncpu(void) {
     return ncpu;
 }
 
+// Upper bound on CPUs the counter buffer is sized for. kpc_get_cpu_counters
+// fills one counter_count-wide row per CPU, so the buffer must cover every CPU
+// the kernel reports or it writes past the end.
+#define KPC_MAX_CPUS 256
+
 static void read_counters(uint32_t classes, int ncpu, uint32_t counter_count, uint64_t *sums) {
-    static uint64_t buf[64 * KPC_MAX_COUNTERS];
+    static uint64_t buf[KPC_MAX_CPUS * KPC_MAX_COUNTERS];
+    if (ncpu > KPC_MAX_CPUS || counter_count > KPC_MAX_COUNTERS) {
+        // Refuse rather than truncate: a short read would silently under-count
+        // and the numbers would still look plausible.
+        fprintf(stderr,
+                "pmc_tool: ncpu=%d counter_count=%u exceeds buffer (%d x %d)\n",
+                ncpu, counter_count, KPC_MAX_CPUS, KPC_MAX_COUNTERS);
+        exit(1);
+    }
     int ret = kpc_get_cpu_counters(true, classes, NULL, buf);
     if (ret != 0) {
         fprintf(stderr, "kpc_get_cpu_counters failed: %d\n", ret);
@@ -205,5 +221,16 @@ int main(int argc, char **argv) {
     for (int i = 0; i < n_events; i++)
         printf("EVENT %s %llu\n", event_names[i],
                (unsigned long long)(after[counter_map[i]] - before[counter_map[i]]));
+    // WEXITSTATUS is only defined when the child exited normally. A child killed
+    // by a signal (SIGSEGV in the server under test, say) would otherwise report
+    // 0 and the caller would treat a crash as a clean run.
+    if (WIFSIGNALED(status)) {
+        fprintf(stderr, "pmc_tool: child killed by signal %d\n", WTERMSIG(status));
+        return 128 + WTERMSIG(status);
+    }
+    if (!WIFEXITED(status)) {
+        fprintf(stderr, "pmc_tool: child did not exit normally (status %d)\n", status);
+        return 1;
+    }
     return WEXITSTATUS(status);
 }
