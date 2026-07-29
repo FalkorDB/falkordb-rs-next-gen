@@ -57,10 +57,30 @@ is not used there), with `--hz 1` and one connection per run:
 
 The residual comes from work whose amount depends on how long the process
 lives, so it appears as a roughly fixed absolute drift per run rather than a
-per-execution error: ~3.5k instr spread over a span of `n2 - n1` executions is
-~18-35 instr/exec. That is 0.5% of a 4.9k-instruction PING and under 0.01% of a
-query costing 500k, so the useful precision is much better for real queries
-than the PING figure suggests. Treat sub-1% differences as noise.
+per-execution error: drift spread over a span of `n2 - n1` executions.
+
+**The 3.5k figure above is the bare-redis case and badly understates the real
+thing.** With the module loaded, CI measured per-run drift of ~300-600k
+instructions on a ~236M baseline. At a fixed span of 100 that is 3-6k
+instr/exec of error — nothing for a 7M-instruction query, but **6.7% for
+`RETURN 1`**, which is how the control row came to read 1.0673x on two builds
+whose Rust was byte-identical:
+
+    RETURN 1              90,512 ->    96,607   1.0673x   (+6,095)
+    create node          191,445 ->   192,544   1.0057x   (+1,099)
+    arithmetic         1,465,420 -> 1,469,746   1.0030x   (+4,326)
+    reduce             4,788,178 -> 4,787,865   0.9999x     (-313)
+    list comprehension 7,414,221 -> 7,412,876   0.9998x   (-1,345)
+
+Note the absolute deltas are all a few thousand regardless of query cost —
+the error is absolute, so "treat sub-1% as noise" is wrong: it is far too
+strict for expensive queries and far too lax for cheap ones.
+
+So the span is now chosen per query as `DRIFT / (TARGET_REL * cost)`, which
+holds the *differenced work* constant instead of the span. Cheap queries get a
+wide span (a cheap thing to do — `RETURN 1` at span ~3300 is still only ~300M
+instructions), expensive ones keep the default. Each row prints the span it
+used and the resulting error bar.
 
 An earlier version of this file claimed the counts were exactly reproducible
 with "no run-to-run noise to threshold against". That was wrong, and the
@@ -91,11 +111,23 @@ Usage:
 import argparse
 import csv
 import glob
+import math
 import os
 import shutil
 import subprocess
 import sys
 import time
+
+# Per-run drift in the whole-process total, measured in CI with the module
+# loaded: the two runs of a pair differ by ~300-600k instructions even for
+# identical code. Divided by the span this becomes the per-execution error, so
+# it is an *absolute* budget, not a relative one.
+DRIFT_INSTR = 600_000
+# Per-execution precision to aim for. span = DRIFT / (TARGET_REL * cost), so
+# the differenced work per query is DRIFT/TARGET_REL = 300M instructions
+# regardless of how cheap the query is — a few seconds under valgrind.
+TARGET_REL = 0.002
+MAX_SPAN = 4000
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -119,8 +151,11 @@ CG_SETUP = [
     "MATCH (a:Person {id: i}) MATCH (b:Person {id: (i + 1) % 1000}) "
     "CREATE (a)-[:KNOWS]->(b)",
     # `delete node` deletes one :Tmp per execution, so there must be more of
-    # them than the highest repeat count.
-    "UNWIND range(0, 999) AS i CREATE (:Tmp {x: i})",
+    # them than the highest repeat count — which is now `MAX_SPAN` plus n1,
+    # since a cheap delete query would get its span widened. Running dry would
+    # not fail loudly: the remaining executions would measure a no-op delete
+    # and quietly halve the reported cost.
+    "UNWIND range(0, 4999) AS i CREATE (:Tmp {x: i})",
 ]
 
 # The command each statement/query is sent as. A seam: valgrind on arm64 cannot
@@ -333,10 +368,33 @@ def main():
             continue
 
         per = (hi - lo) / span
+        used_span, note = span, ""
+
+        # Widen the span for cheap queries. The per-run drift is roughly a
+        # fixed number of instructions, so dividing it by the span makes the
+        # *absolute* error per execution fixed — which is negligible for a
+        # 7M-instruction query and enormous for a 90k one. Choosing
+        # span = DRIFT / (TARGET_REL * cost) makes the differenced work
+        # constant instead, so precision is uniform and the extra cost is
+        # bounded at DRIFT/TARGET_REL instructions per query.
+        if per > 0:
+            want = math.ceil(DRIFT_INSTR / (TARGET_REL * per))
+            want = min(want, MAX_SPAN)
+            if want > span:
+                try:
+                    hi2 = run_total(args.module, args.port, outdir, q, args.n1 + want)
+                except (RuntimeError, subprocess.TimeoutExpired) as e:
+                    print(f"{name:<24} refine failed, keeping span {span}: {e}", flush=True)
+                    hi2 = None
+                if hi2 is not None and hi2 > lo:
+                    per = (hi2 - lo) / want
+                    used_span, note = want, f" [span widened {span}->{want}]"
+
         rows.append({"query": name, "instr": f"{per:.0f}"})
         print(
             f"{name:<24}{per:>15,.0f} instr/exec   "
-            f"(T{args.n1}={lo:,} T{args.n2}={hi:,}, {time.time() - t0:.0f}s)",
+            f"(span {used_span}, +-{DRIFT_INSTR / used_span / per * 100:.2f}%, "
+            f"{time.time() - t0:.0f}s){note}",
             flush=True,
         )
 
