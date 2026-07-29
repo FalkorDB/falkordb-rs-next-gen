@@ -41,7 +41,10 @@ class testSlowLog():
             self.env.assertContains("Invalid graph operation on empty key", str(e))
 
         # issue the same query twice
-        q = "UNWIND range (0, 500000) AS x RETURN max(x)"
+        # NOTE: the range must be large enough that the query deterministically
+        # exceeds the slowlog's 10ms recording threshold; range(0, 500000)
+        # measured 8-10ms on a fast machine, flaking right at the cutoff.
+        q = "UNWIND range (0, 2000000) AS x RETURN max(x)"
         self.graph.query(q)
         self.graph.query(q)
 
