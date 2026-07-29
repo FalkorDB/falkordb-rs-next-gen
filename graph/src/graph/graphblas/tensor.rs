@@ -281,7 +281,7 @@ impl Tensor {
         }
         self.dp.wait();
         self.dm.wait();
-        let base = self.m.nvals() + self.m.nrows();
+        let base = self.m.nvals();
         let dp_nvals = self.dp.nvals();
         let dm_nvals = self.dm.nvals();
         // The deltas are materialized now — resync the approximate counters
@@ -766,7 +766,7 @@ impl Tensor {
     /// write transaction.
     #[must_use]
     pub fn dup(&self) -> Self {
-        let base = self.m.nvals() + self.m.nrows();
+        let base = self.m.nvals();
         let dp_count = self.dp_count.load(Ordering::Relaxed);
         let dm_count = self.dm_count.load(Ordering::Relaxed);
         let fold_dp = self.fold_dp.load(Ordering::Relaxed)

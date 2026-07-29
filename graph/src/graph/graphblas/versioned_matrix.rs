@@ -81,76 +81,109 @@ use crate::graph::{
 };
 
 /// A delta layer is folded into the base once its size justifies a base
-/// rewrite. Every write transaction pays `O(|delta|)` just to touch a
-/// shared delta (COW dup + pending-tuple merge on wait), while a fold costs
-/// `base_cost` amortized over the entries the transaction contributes
-/// (`tx_added`). The two balance at `|delta| ≈ sqrt(base_cost · tx_added)`:
-/// small batches fold early (keeping their per-query delta tax low), bulk
-/// loads keep deltas large (avoiding quadratic base rewrites).
+/// rewrite. Every write transaction pays `O(|delta|)` just to touch a shared
+/// delta, while a fold costs a fixed `F` amortized over the entries the
+/// transaction contributes (`tx_added`). With transactions of `tx_added`
+/// entries accumulating to a fold point `D`, writing `D` entries costs
+/// `Σᵏ (i·tx_added)·w + F ≈ w·D²/(2·tx_added) + F`, i.e. per entry
+/// `w·D/(2·tx_added) + F/D`: a rewrite tax that grows with `D` against a fold
+/// bill that shrinks with it. The two balance at
 ///
-/// The sqrt point is scaled by `WRITE_FOLD_SCALE_SQ`: under MVCC the base
-/// is shared with the committed snapshot, so every fold is a full
-/// `O(base_cost)` rebuild — not C's in-place masked assign — and folding
-/// at the raw sqrt point rebuilt the base ~3x more often than the delta
-/// tax justified (measured −33% instructions on repeated 100-node creates
-/// with a flat 10k floor, C's `DELTA_MAX_PENDING_CHANGES`). A flat floor,
-/// though, lets single-entity writes accumulate a 10k-entry delta and pay
-/// an `O(|delta|)` COW dup on every write (measured `create node` climbing
-/// 435k→517k instructions as the delta grew). Scaling the sqrt point by a
-/// constant keeps the optimal `sqrt(base_cost · tx_added)` shape — the
-/// scale models `sqrt(2 · fold_cost_per_entry / dup_cost_per_entry)` — so
-/// small transactions fold early enough to bound their dup tax while
-/// batched writes keep the floor-era cadence (tx_added = 100 on a 10k
-/// graph puts the scaled point at ~11k, right where the floor was). Reads
-/// do pay for a lingering delta (one materialization plus merged iteration
-/// on every access), so [`should_fold_read`] — the policy for `wait`,
-/// which only runs when something reads the matrix — keeps the unscaled
-/// sqrt rule, folding promptly once a workload turns read-heavy.
+/// ```text
+/// D* = sqrt(2 · (F/w) · tx_added)
+/// ```
 ///
-/// A delta comparable to the fold cost always folds (`2·|delta| ≥
-/// base_cost`): the fold then costs the same order as one delta touch, and
-/// without it a one-shot bulk transaction (whose huge `tx_added` defeats the
-/// sqrt term) can leave a base-sized delta taxing every later transaction.
+/// which is why this is a sqrt rule and not an LSM-style ratio (`D ≥ base/K`).
+/// A ratio is right when each entry is rewritten `O(1)` times between merges;
+/// here every transaction re-touches the *whole* delta, so the accumulated tax
+/// is quadratic in `D` and depends on `tx_added`. Dropping `tx_added` gets both
+/// ends wrong — at `tx_added = 1` on a big graph the delta grows until each
+/// write pays milliseconds, and at a bulk `tx_added` it folds every
+/// transaction. A flat absolute limit was measured against the sqrt rule and
+/// rejected for the same reason: on the read path at `tx_added = 1` a 4k limit
+/// costs 7.2x the per-write cost (102.5 µs vs 14.3 µs) and 14x the worst-case
+/// stall (206.5 µs vs ~14 µs).
 ///
-/// `base_cost` must be `base.nvals() + base.nrows()`: a fold rewrites the
-/// base's row-pointer structure, so on a high-capacity sparse matrix the
-/// `O(nrows)` cumsum/phase work dominates `O(nvals)` (folding every few
-/// queries on 1m-capacity matrices measured +16% instructions on bulk
-/// creates). The nrows term suppresses mid-stream folds there; the sqrt
-/// rule still folds the residual delta on the first small transaction after
-/// the stream, which bounds the per-query delta tax.
+/// `F/w` is measured rather than modelled — see `fold_cost_bench`:
+///
+/// * `F`, the fold, is ~82% fixed cost — `1690 µs + 0.34 ns · nvals` — and
+///   independent of `nrows`: an empty fold costs 2.35 µs at nrows = 65k, 1M
+///   and 16.7M alike. So `F ≈ 2050 µs` for any base above ~1m entries and the
+///   balance point is *flat* in the base rather than growing like
+///   `sqrt(base)`. (An earlier revision used `base.nvals() + base.nrows()`
+///   on the theory that a fold rewrites the row-pointer structure. The
+///   measurement refutes it: the `+16%` instructions that motivated the
+///   `nrows` term came from fold *frequency*, which the measured `F` now
+///   fixes directly.)
+/// * `w` differs by **250x** between the two paths, which is what the
+///   write/read split below encodes. A write transaction nobody reads pays
+///   only the COW dup: `w_dup ≈ 0.2 ns/entry`, memcpy speed — and duping a
+///   *pending* matrix costs the same as an assembled one, so `dup` does not
+///   assemble. A transaction whose delta is also materialized pays the
+///   pending-tuple merge, `w_merge ≈ 50 ns/entry`. That merge is
+///   `O(|delta|)` no matter how little the transaction added: adding 1 entry
+///   to a 16k delta and adding 100 both measure ~900 µs.
+///
+/// Since `D* ∝ 1/sqrt(w)`, the write path's balance point sits
+/// `sqrt(250) ≈ 16x` above the read path's. Reads keep paying for a lingering
+/// delta on every access, so [`should_fold_read`] — the policy for `wait`,
+/// which only runs when something reads the matrix — folds at the tighter
+/// point, promptly bounding the delta once a workload turns read-heavy.
+///
+/// A delta comparable to the base always folds (`2·|delta| ≥ base_nvals`): the
+/// fold then costs the same order as one delta touch, and without it a one-shot
+/// bulk transaction (whose huge `tx_added` defeats the sqrt term) can leave a
+/// base-sized delta taxing every later transaction. This is also what bounds
+/// the delta on a pure-write stream, where the write path deliberately lets it
+/// run large — an absolute cap there is not free: capping at 64k costs 3.5x
+/// bulk write throughput at `tx_added = 10k`, and capping at 16k costs 13.8x,
+/// against a one-time ~3 ms assembly for the first reader after the burst.
+const WRITE_FOLD_K: u64 = 20_500_000;
+
+/// `2 · F / w_merge` — the read path's `D*² / tx_added`. `w_merge ≈ 50 ns`
+/// per entry, 250x the dup cost, putting the balance point at
+/// `286 · sqrt(tx_added)` entries.
+const READ_FOLD_K: u64 = 82_000;
+
+/// Deltas below this never fold: the fold would cost more than the tax it
+/// removes. It sits essentially on the read-path balance point for a
+/// single-entity transaction (`sqrt(READ_FOLD_K) ≈ 286`).
+const MIN_FOLD_DELTA: u64 = 256;
+
+/// Write-path fold policy, evaluated in `dup` (version creation). Balances the
+/// COW dup tax against the fold; see the module docs above for the model and
+/// the measurements behind [`WRITE_FOLD_K`].
 pub(super) fn should_fold(
     delta_nvals: u64,
     tx_added: u64,
-    base_cost: u64,
+    base_nvals: u64,
 ) -> bool {
-    /// Squared scale on the write-path sqrt rule: fold once
-    /// `delta² ≥ SCALE² · base_cost · tx_added`, i.e. at
-    /// `sqrt(SCALE²) = 8` times the raw sqrt balance point.
-    const WRITE_FOLD_SCALE_SQ: u64 = 64;
-    tx_added > 0
-        && delta_nvals >= 256
-        && (delta_nvals.saturating_mul(2) >= base_cost
-            || delta_nvals.saturating_mul(delta_nvals)
-                >= base_cost
-                    .saturating_mul(tx_added)
-                    .saturating_mul(WRITE_FOLD_SCALE_SQ))
+    fold_balance(delta_nvals, tx_added, base_nvals, WRITE_FOLD_K)
 }
 
-/// Read-path fold policy: the unfloored sqrt rule (see [`should_fold`] for
-/// the model). `wait` only runs when a reader materializes the deltas, and
-/// readers keep paying for a lingering delta on every access — so once reads
-/// are in the mix, fold at the sqrt balance point instead of waiting for the
-/// write-path floor.
+/// Read-path fold policy, evaluated in `wait`. Same model as
+/// [`should_fold`], but the transaction pays the `O(|delta|)` pending-tuple
+/// merge on top of the dup, so `w` is 250x larger and the balance point
+/// `sqrt(250) ≈ 16x` tighter. See [`READ_FOLD_K`].
 pub(super) fn should_fold_read(
     delta_nvals: u64,
     tx_added: u64,
-    base_cost: u64,
+    base_nvals: u64,
+) -> bool {
+    fold_balance(delta_nvals, tx_added, base_nvals, READ_FOLD_K)
+}
+
+/// `|delta| ≥ sqrt(k · tx_added)`, or a delta comparable to the base.
+fn fold_balance(
+    delta_nvals: u64,
+    tx_added: u64,
+    base_nvals: u64,
+    k: u64,
 ) -> bool {
     tx_added > 0
-        && delta_nvals >= 256
-        && (delta_nvals.saturating_mul(2) >= base_cost
-            || delta_nvals.saturating_mul(delta_nvals) >= base_cost.saturating_mul(tx_added))
+        && delta_nvals >= MIN_FOLD_DELTA
+        && (delta_nvals.saturating_mul(2) >= base_nvals
+            || delta_nvals.saturating_mul(delta_nvals) >= k.saturating_mul(tx_added))
 }
 
 /// A matrix with MVCC delta tracking for snapshot isolation.
@@ -261,7 +294,7 @@ impl<T> VersionedMatrix<T> {
         }
         self.dp.wait();
         self.dm.wait();
-        let base = self.m.nvals() + self.m.nrows();
+        let base = self.m.nvals();
         let dp_nvals = self.dp.nvals();
         let dm_nvals = self.dm.nvals();
         // The deltas are materialized now — resync the approximate counters
@@ -758,7 +791,7 @@ impl<T> Dup<Self> for VersionedMatrix<T> {
     /// instructions on single-node creates). `m` is never pending, so its
     /// `nvals` is a cheap field read.
     fn dup(&self) -> Self {
-        let base = self.m.nvals() + self.m.nrows();
+        let base = self.m.nvals();
         let dp_count = self.dp_count.load(Ordering::Relaxed);
         let dm_count = self.dm_count.load(Ordering::Relaxed);
         let fold_dp = self.fold_dp.load(Ordering::Relaxed)
@@ -820,8 +853,8 @@ impl<V> Decode<19> for VersionedMatrix<V> {
         let dm = Matrix::<bool>::decode(r)?;
         // Decoded deltas have no owning transaction; treat the whole delta as
         // freshly added so the fold policy sees it on the first flush.
-        let fold_dp = should_fold(dp.nvals(), dp.nvals(), m.nvals() + m.nrows());
-        let fold_dm = should_fold(dm.nvals(), dm.nvals(), m.nvals() + m.nrows());
+        let fold_dp = should_fold(dp.nvals(), dp.nvals(), m.nvals());
+        let fold_dm = should_fold(dm.nvals(), dm.nvals(), m.nvals());
         Ok(Self {
             dp_count: AtomicU64::new(dp.nvals()),
             dm_count: AtomicU64::new(dm.nvals()),
@@ -973,5 +1006,77 @@ impl<E: IterExtract> Iterator for Iter<E> {
             (Some(_), None) => self.m_next.take(),
             (None, _) => self.dp_next.take(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MIN_FOLD_DELTA, READ_FOLD_K, WRITE_FOLD_K, should_fold, should_fold_read};
+
+    /// Smallest delta that satisfies the sqrt rule, i.e. `ceil(sqrt(k · tx))`.
+    fn threshold(
+        k: u64,
+        tx_added: u64,
+    ) -> u64 {
+        let target = k * tx_added;
+        (1..).find(|d| d * d >= target).unwrap()
+    }
+
+    /// A base big enough that the `2·|delta| ≥ base_nvals` escape hatch never
+    /// fires, so these cases exercise the sqrt rule alone.
+    const HUGE_BASE: u64 = u64::MAX / 4;
+
+    #[test]
+    fn read_path_balance_point_is_flat_in_base_size() {
+        assert_eq!(threshold(READ_FOLD_K, 1), 287);
+        // The measured fold cost is independent of the base, so the same
+        // threshold must hold from a 1m-entry base to a 100m-entry one.
+        for base in [1_000_000, 10_000_000, 100_000_000, HUGE_BASE] {
+            assert!(!should_fold_read(286, 1, base), "base {base}");
+            assert!(should_fold_read(287, 1, base), "base {base}");
+        }
+    }
+
+    #[test]
+    fn write_path_is_16x_looser_than_read_path() {
+        // w_dup is 250x cheaper than w_merge, and D* scales as 1/sqrt(w), so
+        // the write path folds at sqrt(250) ~= 15.8x the read path's delta.
+        assert_eq!(threshold(WRITE_FOLD_K, 1), 4_528);
+        assert_eq!(threshold(WRITE_FOLD_K, 1) / threshold(READ_FOLD_K, 1), 15);
+        assert!(!should_fold(4_527, 1, HUGE_BASE));
+        assert!(should_fold(4_528, 1, HUGE_BASE));
+    }
+
+    #[test]
+    fn balance_point_grows_as_sqrt_of_transaction_size() {
+        // 100x the transaction size buys only a ~10x bigger delta.
+        assert_eq!(threshold(READ_FOLD_K, 1), 287);
+        assert_eq!(threshold(READ_FOLD_K, 100), 2_864);
+        for tx_added in [1_u64, 10, 100, 1_000] {
+            let d = threshold(READ_FOLD_K, tx_added);
+            assert!(
+                !should_fold_read(d - 1, tx_added, HUGE_BASE),
+                "tx {tx_added}"
+            );
+            assert!(should_fold_read(d, tx_added, HUGE_BASE), "tx {tx_added}");
+        }
+    }
+
+    #[test]
+    fn delta_comparable_to_base_always_folds() {
+        // The escape hatch: a one-shot bulk transaction's huge `tx_added`
+        // defeats the sqrt term, so without this a base-sized delta would tax
+        // every later transaction.
+        assert!(should_fold(512, u64::MAX, 1_024));
+        assert!(should_fold_read(512, u64::MAX, 1_024));
+    }
+
+    #[test]
+    fn tiny_deltas_and_read_only_transactions_never_fold() {
+        assert!(!should_fold(MIN_FOLD_DELTA - 1, 1, 0));
+        assert!(!should_fold_read(MIN_FOLD_DELTA - 1, 1, 0));
+        // `tx_added == 0` is a transaction that added nothing to this layer.
+        assert!(!should_fold(u64::MAX, 0, 1_024));
+        assert!(!should_fold_read(u64::MAX, 0, 1_024));
     }
 }
