@@ -217,6 +217,28 @@ pub enum ExprIR<TVar> {
     Property(Arc<String>),
     /// Function call with function definition
     FuncInvocation(Arc<GraphFn>),
+    /// `CASE` expression, in either Cypher form.
+    ///
+    /// Children, in order:
+    /// 1. the subject expression — present only in the value form
+    ///    (`CASE x WHEN 1 THEN …`), absent in the searched form
+    ///    (`CASE WHEN x = 1 THEN …`); `has_subject` says which;
+    /// 2. a [`Self::List`] of alternating `when, then` expressions, always
+    ///    present and always non-empty;
+    /// 3. the `ELSE` expression, always present — the parser substitutes
+    ///    `Constant(Null)` when the query omits it.
+    ///
+    /// A dedicated variant rather than an internal `FuncInvocation`: the
+    /// evaluator must try the conditions in order and evaluate only the
+    /// branch that matches, which a function call cannot express (its
+    /// arguments are evaluated first). Encoding the shape here also means
+    /// the shape is decided once at parse time instead of being re-derived
+    /// per row.
+    ///
+    /// The `case` function stays registered in `functions::internal` as the
+    /// introspectable declaration behind `dbms.functions()`; it is no longer
+    /// on the evaluation path.
+    Case { has_subject: bool },
     /// List quantifier (all/any/none/single)
     Quantifier {
         quantifier_type: QuantifierType,
@@ -242,7 +264,7 @@ pub enum ExprIR<TVar> {
     /// Pattern predicate should be rewritten in planner (boxed; see
     /// `PatternComprehension`).
     Pattern(Box<QueryGraph<Arc<String>, Arc<String>, TVar>>),
-    /// shortestPath((a)-[*]->(b)) or allShortestPaths((a)-[*]->(b))
+    /// shortestPath((a)-[*]->(b))
     /// Children: [source_var_expr, dest_var_expr]
     ///
     /// Boxed: the inline payload (rel-type list, hop bounds, flags) is
@@ -251,6 +273,30 @@ pub enum ExprIR<TVar> {
     /// Map projection: base { .prop, .*, key: expr, var }
     /// First child is the base expression, remaining children are projection items
     MapProjection,
+    /// A regex function (`=~`, `string.matchRegEx`, `string.replaceRegEx`)
+    /// whose pattern argument is a constant string. The binder compiles the
+    /// regex once so the compiled program lives in the cached plan instead
+    /// of being rebuilt per row.
+    /// Children: the remaining runtime arguments (text [, replacement]).
+    CompiledRegex(RegexFn),
+}
+
+/// Payload of [`ExprIR::CompiledRegex`].
+#[derive(Clone, Debug)]
+pub struct RegexFn {
+    pub kind: RegexFnKind,
+    pub regex: Arc<regex::Regex>,
+}
+
+/// Which regex function [`ExprIR::CompiledRegex`] replaces.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RegexFnKind {
+    /// `lhs =~ pattern` (internal `regex_matches`)
+    Matches,
+    /// `string.matchRegEx(text, pattern)`
+    MatchList,
+    /// `string.replaceRegEx(text, pattern[, replacement])`
+    Replace,
 }
 
 /// Payload of [`ExprIR::Reduce`].
@@ -267,7 +313,6 @@ pub struct ShortestPathInfo {
     pub min_hops: u32,
     pub max_hops: Option<u32>,
     pub directed: bool,
-    pub all_paths: bool,
 }
 
 #[cfg_attr(tarpaulin, skip)]
@@ -332,14 +377,14 @@ impl<TVar: Display + std::fmt::Debug> Display for ExprIR<TVar> {
             }
             Self::Paren => write!(f, "()"),
             Self::Pattern(_) => write!(f, "<pattern>"),
-            Self::ShortestPath(info) => {
-                if info.all_paths {
-                    write!(f, "allShortestPaths()")
-                } else {
-                    write!(f, "shortestPath()")
-                }
-            }
+            Self::ShortestPath(_) => write!(f, "shortestPath()"),
             Self::MapProjection => write!(f, "map_projection"),
+            Self::CompiledRegex(rf) => match rf.kind {
+                RegexFnKind::Matches => write!(f, "regex_matches()"),
+                RegexFnKind::MatchList => write!(f, "string.matchRegEx()"),
+                RegexFnKind::Replace => write!(f, "string.replaceRegEx()"),
+            },
+            Self::Case { .. } => write!(f, "CASE"),
         }
     }
 }

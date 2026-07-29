@@ -1243,12 +1243,14 @@ impl<'a> Parser<'a> {
     fn parse_case_expression(&mut self) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
         self.lexer.next();
         let mut children = vec![];
-        if let Token::IdentifierOrKeyword {
-            keyword: Some(Keyword::When),
-            ..
-        } = self.lexer.current()?
-        {
-        } else {
+        let has_subject = !matches!(
+            self.lexer.current()?,
+            Token::IdentifierOrKeyword {
+                keyword: Some(Keyword::When),
+                ..
+            }
+        );
+        if has_subject {
             children.push(self.parse_expr(false)?);
         }
         let mut conditions = vec![];
@@ -1267,9 +1269,7 @@ impl<'a> Parser<'a> {
             children.push(tree!(ExprIR::Constant(Value::Null)));
         }
         match_token!(self.lexer => End);
-        Ok(tree!(
-            ExprIR::FuncInvocation(get_functions().get("case", &FnType::Internal)?); children
-        ))
+        Ok(tree!(ExprIR::Case { has_subject }; children))
     }
 
     fn parse_quantifier_expr(
@@ -1407,17 +1407,10 @@ impl<'a> Parser<'a> {
         ))
     }
 
-    /// Parses `shortestPath((src)-[rel:TYPE*min..max]->(dst))` or
-    /// `allShortestPaths(...)` after the opening `(`.
-    fn parse_shortest_path_expr(
-        &mut self,
-        all_paths: bool,
-    ) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
-        let fn_name = if all_paths {
-            "allShortestPaths"
-        } else {
-            "shortestPath"
-        };
+    /// Parses `shortestPath((src)-[rel:TYPE*min..max]->(dst))` after the
+    /// opening `(`.
+    fn parse_shortest_path_expr(&mut self) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
+        let fn_name = "shortestPath";
 
         // Verify pattern starts with `(` — otherwise it's not a valid shortestPath call
         if self.lexer.current()? != Token::LParen {
@@ -1598,7 +1591,6 @@ impl<'a> Parser<'a> {
                 min_hops,
                 max_hops,
                 directed,
-                all_paths,
             })),
             tree!(ExprIR::Variable(actual_src)),
             tree!(ExprIR::Variable(actual_dst))
@@ -1651,7 +1643,7 @@ impl<'a> Parser<'a> {
 
                     // shortestPath((a)-[*]->(b)) or allShortestPaths((a)-[*]->(b))
                     if ident.eq_ignore_ascii_case("shortestPath") {
-                        return Ok((self.parse_shortest_path_expr(false)?, false));
+                        return Ok((self.parse_shortest_path_expr()?, false));
                     }
                     if ident.eq_ignore_ascii_case("allShortestPaths") {
                         return Err(self.lexer.format_error(
