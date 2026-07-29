@@ -82,9 +82,10 @@ C. A hardcoded ranking in a doc is stale the moment anything merges, and a
 stale ranking is worse than none: it sends people to work on rows that are
 already fixed.
 
-Generate it from a live run instead. Either label a PR `benchmark-cov` — CI
-measures `main`, the PR and the C engine in one run and posts the comparison,
-including which rows sit furthest behind C — or locally:
+Generate it from a live run instead. Labelling a PR `benchmark-cov` measures
+`main` and the PR and posts the comparison, but **not the C engine** — that job
+runs on a macOS runner and there is no macOS build of the C module to load. For
+a vs-C reading, run it locally:
 
 ```bash
 python3 bench/run_bench.py --out /tmp/rust.csv                     # this build
