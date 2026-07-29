@@ -335,9 +335,10 @@ def main():
         # recover a message the server had already printed.
         global SERVER_LOG
         SERVER_LOG = os.path.join(work_dir, "server.log")
-        server = subprocess.Popen(
-            server_args,
-            stdout=open(SERVER_LOG, "w"), stderr=subprocess.STDOUT)
+        # Popen dups the fd into the child, so close the parent's copy rather
+        # than leaking it for the life of the run.
+        with open(SERVER_LOG, "w") as log:
+            server = subprocess.Popen(server_args, stdout=log, stderr=subprocess.STDOUT)
         for _ in range(100):
             # check=False: connection refused is the expected answer while
             # the server is still coming up.

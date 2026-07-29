@@ -400,8 +400,6 @@ jobs:
           tail -30 /tmp/coverage.txt
 
       - name: Build the comment
-        env:
-          PMU: ${{ steps.pmu.outputs.pmu }}
         run: |
           python3 - <<'PY' > /tmp/comment.md
           import csv, os
@@ -671,11 +669,17 @@ jobs:
               with urllib.request.urlopen(req) as r:
                   return json.loads(r.read() or "null")
 
-          existing = next(
-              (c["id"] for c in reversed(call(f"{api}/issues/{num}/comments?per_page=100"))
-               if MARKER in (c.get("body") or "")),
-              None,
-          )
+          # Paginate: a PR with more than one page of comments would miss the
+          # marker and post a duplicate on every run.
+          existing, page = None, 1
+          while True:
+              batch = call(f"{api}/issues/{num}/comments?per_page=100&page={page}")
+              if not batch:
+                  break
+              for c in batch:
+                  if MARKER in (c.get("body") or ""):
+                      existing = c["id"]
+              page += 1
           if existing:
               call(f"{api}/issues/comments/{existing}", {"body": body}, "PATCH")
           else:

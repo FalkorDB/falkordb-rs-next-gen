@@ -144,12 +144,16 @@ SHLIB_EXT = "dylib" if sys.platform == "darwin" else "so"
 # The Person index is created before the ring so the ring build is index-driven
 # rather than a 1000x1000 nested scan.
 CG_SETUP = [
-    "UNWIND range(0, 999) AS i "
-    "CREATE (:Person {id: i, name: 'p' + toString(i), age: i % 80, score: i * 1.5})",
+    (
+        "UNWIND range(0, 999) AS i "
+        "CREATE (:Person {id: i, name: 'p' + toString(i), age: i % 80, score: i * 1.5})"
+    ),
     "CREATE INDEX FOR (p:Person) ON (p.id)",
-    "UNWIND range(0, 999) AS i "
-    "MATCH (a:Person {id: i}) MATCH (b:Person {id: (i + 1) % 1000}) "
-    "CREATE (a)-[:KNOWS]->(b)",
+    (
+        "UNWIND range(0, 999) AS i "
+        "MATCH (a:Person {id: i}) MATCH (b:Person {id: (i + 1) % 1000}) "
+        "CREATE (a)-[:KNOWS]->(b)"
+    ),
     # `delete node` deletes one :Tmp per execution, so there must be more of
     # them than the highest repeat count — which is now `MAX_SPAN` plus n1,
     # since a cheap delete query would get its span widened. Running dry would
@@ -283,12 +287,21 @@ def run_total(module, port, outdir, query, reps):
     return max(totals)
 
 
-def cli(port, *args, check=True):
-    out = subprocess.run(
-        ["redis-cli", "-p", str(port)] + [str(a) for a in args],
-        capture_output=True,
-        text=True,
-    )
+def cli(port, *args, check=True, timeout=1800):
+    # Under callgrind a query can take minutes, but never forever: without a
+    # timeout a wedged redis-cli would hang the whole job instead of failing
+    # the one query.
+    try:
+        out = subprocess.run(
+            ["redis-cli", "-p", str(port)] + [str(a) for a in args],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError(
+            f"redis-cli {' '.join(str(a) for a in args)} timed out after {timeout}s"
+        ) from e
     if check and out.returncode != 0:
         raise RuntimeError(
             f"redis-cli {' '.join(str(a) for a in args)} failed "
