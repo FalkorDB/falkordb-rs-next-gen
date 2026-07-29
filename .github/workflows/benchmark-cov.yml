@@ -619,6 +619,9 @@ jobs:
           docker run --rm -e OMP_NUM_THREADS=1 -v "$GITHUB_WORKSPACE:/w" \
             -w /w/pr --entrypoint bash "$C_IMAGE" -c '
             set -e
+            export DEBIAN_FRONTEND=noninteractive  # image has no debconf:
+                                                  # silences a bogus
+                                                  # dpkg-preconfigure error
             apt-get update -qq
             apt-get install -y -qq --no-install-recommends valgrind python3 >/dev/null
             valgrind --version
@@ -647,6 +650,9 @@ jobs:
         run: |
           docker run --rm -v "$GITHUB_WORKSPACE:/w" -w /w/pr --entrypoint bash "$C_IMAGE" -c '
             set -e
+            export DEBIAN_FRONTEND=noninteractive  # image has no debconf:
+                                                  # silences a bogus
+                                                  # dpkg-preconfigure error
             apt-get update -qq
             apt-get install -y -qq --no-install-recommends python3 >/dev/null
             python3 bench/run_bench.py --module /w/pr/target/release/libfalkordb.so \
@@ -708,20 +714,40 @@ jobs:
           c = read(f"{ws}/cg-c.csv")
           c2 = read(f"{ws}/cg-c2.csv")
 
-          # The C engine is measured twice and the column is only published if
-          # the two passes agree. Without this check the table once carried C
-          # numbers that moved by up to 10x between runs while looking
-          # authoritative — thread scheduling under valgrind, since fixed by
-          # pinning every engine to one thread. The check stays: it is the C
-          # column's equivalent of the `RETURN 1` control row.
+          # The C engine is measured twice, and each row is reported with the
+          # spread between the two passes rather than as a single number.
+          #
+          # Why: unlike this module, the C engine cannot be made to run queries
+          # inline. THREAD_COUNT 0 refuses to start, so at least one worker
+          # thread always exists, and valgrind schedules the main/worker handoff
+          # nondeterministically. Measured with everything pinned
+          # (THREAD_COUNT 1, OMP_NUM_THREADS=1) the two passes still disagreed
+          # by 3.8-82% per row, while this module's two builds agreed to 0.07%.
+          # So a C number here is indicative, not deterministic, and the table
+          # says so per row instead of implying a precision it does not have.
           C_TOLERANCE = 0.02
+
+          def c_cell(q):
+              """(display, ratio_display) for the C and PR/C columns."""
+              lo, hi = c.get(q), c2.get(q)
+              vals = [v for v in (lo, hi) if v]
+              if not vals:
+                  return "—", "—"
+              b = pr.get(q)
+              if len(vals) == 1 or abs(max(vals) / min(vals) - 1) <= C_TOLERANCE:
+                  mid = sum(vals) / len(vals)
+                  tag = "" if len(vals) == 2 else " (1 pass)"
+                  return f"{mid:,.0f}{tag}", (f"{b / mid:.2f}x" if b else "—")
+              a, z = min(vals), max(vals)
+              return (
+                  f"{a:,.0f}–{z:,.0f}",
+                  (f"{b / z:.2f}–{b / a:.2f}x" if b else "—"),
+              )
+
           c_spread = max(
               (abs(c2[q] / c[q] - 1) for q in set(c) & set(c2) if c[q]),
               default=None,
           )
-          c_ok = bool(c) and c_spread is not None and c_spread <= C_TOLERANCE
-          if not c_ok:
-              c = {}
           out = ["## Instruction counts (callgrind)", ""]
           if not pr or not main:
               out.append("No output — see the workflow log.")
@@ -746,10 +772,10 @@ jobs:
               ]
               for q in sorted(set(pr) & set(main), key=lambda q: pr[q] / main[q] if main[q] else 1):
                   a, b = main[q], pr[q]
-                  cv = c.get(q)
+                  cdisp, cratio = c_cell(q)
                   out.append(
                       f"| {q} | {a:,.0f} | {b:,.0f} | {f'{b / a:.4f}x' if a else '—'} | "
-                      f"{f'{cv:,.0f}' if cv else '—'} | {f'{b / cv:.2f}x' if cv else '—'} |"
+                      f"{cdisp} | {cratio} |"
                   )
               out += [
                   "",
@@ -759,29 +785,27 @@ jobs:
                   "",
                   "**PR/C** compares this build against the production C engine "
                   "(`falkordb/falkordb-server:edge`); under 1.00x is faster than C. All "
-                  "three modules are measured in the same container, so this is "
-                  "like-for-like rather than a cross-environment guess.",
+                  "engines are measured in the same container with threads pinned "
+                  "(`THREAD_COUNT 1`, `OMP_NUM_THREADS=1`), so this is like-for-like.",
+                  "",
+                  "**Read the C column as indicative, not exact.** It is measured twice "
+                  "and shown as a range when the passes disagree by more than "
+                  f"{C_TOLERANCE * 100:.0f}%. The C engine cannot be pinned as tightly as "
+                  "this module: `THREAD_COUNT 0` refuses to start, so a worker thread "
+                  "always exists and valgrind schedules the handoff nondeterministically. "
+                  "PR/main in the same table is reproducible to ~0.07%, so a PR/C ratio "
+                  "is a direction, and PR/main is a gate.",
               ]
-              if not c:
-                  if c_spread is not None:
-                      out += [
-                          "",
-                          f"_C column suppressed: the two C passes disagreed by "
-                          f"{c_spread * 100:.1f}% (tolerance "
-                          f"{C_TOLERANCE * 100:.0f}%), so its numbers are not "
-                          f"reproducible enough to compare against. See the "
-                          f"`measure c` / `measure c2` groups in the log._",
-                      ]
-                  else:
-                      out += [
-                          "",
-                          "_No C rows — see the `measure c` group in the workflow log._",
-                      ]
+              if not c and not c2:
+                  out += [
+                      "",
+                      "_No C rows — see the `measure c` group in the workflow log._",
+                  ]
               elif c_spread is not None:
                   out += [
                       "",
-                      f"_C reproducibility check: the two independent C passes agree to "
-                      f"{c_spread * 100:.2f}%._",
+                      f"_Worst disagreement between the two C passes: "
+                      f"{c_spread * 100:.1f}%._",
                   ]
           # Full-set vs C: alloc_bytes is the signal worth gating on here
           # (deterministic); wall-clock on a shared runner is not.
