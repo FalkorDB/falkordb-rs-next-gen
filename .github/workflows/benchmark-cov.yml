@@ -628,11 +628,14 @@ jobs:
                   "two complete runs at different repeat counts, so server startup, "
                   "graph setup and plan compilation cancel out.",
                   "",
-                  "Reproducible to ~0.015% of the run total; the residual works out to "
-                  "roughly 20-35 instructions per execution, so **treat sub-1% "
-                  "differences as noise**. Curated subset on a smaller graph than "
-                  "`run_bench.py`, so these absolute numbers are not comparable to its "
-                  "rows — only the main-vs-PR ratio is meaningful.",
+                  "Each query's repeat count is scaled so its error bar lands at "
+                  "**~0.2%**, so anything past ~0.5% is worth a look and anything "
+                  "past 1% is real. The scaling matters: per-run drift is a roughly "
+                  "fixed number of instructions, so at a fixed span the error is fixed "
+                  "*per execution* — invisible on a 7M-instruction query and 6.7% on "
+                  "`RETURN 1`. Curated subset on a smaller graph than `run_bench.py`, "
+                  "so these absolute numbers are not comparable to its rows — only the "
+                  "main-vs-PR ratio is meaningful.",
                   "",
                   "| query | main | PR | ratio |",
                   "|---|---|---|---|",
