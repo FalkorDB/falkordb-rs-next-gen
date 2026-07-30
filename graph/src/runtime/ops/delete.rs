@@ -191,30 +191,58 @@ impl Runtime<'_> {
             let committed_set: std::collections::HashSet<NodeId> =
                 committed.iter().copied().collect();
             let g = self.g.borrow();
-            let n = g.node_cap();
-            for tensor in g.relationship_matrices_iter() {
-                for (src, dest, rel_id) in tensor.iter(0, n, false) {
-                    let src_node: NodeId = src.into();
-                    let dest_node: NodeId = dest.into();
-                    let rel: RelationshipId = rel_id.into();
-                    let src_deleted = committed_set.contains(&src_node);
-                    let dest_deleted = committed_set.contains(&dest_node);
-                    if !src_deleted && !dest_deleted {
-                        continue;
+            // A full tensor scan is O(total edges) regardless of how few nodes
+            // are deleted; per-node adjacency iteration is O(degree) per node.
+            // Scan everything only when the committed set is a large fraction
+            // of the graph.
+            if (committed.len() as u64) * 4 < g.node_count() {
+                for &id in &committed {
+                    for (src, dest, rel) in g.get_node_relationships(id) {
+                        // An edge between two committed nodes is visited from
+                        // both endpoints — snapshot it from the src side only.
+                        if src != id && committed_set.contains(&src) {
+                            continue;
+                        }
+                        let other = if src == id { dest } else { src };
+                        // Skip if other endpoint is already pending-deleted
+                        if !committed_set.contains(&other)
+                            && self.pending.borrow().is_node_deleted(other)
+                        {
+                            continue;
+                        }
+                        let type_name = self.get_relationship_type(rel).unwrap();
+                        let attrs = self.get_relationship_attrs(rel);
+                        self.deleted_relationships
+                            .borrow_mut()
+                            .insert(rel, DeletedRelationship::new(src, dest, type_name, attrs));
                     }
-                    // Skip if other endpoint is already pending-deleted
-                    if !src_deleted && self.pending.borrow().is_node_deleted(src_node) {
-                        continue;
+                }
+            } else {
+                let n = g.node_cap();
+                for tensor in g.relationship_matrices_iter() {
+                    for (src, dest, rel_id) in tensor.iter(0, n, false) {
+                        let src_node: NodeId = src.into();
+                        let dest_node: NodeId = dest.into();
+                        let rel: RelationshipId = rel_id.into();
+                        let src_deleted = committed_set.contains(&src_node);
+                        let dest_deleted = committed_set.contains(&dest_node);
+                        if !src_deleted && !dest_deleted {
+                            continue;
+                        }
+                        // Skip if other endpoint is already pending-deleted
+                        if !src_deleted && self.pending.borrow().is_node_deleted(src_node) {
+                            continue;
+                        }
+                        if !dest_deleted && self.pending.borrow().is_node_deleted(dest_node) {
+                            continue;
+                        }
+                        let type_name = self.get_relationship_type(rel).unwrap();
+                        let attrs = self.get_relationship_attrs(rel);
+                        let (src, dst) = (src_node, dest_node);
+                        self.deleted_relationships
+                            .borrow_mut()
+                            .insert(rel, DeletedRelationship::new(src, dst, type_name, attrs));
                     }
-                    if !dest_deleted && self.pending.borrow().is_node_deleted(dest_node) {
-                        continue;
-                    }
-                    let type_name = self.get_relationship_type(rel).unwrap();
-                    let attrs = self.get_relationship_attrs(rel);
-                    let (src, dst) = (src_node, dest_node);
-                    self.deleted_relationships
-                        .borrow_mut()
-                        .insert(rel, DeletedRelationship::new(src, dst, type_name, attrs));
                 }
             }
         }
