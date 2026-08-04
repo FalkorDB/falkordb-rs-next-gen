@@ -58,6 +58,8 @@ mod select_scan_node;
 mod utilize_index;
 mod utilize_node_by_id;
 
+pub(crate) use reduce_expand_into::ir_references_variable;
+
 use std::collections::{HashMap, HashSet};
 
 use orx_tree::{Bfs, DynTree, NodeRef};

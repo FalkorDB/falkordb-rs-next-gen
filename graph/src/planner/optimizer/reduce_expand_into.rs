@@ -11,15 +11,17 @@
 //! whether any expression references the edge alias. If the edge is never
 //! consumed, `emit_relationship` is set to false.
 
+use std::sync::Arc;
+
 use orx_tree::{Bfs, DynTree, NodeRef};
 
-use crate::parser::ast::SetItem;
+use crate::parser::ast::{QueryGraph, SetItem, Variable};
 
 use super::super::IR;
 
 /// Check if any expression in an IR node references a variable with the
 /// given (id, scope_id) pair.
-pub(super) fn ir_references_variable(
+pub(crate) fn ir_references_variable(
     ir: &IR,
     var_id: u32,
     scope_id: u32,
@@ -51,19 +53,29 @@ pub(super) fn ir_references_variable(
                 .iter()
                 .any(|v| v.id == var_id && v.scope_id == scope_id)
         }),
-        IR::Unwind { var, .. } | IR::ForEach { var, .. } => {
-            var.id == var_id && var.scope_id == scope_id
+        IR::Unwind { expr, var } => {
+            (var.id == var_id && var.scope_id == scope_id)
+                || expr_references_variable(expr, var_id, scope_id)
         }
+        IR::ForEach { list, var } => {
+            (var.id == var_id && var.scope_id == scope_id)
+                || expr_references_variable(list, var_id, scope_id)
+        }
+        IR::ProcedureCall { args, .. } => args
+            .iter()
+            .any(|arg| expr_references_variable(arg, var_id, scope_id)),
         IR::Delete { exprs, .. } | IR::Remove(exprs) => exprs
             .iter()
             .any(|expr| expr_references_variable(expr, var_id, scope_id)),
         IR::Set(items) => set_items_reference_variable(items, var_id, scope_id),
+        IR::Create(pattern) => query_graph_references_variable(pattern, var_id, scope_id),
         IR::Merge {
+            pattern,
             on_create,
             on_match,
-            ..
         } => {
-            set_items_reference_variable(on_create, var_id, scope_id)
+            query_graph_references_variable(pattern, var_id, scope_id)
+                || set_items_reference_variable(on_create, var_id, scope_id)
                 || set_items_reference_variable(on_match, var_id, scope_id)
         }
         IR::ValueHashJoin { lhs_exp, rhs_exp } => {
@@ -72,6 +84,30 @@ pub(super) fn ir_references_variable(
         }
         _ => false,
     }
+}
+
+/// Check if a CREATE/MERGE pattern references a variable: as an alias reused
+/// inside the pattern (e.g. a bound endpoint of a created relationship),
+/// inside any inline attribute expression (e.g. `CREATE (:X {w: r.weight})`),
+/// or as a member of a named path.
+fn query_graph_references_variable(
+    qg: &QueryGraph<Arc<String>, Arc<String>, Variable>,
+    var_id: u32,
+    scope_id: u32,
+) -> bool {
+    let var_matches = |v: &Variable| v.id == var_id && v.scope_id == scope_id;
+    qg.nodes()
+        .iter()
+        .any(|n| var_matches(&n.alias) || expr_references_variable(&n.attrs, var_id, scope_id))
+        || qg.relationships().iter().any(|r| {
+            var_matches(&r.alias)
+                || var_matches(&r.from.alias)
+                || var_matches(&r.to.alias)
+                || expr_references_variable(&r.attrs, var_id, scope_id)
+                || expr_references_variable(&r.from.attrs, var_id, scope_id)
+                || expr_references_variable(&r.to.attrs, var_id, scope_id)
+        })
+        || qg.paths().iter().any(|p| p.vars.iter().any(&var_matches))
 }
 
 fn set_items_reference_variable(
