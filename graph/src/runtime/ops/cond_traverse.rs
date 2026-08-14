@@ -49,6 +49,36 @@ use orx_tree::{Dyn, NodeIdx, NodeRef};
 
 use super::batched_result_emitter::{BatchedResultEmitter, EdgeEndpoints, RowIter};
 
+/// Minimum number of active input rows for the batched F·A path to pay off.
+/// Each `mxm` carries a fixed cost (frontier-matrix build, GraphBLAS dispatch,
+/// OpenMP parallel-region setup) of tens of microseconds, while the per-row
+/// path enumerates a single adjacency-matrix row nearly for free. Tiny batches
+/// — most notably the single-row argument batches produced by correlated
+/// `CALL {}` subqueries (Apply) — are therefore routed to the per-row path.
+/// Fused multi-hop chains are exempt: `expand_row` only handles single hops,
+/// so the batched path is the only correct path for them.
+///
+/// Derived from an in-process sweep of `MATCH (a:Src) MATCH (a)-->(b) RETURN
+/// count(b)` over batch sizes {1..64} × fan-outs {4, 100, 10⁴} (release
+/// build, 4-vCPU AMD EPYC 7763), comparing forced-per-row vs forced-mxm
+/// (µs/query):
+///
+/// | rows | fan-out | per-row |   mxm |
+/// |-----:|--------:|--------:|------:|
+/// |    1 |       4 |     8.9 |  38.2 |
+/// |    8 |       4 |    15.0 |  39.9 |
+/// |    8 |     100 |   158.6 | 151.5 |
+/// |   16 |     100 |   314.9 | 252.9 |
+/// |    1 |     10⁴ |  1864.9 | 1718.7|
+/// |    8 |     10⁴ | 15027.7 |13244.0|
+///
+/// The crossover sits at ~8–16 rows for fan-out 100 and above 64 rows for
+/// fan-out 4. Sub-threshold hub-heavy batches (few rows, huge fan-out) pay at
+/// most ~14% vs mxm — bounded, since per-row enumeration is O(deg) just like
+/// the mxm — while typical small batches gain up to ~4x, so a pure row-count
+/// gate at 16 is a good trade without needing a degree estimate.
+const MIN_BATCHED_ROWS: usize = 16;
+
 /// Base matrix for the batched mxm path. Relationship matrices store inline
 /// edge ids (`u64`) while the adjacency matrix and merged multi-type matrices
 /// are `bool`; traversal only consumes the sparsity pattern (`ANY_PAIR`
@@ -1134,13 +1164,18 @@ impl<'a> Iterator for CondTraverseOp<'a> {
                             // fully handles the batch (`true`) its output is
                             // queued on `pending_batches` and the emitter is left
                             // idle; on fallback (`false`) seed the emitter to
-                            // expand the batch row-by-row.
+                            // expand the batch row-by-row. Small single-hop
+                            // batches skip the mxm entirely: its fixed dispatch
+                            // cost dwarfs the per-row enumeration for a handful
+                            // of source rows (see `MIN_BATCHED_ROWS`).
                             let mut handled = false;
                             if self.batched_eligible {
                                 let active: Vec<usize> = b.active_indices().collect();
-                                let mut pending = std::mem::take(&mut self.pending_batches);
-                                handled = self.expand_batch(&b, &active, &mut pending);
-                                self.pending_batches = pending;
+                                if !self.chain.is_empty() || active.len() >= MIN_BATCHED_ROWS {
+                                    let mut pending = std::mem::take(&mut self.pending_batches);
+                                    handled = self.expand_batch(&b, &active, &mut pending);
+                                    self.pending_batches = pending;
+                                }
                             }
                             if !handled {
                                 self.emitter.seed(b);

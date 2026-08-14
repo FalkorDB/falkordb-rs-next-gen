@@ -1872,3 +1872,73 @@ def test_optional_match_null_merge():
         [None, [2]],
     ]
 
+
+def test_cond_traverse_small_batch_shapes():
+    """CondTraverse routes input batches with fewer than MIN_BATCHED_ROWS (16)
+    active rows to the per-row path instead of the batched mxm path.  Exercise
+    the previously batched-only shapes (forward, transposed, multi-
+    relationship-type union, named-path) at sub-threshold row counts —
+    including a high-fan-out hub row — and check they produce the same
+    results as the supra-threshold (batched) row counts."""
+    n_src, n_dst = 20, 10
+    query(f"UNWIND range(0, {n_src - 1}) AS i CREATE (:S {{id: i}})", write=True)
+    query(f"UNWIND range(0, {n_dst - 1}) AS j CREATE (:D {{id: j}})", write=True)
+    # R1: every s -> s % 10; hub s=0 additionally -> every d (high fan-out).
+    query(
+        "MATCH (s:S) MATCH (d:D) WHERE d.id = s.id % 10 OR s.id = 0 "
+        "CREATE (s)-[:R1]->(d)",
+        write=True,
+    )
+    # R2: s -> (s + 1) % 10 for s < 5.
+    query(
+        "MATCH (s:S) MATCH (d:D) WHERE s.id < 5 AND d.id = (s.id + 1) % 10 "
+        "CREATE (s)-[:R2]->(d)",
+        write=True,
+    )
+
+    r1 = {(s, d) for s in range(n_src) for d in range(n_dst) if d == s % 10 or s == 0}
+    r2 = {(s, (s + 1) % 10) for s in range(5)}
+
+    # k < 16 exercises the per-row path (k=1 puts the hub alone in the batch);
+    # k = 20 exercises the batched mxm path on the same data.  The filters go
+    # through WITH because a WHERE on a MATCH directly followed by another
+    # MATCH is currently dropped from the plan (pre-existing planner bug,
+    # unrelated to batch routing).
+    for k in (1, 2, 3, 8, n_src):
+        # Forward, single type.
+        res = query(
+            f"MATCH (s:S) WHERE s.id < {k} WITH s MATCH (s)-[:R1]->(d) "
+            "RETURN s.id, d.id ORDER BY s.id, d.id"
+        )
+        assert res.result_set == sorted([s, d] for (s, d) in r1 if s < k)
+
+        # Multi-relationship-type union.
+        res = query(
+            f"MATCH (s:S) WHERE s.id < {k} WITH s MATCH (s)-[:R1|:R2]->(d) "
+            "RETURN s.id, d.id ORDER BY s.id, d.id"
+        )
+        assert res.result_set == sorted([s, d] for (s, d) in r1 | r2 if s < k)
+
+        # Transposed: traverse seeded from the destination side.
+        res = query(
+            f"MATCH (d:D) WHERE d.id < {k} WITH d MATCH (s:S)-[:R1]->(d) "
+            "RETURN s.id, d.id ORDER BY s.id, d.id"
+        )
+        assert res.result_set == sorted([s, d] for (s, d) in r1 if d < k)
+
+        # Named-path edge binding.
+        res = query(
+            f"MATCH p = (s:S)-[:R1]->(d) WHERE s.id < {k} "
+            "RETURN s.id, d.id, length(p) ORDER BY s.id, d.id"
+        )
+        assert res.result_set == sorted([s, d, 1] for (s, d) in r1 if s < k)
+
+    # Correlated CALL {} — Apply feeds single-row argument batches.
+    res = query(
+        """
+        MATCH (s:S) WHERE s.id < 3
+        CALL { WITH s MATCH (s)-[:R1|:R2]->(d) RETURN d.id AS did }
+        RETURN s.id, did ORDER BY s.id, did
+        """
+    )
+    assert res.result_set == sorted([s, d] for (s, d) in r1 | r2 if s < 3)
